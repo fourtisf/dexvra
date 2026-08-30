@@ -284,6 +284,10 @@ function loadState() {
     pending: Array.isArray(s.pending) ? s.pending : [],
     // Per-chain "how long has this been under its minimum" — see trendingWatch.
     boardWatch: s.boardWatch && typeof s.boardWatch === "object" ? s.boardWatch : {},
+    // chain:address → when the ranking pass last OPENED this candidate. It is
+    // what makes the probe window rotate instead of re-reading the same N rows
+    // for ever; see PROBE_CAP for the board that sat at 1–2 rows because of it.
+    probe: s.probe && typeof s.probe === "object" ? s.probe : {},
   };
 }
 const saveState = (st) => saveJSON(STATE_FILE, st).catch(() => {});
@@ -471,9 +475,48 @@ function pendingCount() {
 //   • a token whose price cannot be read sorts LAST but is still available —
 //     never promoting an unpriced token would quietly exclude every new listing
 //     on a chain no indexer covers, which is most of Robinhood.
-const PROBE_CAP = 25;
+//
+// ⚠️ AND *WHICH* ONES GET THAT LOOKUP IS THE SIXTH CAUSE OF A SHORT BOARD.
+//
+// This used to be `rows.slice(0, PROBE_CAP)` — the first N of the eligible
+// list in store order, which is `addListing`'s newest-first insertion order and
+// therefore the SAME N on every cycle, for ever. On a chain with five listings
+// that is every listing and nobody noticed for a year. On Solana, with ~190
+// spares, it is a 13% sample chosen by nothing at all: if those particular rows
+// happen to be dead — old memecoins under the cap floor, a pool nobody has
+// traded all day — the chain can never reach its minimum from its own listings
+// again, however good the tokens at position 26 are. Measured before a line was
+// changed: 25 dead rows in front of 175 excellent ones promotes ZERO, on every
+// cycle, and the board publishes 1–2 rows against a minimum of 5. That is the
+// report ("min 5 max 8 tpi yang di baca channel cmn 1/2").
+//
+// So the probe order is LEAST-RECENTLY-OPENED FIRST (never opened = first of
+// all), stamped per chain+address in the state file. That is one cursor per
+// chain in the only form that survives the list changing underneath it — an
+// index would drift by one on every new listing, because the store PREPENDS —
+// and it buys the guarantee a prefix never could: every listing on a chain is
+// opened within ceil(n / PROBE_CAP) passes, and a chain that is short keeps
+// sweeping until it finds something.
+//
+// The budget is a matter of SPEED now rather than of reach, which is what makes
+// it safe to widen: the read below is DexScreener-first, so a wider window
+// costs almost nothing against the GeckoTerminal ceiling.
+const PROBE_CAP = Math.max(5, Math.round(Number(process.env.AUTOTREND_PROBE_CAP)) || 40);
 const PROBE_GAP_MS = 250;
+// A stamp is only ever used to ORDER the next pass, so forgetting one costs a
+// re-read and nothing else — which is why this can be pruned bluntly. Without
+// it the map grows by one entry per token ever considered and never shrinks.
+const PROBE_MEMO_KEEP_MS = 14 * 24 * 3600_000;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** Drop stamps nothing will read again. Mutates and returns the same object. */
+function pruneProbes(probes, now) {
+  for (const k of Object.keys(probes)) {
+    const at = Number(probes[k]);
+    if (!Number.isFinite(at) || now - at > PROBE_MEMO_KEEP_MS) delete probes[k];
+  }
+  return probes;
+}
 
 /**
  * ⚠️ THE ONE OWNER OF "IS THIS BIG ENOUGH AND BUSY ENOUGH FOR A FREE SLOT".
@@ -562,18 +605,48 @@ function floorsPhrase(cfg) {
 // PROBE_CAP; `_unread` is a row we DID probe and could not read — the upstream
 // refused us. Neither may be counted as having failed a floor.
 const looked = (r) => r._change !== undefined && !r._unread;
+// "We OPENED this row" — spent a read on it, whatever the upstream then said.
+// Distinct from `looked` on purpose: `looked` is about the ANSWER (and so
+// excludes a row the upstream refused us), this is about the WINDOW, and the
+// window is what every "every spare is…" sentence was wrong about.
+const opened = (r) => r._change !== undefined;
 function countFloorRefusals(ranked, cfg) {
   return ranked.filter((r) => looked(r) && rowRefusal(r, cfg)).length;
 }
 
-async function byGain(rows, rng = Math.random) {
+/**
+ * @param {object[]} rows      the chain's spare listings, in store order
+ * @param {function} rng
+ * @param {object}  [opts]
+ * @param {object}  [opts.probes] chain:address → when we last opened it,
+ *   MUTATED with a fresh stamp for every row this pass reads. The CALLER owns
+ *   persistence: `runOnce` and `forceChain` save it, and `trending:check`
+ *   deliberately does not — a diagnostic that advanced the bot's own rotation
+ *   would change the very thing it is measuring.
+ */
+async function byGain(rows, rng = Math.random, { probes = null, now = Date.now() } = {}) {
+  // ⚠️ LEAST-RECENTLY-OPENED FIRST, never store order. See PROBE_CAP.
+  // Stable: rows never opened at all carry 0 and keep their store order among
+  // themselves, so a chain that fits inside one budget behaves exactly as it
+  // always did.
+  const order = rows
+    .map((r, i) => ({ r, i, at: probes ? Number(probes[keyOf(r.chain, r.address)]) || 0 : 0 }))
+    .sort((a, b) => a.at - b.at || a.i - b.i)
+    .map((x) => x.r);
   // No shortcut for a single candidate: it still has to be PRICED, or the
   // caller's floor sees an unannotated row and reads it as "never looked" —
   // which is how the one token on a chain silently stopped being promotable.
-  const probe = rows.slice(0, PROBE_CAP);
-  const rest = rows.slice(PROBE_CAP);
+  const probe = order.slice(0, PROBE_CAP);
+  const rest = order.slice(PROBE_CAP);
   const scored = [];
-  for (const r of probe) {
+  for (let pi = 0; pi < probe.length; pi++) {
+    const r = probe[pi];
+    // `now + pi`, not a flat `now`: two passes inside the same millisecond
+    // would otherwise stamp identically, the stable sort would fall back to
+    // store order, and the second pass would re-open the first pass's window —
+    // the very prefix this replaced. The drift is at most PROBE_CAP ms against
+    // a 14-day prune.
+    if (probes) probes[keyOf(r.chain, r.address)] = now + pi;
     let change = null;
     let priced = false;
     let mcap = null;
@@ -756,6 +829,18 @@ async function runOnce({ rng = Math.random, chain = null, count = 1, deps = {} }
   // sends an operator to a key, "below the floors" sends them to a setting, and
   // until now the first was reported as the second.
   const unreadByChain = new Map();
+  // Per chain: how many of its spares this pass actually OPENED. The probe
+  // window is bounded and it ROTATES, so on a chain with hundreds of listings
+  // a pass judges a slice — and every "every spare is…" sentence below spoke
+  // about all of them. A count nobody can read is the same as no count; a
+  // count that is WRONG sends the operator to change the wrong setting, which
+  // is what five earlier rounds of a short board each cost.
+  const consideredByChain = new Map();
+  // The rotation's memory, read for the probe ORDER and stamped by byGain.
+  // Held for the whole run and written ONCE below the promotion loop: every
+  // announce path reloads the state file, so a per-chain save would race them.
+  const probes = loadState().probe;
+  let probesTouched = false;
 
   for (const step of plan) {
     if (step.need <= 0) continue;
@@ -774,7 +859,15 @@ async function runOnce({ rng = Math.random, chain = null, count = 1, deps = {} }
     // TOP GAINERS, not a shuffle. A trending board is a claim about what is
     // moving; filling it at random made that claim false, and put a token down
     // 80% next to one up 40% with nothing to tell them apart.
-    const ranked = await byGain(eligible, rng);
+    const ranked = await byGain(eligible, rng, { probes, now });
+    probesTouched = true;
+    // ⚠️ `ranked.length` is every spare on the chain; this is the subset the
+    // pass opened. They are not the same number and the difference IS the
+    // rotation — saying "200 candidate(s), none up 5%" about 40 we opened is
+    // the false claim this pass had been making since it was written.
+    const considered = ranked.filter(opened).length;
+    consideredByChain.set(step.id, considered);
+    const ofSpares = considered < ranked.length ? ` (${considered} of ${ranked.length} opened this pass)` : "";
     // ⚠️ THE QUALITY FLOORS RUN FIRST, AND THEY BIND A FORCED RUN TOO.
     //
     // First, so `worthy` and the floor fill below both draw from a list the
@@ -833,7 +926,7 @@ async function runOnce({ rng = Math.random, chain = null, count = 1, deps = {} }
       // publishes a short board, and "why is the board short" has to be
       // answerable from pm2 alone.
       log.info(
-        `[autotrend] ${step.id}: could not price ${unread} of ${ranked.length} candidate(s) — the market read failed, ` +
+        `[autotrend] ${step.id}: could not price ${unread} of the ${considered} candidate(s) opened — the market read failed, ` +
           `not the tokens. GECKOTERMINAL_API_KEY raises the shared ceiling; see the [gt] boot line.`,
       );
     }
@@ -958,10 +1051,16 @@ async function runOnce({ rng = Math.random, chain = null, count = 1, deps = {} }
       // floors on that is now most often false — it would send an operator to
       // look at a percentage when the real answer is a $0.05 volume. The
       // refusals were counted a few lines up precisely so this can say so.
+      // ⚠️ …AND "EVERY SPARE" IS ONLY EVER TRUE OF THE SPARES THIS PASS
+      // OPENED. It said it about all of them while the ranking pass read a
+      // bounded window, so a chain with 175 unopened listings was reported as
+      // a chain of dead tokens — the sentence an operator acts on, about rows
+      // nobody had looked at.
+      const scope = considered < ranked.length ? "every spare opened this pass" : "every spare";
       const whyShort = refusals.length
-        ? `every spare is below the free-trending floors (${floorsPhrase(cfg)})`
-        : `every spare is below −${FLOOR_FILL_MAX_DROP}%`;
-      short.push(`${step.id} (needs ${step.needFloor - picks.length} more to reach the minimum; ${whyShort})`);
+        ? `${scope} is below the free-trending floors (${floorsPhrase(cfg)})`
+        : `${scope} is below −${FLOOR_FILL_MAX_DROP}%`;
+      short.push(`${step.id} (needs ${step.needFloor - picks.length} more to reach the minimum; ${whyShort}${ofSpares})`);
       gap(step.id, step.needFloor - picks.length);
     }
     // How many of this chain's spares the floors refused, so the watch can name
@@ -973,11 +1072,11 @@ async function runOnce({ rng = Math.random, chain = null, count = 1, deps = {} }
       // No gap() HERE: this chain is at or above the minimum and its spares are
       // simply not up enough — the gain floor working as designed. Anything
       // below the minimum was already gapped above. See gap().
-      short.push(`${step.id} (needs ${step.need}; ${ranked.length} candidate(s), none up ${cfg.minGainPct}% or more)`);
+      short.push(`${step.id} (needs ${step.need}; ${ranked.length} candidate(s)${ofSpares}, none up ${cfg.minGainPct}% or more)`);
       continue;
     }
     if (picks.length < step.need) {
-      short.push(`${step.id} (needs ${step.need}, only ${picks.length} up ${cfg.minGainPct}% or more)`);
+      short.push(`${step.id} (needs ${step.need}, only ${picks.length} up ${cfg.minGainPct}% or more${ofSpares})`);
     }
     for (const r of picks) {
       // Random duration in [minHours, maxHours] — different per token, so the
@@ -1005,6 +1104,13 @@ async function runOnce({ rng = Math.random, chain = null, count = 1, deps = {} }
         log.debug(`[autotrend] bookTrending ${r.sym}: ${e.message}`);
       }
     }
+  }
+  // The rotation's stamps, written ONCE. Every announce path above reloads the
+  // state file, so a per-chain save would be overwritten by the next of them.
+  if (probesTouched) {
+    const st = loadState();
+    st.probe = pruneProbes(probes, now);
+    await saveState(st);
   }
   // The board is short and nothing here can fix it: those chains need LISTINGS,
   // not another cycle. It is ADVICE about a semi-permanent condition, not an
@@ -1079,6 +1185,11 @@ async function runOnce({ rng = Math.random, chain = null, count = 1, deps = {} }
         // false reason, and it is the reason the operator would act on.
         floorRefused: floorRefusedByChain.get(id) || 0,
         unread: unreadByChain.get(id) || 0,
+        // How many of `eligible` this pass actually opened. Without it the
+        // watch asserts "N spare listing(s) here, and none went on" about rows
+        // the rotating window has not reached yet — the same false claim the
+        // log line was making one function up.
+        considered: consideredByChain.has(id) ? consideredByChain.get(id) : null,
         // The PHRASE, not the two numbers: `trendingWatch` is pure and must not
         // grow its own idea of how a floor of 0 reads (it had one, and it
         // printed `min cap $0`).
@@ -1179,7 +1290,17 @@ async function forceChain(chain, { count = 1, rng = Math.random } = {}) {
   if (!eligible.length) {
     return { promoted: 0, syms: [], reason: `all ${approved.length} listed token(s) on ${id} are already trending` };
   }
-  const ranked = await byGain(eligible, rng);
+  // Rotates like the cycle does, and for the same reason: a ⚡ tap that opened
+  // the same window every time would keep answering "all your listings are
+  // below the floors" about the same rows, on a chain with hundreds. The
+  // stamps are shared with `runOnce`, so a tap moves the cycle's window on too.
+  const probes = loadState().probe;
+  const ranked = await byGain(eligible, rng, { probes, now });
+  {
+    const st = loadState();
+    st.probe = pruneProbes(probes, now);
+    await saveState(st);
+  }
   // The quality floors bind this button too — see the long note on the same
   // filter in `runOnce`. ⚡ Run now is the path an operator uses while they are
   // WATCHING the board, so it is the last place that may publish a token with
@@ -1191,17 +1312,27 @@ async function forceChain(chain, { count = 1, rng = Math.random } = {}) {
   const refused = [];
   const qualified = ranked.filter((r) => {
     const bad = rowRefusal(r, cfg);
-    if (bad) refused.push(`${r.sym || String(r.address).slice(0, 6)} ${bad.why}`);
+    // ⚠️ ONLY A ROW WE OPENED IS NAMED AS REFUSED — the counter's rule, which
+    // this button never had. `rowRefusal` answers "cap could not be read" for
+    // the unopened tail exactly as readily as for a $1K token, so on a chain
+    // with 200 spares this said "all 200 spare listing(s) on solana are below
+    // the free-trending floors" about 160 rows nobody had looked at: a false
+    // accusation, on the one screen an operator is watching while they tap,
+    // pointing them at a floor that had refused nothing of the sort.
+    if (bad && looked(r)) refused.push(`${r.sym || String(r.address).slice(0, 6)} ${bad.why}`);
     return !bad;
   });
   if (!qualified.length) {
+    const seen = ranked.filter(opened).length;
+    const tail = ranked.length - seen;
     return {
       promoted: 0,
       syms: [],
       reason:
-        `all ${refused.length} spare listing(s) on ${id} are below the free-trending floors ` +
+        `${refused.length} of the ${seen} spare listing(s) opened on ${id} are below the free-trending floors ` +
         `(${floorsPhrase(cfg)}): ${refused.slice(0, 4).join(", ")}` +
-        (refused.length > 4 ? `, +${refused.length - 4} more` : ""),
+        (refused.length > 4 ? `, +${refused.length - 4} more` : "") +
+        (tail > 0 ? ` — ${tail} more spare(s) are still queued for the next passes, so tap again` : ""),
     };
   }
   const syms = [];
@@ -1253,6 +1384,10 @@ module.exports = {
     setAnnouncer: (fn) => (_announcer = fn),
     setLastAt: async (t) => { const st = loadState(); st.lastAt = t; await saveState(st); },
     setAnnounced: async (chain, address, t) => { const st = loadState(); st.announced[keyOf(chain, address)] = t; await saveState(st); },
+    // The rotation stamps are persisted and this suite shares one DATA_DIR, so
+    // a test that leaves them behind reorders the next test's probe window —
+    // the "a persisted setting LEAKS BETWEEN TESTS" scar, one file over.
+    forgetProbes: async () => { const st = loadState(); st.probe = {}; await saveState(st); },
   },
   resetState: resetAnnounceState,
   queueAnnounce,
@@ -1279,6 +1414,19 @@ module.exports = {
   FLOOR_FILL_MAX_DROP,
   countFloorRefusals,
   floorsPhrase,
+  // The probe budget, exported because `trending:check` mirrors this pass and
+  // the tests pin that it is BOUNDED — a fixture with fewer rows than the cap
+  // cannot reach the branch it claims to cover, which is how a vacuous test
+  // goes on passing over a broken window.
+  PROBE_CAP,
+  /**
+   * The rotation's stamps, for a caller that wants to price the window the bot
+   * is about to open rather than a prefix of its own. READ-ONLY by contract:
+   * `byGain` mutates whatever it is handed and the CALLER persists, so a
+   * diagnostic passing this in measures the next window without moving it — a
+   * check that advanced the rotation would change the thing it measures.
+   */
+  probeStamps: () => loadState().probe,
   // …and the quality floors, for exactly the same reason, one round later. Both
   // doors ask THIS function: the promoter through `rowRefusal` above, and
   // `trendFill` for the tokens it would list straight into a slot. A second

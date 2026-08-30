@@ -1216,6 +1216,95 @@ between one and four tests.
 CHANGES an existing board on deploy**, deliberately, the way the gainers
 `minMcapUsd` did. Either is one tap to `0` on ⚙️ Auto-Trend.
 
+### The sixth cause: the promoter could only ever see the same 25 listings
+
+"saya set di admin bot auto trending min 5 max 8 tpi yang di baca channel cmn
+1/2, tidak sesuai" — with the panel reading `🎯 min 5/chain · max 8/chain` and
+the pinned board publishing **SOLANA 3 · BSC 1 · ROBINHOOD 2 · ETHEREUM 2 ·
+BASE 2 · TRON 2**. Sixth round of one symptom, and the first where the counts
+rule out every earlier cause on their own: `market:check` reports **192 Solana
+listings** and Solana published three rows. A chain with 189 spares is not a
+chain that ran out of things to promote.
+
+**`byGain` priced `rows.slice(0, PROBE_CAP)` — the first 25 of the eligible
+list, in store order.** `addListing` PREPENDS, so that is the 25 newest spares,
+and it is the SAME 25 on every cycle for ever. On a chain with five listings
+that is every listing and nobody noticed for a year. On a chain with 190 it is
+a 13% sample chosen by nothing at all, and if those particular rows happen to
+be dead — old memecoins under the cap floor, a pool nobody traded all day — the
+chain can never reach its minimum from its own listings again, however good the
+tokens at position 26 are. **Measured before a line was changed**: 25 dead rows
+in front of 175 excellent ones promotes ZERO, on every cycle, for ever.
+
+- **The probe order is LEAST-RECENTLY-OPENED FIRST** (never opened = first of
+  all), stamped per chain+address in `autoTrendState.json`. That is one cursor
+  per chain in the only form that survives the list changing underneath it — an
+  index would drift by one on every new listing, because the store prepends —
+  and it buys the guarantee a prefix never could: **every listing on a chain is
+  opened within `ceil(n / PROBE_CAP)` passes**, and a chain that is short keeps
+  sweeping until it finds something.
+- ⚠️ **The stamp is `now + i`, not a flat `now`.** Two passes inside the same
+  millisecond would stamp identically, the stable sort would fall back to store
+  order, and the second pass would re-open the first pass's window — the very
+  prefix this replaced, reintroduced by the fix for it.
+- ⚠️ **AND IT LIED ABOUT WHAT IT HAD SEEN, which is why five earlier rounds each
+  had to be diagnosed from scratch.** The log line, the ops alert, the watch and
+  ⚡ Run now all said *"every spare is below the free-trending floors"* — about
+  200 spares of which 160 had never been opened. `rowRefusal` answers "market
+  cap could not be read" for an unopened row exactly as it does for a $1K token,
+  so **⚡ Run now reported `all 200 spare listing(s) on solana are below the
+  free-trending floors`**: a failure rendered as a fact, on the one screen an
+  operator watches while they tap, sending them to lower a floor that had
+  refused nothing of the sort. Every surface now counts only rows it OPENED and
+  says how many are still queued.
+- **`opened` sits beside `looked`, and they are different questions.** `looked`
+  is about the ANSWER (and so excludes a row the upstream refused us — the round
+  above); this is about the WINDOW, and the window is what every "every spare
+  is…" sentence was wrong about.
+- ⚠️ **`unread >= eligible` MADE THE UPSTREAM BRANCH UNREACHABLE on exactly the
+  chains it was written for.** `unread` is counted among the rows a pass opened
+  and was compared against every spare on the chain: 40 opened, all 40
+  unreadable, 200 spares → `40 >= 200` is false, so a total GeckoTerminal
+  failure was reported as *"your tokens are below the floors"* — the round above
+  undone by the window it did not know about. It compares against the WINDOW
+  now.
+- **`considered` reaches `trendingWatch` beside `eligible` and `unread`**, and
+  it is `null` when the caller did not measure it — a chain no cycle has priced
+  has no window to report, and inventing one would put "N not opened yet" on a
+  line nobody measured. Same rule as `floorRefused` one field over.
+- **The budget went 25 → 40, and that is a matter of SPEED, not of reach.** It
+  is only safe because the read one round above is already DexScreener-first:
+  a wider window paid at GeckoTerminal's price would be *"…and the bot was the
+  one spending it"* reintroduced by the fix for this.
+- ⚠️ **`trending:check --floors` reads the bot's window and does NOT advance
+  it.** `byGain` mutates the stamps and the CALLER persists, so the check
+  measures the slice the bot is about to judge rather than a prefix of its own
+  — and a diagnostic that moved the rotation on would change the thing it is
+  measuring, showing the operator one window while the bot opened the next.
+- ⚠️ **Both fixtures that cover the tail are SIZED FROM `PROBE_CAP`, never a
+  literal.** `trendQuality`'s "a token nobody PRICED is not counted" was 30 dead
+  rows against a hardcoded 25 — the day the budget was raised its tail would
+  have vanished and the test gone on passing while covering nothing, which is
+  the vacuity it names in its own second comment. The cap is exported for that.
+- **The rotation stamps LEAK BETWEEN TESTS** — they are persisted and the suite
+  shares one `DATA_DIR`, so a test that leaves them behind reorders the next
+  test's window. `_test.forgetProbes()` states it rather than inheriting it, the
+  scar the auto-trend panel helper already carries.
+
+The two guarantees are MUTATION-TESTED rather than argued: restoring the fixed
+prefix fails the rotation test, and dropping the `looked` gate in ⚡ Run now
+fails the honesty test — the latter only after its first cut was found matching
+on the OLD sentence and therefore passing over the mutation it exists to catch.
+
+```bash
+cd bot && node scripts/run-tests.js test/autoTrend.test.js test/trendQuality.test.js test/trendingWatch.test.js
+cd bot && npm run trending:check -- --floors    # N of M opened, and how many are not opened yet
+```
+
+**Config a fix depends on:** nothing. `AUTOTREND_PROBE_CAP` widens the window
+per chain per pass for an operator with thousands of listings; the rotation is
+what makes the size a matter of speed rather than of reach.
+
 ## The gap between two free listings was never a setting
 
 "fitur free listing itu buat berapa jam sekali baru free listing di range misal

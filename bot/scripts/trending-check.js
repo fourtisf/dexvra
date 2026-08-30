@@ -88,20 +88,30 @@ const G = '\x1b[32m', R = '\x1b[31m', Y = '\x1b[33m', D = '\x1b[2m', X = '\x1b[0
   // token big enough" is how `fonts:check` printed nine green ticks over a
   // banner drawing boxes.
   //
-  // Behind a FLAG because it prices every spare at GeckoTerminal's politeness
-  // pace — 250ms each, up to 25 a chain — which is most of a minute on a busy
+  // Behind a FLAG because it prices spares at GeckoTerminal's politeness pace —
+  // 250ms each, up to PROBE_CAP a chain — which is most of a minute on a busy
   // install, and the default run has to stay usable from a cron. Without it the
   // floors still appear on the config line above, so the operator knows this
   // flag is the next thing to try.
   const measureFloors = process.argv.includes('--floors');
   const refusedByChain = new Map();
   const unreadByChain = new Map();
+  const consideredByChain = new Map();
   if (measureFloors && (cfg.minMcapUsd > 0 || cfg.minVol24hUsd > 0)) {
-    console.log(`  ${D}pricing every spare against the floors — this takes a moment${X}\n`);
+    console.log(`  ${D}pricing spares against the floors — a bounded, rotating window per chain, this takes a moment${X}\n`);
     for (const id of cfg.chains) {
       const spares = rows.filter((r) => r.status === 'approved' && !isFeatured(r) && on(r, id));
       if (!spares.length) continue;
-      const ranked = await autoTrend.byGain(spares).catch(() => []);
+      // ⚠️ THE BOT'S OWN WINDOW, READ AND NOT ADVANCED. `probeStamps` is what
+      // decides which slice the next cycle opens, so handing it over measures
+      // the rows the bot is about to judge rather than a prefix of this
+      // script's own. It is deliberately NOT saved back: a diagnostic that
+      // moved the rotation on would change the thing it is measuring, showing
+      // the operator one window while the bot then opened the next.
+      const ranked = await autoTrend
+        .byGain(spares, undefined, { probes: autoTrend.probeStamps() })
+        .catch(() => []);
+      consideredByChain.set(id, ranked.filter((r) => r._change !== undefined).length);
       // ⚠️ THE BOT'S OWN COUNTER, not a copy of it. This line used to filter on
       // `floorRefusal` alone and so counted the tail `byGain` never priced: on
       // a chain with 44 spares it reported 44 refusals where the running bot
@@ -133,13 +143,23 @@ const G = '\x1b[32m', R = '\x1b[31m', Y = '\x1b[33m', D = '\x1b[2m', X = '\x1b[0
       // operator would act on.
       floorRefused: refusedByChain.get(id) || 0,
       unread: unreadByChain.get(id) || 0,
+      // Only ever the MEASURED window, for the same reason the two counts
+      // above are: a chain this run did not price has no window to report, and
+      // inventing one would put "N not opened yet" on a line nobody measured.
+      considered: consideredByChain.has(id) ? consideredByChain.get(id) : null,
       minMcapUsd: cfg.minMcapUsd,
       minVol24hUsd: cfg.minVol24hUsd,
     });
     const unread = unreadByChain.get(id) || 0;
+    // ⚠️ "N below the floors" OUT OF HOW MANY WERE OPENED, never out of how
+    // many exist. The probe window is bounded and it rotates, so a bare count
+    // reads as a verdict on every listing the chain has — and that is the
+    // sentence five rounds of a short board were mis-diagnosed from.
+    const seen = consideredByChain.get(id) || 0;
     const floorNote = refusedByChain.has(id)
-      ? ` ${D}· ${refusedByChain.get(id)} below the floors${X}` +
-        (unread ? ` ${Y}· ${unread} could not be priced${X}` : '')
+      ? ` ${D}· ${refusedByChain.get(id)} of ${seen} opened are below the floors${X}` +
+        (unread ? ` ${Y}· ${unread} could not be priced${X}` : '') +
+        (eligible > seen ? ` ${D}· ${eligible - seen} not opened yet${X}` : '')
       : '';
     if (why) {
       short.push({ id, featured, why });
@@ -150,7 +170,7 @@ const G = '\x1b[32m', R = '\x1b[31m', Y = '\x1b[33m', D = '\x1b[2m', X = '\x1b[0
     }
   }
   if (!measureFloors && (cfg.minMcapUsd > 0 || cfg.minVol24hUsd > 0)) {
-    console.log(`\n  ${D}re-run with --floors to price every spare and see how many the floors refuse${X}`);
+    console.log(`\n  ${D}re-run with --floors to price this cycle's window and see how many the floors refuse${X}`);
   }
 
   // ── "ADA BEBERAPA TOKEN TIDAK ADA PERSENAN TOKENYA WHY?" ───────────────────

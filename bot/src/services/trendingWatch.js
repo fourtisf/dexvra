@@ -54,6 +54,12 @@ function diagnose({
   // How many spares this cycle could not price at all — an upstream fact, and
   // deliberately NOT folded into `floorRefused`: they need different answers.
   unread = 0,
+  // How many of `eligible` the ranking pass actually OPENED, or null when the
+  // caller did not measure it. The probe budget is bounded and its window
+  // ROTATES, so on a chain with hundreds of listings a pass judges a SLICE —
+  // and every count below was being read against the whole chain. `null` keeps
+  // the old wording for a caller that cannot say.
+  considered = null,
   // ⚠️ THE RENDERED PHRASE, not the two numbers. This branch used to format
   // them itself and printed `min cap $0` for a floor the operator had switched
   // OFF — accusing their tokens of failing a floor of nothing. `fmtCap(0)` is
@@ -87,23 +93,33 @@ function diagnose({
   // GT's free tier is ~30 req/min per IP and this box shares it with the
   // website, so a cycle losing most of its reads is ordinary — and the board
   // then carries only as many rows as the read happened to answer for.
-  if (unread > 0 && unread >= eligible) {
+  // ⚠️ AGAINST THE WINDOW, NOT AGAINST THE CHAIN. `unread` is counted among the
+  // rows this pass OPENED, and comparing it to every spare on the chain made
+  // this branch unreachable on exactly the busy chains it matters for: 40
+  // opened, 40 unreadable, 200 spares → `40 >= 200` is false, and a total
+  // upstream failure was then reported as "your tokens are below the floors".
+  const judged = considered != null ? considered : eligible;
+  const rest = considered != null && eligible > considered ? eligible - considered : 0;
+  const restNote = rest > 0
+    ? ` The other ${rest} spare(s) have not been opened yet — the probe window rotates, so the next passes reach them.`
+    : '';
+  if (unread > 0 && unread >= judged) {
     return {
       code: 'unpriced',
       text:
-        `${unread} spare listing(s) here could not be PRICED at all — the market read failed, not the tokens. ` +
+        `${unread} spare listing(s) opened here could not be PRICED at all — the market read failed, not the tokens. ` +
         `That is the shared GeckoTerminal quota, not your floors: GECKOTERMINAL_API_KEY raises the ceiling ` +
-        `(see the [gt] boot line), and \`npm run trending:check\` measures it on the box.`,
+        `(see the [gt] boot line), and \`npm run trending:check\` measures it on the box.` + restNote,
     };
   }
   if (floorRefused > 0) {
     return {
       code: 'below_floors',
       text:
-        `${floorRefused} spare listing(s) here, and none went on — they are below the free-trending floors ` +
+        `${floorRefused} spare listing(s) opened here, and none went on — they are below the free-trending floors ` +
         `(${floorsText || 'see ⚙️ Auto-Trend'}). That is the filter doing its job: ` +
         `a dead token is not a trending row. The next cycle lists a big-cap to cover the gap while 🧲 Fill from market ` +
-        `is ON — or lower 🏦/📊 on ⚙️ Auto-Trend if these floors are too strict for this chain.`,
+        `is ON — or lower 🏦/📊 on ⚙️ Auto-Trend if these floors are too strict for this chain.` + restNote,
     };
   }
   if (eligible > 0) {
@@ -114,8 +130,8 @@ function diagnose({
     return {
       code: 'spares_unusable',
       text:
-        `${eligible} spare listing(s) here, and none went on — they are below −15%, the one thing never ` +
-        `auto-promoted. The next cycle lists a big-cap to cover it while 🧲 Fill from market is ON. ⚡ Run now settles it.`,
+        `${judged} spare listing(s) here, and none went on — they are below −15%, the one thing never ` +
+        `auto-promoted. The next cycle lists a big-cap to cover it while 🧲 Fill from market is ON. ⚡ Run now settles it.` + restNote,
     };
   }
   return {

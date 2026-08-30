@@ -286,9 +286,14 @@ test("⚠️ a token nobody PRICED is not counted as one that failed the floors"
   // buffer instead of a store.
   logged.length = 0;
   const rows = [];
-  // 30 dead ones so the whole probe budget is spent on them, then a real one
-  // far down the tail that never gets looked at.
-  for (let i = 0; i < 30; i++) rows.push(listing(`DEAD${i}`));
+  // ⚠️ SIZED FROM THE CAP. It was 30 dead rows against a hardcoded 25, so the
+  // day the budget was raised its tail vanished and this test would have gone
+  // on passing while covering nothing at all — the vacuity it names in its own
+  // second comment, one budget over. `forgetProbes` because the window ROTATES
+  // now: a stamp left by an earlier test in this file reorders which rows this
+  // one opens.
+  await autoTrend._test.forgetProbes();
+  for (let i = 0; i < autoTrend.PROBE_CAP; i++) rows.push(listing(`DEAD${i}`));
   rows.push(listing("UNSEEN"));
   const seen = new Set();
   const { booked } = await promoteWith(rows, (a) => {
@@ -302,7 +307,11 @@ test("⚠️ a token nobody PRICED is not counted as one that failed the floors"
   const line = logged.find((l) => /below the free-trending floors/.test(l));
   assert.ok(line, "the refusal was never logged");
   const n = Number((line.match(/: (\d+) candidate/) || [])[1]);
-  assert.ok(n > 0 && n <= 25, `counted ${n} refusals — the unprobed tail was counted too (line: ${line})`);
+  assert.ok(
+    n > 0 && n <= autoTrend.PROBE_CAP,
+    `counted ${n} refusals — the unprobed tail was counted too (line: ${line})`,
+  );
+  await autoTrend._test.forgetProbes();
 });
 
 // ── door 2: the market filler ────────────────────────────────────────────────

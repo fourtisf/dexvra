@@ -596,16 +596,105 @@ test("Run now places the best mover, not an arbitrary one", async () => {
 test("the price probe is bounded — this runs on a timer", async () => {
   // A chain with 400 listings must not fire 400 lookups every cycle at the same
   // API the board poster is using.
+  //
+  // ⚠️ SIZED FROM THE CAP, never a literal. The old fixture was 60 rows against
+  // a hardcoded `<= 25`; the day the budget was raised that turned a rule-check
+  // into a number nobody could read, and a fixture SMALLER than the cap cannot
+  // reach the branch at all — it would pass over a probe that was not bounded.
+  const N = autoTrend.PROBE_CAP + 20;
   const realFetch = market.fetchMarket;
   let calls = 0;
   market.fetchMarket = async () => (calls++, { change24h: 1 });
   try {
-    const rows = Array.from({ length: 60 }, (_, i) => ({ chain: "bsc", address: `t${i}` }));
+    const rows = Array.from({ length: N }, (_, i) => ({ chain: "bsc", address: `t${i}` }));
     const ranked = await autoTrend.byGain(rows, () => 0);
-    assert.ok(calls <= 25, `probed ${calls} candidates`);
-    assert.strictEqual(ranked.length, 60, "the unprobed tail is still eligible, just unranked");
+    assert.ok(calls <= autoTrend.PROBE_CAP, `probed ${calls} candidates, cap is ${autoTrend.PROBE_CAP}`);
+    assert.ok(calls < N, "the fixture must exceed the cap, or this test proves nothing");
+    assert.strictEqual(ranked.length, N, "the unprobed tail is still eligible, just unranked");
   } finally {
     market.fetchMarket = realFetch;
+  }
+});
+
+test("⚠️ the probe WINDOW ROTATES — a fixed prefix starved a chain of 190 listings", async () => {
+  // THE bug, in one fixture. `byGain` used to price `rows.slice(0, PROBE_CAP)`
+  // — the first N in store order, which is the same N on every cycle for ever.
+  // So a chain whose front rows are dead could never reach its minimum from its
+  // own listings however many good tokens sat behind them: the live board
+  // published 1–2 rows per chain against a minimum of 5, and every surface
+  // reported it as "every spare is below the floors" about rows nobody opened.
+  await autoTrend._test.forgetProbes();
+  const realFetch = market.fetchMarket;
+  const realGet = api.getListings;
+  const N = autoTrend.PROBE_CAP;
+  const rows = [];
+  for (let i = 0; i < N * 2; i++) rows.push({ status: "approved", chain: "bsc", address: `dead${i}`, sym: `DEAD${i}`, trendingRank: null });
+  for (let i = 0; i < 10; i++) rows.push({ status: "approved", chain: "bsc", address: `good${i}`, sym: `GOOD${i}`, trendingRank: null });
+  market.fetchMarket = async (_c, a) =>
+    String(a).startsWith("dead")
+      ? { priceUsd: 1e-7, mcap: 1_000, vol24h: 5, change24h: -2 }
+      : { priceUsd: 1, mcap: 50_000_000, vol24h: 2_000_000, change24h: 12 };
+  api.getListings = async () => rows;
+  const booked = [];
+  api.bookTrending = async (_c, a) => (booked.push(a), {});
+  try {
+    await autoTrend.set({
+      enabled: true, chains: ["bsc"], perChainMin: 5, perChainMax: 5, minGainPct: 5,
+      minMcapUsd: 100_000, minVol24hUsd: 10_000, fillFromMarket: false,
+    });
+    // Two passes open the dead rows and correctly promote nothing…
+    await autoTrend.runOnce({ rng: () => 0.5 });
+    assert.deepStrictEqual(booked, [], "the dead rows are refused, which is the floors working");
+    await autoTrend.runOnce({ rng: () => 0.5 });
+    assert.deepStrictEqual(booked, [], "still inside the dead rows");
+    // …and the third reaches the ones a prefix could never have opened.
+    await autoTrend.runOnce({ rng: () => 0.5 });
+    assert.strictEqual(booked.length, 5, `the window did not rotate — booked ${booked.join(",") || "nothing"}`);
+    assert.ok(booked.every((a) => a.startsWith("good")), `promoted a dead row: ${booked.join(",")}`);
+  } finally {
+    market.fetchMarket = realFetch;
+    api.getListings = realGet;
+    await autoTrend._test.forgetProbes();
+    await autoTrend.set({ chains: autoTrend.DEFAULTS.chains, perChainMin: 5, perChainMax: 5, minGainPct: 0, minMcapUsd: 0, minVol24hUsd: 0, fillFromMarket: true });
+  }
+});
+
+test("⚠️ a short board never claims something about rows nobody opened", async () => {
+  // The log line, the ops alert and ⚡ Run now all said "every spare is below
+  // the free-trending floors" while the ranking pass had opened a bounded
+  // window of them. A failure rendered as a fact — and the fact it invents
+  // sends the operator to lower a floor that refused nothing of the sort.
+  await autoTrend._test.forgetProbes();
+  const realFetch = market.fetchMarket;
+  const realGet = api.getListings;
+  const N = autoTrend.PROBE_CAP + 30;
+  const rows = Array.from({ length: N }, (_, i) => ({ status: "approved", chain: "bsc", address: `d${i}`, sym: `D${i}`, trendingRank: null }));
+  market.fetchMarket = async () => ({ priceUsd: 1e-7, mcap: 1_000, vol24h: 5, change24h: -2 });
+  api.getListings = async () => rows;
+  api.bookTrending = async () => ({});
+  try {
+    await autoTrend.set({ enabled: true, chains: ["bsc"], perChainMin: 5, perChainMax: 5, minMcapUsd: 100_000, minVol24hUsd: 10_000, fillFromMarket: false });
+    const res = await autoTrend.forceChain("bsc");
+    assert.strictEqual(res.promoted, 0);
+    // ⚠️ ASSERTED AS ARITHMETIC, not as a phrase. A first cut matched on the
+    // OLD sentence ("all 70 spare…"), which the fix had already reworded — so
+    // it passed under the mutation it exists to catch, over a reason reading
+    // "70 of the 40 spare listing(s) opened". The rule is that the accused
+    // count can never exceed the opened count.
+    const m = res.reason.match(/(\d+) of the (\d+) spare listing\(s\) opened/);
+    assert.ok(m, `the refusal must say how many of how many were opened: ${res.reason}`);
+    const [refused, openedN] = [Number(m[1]), Number(m[2])];
+    assert.ok(
+      refused <= openedN,
+      `Run now accused ${refused} spares of failing a floor it only read ${openedN} of: ${res.reason}`,
+    );
+    assert.strictEqual(openedN, autoTrend.PROBE_CAP, "the fixture must exceed the window, or this proves nothing");
+    assert.match(res.reason, /queued for the next passes/, res.reason);
+  } finally {
+    market.fetchMarket = realFetch;
+    api.getListings = realGet;
+    await autoTrend._test.forgetProbes();
+    await autoTrend.set({ chains: autoTrend.DEFAULTS.chains, minMcapUsd: 0, minVol24hUsd: 0, fillFromMarket: true });
   }
 });
 
