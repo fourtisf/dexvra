@@ -39,6 +39,48 @@ function warnOnce(key, msg) {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * ⚠️ HOW MANY ROWS THIS CHAIN SHOWS — rolled inside [min, max], not pinned to
+ * the minimum.
+ *
+ * "mengapa semua chain 5 5 doang kan random min 5 max 8". The first cut of the
+ * website mirror filled every chain to `perChainMin`, so all six published
+ * exactly five rows for ever — which is precisely the defect the RANGE was
+ * added to end: "one fixed perChain: 5 made every chain publish the same count
+ * for ever, which reads as a generated list rather than a board".
+ *
+ * ⚠️ AND IT MAY NOT BE RE-ROLLED ON EVERY PUBLISH. The board is edited in place
+ * every few minutes; a fresh roll each time would make the row count flicker
+ * 5 → 8 → 6 → 5 while somebody is reading it. So the roll is DETERMINISTIC in
+ * the chain and a time BUCKET: different chains differ from each other at any
+ * moment, each one holds its count for hours, and it moves on by itself. No
+ * stored state, so nothing to reset and nothing to leak between processes —
+ * the poster runs in one and the panel in another.
+ *
+ * The promoter's own `rollTarget()` is untouched and answers a different
+ * question: how many slots to BOOK. Booked rows always render, so a chain that
+ * booked more than this shows more — this is a floor for the top-up, never a
+ * cap on a purchase.
+ */
+const TARGET_BUCKET_MS = Math.max(
+  600_000,
+  (Number(process.env.TREND_TARGET_BUCKET_HOURS) || 3) * 3600_000,
+);
+function rolledTarget(chain, min, max, now = Date.now()) {
+  if (!(max > min)) return min; // a pinned range is a fixed count, and says so
+  const bucket = Math.floor(now / TARGET_BUCKET_MS);
+  // FNV-1a over chain+bucket: cheap, stable, and spread enough that six chains
+  // do not land on the same number. `>>> 0` because Math.imul can go negative
+  // and a negative modulus would bias the low end back towards the floor.
+  let h = 2166136261;
+  const key = `${chain}:${bucket}`;
+  for (let i = 0; i < key.length; i++) {
+    h ^= key.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return min + ((h >>> 0) % (max - min + 1));
+}
 // Board priority: paid tier first (Diamond=1 … Bronze=5), then Xpress/none last.
 const tierPrio = (tier) => {
   const r = tierRank(tier);
@@ -176,7 +218,8 @@ async function buildText() {
   // require this module, so there is no cycle, but the dependency is one-way
   // and stating it at the call site keeps it that way.
   const atCfg = require("./autoTrend").get();
-  const perChain = Number(atCfg.perChainMin) || 0;
+  const perChainMin = Number(atCfg.perChainMin) || 0;
+  const perChainMax = Math.max(perChainMin, Number(atCfg.perChainMax) || perChainMin);
   // ⚠️ THE TOP-UP ONLY EVER TOUCHES THE OPERATOR'S OWN CHAINS.
   //
   // `cfg.chains` is "the networks auto-trending keeps alive", and its comment
@@ -231,8 +274,9 @@ async function buildText() {
     // section the operator switched off, with one bought row and four free ones
     // under it — the fix producing a worse version of the bug it fixes.
     const mayFill = autoChains.has(String(chain).toLowerCase());
+    const target = rolledTarget(chain, perChainMin, perChainMax, now);
     for (const t of (mayFill ? siteRank[chain] || [] : [])) {
-      if (fill.length >= Math.max(0, perChain - booked.length)) break;
+      if (fill.length >= Math.max(0, target - booked.length)) break;
       if (shown.has(keyOf(t.chain, t.address))) continue;
       // ⚠️ A ROW WITH NO READING MAY NOT BE PUT ON THE BOARD BY US. The site
       // sends `null` for a change it could not read, and this board's standing
@@ -244,7 +288,7 @@ async function buildText() {
       fill.push(t);
     }
     if (booked.length || fill.length) {
-      fillStat.push(`${chain} ${booked.length}+${fill.length}`);
+      fillStat.push(`${chain} ${booked.length}+${fill.length}/${target}`);
     }
     const arr = [...booked, ...fill.map((t) => ({
       chain: t.chain,
@@ -333,7 +377,7 @@ async function buildText() {
   // from scratch.
   log.info(
     `[trending] board: ${fillStat.join(" · ") || "nothing featured"}` +
-      ` (booked+from-site, minimum ${perChain}/chain)` +
+      ` (booked+from-site/target, range ${perChainMin}–${perChainMax}/chain)` +
       (siteLive ? "" : ` — NOT mirrored: ${fillWhy || "unknown"}`),
   );
   if (newCount > 0) {
@@ -584,7 +628,7 @@ function start(tg) {
   };
 }
 
-module.exports = { start, runOnce, buildText, lastRender: getLastRender };
+module.exports = { start, runOnce, buildText, lastRender: getLastRender, _rolledTarget: rolledTarget };
 // Exposed for tests: reset the in-memory post state between cases.
 module.exports._resetState = () => {
   lastRender = null;

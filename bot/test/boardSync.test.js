@@ -26,14 +26,17 @@ const siteRow = (symbol, change, over) => ({
   change24h: change, mcap: 5e6, booked: false, ...over,
 });
 
-async function render({ listings, chains, live = true, perChainMin = 5, autoChains = ["solana"] }) {
+async function render({ listings, chains, live = true, perChainMin = 5, perChainMax = null, autoChains = ["solana"] }) {
   const realGet = api.getListings;
   const realRank = api.boardRank;
   const realFetch = market.fetchMarket;
   api.getListings = async () => listings;
   api.boardRank = async () => ({ frame: "24h", live, chains });
   market.fetchMarket = async (_c, a) => ({ change24h: 1, mcap: 1e6, priceUsd: 1, poolAddress: `p${a}` });
-  await autoTrend.set({ perChainMin, perChainMax: perChainMin, chains: autoChains });
+  // perChainMax defaults to perChainMin so the ROW COUNTS in these fixtures are
+  // deterministic. The rolled range has its own test below; a case that is not
+  // about the range must pin it, or it asserts against a coin flip.
+  await autoTrend.set({ perChainMin, perChainMax: perChainMax == null ? perChainMin : perChainMax, chains: autoChains });
   try {
     poster._resetState();
     return await poster.buildText();
@@ -232,4 +235,61 @@ test("⚠️ a switched-off chain with a FREE booked slot gets no section at all
   assert.ok(text.includes("$MINE"), `the configured chain lost its rows:\n${text}`);
   assert.ok(!text.includes("$AUTO"), `a switched-off chain kept its free booked row:\n${text}`);
   assert.ok(!/POLYGON/i.test(text), `a switched-off chain kept its section:\n${text}`);
+});
+
+// ── how many rows a chain shows ─────────────────────────────────────────────
+
+test("⚠️ the row count is ROLLED in [min, max] — not pinned to the minimum", async () => {
+  // "mengapa semua chain 5 5 doang kan random min 5 max 8". The first cut of
+  // the mirror filled every chain to `perChainMin`, so all six published
+  // exactly five rows for ever — the very defect the range was added to end.
+  const now = Date.now();
+  const CHAINS = ["solana", "bsc", "ethereum", "base", "robinhood", "tron"];
+  const t = CHAINS.map((c) => poster._rolledTarget(c, 5, 8, now));
+  for (const n of t) assert.ok(n >= 5 && n <= 8, `target ${n} outside the range`);
+  assert.ok(new Set(t).size > 1, `every chain got the same count again: ${t.join(",")}`);
+});
+
+test("the roll HOLDS within its bucket, then moves on by itself", async () => {
+  // The board is edited in place every few minutes; a fresh roll each publish
+  // would make the count flicker 5 → 8 → 6 while somebody is reading it.
+  //
+  // ⚠️ MEASURED FROM A BUCKET BOUNDARY, not an arbitrary instant. The first cut
+  // asserted stability at t0+2h against a 3h bucket and failed — because t0
+  // happened to sit near a boundary, so the offset crossed into the next
+  // bucket. The premise was wrong, not the code: a bucketed roll is stable
+  // INSIDE a bucket by construction and must change at the edge, and a test
+  // that cannot say which side of the edge it is on proves neither.
+  const BUCKET = 3 * 3600_000;
+  const start = Math.ceil(1_700_000_000_000 / BUCKET) * BUCKET;
+  const at = (ms) => poster._rolledTarget("solana", 5, 8, ms);
+  const held = at(start);
+  for (const off of [0, 1, 60_000, BUCKET / 2, BUCKET - 1]) {
+    assert.strictEqual(at(start + off), held, `the count changed ${off}ms into its own bucket`);
+  }
+  // …and over a long enough span it does not sit on one number for ever.
+  const seen = new Set();
+  for (let i = 0; i < 60; i++) seen.add(at(start + i * BUCKET));
+  assert.ok(seen.size > 1, `the count never changed across a week: ${[...seen]}`);
+});
+
+test("a PINNED range (min = max) is a fixed count, and stays one", async () => {
+  for (let i = 0; i < 20; i++) {
+    assert.strictEqual(poster._rolledTarget("bsc", 5, 5, Date.now() + i * 3600_000), 5);
+  }
+});
+
+test("the board actually renders the rolled target, not the minimum", async () => {
+  // Driving the real renderer, because the roll is only worth anything if the
+  // fill loop reads it — the constant it replaced was read in two places.
+  const now = Date.now();
+  const target = poster._rolledTarget("solana", 5, 8, now);
+  const text = await render({
+    listings: [listing({ address: "p", sym: "PAID", trendingRank: 1, trendStart: now, trendExp: now + 3600_000, tier: "DIAMOND" })],
+    chains: { solana: Array.from({ length: 20 }, (_, i) => siteRow(`T${i}`, 50 - i)) },
+    perChainMin: 5,
+    perChainMax: 8,
+  });
+  const rows = text.split("\n").filter((l) => /\| \[\$/.test(l));
+  assert.strictEqual(rows.length, target, `rendered ${rows.length} rows for a rolled target of ${target}`);
 });

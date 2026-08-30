@@ -1513,6 +1513,20 @@ ranked from different places.
   `—`; a row the board picked for itself has no such claim on it.
 - **A site that cannot be reached still publishes the booked slots.** A board
   that vanished is worse than one that is short, and those rows are real.
+- ⚠️ **THE ROW COUNT IS ROLLED IN `[min, max]`, not pinned to the minimum.**
+  "mengapa semua chain 5 5 doang kan random min 5 max 8" — the first cut filled
+  every chain to `perChainMin`, so all six published exactly five rows for ever.
+  That is the very defect the RANGE was added to end, reintroduced by the
+  mirror: *"one fixed `perChain: 5` made every chain publish the same count for
+  ever, which reads as a generated list rather than a board."*
+  ⚠️ And it may NOT be re-rolled on every publish — the board is edited in place
+  every few minutes, so a fresh roll each time would flicker the count
+  5 → 8 → 6 under a reader. The roll is DETERMINISTIC in the chain and a time
+  bucket (`TREND_TARGET_BUCKET_HOURS`, 3h): chains differ from each other at any
+  moment, each holds its count for hours, and it moves on by itself. No stored
+  state — the poster and the panel are different processes, and there is nothing
+  to reset or to leak between them. The promoter's own `rollTarget()` is
+  untouched and answers a different question: how many slots to BOOK.
 - **`perChainMin` is read from ⚙️ Auto-Trend**, its one owner. A second number
   in the poster is how the panel and the channel would come to disagree about
   what the minimum is, which is the shape of all six rounds of this report.
