@@ -211,3 +211,25 @@ test("…but a chain the operator did not configure still publishes a PAID slot"
   assert.ok(text.includes("$BOUGHT"), `a paid slot was dropped from an unconfigured chain:\n${text}`);
   assert.ok(!text.includes("$FREE"), `…but the bot must not top that chain up:\n${text}`);
 });
+
+test("⚠️ a switched-off chain with a FREE booked slot gets no section at all", async () => {
+  // THE reported case, and the one the other two tests missed: POLYGON,
+  // OPTIMISM, BERACHAIN and HYPEREVM had booked rows the bot had put there
+  // itself, so gating only the TOP-UP left every section standing. Caught by
+  // mutation testing — deleting the section gate failed nothing until this
+  // existed, which is the vacuity this file keeps having to name.
+  const now = Date.now();
+  const text = await render({
+    listings: [
+      listing({ address: "s1", sym: "MINE", trendingRank: 1, trendStart: now, trendExp: now + 3600_000, tier: "DIAMOND" }),
+      // Booked, but nobody BOUGHT it — no real tier. This is what the bot's own
+      // promoter and market filler produce.
+      { status: "approved", chain: "polygon", address: "0xauto", sym: "AUTO", trendingRank: 1, trendStart: now, trendExp: now + 3600_000 },
+    ],
+    chains: { solana: [siteRow("AAA", 20)] },
+    autoChains: ["solana"],
+  });
+  assert.ok(text.includes("$MINE"), `the configured chain lost its rows:\n${text}`);
+  assert.ok(!text.includes("$AUTO"), `a switched-off chain kept its free booked row:\n${text}`);
+  assert.ok(!/POLYGON/i.test(text), `a switched-off chain kept its section:\n${text}`);
+});

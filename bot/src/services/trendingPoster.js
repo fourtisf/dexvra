@@ -197,11 +197,41 @@ async function buildText() {
   let rowCount = 0;
   const blank = [];
   for (const chain of CHAIN_ORDER) {
-    const booked = byChain[chain] || [];
+    let booked = byChain[chain] || [];
+    // ⚠️ A CHAIN THE OPERATOR SWITCHED OFF DOES NOT GET A SECTION AT ALL.
+    //
+    // "saya tidak ingin chain ini ada di channel trending" — POLYGON, OPTIMISM,
+    // BERACHAIN and HYPEREVM had grown their own headings on a board meant to
+    // carry six networks. Gating only the TOP-UP was not enough: a chain with a
+    // booked slot still rendered, so the sections stayed. The operator's list
+    // decides what the board COVERS, not merely what the bot may add to it.
+    //
+    // ⚠️ …EXCEPT A ROW SOMEBODY BOUGHT, which is never dropped silently. A real
+    // paid tier on a switched-off chain is a contradiction only the operator
+    // can resolve, and this repo's standing rule is that a purchase demotes
+    // rather than disappears. It publishes, and the ops channel is told once —
+    // a refund conversation must not start with a row vanishing unannounced.
+    if (!autoChains.has(String(chain).toLowerCase())) {
+      const paid = booked.filter((r) => tierPrio(r.tier) < 99);
+      if (!paid.length) continue;
+      warnOnce(
+        `off-chain-paid:${chain}`,
+        `[trending] ${chain} is switched OFF on ⚙️ Auto-Trend, but ${paid.length} PAID slot(s) are live there ` +
+          `(${paid.map((r) => r.sym || r.address).join(", ")}) — publishing them rather than dropping a purchase. ` +
+          `Turn the chain back on, or let the slot expire.`,
+      );
+      booked = paid;
+    }
     // Top up from the site's order, skipping anything already booked here.
     const shown = new Set(booked.map((r) => keyOf(r.chain, r.address)));
     const fill = [];
-    for (const t of (autoChains.has(String(chain).toLowerCase()) ? siteRank[chain] || [] : [])) {
+    // ⚠️ AND A SWITCHED-OFF CHAIN THAT SURVIVED ON A PAID ROW IS NEVER TOPPED
+    // UP. The section gate above lets a purchase through; it does not put the
+    // chain back on the board. Without this the exception re-created the very
+    // section the operator switched off, with one bought row and four free ones
+    // under it — the fix producing a worse version of the bug it fixes.
+    const mayFill = autoChains.has(String(chain).toLowerCase());
+    for (const t of (mayFill ? siteRank[chain] || [] : [])) {
       if (fill.length >= Math.max(0, perChain - booked.length)) break;
       if (shown.has(keyOf(t.chain, t.address))) continue;
       // ⚠️ A ROW WITH NO READING MAY NOT BE PUT ON THE BOARD BY US. The site

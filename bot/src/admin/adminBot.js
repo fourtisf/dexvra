@@ -1663,6 +1663,11 @@ function atKb() {
         ]
       : []),
     ...atChainRows(cb),
+    // The ON/OFF row, under ⚡ Run now because the two answer different
+    // questions about the same chain: "put one there now" and "should this
+    // network be on the board at all".
+    [cb("🌐 Chains on the board — tap to switch", "atnop")],
+    ...atChainToggleRows(cb),
     [cb("🔄 Refresh", "atref"), cb("↩️ Reset", "atrst"), cb("⬅ Back", "home")],
   ]);
 }
@@ -2072,6 +2077,40 @@ function atChainRows(cb, counts = _atCounts) {
     .filter((id) => !c.chains.includes(id) && meta.has(id) && ((counts[id].featured || 0) + (counts[id].eligible || 0)) > 0)
     .sort();
   for (const id of extra) btns.push(btn(id, false));
+  const rows = [];
+  for (let i = 0; i < btns.length; i += 2) rows.push(btns.slice(i, i + 2));
+  return rows;
+}
+
+/**
+ * ⚠️ WHICH CHAINS THE BOARD COVERS — the ON/OFF row this panel never had.
+ *
+ * "saya tidak ingin chain ini ada di channel trending dan liat di admin bot
+ * harusnya bisa aktivkan dan nonaktifkan". `cfg.chains` has always governed the
+ * board, and the only ways to change it were a code default or a shell script —
+ * so an operator who wanted POLYGON off had to ask for a deploy. Every other
+ * setting on this panel is a tap; this one was not, and it is the one that
+ * decides what a channel of 10,543 people sees.
+ *
+ * A chain with NOTHING listed on it is left out entirely, the same rule the
+ * ⚡ Run now rows already follow: a list of twenty networks nobody has listed
+ * on is a screen you have to read past to reach the toggle you want.
+ */
+function atChainToggleRows(cb, counts = _atCounts) {
+  const c = autoTrend.get();
+  const on = new Set(c.chains.map((x) => String(x).toLowerCase()));
+  const meta = new Map(trendingBoard.chainList().map((x) => [x.id, x]));
+  // Configured chains ALWAYS show — an operator must be able to switch one off
+  // even on a day it happens to have no listings, or the row that turns it off
+  // disappears exactly when they go looking for it.
+  const ids = [...new Set([
+    ...c.chains,
+    ...Object.keys(counts).filter((id) => meta.has(id) && ((counts[id].featured || 0) + (counts[id].eligible || 0)) > 0),
+  ])].filter((id) => meta.has(id));
+  const btns = ids.map((id) => {
+    const m = meta.get(id);
+    return cb(`${on.has(id) ? "🟢" : "⚪️"} ${trendingBoard.displayEmoji(m.logo)} ${m.label}`, `atch:${id}`);
+  });
   const rows = [];
   for (let i = 0; i < btns.length; i += 2) rows.push(btns.slice(i, i + 2));
   return rows;
@@ -3648,6 +3687,61 @@ function build() {
     ctx.answerCbQuery(c.announce ? "📣 Auto slots post a Spotlight card" : "🤫 Board only, no channel post").catch(() => {});
     await edit(ctx, atText(), atKb());
   });
+  // ⚠️ SWITCH A CHAIN ON OR OFF FOR THE TRENDING BOARD.
+  //
+  // `cfg.chains` decides what the channel COVERS — the poster skips a chain
+  // that is off, and the promoter never fills one. Until now it could only be
+  // changed by a code default or a shell script, so "hapus polygon" needed a
+  // deploy.
+  bot.action(/^atch:([a-z0-9]+)$/, async (ctx) => {
+    if (!guard(ctx)) return;
+    const id = ctx.match[1];
+    const cur = autoTrend.get().chains.map((x) => String(x).toLowerCase());
+    const on = cur.includes(id);
+    const next = on ? cur.filter((x) => x !== id) : [...cur, id];
+    // ⚠️ THE LAST CHAIN MAY NOT BE SWITCHED OFF. `set()` reads an empty list as
+    // a mistake and falls back to the shipped six — so the tap would appear to
+    // work and then silently restore every chain the operator had just removed.
+    // Refusing is the honest answer, and it names the switch that turns the
+    // whole service off.
+    if (!next.length) {
+      return ctx
+        .answerCbQuery("That is the last chain — use ⏸ Disable to stop the board entirely.", { show_alert: true })
+        .catch(() => {});
+    }
+    // Answer FIRST: this writes and then redraws, and a callback answer is the
+    // one channel with a deadline. Same rule as ⚡ Run now beside it.
+    const m = trendingBoard.chainList().find((x) => x.id === id);
+    const label = (m && m.label) || id;
+    await ctx
+      .answerCbQuery(on ? `⚪️ ${label} removed from the board` : `🟢 ${label} added to the board`)
+      .catch(() => {});
+    try {
+      await autoTrend.set({ chains: next });
+    } catch (e) {
+      // A write that throws inside a bot.action is swallowed by bot.catch, so
+      // the button would spin and the panel would not change — this file's own
+      // scar, from the guard that produced the symptom it was written to end.
+      log.error(`[adminbot] chain toggle refused: ${e.message}`);
+      await ctx.reply(`⛔ Could not save: ${String(e.message).slice(0, 180)}`).catch(() => {});
+      return;
+    }
+    // The board is edited in place on its own 5-minute timer, so the channel
+    // does not change the instant this is tapped — say so, or the next report
+    // is "saya sudah matikan tapi masih ada".
+    if (on) {
+      await ctx
+        .reply(
+          `⚪️ <b>${label}</b> is off the trending board.\n` +
+            `The channel updates on its next publish (up to 5 min). A slot somebody PAID for on that chain still ` +
+            `publishes — the ops channel says so if there is one.`,
+          { parse_mode: "HTML" },
+        )
+        .catch(() => {});
+    }
+    await edit(ctx, atText(), atKb()).catch(() => {});
+  });
+
   bot.action(/^atrun:([a-z0-9]+)$/, async (ctx) => {
     if (!guard(ctx)) return;
     const chain = ctx.match[1];

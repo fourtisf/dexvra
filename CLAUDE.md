@@ -1516,6 +1516,25 @@ ranked from different places.
 - **`perChainMin` is read from ⚙️ Auto-Trend**, its one owner. A second number
   in the poster is how the panel and the channel would come to disagree about
   what the minimum is, which is the shape of all six rounds of this report.
+- ⚠️ **AND THE CHAIN LIST IS A TAP NOW, not a deploy.** "saya tidak ingin chain
+  ini ada di channel trending dan liat di admin bot harusnya bisa aktivkan dan
+  nonaktifkan" — `cfg.chains` has always governed the board and could only be
+  changed by a code default or `npm run trending:chains`, so taking POLYGON off
+  a channel of 10,543 people needed a deploy. ⚙️ Auto-Trend carries a 🟢/⚪️ row
+  per chain. A chain that is OFF gets **no section at all**, booked or not —
+  gating only the top-up left every unwanted heading standing, because those
+  rows were booked by the bot itself. ⚠️ The LAST chain cannot be switched off:
+  `set()` reads an empty list as a mistake and restores the shipped six, so the
+  tap would appear to work and then silently undo everything the operator had
+  just removed — the toggle-that-reverts defect `fillFromMarket` already has a
+  scar for.
+- ⚠️ **…EXCEPT A ROW SOMEBODY BOUGHT.** A real paid tier on a switched-off chain
+  publishes anyway and the ops channel is told once. A purchase disappearing
+  unannounced is how a refund conversation starts, and this repo demotes rather
+  than hides everywhere else. That chain is still never TOPPED UP — the
+  exception lets a purchase through, it does not put the network back on the
+  board with four free rows under it, which is the fix producing a worse version
+  of the bug it fixes.
 - ⚠️ **THE TOP-UP ONLY EVER TOUCHES THE OPERATOR'S OWN CHAINS.** `cfg.chains` is
   "the networks auto-trending keeps alive", and its comment has always finished
   the sentence: *"Everything else is PAID-ONLY"*. The first cut of the mirror
