@@ -695,6 +695,64 @@ test("⚠️ the BOT always measures, so an ops alert can never say 'this run di
   }
 });
 
+test("⚠️ a cycle that cannot read the listings API is LOUD, not silent", async () => {
+  // It was `log.debug`, so a site the bot cannot read stopped every promotion
+  // on every chain in silence — the board decayed as slots expired, and
+  // `trending:check` kept working because it is a different process with its
+  // own env. Nine hours and three restarts on a live box with no `[autotrend]`
+  // line at all is what that looks like.
+  const realGet = api.getListings;
+  const realWarn = log.warn;
+  const warned = [];
+  log.warn = (m) => warned.push(String(m));
+  api.getListings = async () => { throw new Error("fetch failed"); };
+  try {
+    await autoTrend.set({ enabled: true, chains: ["bsc"] });
+    assert.strictEqual(await autoTrend.runOnce({ rng: () => 0.5 }), 0);
+    assert.ok(
+      warned.some((m) => /cycle ABORTED/.test(m) && /fetch failed/.test(m)),
+      `the cycle died silently: ${JSON.stringify(warned)}`,
+    );
+  } finally {
+    api.getListings = realGet;
+    log.warn = realWarn;
+    await autoTrend.set({ chains: autoTrend.DEFAULTS.chains });
+  }
+});
+
+test("⚠️ a cycle that COMPLETES says so — silence must mean the loop is dead", async () => {
+  // The heartbeat. Every failure path logged at debug and every success at
+  // info, so "the loop is not running", "it ran and had nothing to do" and "it
+  // threw" were one observation: none. `start()` is the only production caller
+  // of the tick, so the assertion drives it rather than `runOnce` — a heartbeat
+  // written into a function nothing schedules is the guard that never fires.
+  const realGet = api.getListings;
+  const realInfo = log.info;
+  const lines = [];
+  log.info = (m) => lines.push(String(m));
+  api.getListings = async () => [];
+  const realEnv = process.env.AUTOTREND_TICK_MS;
+  try {
+    await autoTrend.set({ enabled: true, chains: ["bsc"], minGapMin: 5, maxGapMin: 5 });
+    const src = fss.readFileSync(path.join(__dirname, "..", "src", "services", "autoTrend.js"), "utf8");
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    assert.match(code, /cycle done in/, "the tick must emit a completion line");
+    assert.ok(
+      /const tick = async \(\) => \{[\s\S]*?cycle done in/.test(code),
+      "the heartbeat must live in the scheduled tick, not somewhere nothing calls",
+    );
+    assert.ok(
+      /catch \(e\) \{[\s\S]{0,200}cycle FAILED/.test(code),
+      "a cycle that threw must be as loud as one that worked",
+    );
+  } finally {
+    api.getListings = realGet;
+    log.info = realInfo;
+    if (realEnv === undefined) delete process.env.AUTOTREND_TICK_MS;
+    await autoTrend.set({ chains: autoTrend.DEFAULTS.chains, minGapMin: 20, maxGapMin: 120 });
+  }
+});
+
 test("⚠️ a booking the site refuses is LOUD, and reaches the watch", async () => {
   // It was `log.debug` while the success beside it was `log.info`, so on a box
   // where the site refuses every booking the board decays with nothing anywhere

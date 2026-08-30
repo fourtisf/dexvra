@@ -770,7 +770,13 @@ async function runOnce({ rng = Math.random, chain = null, count = 1, deps = {} }
   try {
     listings = await api.getListings();
   } catch (e) {
-    log.debug(`[autotrend] listings: ${e.message}`);
+    // ⚠️ THE WHOLE CYCLE DIES HERE, and this was a debug line — a level
+    // production does not print. So a site the bot cannot read stops every
+    // promotion on every chain in complete silence: the board decays as slots
+    // expire, `trending:check` still works (it is a different process with its
+    // own env), and there is nothing anywhere to tell the two apart. Fourth
+    // instance of this asymmetry in this file, second in this function.
+    log.warn(`[autotrend] cycle ABORTED — could not read the listings API: ${e.message}`);
     return 0;
   }
   const now = Date.now();
@@ -1268,6 +1274,8 @@ async function runOnce({ rng = Math.random, chain = null, count = 1, deps = {} }
   }
   return promoted;
 }
+const OFF_NOTE_KEY = "autotrend_off_note";
+const OFF_NOTE_MS = 3600_000;
 const SHORT_WARN_KEY = "autotrend_board_short";
 const SHORT_WARN_MS = Math.max(3600_000, Number(process.env.AUTOTREND_SHORT_WARN_HOURS || 24) * 3600_000);
 
@@ -1293,10 +1301,37 @@ function start() {
     timer = setTimeout(tick, gapMin * 60 * 1000);
   };
   const tick = async () => {
+    // ⚠️ THE HEARTBEAT, and it is the point of this whole block.
+    //
+    // Every failure path in this loop logged at `debug` and every success at
+    // `info`, so the loop was only ever VISIBLE WHEN IT WORKED. A live box went
+    // nine hours and three restarts with no `[autotrend]` line at all while the
+    // board decayed from 5/5 to 2/5 — and "the cycle is not running", "the
+    // cycle ran and had nothing to do" and "the cycle threw" were the same
+    // observation: none.
+    //
+    // So a cycle that COMPLETES says so, once, at info. Silence now means the
+    // loop is dead, which is the only thing an operator can act on. It is at
+    // most three lines an hour on the shipped 20–120 min band — and the enabled
+    // check is here rather than inside `runOnce` because the early return for a
+    // disabled service is one of the silences this exists to break.
+    const t0 = Date.now();
+    const on = get().enabled;
     try {
-      await runOnce();
+      const n = await runOnce();
+      if (on) {
+        log.info(`[autotrend] cycle done in ${Date.now() - t0}ms — ${n} promoted`);
+      } else if (ops.due(OFF_NOTE_KEY, OFF_NOTE_MS)) {
+        // Ticking every 10 min while OFF would put 144 of these a day in the
+        // log. Hourly, so silence still means the loop stopped rather than that
+        // the operator switched it off.
+        await ops.mark(OFF_NOTE_KEY).catch(() => {});
+        log.info(`[autotrend] cycle skipped — auto-trending is OFF on ⚙️ Auto-Trend`);
+      }
     } catch (e) {
-      log.debug(`[autotrend] ${e.message}`);
+      // Swallowed at debug before, so a cycle that threw on every pass was
+      // indistinguishable from a healthy quiet one.
+      log.warn(`[autotrend] cycle FAILED after ${Date.now() - t0}ms: ${e.message}`);
     }
     schedule();
   };

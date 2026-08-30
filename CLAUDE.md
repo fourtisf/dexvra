@@ -1415,6 +1415,55 @@ is how two rounds of this went to the wrong setting. Ethereum had also gone
 Both are mutation-tested: restoring the `debug` line, and taking the first
 counter instead of the dominant one, each fail their test.
 
+#### …and the loop had simply STOPPED, which nothing could say
+
+The log settled it, and it was none of the above:
+
+```
+04:47:12 promoted robinhood/0x39dBED… ($PONS) for 8h
+04:47:14 tron: promoting 1 below the +5% floor to reach the minimum of 5 ($SUN −0.1%)
+04:47:20 board topped up from the market → solana: PEPE · tron: WIN
+09:01:56 promoted tron/TXL6rJbv… ($SUNDOG) for 16h
+```
+
+…and then **nothing for nine hours**, across three restarts, while the board
+decayed 5/5 → 4/5 → 2/5. When the cycle runs it works exactly as designed —
+it promotes, it overrules the gain floor to reach the minimum, it fills from
+the market, it announces. It had stopped running, and slots expiring need no
+loop at all.
+
+**Every failure path in this loop logged at `debug` and every success at
+`info`, so the loop was only ever VISIBLE WHILE IT WORKED.** `getListings()`
+throwing returns 0 from the top of `runOnce` — the whole cycle, every chain —
+under one debug line; a throw out of `runOnce` was swallowed by the tick's
+catch the same way. Production prints neither. So *"the loop is not running"*,
+*"it ran and had nothing to do"* and *"it threw on every pass"* were one
+observation: **none**. `trending:check` keeps working throughout, because it is
+a different process with its own env — which is what makes the silence read as
+a healthy quiet board.
+
+- **A cycle that COMPLETES says so**, once, at info (`cycle done in 412ms — 2
+  promoted`). Silence now means the loop is dead, which is the only thing an
+  operator can act on. At most three lines an hour on the shipped 20–120 min
+  band.
+- **The heartbeat is in the scheduled `tick`, not in `runOnce`** — `runOnce`
+  has three early returns and the disabled one is among the silences this
+  exists to break. A guard written inside the thing it guards cannot see the
+  thing not being called; the test asserts it sits in `tick`.
+- **A DISABLED service says so hourly**, not every 10-minute tick: 144 lines a
+  day would be noise, and no line at all would put the ambiguity straight back.
+- **The aborted cycle names the API**, because a site the bot cannot read and a
+  market with nothing in it produce the same empty board.
+
+Mutation-tested: restoring the debug line on the aborted cycle, and deleting
+the heartbeat, each fail their test.
+
+⚠️ **What this does NOT do is explain why the loop stopped at 09:01.** Nothing
+recorded it, which is the whole defect; the next cycle after this deploys is
+the first one that can say. If the heartbeat is absent while ⚙️ Auto-Trend
+reads 🟢 ON, the service is not starting and `[monitoring]` is the next place
+to look.
+
 ```bash
 cd bot && node scripts/run-tests.js test/autoTrend.test.js test/trendQuality.test.js test/trendingWatch.test.js
 cd bot && npm run trending:check -- --floors    # N of M opened, and how many are not opened yet
