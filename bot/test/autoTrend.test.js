@@ -695,6 +695,49 @@ test("⚠️ the BOT always measures, so an ops alert can never say 'this run di
   }
 });
 
+test("⚠️ a booking the site refuses is LOUD, and reaches the watch", async () => {
+  // It was `log.debug` while the success beside it was `log.info`, so on a box
+  // where the site refuses every booking the board decays with nothing anywhere
+  // saying why — the chain reads as short, every surface blames the floors, and
+  // the operator is sent to change a setting that refused nothing. This file's
+  // notes say the same asymmetry has had to be fixed in three services.
+  await autoTrend._test.forgetProbes();
+  const watch = require("../src/services/trendingWatch");
+  const realEval = watch.evaluate;
+  const realFetch = market.fetchMarket;
+  const realGet = api.getListings;
+  const realWarn = log.warn;
+  const warned = [];
+  const seen = [];
+  watch.evaluate = (snap, prev, opts) => (seen.push(...snap), realEval(snap, prev, opts));
+  log.warn = (m) => warned.push(String(m));
+  market.fetchMarket = async () => ({ priceUsd: 1, mcap: 5e7, vol24h: 2e6, change24h: 12 });
+  api.getListings = async () => [
+    { status: "approved", chain: "bsc", address: "b1", sym: "B1", trendingRank: null },
+    { status: "approved", chain: "bsc", address: "b2", sym: "B2", trendingRank: null },
+  ];
+  api.bookTrending = async () => { throw new Error("404: Listing not found"); };
+  try {
+    await autoTrend.set({ enabled: true, chains: ["bsc"], perChainMin: 5, perChainMax: 5, minGainPct: 0, minMcapUsd: 0, minVol24hUsd: 0, fillFromMarket: false });
+    const n = await autoTrend.runOnce({ rng: () => 0.5 });
+    assert.strictEqual(n, 0, "nothing was booked");
+    assert.ok(
+      warned.some((m) => /refused a booking/.test(m) && /404: Listing not found/.test(m)),
+      `a refused booking was silent: ${JSON.stringify(warned)}`,
+    );
+    const bsc = seen.find((c) => c.id === "bsc");
+    assert.ok(bsc && bsc.bookFailed > 0, "the watch was never told the site refused");
+    assert.strictEqual(watch.diagnose(bsc).code, "book_failed", watch.diagnose(bsc).text);
+  } finally {
+    watch.evaluate = realEval;
+    log.warn = realWarn;
+    market.fetchMarket = realFetch;
+    api.getListings = realGet;
+    await autoTrend._test.forgetProbes();
+    await autoTrend.set({ chains: autoTrend.DEFAULTS.chains, fillFromMarket: true });
+  }
+});
+
 test("⚠️ a short board never claims something about rows nobody opened", async () => {
   // The log line, the ops alert and ⚡ Run now all said "every spare is below
   // the free-trending floors" while the ranking pass had opened a bounded

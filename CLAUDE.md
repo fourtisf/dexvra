@@ -1372,6 +1372,49 @@ one.
 Both are mutation-tested: deleting the `unmeasured` branch, and letting the
 window overstate the spares, each fail it.
 
+#### …and the cause it named did not ACCOUNT for the shortfall
+
+The `--floors` run that followed, on the same box:
+
+```
+✗ Ethereum  4/5 · 18 spare listing(s) · 10 of 18 opened are below the floors
+✗ Base      3/5 · 14 spare listing(s) ·  6 of 14 opened are below the floors
+✗ Tron      4/5 ·  7 spare listing(s) ·  6 of  7 opened are below the floors
+```
+
+…each under *"they are below the free-trending floors, and none went on"*. Do
+the arithmetic: on Ethereum **eight** of the eighteen CLEARED the floors, on
+Base **eight** of fourteen — and the board still did not fill. The named cause
+could not explain the shortfall, and it is the cause an operator acts on, which
+is how two rounds of this went to the wrong setting. Ethereum had also gone
+5/5 → 4/5 and Robinhood 3/5 → 2/5 in ninety minutes: the board was DECAYING.
+
+- ⚠️ **A BOOKING THE SITE REFUSED WAS LOGGED AT `debug` — AND THE SUCCESS BESIDE
+  IT AT `info`.** So a promotion that worked printed a line and one that failed
+  printed nothing production ever shows, on the one path that puts a row on the
+  board. A site refusing every booking therefore decays the board in total
+  silence: the chain reads as short, every surface blames the floors, and the
+  operator is sent to change a setting that refused nothing. **This file's notes
+  already say that exact asymmetry has had to be fixed in three services** — the
+  promoter was the fourth, and it was found by arithmetic on a live check rather
+  than by reading. It is a WARN naming the site's own reason now, it is counted,
+  and it reaches the watch as its own cause: no floor fixes a site that says no,
+  so it outranks the whole refusal ladder.
+- ⚠️ **THE PROMOTER NEVER HAD THE REFUSAL LADDER THE FILLER ALREADY HAS.**
+  `trendFill` reports the DOMINANT counter and says whether it accounts for all
+  of them, precisely because "every one is in free-fall" and "every one is below
+  the floors" send an operator to different places. `diagnose` returned
+  `below_floors` the moment `floorRefused` was non-zero, so the first counter
+  written down won. It now ranks {floors, free-fall, no-reading} — counted over
+  the rows that CLEARED the floors, so they partition — and prints
+  `10 of the 18` rather than claiming all of them.
+- **The check prints the same breakdown**, measured with the bot's own
+  predicates (`opened`, `floorRefusal`), because a check with its own idea of
+  the question is how this investigation lost two rounds.
+
+Both are mutation-tested: restoring the `debug` line, and taking the first
+counter instead of the dominant one, each fail their test.
+
 ```bash
 cd bot && node scripts/run-tests.js test/autoTrend.test.js test/trendQuality.test.js test/trendingWatch.test.js
 cd bot && npm run trending:check -- --floors    # N of M opened, and how many are not opened yet

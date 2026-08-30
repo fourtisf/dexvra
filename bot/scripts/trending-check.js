@@ -97,6 +97,8 @@ const G = '\x1b[32m', R = '\x1b[31m', Y = '\x1b[33m', D = '\x1b[2m', X = '\x1b[0
   const refusedByChain = new Map();
   const unreadByChain = new Map();
   const consideredByChain = new Map();
+  const freeFallByChain = new Map();
+  const noReadingByChain = new Map();
   // ⚠️ NOT GATED ON THE FLOORS BEING ON ANY MORE. This pass measures three
   // things now — how many rows the window opened, how many the floors refused,
   // how many could not be read — and only the middle one is about the floors.
@@ -123,6 +125,13 @@ const G = '\x1b[32m', R = '\x1b[31m', Y = '\x1b[33m', D = '\x1b[2m', X = '\x1b[0
       // day one of them learns about a new annotation the check reports a
       // window the bot never had.
       consideredByChain.set(id, autoTrend.countOpened(ranked));
+      // The two gates BELOW the floors, over the rows that CLEARED them — the
+      // same sets the cycle counts, so the check cannot name a different cause
+      // from the bot. Without them a chain whose spares cleared every floor and
+      // still did not go on printed as a floor problem.
+      const cleared = ranked.filter((r) => autoTrend.opened(r) && !autoTrend.floorRefusal({ mcap: r._mcap, vol24: r._vol24 }, cfg));
+      freeFallByChain.set(id, cleared.filter((r) => Number.isFinite(r._change) && r._change < autoTrend.FLOOR_FILL_MAX_DROP * -1).length);
+      noReadingByChain.set(id, cleared.filter((r) => !Number.isFinite(r._change)).length);
       // ⚠️ THE BOT'S OWN COUNTER, not a copy of it. This line used to filter on
       // `floorRefusal` alone and so counted the tail `byGain` never priced: on
       // a chain with 44 spares it reported 44 refusals where the running bot
@@ -158,6 +167,8 @@ const G = '\x1b[32m', R = '\x1b[31m', Y = '\x1b[33m', D = '\x1b[2m', X = '\x1b[0
       // above are: a chain this run did not price has no window to report, and
       // inventing one would put "N not opened yet" on a line nobody measured.
       considered: consideredByChain.has(id) ? consideredByChain.get(id) : null,
+      freeFall: freeFallByChain.get(id) || 0,
+      noReading: noReadingByChain.get(id) || 0,
       minMcapUsd: cfg.minMcapUsd,
       minVol24hUsd: cfg.minVol24hUsd,
     });
@@ -169,6 +180,11 @@ const G = '\x1b[32m', R = '\x1b[31m', Y = '\x1b[33m', D = '\x1b[2m', X = '\x1b[0
     const seen = consideredByChain.get(id) || 0;
     const floorNote = refusedByChain.has(id)
       ? ` ${D}· ${refusedByChain.get(id)} of ${seen} opened are below the floors${X}` +
+        // ⚠️ AND WHAT REFUSED THE REST. Printing only the floor count over a
+        // chain where most of the opened rows CLEARED the floors is the line
+        // that sent this investigation to the wrong setting twice.
+        ((freeFallByChain.get(id) || 0) ? ` ${D}· ${freeFallByChain.get(id)} below −15%${X}` : '') +
+        ((noReadingByChain.get(id) || 0) ? ` ${D}· ${noReadingByChain.get(id)} with no 24h reading${X}` : '') +
         (unread ? ` ${Y}· ${unread} could not be priced${X}` : '') +
         (eligible > seen ? ` ${D}· ${eligible - seen} not opened yet${X}` : '')
       : '';

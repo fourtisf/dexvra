@@ -845,6 +845,19 @@ async function runOnce({ rng = Math.random, chain = null, count = 1, deps = {} }
   // count that is WRONG sends the operator to change the wrong setting, which
   // is what five earlier rounds of a short board each cost.
   const consideredByChain = new Map();
+  // ⚠️ THE PROMOTER NEVER HAD THE REFUSAL LADDER THE FILLER ALREADY HAS.
+  //
+  // `trendFill` reports the DOMINANT counter and says whether it accounts for
+  // all of them, precisely because "every big token here is in free-fall" and
+  // "every one is below the floors" send an operator to different places. This
+  // pass reported whichever counter was written down first — so a live board
+  // showed `Ethereum 4/5 · 10 of 18 opened are below the floors` under the
+  // sentence "they are below the floors, and none went on", about a chain where
+  // EIGHT spares had cleared the floors and something else refused them. A
+  // cause that does not account for the shortfall is the wrong cause.
+  const freeFallByChain = new Map();
+  const noReadingByChain = new Map();
+  const bookFailedByChain = new Map();
   // The rotation's memory, read for the probe ORDER and stamped by byGain.
   // Held for the whole run and written ONCE below the promotion loop: every
   // announce path reloads the state file, so a per-chain save would race them.
@@ -870,6 +883,8 @@ async function runOnce({ rng = Math.random, chain = null, count = 1, deps = {} }
     // 80% next to one up 40% with nothing to tell them apart.
     const ranked = await byGain(eligible, rng, { probes, now });
     probesTouched = true;
+    let bookFailed = 0;
+    let lastBookErr = null;
     // ⚠️ `ranked.length` is every spare on the chain; this is the subset the
     // pass opened. They are not the same number and the difference IS the
     // rotation — saying "200 candidate(s), none up 5%" about 40 we opened is
@@ -1077,6 +1092,15 @@ async function runOnce({ rng = Math.random, chain = null, count = 1, deps = {} }
     // the chain filled anyway: the board is what matters, and a chain that
     // reached its minimum is not short whatever was refused on the way.
     floorRefusedByChain.set(step.id, refusals.length);
+    // Counted over `ranQualified` — the rows that CLEARED the floors — because
+    // that is the set the shortfall has to be explained out of. Mutually
+    // exclusive with the floor count by construction, so the ladder in
+    // `trendingWatch` can say which one accounts for all of them.
+    freeFallByChain.set(
+      step.id,
+      ranQualified.filter((r) => Number.isFinite(r._change) && r._change < -FLOOR_FILL_MAX_DROP).length,
+    );
+    noReadingByChain.set(step.id, ranQualified.filter((r) => !hasReading(r) || !hasMarket(r)).length);
     if (!picks.length) {
       // No gap() HERE: this chain is at or above the minimum and its spares are
       // simply not up enough — the gain floor working as designed. Anything
@@ -1110,9 +1134,21 @@ async function runOnce({ rng = Math.random, chain = null, count = 1, deps = {} }
           await queueAnnounce(r, hours);
         }
       } catch (e) {
-        log.debug(`[autotrend] bookTrending ${r.sym}: ${e.message}`);
+        // ⚠️ AS LOUD AS THE LINE ABOVE IT. This was `log.debug`, and the
+        // SUCCESS beside it is `log.info` — so a working promotion logged and
+        // a failing one did not, on the one path that puts a row on the board.
+        // Production does not print debug, so a site refusing every booking
+        // decayed the board with nothing anywhere saying why: the chain simply
+        // read as short, every surface blamed the floors, and the operator was
+        // sent to change a setting that had refused nothing. This file's own
+        // notes say the exact asymmetry has had to be fixed in three services;
+        // this is the fourth.
+        bookFailed++;
+        lastBookErr = e.message;
+        log.warn(`[autotrend] ${step.id}: the site refused a booking for ${r.sym || String(r.address).slice(0, 8)} — ${e.message}`);
       }
     }
+    if (bookFailed) bookFailedByChain.set(step.id, { n: bookFailed, why: lastBookErr });
   }
   // The rotation's stamps, written ONCE. Every announce path above reloads the
   // state file, so a per-chain save would be overwritten by the next of them.
@@ -1199,6 +1235,14 @@ async function runOnce({ rng = Math.random, chain = null, count = 1, deps = {} }
         // the rotating window has not reached yet — the same false claim the
         // log line was making one function up.
         considered: consideredByChain.has(id) ? consideredByChain.get(id) : null,
+        // The two gates BELOW the floors, plus the one that is not a refusal at
+        // all: a booking the site declined. Without them a chain whose spares
+        // cleared every floor and still did not go on is reported as a floor
+        // problem — the cause that does not account for the shortfall.
+        freeFall: freeFallByChain.has(id) ? freeFallByChain.get(id) : 0,
+        noReading: noReadingByChain.has(id) ? noReadingByChain.get(id) : 0,
+        bookFailed: (bookFailedByChain.get(id) || {}).n || 0,
+        bookWhy: (bookFailedByChain.get(id) || {}).why || null,
         // The PHRASE, not the two numbers: `trendingWatch` is pure and must not
         // grow its own idea of how a floor of 0 reads (it had one, and it
         // printed `min cap $0`).
@@ -1434,6 +1478,10 @@ module.exports = {
    * the bot's and the two disagreed about the one number an operator acts on.
    */
   countOpened: (ranked) => ranked.filter(opened).length,
+  // The same predicate, for a caller that needs to FILTER rather than count.
+  // Both come from one function so the check cannot end up with a third idea
+  // of "did we open this row" — the scar `countFloorRefusals` carries.
+  opened,
   floorsPhrase,
   // The probe budget, exported because `trending:check` mirrors this pass and
   // the tests pin that it is BOUNDED — a fixture with fewer rows than the cap

@@ -84,6 +84,44 @@ test("the three causes get three different answers — that is what took three r
   assert.strictEqual(watch.diagnose({ featured: 9, floor: 5, eligible: 0 }), null);
 });
 
+test("⚠️ the cause named must ACCOUNT for the shortfall, not just be first in the list", () => {
+  // Live board, 17:57: `Ethereum 4/5 · 18 spare listing(s) · 10 of 18 opened
+  // are below the floors` — under the sentence "they are below the
+  // free-trending floors, and none went on". EIGHT of the eighteen had CLEARED
+  // the floors and something else refused them, so the cause on screen could
+  // not explain the shortfall — and it is the cause an operator acts on, which
+  // is how two rounds of this went to the wrong setting. `trendFill` has
+  // reported the DOMINANT counter since it was written; the promoter never got
+  // that ladder.
+  const base = { featured: 4, floor: 5, eligible: 18, considered: 18, floorsText: "cap $100.0K" };
+  const mixed = watch.diagnose({ ...base, floorRefused: 10, freeFall: 8 });
+  assert.strictEqual(mixed.code, "below_floors", mixed.text);
+  assert.match(mixed.text, /10 of the 18/, `it claimed the floors accounted for all of them: ${mixed.text}`);
+
+  // The dominant one wins, not the first one written down.
+  assert.strictEqual(watch.diagnose({ ...base, floorRefused: 2, freeFall: 9 }).code, "free_fall");
+  assert.strictEqual(watch.diagnose({ ...base, floorRefused: 1, noReading: 7 }).code, "no_reading");
+
+  // …and when one counter IS all of them, it says so without the fraction.
+  const all = watch.diagnose({ ...base, freeFall: 8 });
+  assert.strictEqual(all.code, "free_fall");
+  assert.match(all.text, /^8 spare listing\(s\) opened here, and none went on/, all.text);
+});
+
+test("⚠️ a booking the SITE refused is not a shortage of candidates", () => {
+  // `bookTrending` failing was logged at DEBUG while the SUCCESS beside it was
+  // INFO — so production printed nothing at all, the board decayed, and every
+  // surface blamed the floors. It outranks the refusal ladder: no floor will
+  // fix a site that says no.
+  const why = watch.diagnose({
+    featured: 4, floor: 5, eligible: 18, considered: 18,
+    floorRefused: 10, freeFall: 8, bookFailed: 2, bookWhy: "404: Listing not found",
+  });
+  assert.strictEqual(why.code, "book_failed", why.text);
+  assert.match(why.text, /404: Listing not found/, "the site's own reason is the diagnosis");
+  assert.ok(!/below the free-trending floors/.test(why.text), `it blamed the floors for a refused booking: ${why.text}`);
+});
+
 test("⚠️ a cause NOBODY MEASURED is not a cause", () => {
   // Live run, straight after the deploy: `trending:check` (no --floors) printed
   // "63 spare listing(s) here, and none went on — they are below −15%" for

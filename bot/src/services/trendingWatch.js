@@ -60,6 +60,13 @@ function diagnose({
   // and every count below was being read against the whole chain. `null` keeps
   // the old wording for a caller that cannot say.
   considered = null,
+  // The gates BELOW the floors, counted over the rows that CLEARED them, plus
+  // the one that is not a refusal at all — a booking the site declined. See the
+  // ladder below for why a bare `floorRefused` was the wrong answer.
+  freeFall = 0,
+  noReading = 0,
+  bookFailed = 0,
+  bookWhy = null,
   // ⚠️ THE RENDERED PHRASE, not the two numbers. This branch used to format
   // them itself and printed `min cap $0` for a floor the operator had switched
   // OFF — accusing their tokens of failing a floor of nothing. `fmtCap(0)` is
@@ -112,14 +119,46 @@ function diagnose({
         `(see the [gt] boot line), and \`npm run trending:check\` measures it on the box.` + restNote,
     };
   }
-  if (floorRefused > 0) {
+  // ⚠️ A BOOKING THE SITE REFUSED IS NOT A SHORTAGE OF CANDIDATES. It is the
+  // most specific fact available and the only one on this list that is not
+  // about the tokens at all — the promoter picked a row, called the site, and
+  // was told no. It outranks everything below for the same reason the filler's
+  // own reason outranks the spare count.
+  if (bookFailed > 0) {
     return {
-      code: 'below_floors',
+      code: 'book_failed',
       text:
-        `${floorRefused} spare listing(s) opened here, and none went on — they are below the free-trending floors ` +
-        `(${floorsText || 'see ⚙️ Auto-Trend'}). That is the filter doing its job: ` +
-        `a dead token is not a trending row. The next cycle lists a big-cap to cover the gap while 🧲 Fill from market ` +
-        `is ON — or lower 🏦/📊 on ⚙️ Auto-Trend if these floors are too strict for this chain.` + restNote,
+        `${bookFailed} promotion(s) were picked here and the SITE refused the booking` +
+        (bookWhy ? `: ${bookWhy}` : '') +
+        `. That is not a shortage of candidates and no floor will fix it — check INTERNAL_API_TOKEN and ` +
+        `\`pm2 logs dexvra-bot | grep autotrend\` for the refusal.`,
+    };
+  }
+  // ⚠️ THE DOMINANT REFUSAL, AND WHETHER IT ACCOUNTS FOR ALL OF THEM.
+  //
+  // This used to return `below_floors` the moment `floorRefused` was non-zero,
+  // so a live board showed `Ethereum 4/5 · 10 of 18 opened are below the floors`
+  // under "they are below the floors, and none went on" — about a chain where
+  // EIGHT of the opened spares had CLEARED the floors and something else
+  // refused them. A cause that does not account for the shortfall is the wrong
+  // cause, and it is the one an operator acts on. `trendFill`'s `why` ladder
+  // has reported the dominant counter for exactly this reason since it was
+  // written; the promoter never got it.
+  const worst = [
+    { n: floorRefused, code: 'below_floors', what: `below the free-trending floors (${floorsText || 'see ⚙️ Auto-Trend'})`,
+      fix: `That is the filter doing its job: a dead token is not a trending row. The next cycle lists a big-cap to cover the gap while 🧲 Fill from market is ON — or lower 🏦/📊 on ⚙️ Auto-Trend if these floors are too strict for this chain.` },
+    { n: freeFall, code: 'free_fall', what: `below −15%, the one thing never auto-promoted`,
+      fix: `The next cycle lists a big-cap to cover it while 🧲 Fill from market is ON.` },
+    { n: noReading, code: 'no_reading', what: `carrying no 24h reading — a trending row without a percentage is not a trending row`,
+      fix: `That is the shared market quota more often than the token: GECKOTERMINAL_API_KEY raises the ceiling.` },
+  ].sort((a, b) => b.n - a.n)[0];
+  const refusedTotal = floorRefused + freeFall + noReading;
+  if (worst.n > 0) {
+    return {
+      code: worst.code,
+      text:
+        `${worst.n === refusedTotal ? `${worst.n} spare listing(s) opened here, and none went on — they are` : `${worst.n} of the ${refusedTotal} spare(s) opened here are`} ` +
+        `${worst.what}. ${worst.fix}` + restNote,
     };
   }
   if (eligible > 0) {
