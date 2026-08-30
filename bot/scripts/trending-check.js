@@ -169,8 +169,14 @@ const G = '\x1b[32m', R = '\x1b[31m', Y = '\x1b[33m', D = '\x1b[2m', X = '\x1b[0
       considered: consideredByChain.has(id) ? consideredByChain.get(id) : null,
       freeFall: freeFallByChain.get(id) || 0,
       noReading: noReadingByChain.get(id) || 0,
-      minMcapUsd: cfg.minMcapUsd,
-      minVol24hUsd: cfg.minVol24hUsd,
+      // ⚠️ THE PHRASE, which is the only thing `diagnose` reads. This passed
+      // `minMcapUsd`/`minVol24hUsd` — two fields that function has never looked
+      // at — so the floors fell back to the placeholder and the check printed
+      // "(see ⚙️ Auto-Trend)" where the BOT prints "(cap $100.0K, 24h vol
+      // $10.0K)". Two surfaces describing one rule differently, and the check
+      // dropped the two numbers the operator would act on. A parameter that
+      // looks meaningful and binds nothing is the row the engine ignores.
+      floorsText: autoTrend.floorsPhrase(cfg),
     });
     const unread = unreadByChain.get(id) || 0;
     // ⚠️ "N below the floors" OUT OF HOW MANY WERE OPENED, never out of how
