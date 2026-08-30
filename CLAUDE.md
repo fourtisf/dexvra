@@ -1516,6 +1516,16 @@ ranked from different places.
 - **`perChainMin` is read from ⚙️ Auto-Trend**, its one owner. A second number
   in the poster is how the panel and the channel would come to disagree about
   what the minimum is, which is the shape of all six rounds of this report.
+- ⚠️ **THE TOP-UP ONLY EVER TOUCHES THE OPERATOR'S OWN CHAINS.** `cfg.chains` is
+  "the networks auto-trending keeps alive", and its comment has always finished
+  the sentence: *"Everything else is PAID-ONLY"*. The first cut of the mirror
+  filled every chain in `CHAIN_ORDER`, so the board grew **POLYGON, OPTIMISM,
+  BERACHAIN and HYPEREVM** sections overnight — four networks the operator had
+  never put on it, each topped up to five rows, reported the next morning as
+  "hapus polygon hyper optimis". A rule stated in a comment one module over is
+  not a rule the new caller inherits. A BOOKED slot on any chain still
+  publishes: somebody paid for that row, and this list governs what the bot adds
+  by itself, never what a purchase may buy.
 - ⚠️ **AND EVERY PUBLISH SAYS WHAT THE TOP-UP DID.** The first cut warned on
   failure and said nothing on success — so *"the site was unreachable"*, *"the
   site is on demo data"*, *"there was nothing readable to add"* and *"it

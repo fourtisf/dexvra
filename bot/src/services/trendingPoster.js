@@ -175,7 +175,19 @@ async function buildText() {
   // shape of every round of this report. Lazily required: autoTrend does not
   // require this module, so there is no cycle, but the dependency is one-way
   // and stating it at the call site keeps it that way.
-  const perChain = Number(require("./autoTrend").get().perChainMin) || 0;
+  const atCfg = require("./autoTrend").get();
+  const perChain = Number(atCfg.perChainMin) || 0;
+  // ⚠️ THE TOP-UP ONLY EVER TOUCHES THE OPERATOR'S OWN CHAINS.
+  //
+  // `cfg.chains` is "the networks auto-trending keeps alive", and its comment
+  // has always finished the sentence: "Everything else is PAID-ONLY". The first
+  // cut of the mirror filled every chain in CHAIN_ORDER, so the board grew
+  // POLYGON, OPTIMISM, BERACHAIN and HYPEREVM sections overnight — four
+  // networks the operator had never put on it, each topped up to five rows,
+  // reported as "hapus polygon hyper optimis". A booked slot on any chain still
+  // publishes: somebody paid for that row, and this list governs what the bot
+  // adds by itself, never what a purchase may buy.
+  const autoChains = new Set((atCfg.chains || []).map((c) => String(c).toLowerCase()));
 
   // Title emoji is admin-settable (@dexvraadminbot → Trending board) so the
   // operator can make it a premium, animated fire without a redeploy.
@@ -189,7 +201,7 @@ async function buildText() {
     // Top up from the site's order, skipping anything already booked here.
     const shown = new Set(booked.map((r) => keyOf(r.chain, r.address)));
     const fill = [];
-    for (const t of siteRank[chain] || []) {
+    for (const t of (autoChains.has(String(chain).toLowerCase()) ? siteRank[chain] || [] : [])) {
       if (fill.length >= Math.max(0, perChain - booked.length)) break;
       if (shown.has(keyOf(t.chain, t.address))) continue;
       // ⚠️ A ROW WITH NO READING MAY NOT BE PUT ON THE BOARD BY US. The site

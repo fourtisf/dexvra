@@ -26,14 +26,14 @@ const siteRow = (symbol, change, over) => ({
   change24h: change, mcap: 5e6, booked: false, ...over,
 });
 
-async function render({ listings, chains, live = true, perChainMin = 5 }) {
+async function render({ listings, chains, live = true, perChainMin = 5, autoChains = ["solana"] }) {
   const realGet = api.getListings;
   const realRank = api.boardRank;
   const realFetch = market.fetchMarket;
   api.getListings = async () => listings;
   api.boardRank = async () => ({ frame: "24h", live, chains });
   market.fetchMarket = async (_c, a) => ({ change24h: 1, mcap: 1e6, priceUsd: 1, poolAddress: `p${a}` });
-  await autoTrend.set({ perChainMin, perChainMax: perChainMin });
+  await autoTrend.set({ perChainMin, perChainMax: perChainMin, chains: autoChains });
   try {
     poster._resetState();
     return await poster.buildText();
@@ -178,4 +178,36 @@ test("⚠️ every publish SAYS what the top-up did, or why it did not happen", 
   } finally {
     log.info = realInfo;
   }
+});
+
+test("⚠️ the top-up never invents a chain section the operator did not configure", async () => {
+  // The first cut filled every chain in CHAIN_ORDER, so the board grew POLYGON,
+  // OPTIMISM, BERACHAIN and HYPEREVM sections overnight — four networks nobody
+  // had put on it, each topped up to five rows. `cfg.chains` has always ended
+  // its own comment with "Everything else is PAID-ONLY".
+  const now = Date.now();
+  const text = await render({
+    listings: [listing({ address: "p", sym: "PAID", trendingRank: 1, trendStart: now, trendExp: now + 3600_000, tier: "DIAMOND" })],
+    chains: {
+      solana: [siteRow("MINE", 20)],
+      polygon: [{ chain: "polygon", address: "0xpoly", symbol: "LGNS", name: "L", change24h: 9, mcap: 5e6, booked: false }],
+    },
+    autoChains: ["solana"],
+  });
+  assert.ok(text.includes("$MINE"), `the configured chain was not topped up:\n${text}`);
+  assert.ok(!text.includes("$LGNS"), `a chain the operator never configured appeared on the board:\n${text}`);
+  assert.ok(!/POLYGON/i.test(text), `an unconfigured chain got its own section:\n${text}`);
+});
+
+test("…but a chain the operator did not configure still publishes a PAID slot", async () => {
+  // The paid-only rule cuts both ways: this list governs what the bot adds by
+  // itself, never what a purchase may buy.
+  const now = Date.now();
+  const text = await render({
+    listings: [{ status: "approved", chain: "polygon", address: "0xbought", sym: "BOUGHT", trendingRank: 1, trendStart: now, trendExp: now + 3600_000, tier: "DIAMOND" }],
+    chains: { polygon: [{ chain: "polygon", address: "0xfree", symbol: "FREE", name: "F", change24h: 9, mcap: 5e6, booked: false }] },
+    autoChains: ["solana"],
+  });
+  assert.ok(text.includes("$BOUGHT"), `a paid slot was dropped from an unconfigured chain:\n${text}`);
+  assert.ok(!text.includes("$FREE"), `…but the bot must not top that chain up:\n${text}`);
 });
