@@ -1,7 +1,7 @@
 // "di klik fiturnya not work" — ⚡ Run now on the Auto Trending panel.
 //
 // The button spun and nothing came back. Nothing was wrong with the promotion:
-// `byGain` prices up to 25 candidates SERIALLY with a 250ms gap and an 8s
+// `byGain` prices up to PROBE_CAP candidates SERIALLY with a 250ms gap and an 8s
 // timeout each, so on a chain with dozens of spares (Robinhood had 44) the work
 // runs well past Telegram's ~15s callback deadline. `answerCbQuery` then fails
 // with "query is too old", the .catch swallows it, and the operator is told

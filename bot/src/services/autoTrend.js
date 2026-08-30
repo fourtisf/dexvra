@@ -295,7 +295,16 @@ const todayCount = (st, now) => (st.day && st.day.key === dayKey(now) ? st.day.n
 
 /** Forget every announcement — the operator's "start fresh" for the cooldowns. */
 async function resetAnnounceState() {
-  await saveJSON(STATE_FILE, { announced: {}, day: null, lastAt: 0, pending: [] });
+  // ⚠️ THE ROTATION AND THE WATCH CLOCK SURVIVE IT. This writes a whole fresh
+  // object, so every field not named here is deleted — and two of them are
+  // nothing to do with announcing. Wiping `probe` restarts the probe window at
+  // the front of every chain (the prefix bug, for one sweep); wiping
+  // `boardWatch` resets "how long has this chain been short", so a board that
+  // has been under its minimum for two days serves out its grace period again
+  // and the alert never lands. An operator clearing announcement cooldowns is
+  // not asking for either.
+  const st = loadState();
+  await saveJSON(STATE_FILE, { announced: {}, day: null, lastAt: 0, pending: [], boardWatch: st.boardWatch, probe: st.probe });
 }
 
 /** Why this token is NOT getting announced, or null when it may be. One
@@ -906,7 +915,7 @@ async function runOnce({ rng = Math.random, chain = null, count = 1, deps = {} }
       const bad = rowRefusal(r, cfg);
       // ⚠️ ONLY A ROW WE ACTUALLY LOOKED AT IS COUNTED AS REFUSED.
       //
-      // `byGain` prices at most PROBE_CAP (25) candidates a chain and leaves
+      // `byGain` prices at most PROBE_CAP candidates a chain and leaves
       // the tail annotated `undefined` — "we never looked", deliberately
       // distinct from "we looked and there is nothing". Those rows are still
       // filtered out, and must be: promoting a token nobody priced is how a
@@ -1388,6 +1397,10 @@ module.exports = {
     // a test that leaves them behind reorders the next test's probe window —
     // the "a persisted setting LEAKS BETWEEN TESTS" scar, one file over.
     forgetProbes: async () => { const st = loadState(); st.probe = {}; await saveState(st); },
+    probes: () => loadState().probe,
+    setProbes: async (m) => { const st = loadState(); st.probe = m; await saveState(st); },
+    boardWatch: () => loadState().boardWatch,
+    setBoardWatch: async (w) => { const st = loadState(); st.boardWatch = w; await saveState(st); },
   },
   resetState: resetAnnounceState,
   queueAnnounce,
@@ -1413,6 +1426,14 @@ module.exports = {
   // two things.
   FLOOR_FILL_MAX_DROP,
   countFloorRefusals,
+  /**
+   * How many of a `byGain`-ranked list this pass actually OPENED — exported for
+   * the same reason `countFloorRefusals` is. `trending:check` had its own copy
+   * of the predicate (`r._change !== undefined`), and this file's scar says
+   * what a second copy costs: the check's own count of refusals drifted from
+   * the bot's and the two disagreed about the one number an operator acts on.
+   */
+  countOpened: (ranked) => ranked.filter(opened).length,
   floorsPhrase,
   // The probe budget, exported because `trending:check` mirrors this pass and
   // the tests pin that it is BOUNDED — a fixture with fewer rows than the cap

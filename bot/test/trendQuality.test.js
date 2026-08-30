@@ -270,7 +270,7 @@ test("…and the Robinhood exemption still fires where NOTHING on the chain is r
 });
 
 test("⚠️ a token nobody PRICED is not counted as one that failed the floors", async () => {
-  // `byGain` prices at most 25 candidates a chain and leaves the rest
+  // `byGain` prices at most PROBE_CAP candidates a chain and leaves the rest
   // annotated `undefined` — "we never looked". Those rows are still filtered
   // out (promoting a token nobody priced is how a dead row reaches the board),
   // but counting them as "below the floors" would tell an operator with 100
@@ -467,6 +467,70 @@ test("⚠️ trending:check counts refusals with the BOT'S counter, not a copy",
   const priced = { _change: 5, _mcap: 1000, _vol24: 1 };       // looked at, refused
   const tail = { _change: undefined, _mcap: undefined, _vol24: undefined }; // never priced
   assert.strictEqual(autoTrend.countFloorRefusals([priced, tail, tail], cfg), 1);
+
+  // ⚠️ AND THE SAME RULE FOR "DID WE OPEN THIS ROW". The probe window is
+  // bounded and it rotates, so every count the check prints is out of the
+  // WINDOW — and the first cut of that spelled `_change !== undefined` inline,
+  // two lines under the comment above explaining what the last copy cost.
+  assert.match(src, /autoTrend\.countOpened\(ranked\)/, "the script must call the bot's opened-count");
+  // ⚠️ AGAINST THE CODE, NOT THE COMMENTS. The first cut of this scanned the
+  // raw file and failed on the comment that QUOTES the defect it guards
+  // against — the repo's own rule for a source scan, and it caught itself.
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  assert.ok(
+    !/_change !== undefined/.test(code),
+    "the script grew its own copy of the opened predicate again",
+  );
+  assert.ok(/_change !== undefined/.test(src), "…and the scan must be stripping comments, or it proves nothing here");
+  // `looked` excludes a row the upstream refused us; `opened` must not — they
+  // answer different questions and collapsing them puts "we could not ask"
+  // back under "your tokens are too small".
+  const unread = { _change: null, _unread: true };
+  assert.strictEqual(autoTrend.countOpened([priced, unread, tail]), 2);
+  assert.strictEqual(autoTrend.countFloorRefusals([priced, unread, tail], cfg), 1);
+});
+
+test("⚠️ clearing the announce cooldowns does not clear the rotation or the watch clock", async () => {
+  // `resetAnnounceState` writes a WHOLE fresh object, so every field it does
+  // not name is deleted — and two of them have nothing to do with announcing.
+  // Wiping `probe` restarts the probe window at the front of every chain (the
+  // prefix bug, for one sweep); wiping `boardWatch` resets "how long has this
+  // chain been short", so a board short for two days serves its grace period
+  // out again and the alert never lands.
+  await autoTrend._test.forgetProbes();
+  await autoTrend._test.setAnnounced("bsc", "0xabc", 123);
+  // Put a stamp and a watch clock on the file the way a real cycle would.
+  const realFetch = market.fetchMarket;
+  market.fetchMarket = async () => ({ priceUsd: 1, mcap: 5e7, vol24h: 1e6, change24h: 9 });
+  try {
+    await autoTrend.byGain([{ chain: "bsc", address: "0xSTAMPED" }], () => 0, {
+      probes: (() => {
+        // byGain mutates what it is handed; the caller persists — so this test
+        // has to do the persisting the way `runOnce` does.
+        return globalThis.__probes = {};
+      })(),
+      now: 5_000,
+    });
+  } finally {
+    market.fetchMarket = realFetch;
+  }
+  await autoTrend._test.setProbes(globalThis.__probes);
+  await autoTrend._test.setBoardWatch({ bsc: { since: 111, why: "below_floors" } });
+  assert.ok(Object.keys(autoTrend._test.probes()).length > 0, "the fixture must store a stamp");
+
+  await autoTrend.resetAnnounceState();
+
+  assert.deepStrictEqual(
+    autoTrend._test.probes(),
+    globalThis.__probes,
+    "clearing announcements deleted the probe rotation",
+  );
+  assert.deepStrictEqual(
+    autoTrend._test.boardWatch(),
+    { bsc: { since: 111, why: "below_floors" } },
+    "clearing announcements deleted the short-board clock",
+  );
+  await autoTrend._test.forgetProbes();
 });
 
 test("⚠️ a floor switched OFF is never NAMED as one that refused something", async () => {

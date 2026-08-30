@@ -1222,9 +1222,10 @@ CHANGES an existing board on deploy**, deliberately, the way the gainers
 1/2, tidak sesuai" — with the panel reading `🎯 min 5/chain · max 8/chain` and
 the pinned board publishing **SOLANA 3 · BSC 1 · ROBINHOOD 2 · ETHEREUM 2 ·
 BASE 2 · TRON 2**. Sixth round of one symptom, and the first where the counts
-rule out every earlier cause on their own: `market:check` reports **192 Solana
-listings** and Solana published three rows. A chain with 189 spares is not a
-chain that ran out of things to promote.
+rule out every earlier cause on their own: the last `market:check` run recorded
+in these notes counted **192 Solana listings** (`solana 162/192 priced`), and
+Solana published three rows. A chain with that many spares is not a chain that
+ran out of things to promote.
 
 **`byGain` priced `rows.slice(0, PROBE_CAP)` — the first 25 of the eligible
 list, in store order.** `addListing` PREPENDS, so that is the 25 newest spares,
@@ -1295,6 +1296,45 @@ The two guarantees are MUTATION-TESTED rather than argued: restoring the fixed
 prefix fails the rotation test, and dropping the `looked` gate in ⚡ Run now
 fails the honesty test — the latter only after its first cut was found matching
 on the OLD sentence and therefore passing over the mutation it exists to catch.
+
+#### The audit round — four of these were in the FIX
+
+Asked straight after it landed ("kapan selesai audit anda?"), and the answer was
+that four things were wrong, all of them this file's own recurring shapes:
+
+- ⚠️ **`resetAnnounceState()` DELETED THE ROTATION AND THE WATCH CLOCK.** It
+  writes a whole fresh object, so every field not named in it is dropped — and
+  the operator's "start fresh" for *announcement cooldowns* was silently
+  restarting the probe window at the front of every chain and resetting "how
+  long has this chain been short", which serves the grace period out again and
+  the alert never lands. Two fields, neither of them anything to do with
+  announcing. (The probe map itself is safe under the other loss path this file
+  documents — `loadJSONSync` collapsing "no file" with "unreadable file", which
+  is destructive for `everListed` — because a stamp is a CACHE, not a ledger:
+  losing one costs a re-read.)
+- ⚠️ **`trending:check` grew its own copy of "did we open this row"**
+  (`r._change !== undefined`), two lines below the comment explaining what the
+  last copy of a predicate cost this exact script. `countOpened` is exported and
+  is the one owner, the way `countFloorRefusals` already is.
+- **Three comments still said "up to 25 candidates", one of them load-bearing.**
+  The ⚡ Run now handler's note reasons from that number to "~6s of sleeping,
+  well past Telegram's ~15s deadline" — the argument for answering the callback
+  first — and the budget is 40 now. A literal that the code no longer produces
+  is how the next reader is talked out of a rule that is still right.
+- **The section above claimed `market:check` "reports" 192 Solana listings.**
+  It is a reading recorded earlier in these notes, not one taken on the day —
+  and presenting a stored measurement as a current one is the thing the build
+  stamp on every check script exists to prevent.
+- ⚠️ **AND THE GUARD WRITTEN FOR THE SECOND FINDING FAILED ON ITS OWN COMMENT.**
+  The scan for a copied predicate matched the raw file, and the comment beside
+  the fix QUOTES the predicate it forbids — this repo's own rule for a source
+  scan, caught by the scan catching itself. It strips comments now, and asserts
+  that the stripping is what makes it pass: a comment-blind scan here would be
+  vacuous rather than merely noisy.
+
+Each is pinned, and the two behavioural ones are MUTATION-TESTED: putting the
+bare `saveJSON` back in `resetAnnounceState` fails the rotation-survives test,
+and giving the check its own predicate back fails the one-owner test.
 
 ```bash
 cd bot && node scripts/run-tests.js test/autoTrend.test.js test/trendQuality.test.js test/trendingWatch.test.js

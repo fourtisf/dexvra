@@ -111,7 +111,12 @@ const G = '\x1b[32m', R = '\x1b[31m', Y = '\x1b[33m', D = '\x1b[2m', X = '\x1b[0
       const ranked = await autoTrend
         .byGain(spares, undefined, { probes: autoTrend.probeStamps() })
         .catch(() => []);
-      consideredByChain.set(id, ranked.filter((r) => r._change !== undefined).length);
+      // ⚠️ THE BOT'S OWN PREDICATE, not a copy of it — the rule the refusal
+      // count two lines down already carries a scar for. `_change !== undefined`
+      // spelled out here is a second owner of "did we open this row", and the
+      // day one of them learns about a new annotation the check reports a
+      // window the bot never had.
+      consideredByChain.set(id, autoTrend.countOpened(ranked));
       // ⚠️ THE BOT'S OWN COUNTER, not a copy of it. This line used to filter on
       // `floorRefusal` alone and so counted the tail `byGain` never priced: on
       // a chain with 44 spares it reported 44 refusals where the running bot

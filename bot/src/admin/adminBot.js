@@ -3654,9 +3654,10 @@ function build() {
     // ⚠️ A CALLBACK ANSWER EXPIRES; A MESSAGE EDIT DOES NOT.
     //
     // "di klik fiturnya not work" — the button spun and nothing came back. The
-    // work is what takes the time: `byGain` prices up to 25 candidates SERIALLY
-    // with a 250ms gap, which is ~6s of sleeping before a single lookup, and on
-    // a chain with dozens of spares (Robinhood had 44) it runs well past
+    // work is what takes the time: `byGain` prices up to PROBE_CAP candidates
+    // SERIALLY with a 250ms gap — ten seconds of sleeping at the shipped budget,
+    // before a single lookup — and on a chain with dozens of spares (Robinhood
+    // had 44) it runs well past
     // Telegram's ~15s callback deadline. `answerCbQuery` then fails with "query
     // is too old", the .catch swallows it, and the operator is told nothing at
     // all — while the promotion may well have succeeded.
