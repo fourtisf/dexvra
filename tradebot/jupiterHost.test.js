@@ -96,9 +96,29 @@ test('an HTTP status does NOT fail over — the host answered', async () => {
 test('JUP_BASE pins one host and is never overruled', () => {
   // The escape hatch. Same contract as <CHAIN>_V4_POOLMANAGER: an override AND a
   // discovery skip, so an operator can pin a host this code has not heard of.
-  const src = require('node:fs').readFileSync(require.resolve('./solana.js'), 'utf8');
-  assert.match(src, /const JUP_BASES = JUP_BASE \? \[JUP_BASE\] : \[/);
-  assert.match(src, /const JUP_TOKEN_BASES = JUP_TOKEN_BASE \? \[JUP_TOKEN_BASE\] : \[/);
+  //
+  // ⚠️ THIS USED TO BE A SOURCE SCAN FOR A LITERAL LINE, and it therefore failed
+  // on an edit that left the rule perfectly intact (the base list gained a keyed
+  // tier). A test about formatting is not a test about behaviour — it is the
+  // `POOL_TTL` guard's defect, one repo over. It re-requires the module with the
+  // env set and reads what it actually resolved.
+  const path = require.resolve('./solana');
+  const keep = { b: process.env.JUP_BASE, t: process.env.JUP_TOKEN_BASE, k: process.env.JUP_API_KEY };
+  try {
+    process.env.JUP_BASE = 'https://my-own-jup.example/v1';
+    process.env.JUP_TOKEN_BASE = 'https://my-own-tokens.example';
+    process.env.JUP_API_KEY = 'not-a-real-key';   // a pin outranks even the keyed tier
+    delete require.cache[path];
+    const fresh = require('./solana');
+    assert.deepEqual(fresh.JUP_BASES, ['https://my-own-jup.example/v1'], 'a pinned base is a SKIP as well as an override');
+    assert.deepEqual(fresh.JUP_TOKEN_BASES, ['https://my-own-tokens.example']);
+  } finally {
+    for (const [k, v] of [['JUP_BASE', keep.b], ['JUP_TOKEN_BASE', keep.t], ['JUP_API_KEY', keep.k]]) {
+      if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    }
+    delete require.cache[path];
+    require('./solana');
+  }
 });
 
 // ── netErr ───────────────────────────────────────────────────────────────────

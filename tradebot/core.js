@@ -1726,9 +1726,28 @@ async function tokenSupplyRaw(ca, chainKey) {
     return v > 0n ? v : null;
   } catch (_) { return null; }
 }
+// ⚠️ A CACHE MISS IS A STAMPEDE ON THE BUY PATH. Five wallets buying one token
+// call this at the same instant, and until one of them has ANSWERED the cache is
+// still empty for the other four — so an uncached mint cost five identical reads
+// (on Solana: five `getTokenSupply` RPC calls AND five Jupiter token-registry
+// requests) into two budgets that are both metered per IP. That is a quarter of
+// the burst that made a five-wallet buy fail with "Couldn't read live pricing".
+//
+// The in-flight map is not a second cache: it holds only a read that has not yet
+// answered, and `_metaCache` — which already shares one object with every future
+// caller — remains the only thing that remembers. So this changes how many
+// requests are made and nothing at all about what is returned.
+const _metaInflight = new Map();
 async function tokenMeta(ca, chainKey) {
   const k = _ckey(chainKey, ca);
   const hit = _metaCache.get(k); if (hit) return hit;
+  const joined = _metaInflight.get(k); if (joined) return joined;
+  const p = _tokenMeta(ca, chainKey, k);
+  _metaInflight.set(k, p);
+  p.catch(() => {}).then(() => { if (_metaInflight.get(k) === p) _metaInflight.delete(k); });
+  return p;
+}
+async function _tokenMeta(ca, chainKey, k) {
   if (isSvm(chainKey)) {
     const m = await solana.splMeta(providerFor(chainKey), ca);
     const out = { name: m.name, sym: m.sym, decimals: m.decimals };

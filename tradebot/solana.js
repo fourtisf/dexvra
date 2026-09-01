@@ -47,16 +47,49 @@ const SOL_PATH = "m/44'/501'/0'/0'";
 //
 // The relative paths are identical under both bases (`/quote`, `/swap`), which
 // is the only reason a plain base swap is enough.
+//
+// ⚠️ AND THE KEYLESS TIER IS METERED PER IP, WHICH IS WHAT FIVE WALLETS HIT.
+// `lite-api.jup.ag` is the free tier and it is rate-limited by SOURCE ADDRESS —
+// so a five-wallet buy, which fires five quotes, five swap-builds and five token
+// reads at the same instant from one box, is a burst against a bucket sized for
+// roughly one request a second. Jupiter answers the overflow with 429, `getQuote`
+// threw `Jupiter quote failed (429)`, and i18n's `/quote/` rule rendered that as
+// "Couldn't read live pricing for this token right now" on every wallet at once.
+// That is a report about OUR request budget wearing the words of a fact about
+// the token — see `_jupGate`, the in-flight coalescing in `getQuote`, and the
+// retry in `_overBases`, which are the three halves of not spending it.
+//
+// `JUP_API_KEY` is the only thing that RAISES that ceiling rather than dividing
+// it (the `GECKOTERMINAL_API_KEY` rule, one API over): it moves the base to the
+// keyed host and sends `x-api-key`. Unset is the shipped behaviour and stays
+// supported — this is headroom, never a prerequisite.
+const JUP_API_KEY = (process.env.JUP_API_KEY || '').trim();
 const JUP_BASE = (process.env.JUP_BASE || '').trim().replace(/\/+$/, '');
-const JUP_BASES = JUP_BASE ? [JUP_BASE] : [
+const JUP_BASES = JUP_BASE ? [JUP_BASE] : (JUP_API_KEY ? [
+  'https://api.jup.ag/swap/v1',
+  'https://lite-api.jup.ag/swap/v1',
+] : [
   'https://lite-api.jup.ag/swap/v1',
   'https://quote-api.jup.ag/v6',
-];
+]);
 const JUP_TOKEN_BASE = (process.env.JUP_TOKEN_BASE || '').trim().replace(/\/+$/, '');
-const JUP_TOKEN_BASES = JUP_TOKEN_BASE ? [JUP_TOKEN_BASE] : [
+const JUP_TOKEN_BASES = JUP_TOKEN_BASE ? [JUP_TOKEN_BASE] : (JUP_API_KEY ? [
+  'https://api.jup.ag/tokens/v1/token',
+  'https://lite-api.jup.ag/tokens/v1/token',
+] : [
   'https://lite-api.jup.ag/tokens/v1/token',
   'https://tokens.jup.ag/token',
-];
+]);
+// The key rides every Jupiter request and NOTHING ELSE — a header applied by
+// host, so an operator's key is never posted to a base it does not belong to.
+// It is deliberately absent from every log line and every error message: this
+// module's own `netErr` had to learn that a URL can carry a secret.
+function jupHeaders(url, extra) {
+  const h = Object.assign({}, extra || {});
+  if (JUP_API_KEY && /(^|\.)jup\.ag$/.test(hostOf(url))) h['x-api-key'] = JUP_API_KEY;
+  return h;
+}
+function hostOf(url) { try { return new URL(url).host; } catch (_) { return ''; } }
 // pump.fun moved the same way Jupiter did, and this bot was left on the old host
 // while its SIBLING PROCESS in this very repo (bot/src/marketdata.js) already
 // called the v3 one — one repo holding two answers to "which host is current",
@@ -458,6 +491,121 @@ function netErr(e, url) {
   return err;
 }
 
+// ------------------------------------------------ the per-IP request budget
+//
+// EVERY RULE BELOW IS ONE WAY FIVE WALLETS SPENT ONE WALLET'S ALLOWANCE.
+//
+// A five-wallet buy used to fire, in the same millisecond: five `/quote` GETs
+// (byte-identical — same mints, same amount, same slippage), five `/tokens`
+// reads for the same mint, and five `/swap` builds. Fifteen requests at once
+// into a bucket metered per SOURCE ADDRESS. Jupiter answered the overflow with
+// 429, and every wallet reported it as "Couldn't read live pricing for this
+// token right now" — the whole batch, in one second, on a token that was
+// perfectly tradable.
+//
+// Three rules, and each one closes a hole the others cannot:
+//
+//   1. IDENTICAL REQUESTS THAT ARE STILL IN THE AIR ARE ONE REQUEST (getQuote).
+//      Five wallets buying the same amount of the same token ask one question.
+//   2. THE BURST IS PACED, per HOST, so what is left arrives as a queue rather
+//      than as a spike. `lite-api.jup.ag` serves the quote, the swap-build AND
+//      the token registry, so keying the pacer on the host is what makes those
+//      three share one budget without any caller having to know they do.
+//   3. A 429 IS WAITED OUT ONCE, NOT PAID N TIMES. `Retry-After` is honoured and
+//      recorded process-wide, so the four requests queued behind the one that
+//      hit the limit wait for it instead of each spending their own 429. That is
+//      this repo's `benched` rule, adapted: for a USER'S TRADE the answer is a
+//      pace, never a refusal — a fill a second late beats a red cross.
+//
+// ⚠️ RETRYING IS SAFE HERE AND NOWHERE NEAR THE CHAIN. `/quote` is a GET and
+// `/swap` returns an UNSIGNED transaction; neither moves a lamport, so a second
+// attempt cannot double-spend. The broadcast (`sendRawTransaction`) is not on
+// this path and is never retried by anything here.
+//
+// This is NOT the base failover being weakened. That rule — "fail over on a
+// TRANSPORT error only, because a status means the host answered and the same
+// request gets the same status everywhere else" — still holds and is why a 400
+// is never retried at all. A 429 is the one status that explicitly means "ask me
+// again later", and a 5xx is not deterministic; those two are retried ON THE
+// SAME BASE, which is a different rule from moving to another host.
+const JUP_MIN_GAP_MS = _envInt('JUP_MIN_GAP_MS', 90, 0, 5000);
+const JUP_RETRIES = _envInt('JUP_RETRIES', 2, 0, 5);
+const JUP_HTTP_TIMEOUT_MS = _envInt('JUP_HTTP_TIMEOUT_MS', 12000, 2000, 60000);
+// The longest a request will sit waiting for a 429 to lift before giving up. A
+// trade held for a minute is not a trade; past this the honest answer is the
+// rate limit, named, so the user can decide.
+const JUP_MAX_WAIT_MS = _envInt('JUP_MAX_WAIT_MS', 8000, 0, 60000);
+
+// ⚠️ `Number('')` IS 0, AND 0 IS FINITE — a bare `JUP_MIN_GAP_MS=` in .env would
+// silently mean "no pacing at all", and a bare `JUP_RETRIES=` "never retry",
+// which is the state this whole section exists to end. Blank is ABSENT; an
+// explicit 0 is still a real, honoured 0 (it is how an operator turns the pacer
+// off). Third time this repo has been bitten by a falsy-but-valid number.
+function _envInt(name, dflt, lo, hi) {
+  const raw = String(process.env[name] == null ? '' : process.env[name]).trim();
+  if (!raw) return dflt;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return dflt;
+  return Math.min(hi, Math.max(lo, Math.floor(n)));
+}
+
+// One budget per HOST — see rule 2 above. Never per module and never per
+// endpoint: two callers with their own idea of one bucket is how a 429 one of
+// them has already noticed gets hammered through by the other, which is the
+// defect `gtPairs.js` names in its own header.
+const _budgets = new Map();
+function _budget(host) {
+  let b = _budgets.get(host);
+  if (!b) { b = { nextAt: 0, holdUntil: 0, why: '' }; _budgets.set(host, b); }
+  return b;
+}
+/** Wait for this host's turn, or say why we will not. Returns null when the wait
+ *  is over, or an Error when the budget cannot be honoured inside `deadline` —
+ *  which is a real answer ("we are rate limited"), not a transport failure. */
+async function _gate(host, deadline) {
+  const b = _budget(host);
+  for (;;) {
+    const now = Date.now();
+    const until = Math.max(b.nextAt, b.holdUntil);
+    if (until <= now) { b.nextAt = now + JUP_MIN_GAP_MS; return null; }
+    // The hold is reported as itself. "can't reach lite-api.jup.ag" would be a
+    // false statement about a host that is answering perfectly well, and would
+    // send an operator to check their egress for a problem in our own budget.
+    if (until - now > Math.max(0, Math.min(JUP_MAX_WAIT_MS, deadline - now))) {
+      // The number is how much longer the hold has to RUN, not how long we
+      // waited — saying "waited 28s" about a request that returned instantly is
+      // a small lie on the one line an operator reads to size the problem.
+      const e = new Error(`Jupiter is rate-limiting this server — ${b.why || 'over the per-IP request budget'} (${Math.round((until - now) / 100) / 10}s left on the limit)`);
+      e.rateLimited = true; e.status = 429;
+      return e;
+    }
+    await _sleep(Math.min(250, until - now));
+  }
+}
+/** A 429/503 that named when to come back. Seconds per RFC 7231; some hosts send
+ *  a date, which parses to a real instant. Anything unreadable is not a reason to
+ *  invent a long wait, so it falls back to the caller's own backoff. */
+function _retryAfterMs(r) {
+  let v = '';
+  try { v = (r.headers && r.headers.get && r.headers.get('retry-after')) || ''; } catch (_) {}
+  v = String(v || '').trim();
+  if (!v) return 0;
+  if (/^\d+$/.test(v)) return Math.min(60000, Number(v) * 1000);
+  const at = Date.parse(v);
+  return Number.isFinite(at) ? Math.min(60000, Math.max(0, at - Date.now())) : 0;
+}
+/** Record what a 429 said, for every request queued behind this one. */
+function _holdHost(host, ms, why) {
+  const b = _budget(host);
+  b.holdUntil = Math.max(b.holdUntil, Date.now() + ms);
+  b.why = why || b.why;
+}
+// A status that means "ask again": 429 is the host telling us to, and a 5xx is
+// not a deterministic answer about the request. Everything else — a 400 above
+// all — gets the same answer on every attempt and from every base, so retrying
+// one only doubles the latency of a request that was always going to fail.
+function _retryable(status) { return status === 429 || (status >= 500 && status < 600); }
+
 // The base that last answered, so the healthy host is tried first rather than
 // paying the dead one's connect timeout on every single trade.
 let _jupBase = null;
@@ -467,20 +615,7 @@ let _jupBase = null;
 // 400 from the right host would be a 400 from every other one too — retrying it
 // elsewhere just doubles the latency of a request that was always going to fail.
 async function jupFetch(path, init) {
-  const bases = _jupBase ? [_jupBase, ...JUP_BASES.filter((b) => b !== _jupBase)] : JUP_BASES;
-  let last = null;
-  for (const base of bases) {
-    const url = base + path;
-    try {
-      const r = await _fetch(url, init);
-      _jupBase = base;
-      return r;
-    } catch (e) {
-      if (_jupBase === base) _jupBase = null;
-      last = netErr(e, url);
-    }
-  }
-  throw last || new Error('no Jupiter base configured');
+  return _overBases(JUP_BASES, () => _jupBase, (b) => { _jupBase = b; }, path, init, 'Jupiter');
 }
 
 // The token registry is a different host family with the same failover story.
@@ -496,15 +631,69 @@ async function pumpFetch(path, init) {
 }
 // Try each base in turn, sticking to the one that answered. Fails over ONLY on a
 // transport error: an HTTP status means the host is there and answered, and the
-// same request would get the same status from every other base.
+// same request would get the same status from every other base. A RETRYABLE
+// status (429/5xx) is re-asked on the SAME base instead, inside the budget — see
+// the long note above for why those two rules are not in conflict.
+//
+// `timeoutMs` is per ATTEMPT and `deadline` bounds the whole call, so a retry can
+// never turn a 12s request into a minute. A caller that supplies its own `signal`
+// keeps full control and gets no retry — it has said it owns the lifetime.
 async function _overBases(bases, get, set, path, init, what) {
+  const opt = init || {};
+  const perTry = Number(opt.timeoutMs) > 0 ? Number(opt.timeoutMs) : JUP_HTTP_TIMEOUT_MS;
+  // ⚠️ ONE BUDGET FOR THE WHOLE CALL, NOT ONE PER ATTEMPT. The first cut let the
+  // deadline grow with the number of attempts, so a `Retry-After: 30` was
+  // OBEYED — a buy sat there for thirty seconds and then filled at a price
+  // half a minute old, which is worse than the red cross it replaced. A trade
+  // held that long is not a trade. Past `JUP_MAX_WAIT_MS` the honest answer is
+  // the rate limit itself, named, with the hold still recorded so nothing else
+  // pays for it.
+  const deadline = Date.now() + (Number(opt.deadlineMs) > 0 ? Number(opt.deadlineMs) : perTry + JUP_MAX_WAIT_MS);
+  const tries = opt.signal ? 0 : JUP_RETRIES;
   const cur = get();
   const order = cur ? [cur, ...bases.filter((b) => b !== cur)] : bases;
   let last = null;
   for (const base of order) {
     const url = base + path;
-    try { const r = await _fetch(url, init); set(base); return r; }
-    catch (e) { if (get() === base) set(null); last = netErr(e, url); }
+    const host = hostOf(url);
+    for (let attempt = 0; ; attempt++) {
+      const held = await _gate(host, deadline);
+      // ⚠️ THE REPORTED REASON IS THE FIRST ONE, NOT THE LAST. A hold still lets
+      // the OTHER bases be tried — a different host is a different bucket, which
+      // is the whole point of a keyed base sitting above the lite one — but the
+      // legacy fallback is retired, so it fails at the transport and its
+      // "can't reach quote-api.jup.ag" would then overwrite the rate limit that
+      // actually stopped the trade. An operator sent to check their egress for a
+      // problem in our own request budget is the misdiagnosis this section
+      // exists to end. Same rule the web app's GT client states for its chunks.
+      if (held) { last = last || held; break; }
+      let r;
+      try {
+        r = await _fetch(url, Object.assign({}, opt, {
+          headers: jupHeaders(url, opt.headers),
+          signal: opt.signal || AbortSignal.timeout(Math.max(1000, Math.min(perTry, deadline - Date.now()))),
+        }));
+      } catch (e) {
+        if (get() === base) set(null);
+        last = last || netErr(e, url);
+        break;                                     // transport → the NEXT BASE, the standing rule
+      }
+      set(base);
+      if (r.ok || !_retryable(r.status) || attempt >= tries) return r;
+      // A 429 is recorded for everything queued behind this request, so the
+      // other four wallets wait it out instead of each buying their own.
+      const asked = _retryAfterMs(r);
+      const wait = asked || (Math.min(4000, 250 * Math.pow(2, attempt)) + Math.floor(Math.random() * 120));
+      // The hold is recorded with what the host ACTUALLY asked for, even when
+      // that is longer than we are prepared to wait here — the four requests
+      // queued behind this one must know the real number, or they each spend
+      // their own 429 discovering it.
+      if (r.status === 429) _holdHost(host, wait, `${what} returned 429`);
+      // …and this request waits only as long as a TRADE can afford to.
+      if (wait > JUP_MAX_WAIT_MS || Date.now() + wait > deadline) return r;
+      try { if (r.body && typeof r.body.cancel === 'function') r.body.cancel(); } catch (_) {}
+      await _sleep(wait);
+    }
   }
   throw last || new Error(`no ${what} base configured`);
 }
@@ -523,10 +712,65 @@ async function jupWhy(r) {
     catch (_) { return ' — ' + t; }
   } catch (_) { return ''; }
 }
+// A NON-OK STATUS IS THREE DIFFERENT FACTS, AND THEY WERE ONE SENTENCE.
+//
+// `Jupiter quote failed (<status>)` matched i18n's `/quote/` rule and came out
+// as "Couldn't read live pricing for this token right now. Please try again in
+// a moment." — under a 🔄 Try again button — for all of:
+//
+//   429  our own request budget, spent by the other four wallets. Waiting helps.
+//   400  Jupiter has no route for this mint (COULD_NOT_FIND_ANY_ROUTE, or a
+//        token it will not trade). Retrying changes NOTHING until the token
+//        migrates or its pool opens, and telling somebody to keep tapping is the
+//        exact defect this repo already fixed for the parsed-empty-quote door —
+//        it simply had a second door, through the HTTP status, that nobody shut.
+//   5xx  Jupiter is down. Not our budget and not the token.
+//
+// So the status travels on the error and the body travels with it. `jupWhy`
+// already had the explanation and was only ever pasted into a sentence nothing
+// could classify; `errorKey` reads `.status`/the named codes now.
+function jupErr(status, what, why) {
+  const tail = why || '';
+  const e = new Error(
+    status === 429 ? `Jupiter is rate-limiting this server (429)${tail}`
+      : status >= 500 ? `Jupiter ${what} is unavailable (${status})${tail}`
+      : `Jupiter ${what} failed (${status})${tail}`);
+  e.status = status;
+  if (status === 429) e.rateLimited = true;
+  return e;
+}
+
+// FIVE WALLETS ASK ONE QUESTION.
+//
+// `quotePath` is built from the two mints, the amount and the slippage — nothing
+// about WHO is buying — so a fan-out across wallets produces N byte-identical
+// GETs in the same millisecond. They are one request now: a caller arriving
+// while an identical one is still in the air joins it.
+//
+// ⚠️ IT IS NOT A CACHE, and the difference is the whole safety argument. Only a
+// request that has NOT YET ANSWERED is shared; the entry is dropped the instant
+// it settles, so the next buy always pays for a fresh price. A remembered quote
+// would be a stale price authorising a trade, which is the one thing a quote may
+// never be — it is the only executable price on this path (see `swap`).
+const _quoteInflight = new Map();
+
 async function getQuote({ inputMint, outputMint, amountRaw, slippageBps = 100, platformFeeBps }) {
   const qs = quotePath({ inputMint, outputMint, amountRaw, slippageBps, platformFeeBps });
-  const r = await jupFetch(qs, { signal: AbortSignal.timeout(12000) });
-  if (!r.ok) throw new Error('Jupiter quote failed (' + r.status + ')' + await jupWhy(r));
+  const joined = _quoteInflight.get(qs);
+  // A shallow copy per caller. `raw` is shared deliberately — /swap needs that
+  // object verbatim and copying it per wallet would be waste — but the headline
+  // numbers are the caller's own, so a future caller that annotates its quote
+  // cannot silently rewrite the other four wallets' trade.
+  if (joined) return joined.then((q) => Object.assign({}, q));
+  const p = _getQuote(qs);
+  _quoteInflight.set(qs, p);
+  p.catch(() => {}).then(() => { if (_quoteInflight.get(qs) === p) _quoteInflight.delete(qs); });
+  return p.then((q) => Object.assign({}, q));
+}
+
+async function _getQuote(qs) {
+  const r = await jupFetch(qs, {});
+  if (!r.ok) throw jupErr(r.status, 'quote', await jupWhy(r));
   const j = await r.json();
   const q = parseQuote(j);
   if (!q || q.outAmount <= 0n) throw new Error('no route / no liquidity for this token on Jupiter');
@@ -535,8 +779,8 @@ async function getQuote({ inputMint, outputMint, amountRaw, slippageBps = 100, p
 // POST the quote back to /swap and get the base64 VersionedTransaction to sign.
 async function getSwapTx(quoteRaw, userPublicKey, { feeAccount, priorityLamports } = {}) {
   const body = swapBody(quoteRaw, userPublicKey, { feeAccount, priorityLamports });
-  const r = await jupFetch('/swap', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(12000) });
-  if (!r.ok) throw new Error('Jupiter swap-build failed (' + r.status + ')' + await jupWhy(r));
+  const r = await jupFetch('/swap', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  if (!r.ok) throw jupErr(r.status, 'swap-build', await jupWhy(r));
   const j = await r.json();
   if (!j || !j.swapTransaction) throw new Error('Jupiter returned no swap transaction');
   return j.swapTransaction;   // base64
@@ -713,7 +957,7 @@ async function jupTokenMeta(mint) {
   try {
     // Same host migration as the swap API, same failover, same reason to keep
     // both: the registry moved off tokens.jup.ag to lite-api.jup.ag/tokens/v1.
-    const r = await tokenFetch('/' + mint, { signal: AbortSignal.timeout(8000) });
+    const r = await tokenFetch('/' + mint, { timeoutMs: 8000 });
     if (!r.ok) return null;
     const j = await r.json();
     if (!j || (!j.symbol && !j.name)) return null;
@@ -794,7 +1038,7 @@ async function pumpfunNewX(limit = 50) {
   try {
     const n = Math.max(1, Math.min(100, limit));
     const r = await pumpFetch(`?offset=0&limit=${n}&sort=created_timestamp&order=DESC&includeNsfw=true`,
-      { signal: AbortSignal.timeout(9000), headers: { accept: 'application/json' } });
+      { timeoutMs: 9000, headers: { accept: 'application/json' } });
     if (!r.ok) return { coins: [], ok: false, why: `pump.fun answered ${r.status}` };
     const j = await r.json();
     const arr = Array.isArray(j) ? j : (Array.isArray(j && j.coins) ? j.coins : []);
@@ -823,5 +1067,13 @@ module.exports = {
   getConnection, solBalance, solBalanceOrNull, splDecimalsOrNull, splBalance, splBalanceOrNull, sendJupiterSwap, sendSplToken, confirmSignature,
   rentExemptMin, transferFee,
   getQuote, getSwapTx, swap, sendSol, splDecimals, jupTokenMeta, splMeta, dexScreener, pumpfunNew,
+  jupErr, jupKeyed: () => !!JUP_API_KEY, jupHeaders,
+  JUP_MIN_GAP_MS, JUP_RETRIES,
+  // ⚠️ THE REQUEST BUDGET IS PROCESS STATE, so a test that trips a 429 leaves a
+  // hold behind and the next test reads a rate limit it never caused — which
+  // looks exactly like a regression in the code under test. Stated, never
+  // inherited: the rule this repo's auto-trend panel helper had to learn.
+  _resetBudget: () => { _budgets.clear(); _jupBase = null; _tokBase = null; _pumpBase = null; _quoteInflight.clear(); },
+  _budgets,   // test-only: proves a 429 was recorded once and not paid five times
   _statusQ,   // test-only: proves the batch queue is emptied, not just drained
 };

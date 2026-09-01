@@ -1,0 +1,308 @@
+'use strict';
+/*
+ * jupiterQuota.test.js — why five wallets could not buy one token.
+ *
+ * A live buy card, 2026-09-01: `$E5iD…pump`, wallets 2, 4 and 5, all at 23:03,
+ * every one of them reading
+ *
+ *     ❌ Buy failed · Wallet 4
+ *     Couldn't read live pricing for this token right now. Please try again in
+ *     a moment.
+ *
+ * Nothing about that sentence is true of what happened, and the retry it invites
+ * makes it worse. A five-wallet buy fired, in one millisecond: five BYTE-IDENTICAL
+ * `/quote` GETs (the path is built from the mints, the amount and the slippage —
+ * nothing about who is buying), five `/tokens` reads for the same mint, and five
+ * `/swap` builds. Fifteen requests into `lite-api.jup.ag`, which is metered per
+ * SOURCE ADDRESS. The overflow came back 429; `getQuote` threw
+ * `Jupiter quote failed (429)`; and i18n's `/quote/` rule — written for a pool
+ * read that failed — rendered our own spent request budget as a fact about the
+ * token.
+ *
+ * These tests are offline: `global.fetch` is replaced, so they pin the budget,
+ * the coalescing and the sentences WITHOUT depending on what Jupiter is doing
+ * today.
+ */
+const test = require('node:test');
+const assert = require('node:assert');
+
+const solana = require('./solana');
+const i18n = require('./i18n');
+
+const realFetch = global.fetch;
+// ⚠️ THE REQUEST BUDGET IS PROCESS STATE. A test that trips a 429 leaves a hold
+// behind, and the next test then reads a rate limit it never caused — which
+// looks exactly like a regression in the code under test. Stated, never
+// inherited.
+test.beforeEach(() => { solana._resetBudget(); });
+test.afterEach(() => { global.fetch = realFetch; solana._resetBudget(); });
+
+const QUOTE = { inAmount: '10000000', outAmount: '2500000', otherAmountThreshold: '2475000', priceImpactPct: '0.001' };
+const MINT = 'E5iDD4kt9gDxTaAeoCNeN3CcZAWB7FvbPXwqJuuHpump';
+const ARGS = { inputMint: solana.WSOL_MINT, outputMint: MINT, amountRaw: 10000000n, slippageBps: 100 };
+
+/** A fetch that answers `plan[n]` for the n-th call and then repeats the last
+ *  entry. Each entry is a status, optionally with a body and headers. */
+function scripted(plan) {
+  const calls = [];
+  let i = 0;
+  global.fetch = async (url, init) => {
+    calls.push({ url: String(url), init });
+    const step = plan[Math.min(i++, plan.length - 1)];
+    const status = step.status || 200;
+    return {
+      ok: status >= 200 && status < 300,
+      status,
+      headers: { get: (k) => (step.headers || {})[String(k).toLowerCase()] || null },
+      json: async () => (step.body === undefined ? QUOTE : step.body),
+      text: async () => (typeof step.body === 'string' ? step.body : JSON.stringify(step.body === undefined ? QUOTE : step.body)),
+      body: null,
+    };
+  };
+  return calls;
+}
+
+// ── 1. Five wallets ask ONE question ─────────────────────────────────────────
+
+test('identical in-flight quotes are coalesced into one request', async () => {
+  // The five wallets of the reported buy. Same mints, same amount, same
+  // slippage — so it is one question asked five times, and four of those five
+  // requests bought nothing but a step towards the rate limit.
+  const calls = scripted([{ status: 200 }]);
+  const five = await Promise.all([0, 1, 2, 3, 4].map(() => solana.getQuote(ARGS)));
+  assert.equal(calls.length, 1, 'five identical concurrent quotes must cost ONE request');
+  for (const q of five) assert.equal(q.outAmount, 2500000n, 'every wallet still gets the quote');
+});
+
+test('a different amount is a different question and is NOT shared', async () => {
+  // The coalescing key is the request path, so anything that changes the price
+  // — the amount, the slippage, the mint — is its own request. A shared quote
+  // across different sizes would authorise a trade at somebody else's price.
+  const calls = scripted([{ status: 200 }]);
+  await Promise.all([
+    solana.getQuote(ARGS),
+    solana.getQuote(Object.assign({}, ARGS, { amountRaw: 20000000n })),
+    solana.getQuote(Object.assign({}, ARGS, { slippageBps: 300 })),
+  ]);
+  assert.equal(calls.length, 3);
+});
+
+test('it is NOT a cache — a later buy pays for a fresh price', async () => {
+  // The whole safety argument. A quote is the only executable price on this
+  // path, so a REMEMBERED one would be a stale price authorising a trade. Only
+  // a request that has not yet answered is shared.
+  const calls = scripted([{ status: 200 }]);
+  await solana.getQuote(ARGS);
+  await solana.getQuote(ARGS);
+  assert.equal(calls.length, 2, 'a settled quote must never be replayed');
+});
+
+test('each caller gets its own quote object, not a shared one', async () => {
+  scripted([{ status: 200 }]);
+  const [a, b] = await Promise.all([solana.getQuote(ARGS), solana.getQuote(ARGS)]);
+  assert.notStrictEqual(a, b, 'one wallet annotating its quote must not rewrite the other four');
+  a.minOut = 1n;
+  assert.equal(b.minOut, 2475000n);
+});
+
+test('a coalesced quote that FAILS fails every joiner, and the next buy re-asks', async () => {
+  // A shared failure must not become a stuck entry: the map is cleared on
+  // rejection too, or one bad second would blind the mint for the process.
+  const calls = scripted([{ status: 400, body: { errorCode: 'COULD_NOT_FIND_ANY_ROUTE' } }, { status: 200 }]);
+  const rs = await Promise.allSettled([solana.getQuote(ARGS), solana.getQuote(ARGS)]);
+  assert.equal(rs[0].status, 'rejected');
+  assert.equal(rs[1].status, 'rejected');
+  assert.equal(calls.length, 1);
+  const q = await solana.getQuote(ARGS);
+  assert.equal(q.outAmount, 2500000n, 'the failure must not stick to the mint');
+});
+
+// ── 2. A 429 is waited out once, not paid five times ─────────────────────────
+
+test('a 429 is retried on the same base and the buy goes through', async () => {
+  // The reported failure, end to end: the first attempt is refused by our own
+  // per-IP budget and the second one fills. This is the difference between a red
+  // cross and a trade.
+  const calls = scripted([{ status: 429, headers: { 'retry-after': '1' } }, { status: 200 }]);
+  const q = await solana.getQuote(ARGS);
+  assert.equal(q.outAmount, 2500000n);
+  assert.equal(calls.length, 2);
+  assert.match(calls[1].url, /lite-api\.jup\.ag/, 'a 429 is re-asked on the SAME host, not failed over');
+});
+
+test('a 429 is recorded process-wide so the next request waits instead of spending its own', async () => {
+  // `benched`, adapted for a user's trade: the four requests queued behind the
+  // one that hit the limit must not each buy their own 429. For a TRADE the
+  // answer is a pace, never a refusal — but a wait longer than a fill can afford
+  // is reported rather than obeyed (a buy that sits for 30s then fills at a
+  // half-minute-old price is worse than the red cross it replaced).
+  //
+  // The legacy base is scripted DEAD, which is what it really is — the point of
+  // the test is that its transport failure must not overwrite the rate limit as
+  // the reported reason.
+  const hit = [];
+  global.fetch = async (url) => {
+    hit.push(String(url));
+    if (String(url).includes('quote-api.jup.ag')) { const e = new TypeError('fetch failed'); e.cause = Object.assign(new Error('x'), { code: 'ENOTFOUND' }); throw e; }
+    return { ok: false, status: 429, headers: { get: (k) => (String(k).toLowerCase() === 'retry-after' ? '30' : null) }, json: async () => ({}), text: async () => 'Too many requests', body: null };
+  };
+  await assert.rejects(() => solana.getQuote(ARGS), /rate-limiting/);
+  const held = solana._budgets.get('lite-api.jup.ag');
+  assert.ok(held && held.holdUntil > Date.now() + 20000, 'Retry-After must be honoured, not guessed');
+  const onLite = hit.filter((u) => u.includes('lite-api')).length;
+  // A second, DIFFERENT request now arrives while the hold stands.
+  await assert.rejects(() => solana.getQuote(Object.assign({}, ARGS, { amountRaw: 999n })), /rate-limiting/);
+  assert.equal(hit.filter((u) => u.includes('lite-api')).length, onLite,
+    'a request made during the hold is a 429 we paid for twice');
+});
+
+test('a 400 is never retried — the same request gets the same status everywhere', async () => {
+  // The base-failover rule, unweakened: only 429 and 5xx mean "ask again".
+  const calls = scripted([{ status: 400, body: { errorCode: 'COULD_NOT_FIND_ANY_ROUTE' } }]);
+  await assert.rejects(() => solana.getQuote(ARGS));
+  assert.equal(calls.length, 1, 'retrying a deterministic refusal only doubles the latency');
+});
+
+test('a 5xx is retried, because it is not an answer about the request', async () => {
+  const calls = scripted([{ status: 503 }, { status: 200 }]);
+  const q = await solana.getQuote(ARGS);
+  assert.equal(q.outAmount, 2500000n);
+  assert.equal(calls.length, 2);
+});
+
+test('a transport failure still fails OVER to the next base', async () => {
+  // The standing rule, which the retry must not have replaced: a host that does
+  // not answer at all is a host to leave, and that is how the retired
+  // quote-api.jup.ag outage was survived.
+  const seen = [];
+  global.fetch = async (url) => {
+    seen.push(String(url));
+    if (String(url).includes('lite-api')) { const e = new TypeError('fetch failed'); e.cause = Object.assign(new Error('x'), { code: 'ENOTFOUND' }); throw e; }
+    return { ok: true, status: 200, headers: { get: () => null }, json: async () => QUOTE, text: async () => '', body: null };
+  };
+  const q = await solana.getQuote(ARGS);
+  assert.equal(q.outAmount, 2500000n);
+  assert.ok(seen.some((u) => u.includes('quote-api.jup.ag')), 'a dead host must not fail the buy');
+});
+
+// ── 3. The burst is paced ────────────────────────────────────────────────────
+
+test('requests to one host are paced, so a fan-out is a queue and not a spike', async () => {
+  // `lite-api.jup.ag` serves the quote, the swap-build AND the token registry,
+  // so keying the pacer on the HOST is what makes those three share one budget
+  // without any caller having to know that they do.
+  assert.ok(solana.JUP_MIN_GAP_MS > 0, 'a default of 0 would make the fix depend on config');
+  scripted([{ status: 200 }]);
+  const t0 = Date.now();
+  // Three DIFFERENT requests (coalescing cannot help here) — the case a
+  // multi-wallet /swap fan-out actually is.
+  await Promise.all([1, 2, 3].map((n) => solana.getQuote(Object.assign({}, ARGS, { amountRaw: BigInt(n * 1000) }))));
+  assert.ok(Date.now() - t0 >= solana.JUP_MIN_GAP_MS * 2 - 20, 'three requests went out as one spike');
+});
+
+// ── 4. Three facts stopped being one sentence ────────────────────────────────
+
+test('a rate limit is reported as OUR budget, not as the token having no price', async () => {
+  // The reported message, and why it was the wrong one: it sent the user to look
+  // at their token while the answer was the number of wallets they had selected.
+  const key = i18n.errorKey('buy failed on Solana: Jupiter is rate-limiting this server (429) — Too many requests');
+  assert.equal(key, 'err.rate_limited');
+  const en = i18n.errorText('en', 'buy failed on Solana: Jupiter is rate-limiting this server (429)', 'buy');
+  assert.match(en, /rate-limit/i);
+  assert.match(en, /nothing was spent/i, 'after five red crosses, "did I pay?" is the first question');
+  assert.match(en, /fewer wallets/i, 'a diagnosis with no hands attached is a bug report filed against the owner');
+  assert.notEqual(en, i18n.errorText('id', 'Jupiter is rate-limiting this server (429)', 'buy'), 'both languages, like every other error here');
+});
+
+test("Jupiter's own refusal codes are reported as no route, not as 'try again in a moment'", () => {
+  // The `err.no_route` comment already describes this defect for the
+  // parsed-empty-quote door. This is the SAME fact arriving through the HTTP
+  // status, which is the door that was left open: a user whose token simply has
+  // no pool was told to keep retrying, and did.
+  for (const raw of [
+    'buy failed on Solana: Jupiter quote failed (400) — COULD_NOT_FIND_ANY_ROUTE',
+    'buy failed on Solana: Jupiter quote failed (400) — The mint is not tradable',
+    'buy failed on Solana: Jupiter quote failed (422) — no routes found for the requested pair',
+  ]) assert.equal(i18n.errorKey(raw), 'err.no_route', raw);
+  assert.doesNotMatch(i18n.errorText('en', 'Jupiter quote failed (400) — COULD_NOT_FIND_ANY_ROUTE', 'buy'), /try again in a moment/i);
+});
+
+test('a 5xx is reported as the router being down — theirs, not ours and not the token', () => {
+  assert.equal(i18n.errorKey('buy failed on Solana: Jupiter quote is unavailable (503) — upstream'), 'err.upstream_down');
+  assert.match(i18n.errorText('en', 'Jupiter swap-build is unavailable (502)', 'buy'), /nothing was spent/i);
+});
+
+test('a real pool-read failure still reports as no_price', () => {
+  // The rule that was over-matching must still cover what it was written for.
+  assert.equal(i18n.errorKey('could not read pool'), 'err.no_price');
+  assert.equal(i18n.errorKey('pool read failed'), 'err.no_price');
+});
+
+test('a transport failure is still offline, never a rate limit', () => {
+  // These are checked FIRST for a reason — "no answer before the timeout" is not
+  // a budget problem, and the operator's next step is completely different.
+  assert.equal(i18n.errorKey("can't reach lite-api.jup.ag — the name does not resolve from this server"), 'err.offline');
+  assert.equal(i18n.errorKey('buy failed on Solana: fetch failed'), 'err.offline');
+});
+
+// ── 5. The key is the only thing that raises the ceiling ─────────────────────
+
+test('JUP_API_KEY rides jup.ag requests and nothing else', () => {
+  // A header applied BY HOST, so an operator's key is never posted to a base it
+  // does not belong to. It is deliberately absent from every log line for the
+  // reason the RPC url is: those go to pm2's log.
+  const h = solana.jupHeaders('https://lite-api.jup.ag/swap/v1/quote', { accept: 'application/json' });
+  assert.equal(h.accept, 'application/json');
+  assert.equal(h['x-api-key'], undefined, 'no key configured in this environment');
+  assert.equal(solana.jupKeyed(), false);
+  assert.equal(solana.jupHeaders('https://frontend-api-v3.pump.fun/coins')['x-api-key'], undefined);
+});
+
+test('JUP_API_KEY moves the bases to the keyed host and sends the header', () => {
+  // The only thing that RAISES the ceiling rather than dividing it — the
+  // `GECKOTERMINAL_API_KEY` rule, one API over. Driven, not source-scanned:
+  // a scan cannot tell a key that is configured from one that is sent.
+  const path = require.resolve('./solana');
+  const before = process.env.JUP_API_KEY;
+  try {
+    process.env.JUP_API_KEY = 'test-key-abc';
+    delete require.cache[path];
+    const fresh = require('./solana');
+    assert.equal(fresh.jupKeyed(), true);
+    assert.match(fresh.JUP_BASES[0], /api\.jup\.ag/, 'the keyed host must lead');
+    assert.ok(fresh.JUP_BASES.some((b) => /lite-api/.test(b)), 'the free tier stays behind it as a fallback');
+    assert.equal(fresh.jupHeaders('https://api.jup.ag/swap/v1/quote')['x-api-key'], 'test-key-abc');
+    // …and NOWHERE ELSE. A key posted to a host it does not belong to is a
+    // leaked credential; this is a header applied by HOST for that reason.
+    assert.equal(fresh.jupHeaders('https://frontend-api-v3.pump.fun/coins')['x-api-key'], undefined);
+    assert.equal(fresh.jupHeaders('https://api.dexscreener.com/x')['x-api-key'], undefined);
+    assert.equal(fresh.jupHeaders('https://jup.ag.evil.example/quote')['x-api-key'], undefined,
+      'the host check must be an anchored suffix, or a lookalike domain harvests the key');
+  } finally {
+    if (before === undefined) delete process.env.JUP_API_KEY; else process.env.JUP_API_KEY = before;
+    delete require.cache[path];
+    require('./solana');
+  }
+});
+
+test('the budget knobs read a BLANK env as absent, not as zero', () => {
+  // ⚠️ `Number('')` is 0 and 0 is FINITE. A bare `JUP_MIN_GAP_MS=` in .env would
+  // otherwise mean no pacing at all and `JUP_RETRIES=` would mean never retry —
+  // which is exactly the state this file exists to end, arrived at silently.
+  // Third time this repo has been bitten by a falsy-but-valid number.
+  const path = require.resolve('./solana');
+  const before = process.env.JUP_MIN_GAP_MS;
+  try {
+    process.env.JUP_MIN_GAP_MS = '';
+    delete require.cache[path];
+    const fresh = require('./solana');
+    assert.ok(fresh.JUP_MIN_GAP_MS > 0, 'a blank env var switched the pacer off');
+    process.env.JUP_MIN_GAP_MS = '0';
+    delete require.cache[path];
+    assert.equal(require('./solana').JUP_MIN_GAP_MS, 0, 'an explicit 0 is a real, honoured 0');
+  } finally {
+    if (before === undefined) delete process.env.JUP_MIN_GAP_MS; else process.env.JUP_MIN_GAP_MS = before;
+    delete require.cache[path];
+    require('./solana');
+  }
+});

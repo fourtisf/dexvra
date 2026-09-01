@@ -5658,6 +5658,173 @@ cd tradebot && node --test venueCheck.test.js   # 6 tests, no network
 **Config a fix depends on:** nothing — but what it reports is a property of the
 box's egress and of the chain today, which is the whole reason it is a script and
 not a test.
+## "Mengapa gagal beli token" — five wallets spent one wallet's allowance
+
+A live buy card, 2026-09-01: `$E5iD…pump` on Solana, wallets 2, 4 and 5, all
+stamped **23:03**, every one of them reading
+
+> ❌ Buy failed · Wallet 4
+> Couldn't read live pricing for this token right now. Please try again in a moment.
+
+**Not one word of that sentence is true of what happened, and the retry it
+invites makes it worse.** Established by ELIMINATION, not by guessing: on the
+Solana buy path exactly one thing produces `err.no_price`, and it is a non-2xx
+HTTP status from Jupiter's `/quote` — every other failure there already has its
+own key (`insufficient`, `diverged`, `unconfirmed`, `build_failed`, `no_route`).
+`getQuote` threw `Jupiter quote failed (<status>)`, and i18n's `/quote/` rule —
+written for a **pool read** that failed — matched the word and rendered our own
+spent request budget as a fact about the token.
+
+- ⚠️ **A FAN-OUT IS A BURST, AND `lite-api.jup.ag` IS METERED PER SOURCE
+  ADDRESS.** One five-wallet buy fired, in the same millisecond: five `/quote`
+  GETs, five `/tokens` reads for the same mint, and five `/swap` builds. Fifteen
+  requests into a bucket sized for roughly one a second. This repo already knows
+  this shape — *"five wallets were throttling each other"* is the section that
+  batched `getSignatureStatuses`, and *"the ceiling is per IP, so the two
+  processes' budgets have to ADD UP TO IT"* is the same lesson at
+  GeckoTerminal. The Jupiter path had learnt neither.
+- **FIVE WALLETS ASK ONE QUESTION.** `quotePath` is built from the two mints,
+  the amount and the slippage — nothing about WHO is buying — so those five
+  quotes were byte-identical and four of them bought nothing but a step towards
+  the limit. A caller arriving while an identical request is still in the air
+  joins it. ⚠️ **It is NOT a cache**, and that is the whole safety argument:
+  only a request that has not yet ANSWERED is shared, and the entry is dropped
+  the instant it settles. A remembered quote is a stale price authorising a
+  trade, and a quote is the only executable price on this path.
+- **The burst is PACED per HOST** (`JUP_MIN_GAP_MS`, 90ms). Keying it on the
+  host is what makes the quote, the swap-build and the token registry share one
+  budget without any caller having to know that they do — they are all
+  `lite-api.jup.ag`. It costs a single-wallet buy nothing: by the time the swap
+  build is issued, the quote's own round trip has already outlasted the gap.
+- **A 429 IS WAITED OUT ONCE, NOT PAID N TIMES.** `Retry-After` is honoured and
+  recorded process-wide, so the four requests queued behind the one that hit the
+  limit wait for it rather than each spending their own 429 to discover it. That
+  is the `benched` rule (`gt.ts`, `dsChart.ts`, `logoFill`), adapted: for a
+  USER'S TRADE the answer is a **pace, never a refusal** — a fill a second late
+  beats a red cross.
+- ⚠️ **…but the wait is bounded by what a TRADE can afford**, not by the retry
+  budget. The first cut let the deadline grow per attempt, so a `Retry-After:
+  30` was **obeyed**: a buy sat for thirty seconds and then filled at a
+  half-minute-old price, which is worse than the red cross it replaced. Past
+  `JUP_MAX_WAIT_MS` (8s) the answer is the rate limit, named — with the hold
+  still recorded, so nothing else pays for it.
+- ⚠️ **RETRYING IS NOT THE BASE-FAILOVER RULE BEING WEAKENED.** *"Fail over on a
+  TRANSPORT error only, because a status means the host answered and the same
+  request gets the same status everywhere else"* still holds, and is exactly why
+  a **400 is never retried at all**. 429 is the one status that explicitly means
+  "ask me again later" and a 5xx is not deterministic; those two are re-asked on
+  the SAME base, which is a different rule from moving to another host. Safe
+  here and nowhere near the chain: `/quote` is a GET and `/swap` returns an
+  UNSIGNED transaction, so a second attempt cannot double-spend. The broadcast
+  is not on this path and is retried by nothing.
+- ⚠️ **THE REPORTED REASON IS THE FIRST ONE, NOT THE LAST.** A hold still lets
+  the other bases be tried — a different host is a different bucket, which is
+  the whole point of a keyed base above the lite one — but the legacy fallback
+  is retired, so it fails at the transport and its `can't reach
+  quote-api.jup.ag` would have overwritten the rate limit that actually stopped
+  the trade. An operator sent to check their egress for a problem in our own
+  budget is the misdiagnosis this section exists to end.
+- ⚠️ **`Number('')` IS 0, AND 0 IS FINITE.** A bare `JUP_MIN_GAP_MS=` in `.env`
+  would have meant no pacing at all and `JUP_RETRIES=` never retry — the exact
+  state being fixed, arrived at silently. Blank is ABSENT; an explicit `0` is
+  still a real, honoured 0. Fourth time this repo has been bitten by a
+  falsy-but-valid number.
+
+### Three facts had one sentence
+
+`Jupiter quote failed (429)`, `(400)` and `(503)` are our budget, the token, and
+Jupiter — and all three came out as *"Couldn't read live pricing … try again in
+a moment"*, under a 🔄 Try again button.
+
+| status | is | says now |
+| --- | --- | --- |
+| 429 | our per-IP budget, spent by the other four wallets | `err.rate_limited` — nothing was spent; fewer wallets, or a key |
+| 400 `COULD_NOT_FIND_ANY_ROUTE` | a fact about the token | `err.no_route` — retrying won't change it |
+| 5xx | Jupiter | `err.upstream_down` — theirs, clears in a minute |
+
+- ⚠️ **The 400 case is a defect this file already describes, through a door
+  nobody shut.** The `err.no_route` comment names it for the parsed-empty-quote
+  path — *"a user whose token simply has no tradable pool was told to keep
+  retrying, and did"* — and the identical fact arriving as an HTTP STATUS went
+  on falling into `err.no_price`. A lesson applied to one branch is a lesson
+  half-learnt, which is the shape the snipe panel's refusal path already cost.
+- **A swap-build 5xx KEEPS `err.build_failed`.** That key exists for exactly
+  that status on exactly that endpoint (the v6-vs-v1 body spelling produced it
+  as a 500), and it says the more useful thing — *"try a smaller amount"* — than
+  "their side is down". The specific fact must not be swallowed by the rule
+  written for the general one, so it is checked first.
+- **The rate-limit sentence says `nothing was spent`.** After five red crosses
+  that is the first question, and both new keys are in EN and ID like every
+  other error here.
+- ⚠️ **`tokenMeta` had the same stampede one layer up.** Five wallets call it at
+  the same instant and the cache is still empty for four of them until the first
+  ANSWERS — five `getTokenSupply` RPC reads and five Jupiter registry requests
+  for one mint, a quarter of the burst. In-flight coalescing there too; it is
+  not a second cache (`_metaCache` still owns remembering), so it changes how
+  many requests are made and nothing about what is returned.
+
+### `JUP_API_KEY` is the only thing that RAISES the ceiling rather than dividing it
+
+The `GECKOTERMINAL_API_KEY` rule, one API over. It moves the bases to
+`api.jup.ag` and sends `x-api-key`; unset is the shipped behaviour and stays
+fully supported — this is headroom, never a prerequisite.
+
+- **The header is applied by HOST**, anchored (`/(^|\.)jup\.ag$/`), so an
+  operator's key is never posted to a base it does not belong to and a lookalike
+  domain cannot harvest it. It is in no log line and no error message, for the
+  reason the RPC url is not: those go to pm2's log.
+- **The boot line prints the tier and the pacing.** A budget nobody can read is
+  how this one stayed invisible while it was failing trades — the same line that
+  already had to exist for `prio=` and for `[gt]`.
+
+```
+[boot] jupiter: keyless lite tier (metered per IP — set JUP_API_KEY to raise it) · pacing 90ms between requests · 2 retry(ies) on 429/5xx
+```
+
+### Which of the three it was is MEASURED on the box
+
+⚠️ Whether Jupiter answers this server today is a property of this box's egress
+and of Jupiter's current limits — the rule `raid:check`, `launchpads:check` and
+`fonts:check` all state — so it cannot be settled from a sandbox with no egress.
+The preflight takes a mint and answers it:
+
+```bash
+cd tradebot && npm run preflight:solana -- E5iDD4kt9gDxTaAeoCNeN3CcZAWB7FvbPXwqJuuHpump
+```
+
+- **It quotes the mint ONCE, and then fires the real fan-out.** One quote
+  passing while the concurrent one fails IS the diagnosis: the budget, not the
+  token. ⚠️ The burst uses DISTINCT amounts, or the in-flight coalescing would
+  mask the very load the check exists to size — a check measuring the
+  optimisation instead of the budget prints green over the failure it was
+  written for.
+- **It reads the two lines out loud**, because a status alone is not actionable:
+  both ✅ / single ✅ + concurrent ❌ / 400 / 5xx / `can't reach` are five
+  different next steps.
+- **No usage line offering a bracketed blank.** A non-address argument is
+  DIAGNOSED (`base58 has no 0, O, I or l`), never bounced to a usage screen —
+  this repo has had a placeholder pasted into a live shell three times, and bash
+  reads `<` as a redirect.
+
+```bash
+cd tradebot && SKIP_DOTENV=1 node --test jupiterQuota.test.js jupiterHost.test.js i18n.test.js   # 57 tests, no network
+```
+
+Ten guarantees are MUTATION-TESTED rather than argued — dropping the coalescing,
+turning it into a cache, removing the retry, retrying a deterministic 400,
+forgetting the 429, reporting the last failure instead of the first, letting the
+429 fall back into `err.no_price`, reading a blank env as a real 0, shipping the
+pacer off by default, and sending the key to every host. Each fails between one
+and five tests.
+
+**Config a fix depends on:** nothing — every knob has a working default and the
+fix ships on. ⚠️ But `JUP_API_KEY` in **`tradebot/.env`** (`/opt/dexvra/tradebot/.env`
+— the trade bot reads its OWN `.env`, and that mistake has been made) is the only
+thing that raises the real ceiling rather than dividing it, and a box trading
+five wallets at a time has outgrown the keyless tier. ⚠️ And if the preflight
+says `400 / COULD_NOT_FIND_ANY_ROUTE`, **no configuration will help**: a token
+still on a pump.fun curve becomes buyable when Jupiter can route it, and the
+honest answer is the one the card now gives.
 
 ## Two bot processes, one config
 

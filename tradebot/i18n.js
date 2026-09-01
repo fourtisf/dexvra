@@ -700,6 +700,25 @@ const S = {
     en: "Couldn't read live pricing for this token right now. Please try again in a moment.",
     id: 'Harga live token ini belum bisa dibaca sekarang. Coba lagi sebentar lagi.',
   },
+  // ⚠️ OUR OWN REQUEST BUDGET, NOT A FACT ABOUT THE TOKEN — and for months it
+  // wore the sentence above. Five wallets buying one token fire five quotes,
+  // five swap-builds and five token reads in the same millisecond at a Jupiter
+  // tier metered per IP; the overflow comes back 429, and "Couldn't read live
+  // pricing for this token" sent the user to look at their token while the
+  // answer was the number of wallets they had selected. It says what to do
+  // (fewer wallets, or a key) because a diagnosis with no hands attached is a
+  // bug report the code files against its owner.
+  'err.rate_limited': {
+    en: "Jupiter is rate-limiting this server right now, so the {act} was not sent — nothing was spent. Try again in a few seconds, or with fewer wallets at once.",
+    id: 'Jupiter sedang membatasi request dari server ini, jadi {act}-nya tidak dikirim — tidak ada dana yang keluar. Coba lagi beberapa detik, atau pakai lebih sedikit wallet sekaligus.',
+  },
+  // Their side, not ours and not the token's. "Try again in a moment" is right
+  // here and wrong for the two neighbours above and below it, which is the whole
+  // reason these are three keys.
+  'err.upstream_down': {
+    en: "The router (Jupiter) is having trouble right now, so the {act} was not sent — nothing was spent. It usually clears within a minute.",
+    id: 'Router-nya (Jupiter) lagi bermasalah, jadi {act}-nya tidak dikirim — tidak ada dana yang keluar. Biasanya pulih dalam semenit.',
+  },
   // ⚠️ NO ROUTE IS A FACT ABOUT THE TOKEN, NOT A HICCUP ON OUR SIDE — and it
   // used to be reported as one. `no route / no liquidity for this token on
   // Jupiter` matched the `err.no_price` rule and came out as "Couldn't read
@@ -839,6 +858,26 @@ function errorKey(raw) {
   // defect the comment above this key describes, on the sentence that produces
   // it most often.
   if (/no route|no liquidity \/ zero quote|not tradable|can't route through/.test(m)) return 'err.no_route';
+  // ⚠️ EVERY ONE OF THESE USED TO BE 'err.no_price', BECAUSE THE WORD `quote` IS
+  // IN THE MESSAGE. `Jupiter quote failed (429)`, `(400)` and `(503)` are three
+  // different facts — our request budget, the token, and Jupiter — and they were
+  // rendered as one sentence telling the user to try again in a moment. For the
+  // 400 that is the very defect the `err.no_route` comment above describes,
+  // reached through the HTTP status instead of through an empty quote: the
+  // parsed-empty door was shut and this one was left open. Ordered before the
+  // no_price rule for exactly that reason, and 400 is checked FIRST because
+  // Jupiter's own refusal codes are the most specific thing in the string.
+  if (/could_not_find_any_route|token_not_tradable|no routes found|could not find any route|not tradable/.test(m)) return 'err.no_route';
+  if (/rate.?limit|\(429\)|too many requests/.test(m)) return 'err.rate_limited';
+  // ⚠️ A SWAP-BUILD 5xx KEEPS ITS OWN KEY, and this order is the whole reason
+  // the generic upstream rule below it is safe to add. `err.build_failed` exists
+  // for exactly this status on exactly this endpoint — Jupiter PRICED the token
+  // and then refused to build the transaction, which the v6-vs-v1 body spelling
+  // produced in production as a 500 — and it says the more useful thing ("try a
+  // smaller amount") than "their side is down". A more specific fact must not be
+  // swallowed by a rule written for the general one.
+  if (/swap-build (failed|is unavailable)|returned no swap transaction/.test(m)) return 'err.build_failed';
+  if (/is unavailable \(5\d\d\)|\(50[0-4]\)|bad gateway|service unavailable|gateway time/.test(m)) return 'err.upstream_down';
   if (/could not (read|price)|pool read|quote|no pool|no liquidity/.test(m)) return 'err.no_price';
   if (/private beta|not allowed|notallowed/.test(m)) return 'err.restricted';
   // THE AGGREGATOR PRICED IT AND THEN REFUSED TO BUILD THE TRANSACTION. A
@@ -848,7 +887,6 @@ function errorKey(raw) {
   // is what a user saw on all five wallets at once with no way to tell whether
   // their money had moved. `swapBody`'s v6-vs-v1 spelling produced exactly this
   // in production once already; see the note in solana.js.
-  if (/swap-build failed|returned no swap transaction/.test(m)) return 'err.build_failed';
   // Sent, and the chain rejected it. Belongs with the revert family, not with
   // "nothing happened": the signature fee is spent either way.
   if (/transaction failed on-chain|failed on-chain/.test(m)) return 'err.slippage';

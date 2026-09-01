@@ -18,6 +18,19 @@ const upstreams = require(path.join(__dirname, '..', 'upstreams'));
 const { Connection, Keypair } = require('@solana/web3.js');
 
 const RPC = (process.env.SOLANA_RPC || 'https://api.mainnet-beta.solana.com').trim();
+// A mint to interrogate, taken as a bare argument. There is deliberately no
+// usage line offering `<mint>`: this repo has had a bracketed placeholder pasted
+// into a live shell three times, and bash reads `<` as a redirect, so the
+// command dies before the script runs. With no argument the script simply runs
+// the standing checks and SAYS, in prose, what an address would add.
+const ASK = process.argv.slice(2).find((a) => !a.startsWith('-')) || '';
+// Five, because five is what the reported buy used. `--wallets=N` reproduces
+// whatever selection an operator actually trades with.
+const WALLETS = (() => {
+  const f = process.argv.find((a) => /^--wallets=\d+$/.test(a));
+  const n = f ? Number(f.split('=')[1]) : 5;
+  return Math.max(1, Math.min(10, Number.isFinite(n) && n > 0 ? n : 5));
+})();
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';   // a known, always-liquid mint
 const MN = 'legal winner thank year wave sausage worth useful legal winner thank yellow';
 const MN_SOL = 'BLeUXTx9thHGT7VJUtF9vHEmfMDgW1nnKZ9UVer2CoLX';   // Phantom-path anchor (must never change)
@@ -102,6 +115,75 @@ async function check(name, fn) {
     console.log('     via ' + solana.pumpBase());
     return c.length + ' recent launches';
   });
+
+  // ── WHY DID THE BUY FAIL FOR THIS TOKEN? ──────────────────────────────────
+  //
+  // A live buy card, 2026-09-01: five wallets, `$E5iD…pump`, every one of them
+  // reading "Couldn't read live pricing for this token right now." THREE
+  // different facts render as that one sentence, and they need three different
+  // answers — so the point of this section is to say WHICH, on the box, with
+  // the status and the body Jupiter actually sent.
+  //
+  //   429 → our own per-IP budget, spent by the OTHER wallets in the same buy.
+  //   400 → Jupiter has no route for this mint. Retrying changes nothing.
+  //   5xx → Jupiter. Not us and not the token.
+  //
+  // It is measured rather than reasoned about, because whether Jupiter answers
+  // this box today is a property of this box's egress and of Jupiter's current
+  // limits — the rule `raid:check`, `launchpads:check` and `fonts:check` all
+  // state, one process over.
+  if (ASK) {
+    if (!solana.isSolAddress(ASK)) {
+      // ⚠️ DIAGNOSED, NOT BOUNCED TO A USAGE SCREEN. A non-address argument is
+      // usually a truncated paste or a placeholder somebody was offered, and
+      // "that is not valid" points at the wrong problem.
+      console.log('\n' + ASK + '\n  ✗ that is not a Solana mint — a mint is 32–44 base58 characters');
+      console.log('    (base58 has no 0, O, I or l. A pump.fun mint ends in "pump".)');
+      process.exit(1);
+    }
+    console.log('\nThis token — ' + ASK);
+    const size = 10000000n;   // 0.01 SOL, the size a real buy is
+    let verdict = null;
+    await check('Jupiter quote for this mint (0.01 SOL)', async () => {
+      const q = await solana.getQuote({ inputMint: solana.WSOL_MINT, outputMint: ASK, amountRaw: size, slippageBps: 100 });
+      verdict = 'ok';
+      return 'out ' + q.outAmount + ' units · impact ' + q.priceImpactPct + '% — Jupiter CAN route this token';
+    });
+    if (verdict !== 'ok') {
+      // THE BURST IS THE THING BEING TESTED, because one quote at a time is not
+      // what a five-wallet buy does. A single quote passing while the fan-out
+      // fails IS the diagnosis — it is our request budget, not the token.
+      console.log('\n  One quote at a time failed. Trying it again, alone, to tell a\n'
+        + '  rate limit apart from a token Jupiter will not route…');
+    }
+    // The reported shape, reproduced: N wallets, one token, one instant.
+    await check(WALLETS + ' concurrent quotes (what a ' + WALLETS + '-wallet buy really does)', async () => {
+      solana._resetBudget();
+      const rs = await Promise.allSettled(Array.from({ length: WALLETS }, (_, i) =>
+        // Distinct amounts, so the in-flight coalescing cannot mask the load —
+        // a check that measured the optimisation instead of the budget would
+        // print green over exactly the burst it exists to size.
+        solana.getQuote({ inputMint: solana.WSOL_MINT, outputMint: ASK, amountRaw: size + BigInt(i), slippageBps: 100 })));
+      const bad = rs.filter((r) => r.status === 'rejected');
+      if (bad.length) throw new Error(bad.length + '/' + WALLETS + ' failed · first: ' + (bad[0].reason && bad[0].reason.message));
+      return 'all ' + WALLETS + ' quoted — a multi-wallet buy on this token fits inside the budget';
+    });
+    console.log('\n  Reading the two lines above:');
+    console.log('    • both ✅  → the bot can buy this token from this box right now.');
+    console.log('    • single ✅, concurrent ❌  → the REQUEST BUDGET, not the token.');
+    console.log('        Jupiter meters the keyless tier per IP. Set JUP_API_KEY in');
+    console.log('        tradebot/.env to raise it, or buy with fewer wallets at once.');
+    console.log('    • both ❌ with 400 / COULD_NOT_FIND_ANY_ROUTE  → Jupiter has no');
+    console.log('        route for this mint yet. Nothing here can change that; a');
+    console.log('        pump.fun token becomes routable once its curve has traded.');
+    console.log('    • both ❌ with 5xx  → Jupiter. Wait it out.');
+    console.log('    • both ❌ with "can\'t reach"  → this box cannot reach Jupiter at all.');
+  } else {
+    // Prose, and no command with a blank in it. See the note at ASK.
+    console.log('\n  Add a Solana mint address as the only argument to ask why a buy for');
+    console.log('  that one token failed — it separates a rate limit from a token');
+    console.log('  Jupiter cannot route, which look identical from Telegram.');
+  }
 
   const fail = results.filter((r) => !r.ok).length;
   console.log('\n' + (fail ? '❌ ' + fail + ' check(s) FAILED — fix these before enabling Solana with real funds.' : '✅ All Solana preflight checks passed — the live integration paths work.') + '\n');

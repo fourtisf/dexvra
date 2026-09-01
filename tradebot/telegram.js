@@ -5686,6 +5686,16 @@ async function start() {
     const prio = Number(core.CFG.solPriorityLamports) || 0;
     console.log(`[boot] solana: rpc ${process.env.SOLANA_RPC ? 'custom' : 'PUBLIC default (rate-limited)'}`
       + ` · priority fee ${prio > 0 ? prio + ' lamports (~' + (prio / 1e9).toFixed(6) + ' SOL/trade)' : 'OFF — transactions queue behind every paying one'}`);
+    // …AND THE THIRD KNOB, WHICH IS THE ONE FIVE WALLETS RAN OUT OF. The keyless
+    // Jupiter tier is metered per IP, so a multi-wallet buy is a burst against a
+    // bucket the whole box shares — and every wallet reported the 429 as
+    // "Couldn't read live pricing for this token". Whether a key is SET is the
+    // fact worth printing; the key itself never is, for the reason the RPC url
+    // is not (this line goes to pm2's log). A budget nobody can read is how this
+    // one stayed invisible while it was failing trades.
+    console.log(`[boot] jupiter: ${solana.jupKeyed() ? 'KEYED (api.jup.ag — higher per-key ceiling)' : 'keyless lite tier (metered per IP — set JUP_API_KEY to raise it)'}`
+      + ` · pacing ${solana.JUP_MIN_GAP_MS > 0 ? solana.JUP_MIN_GAP_MS + 'ms between requests' : 'OFF (JUP_MIN_GAP_MS=0)'}`
+      + ` · ${solana.JUP_RETRIES} retry(ies) on 429/5xx`);
   }
   // Which optional venues this process can actually use. A v4 token reads as
   // "couldn't price it" when v4 is unreachable, and that looked exactly like a
