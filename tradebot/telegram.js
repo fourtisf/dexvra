@@ -3628,8 +3628,13 @@ async function onMessageImpl(m) {
   if (text === '/health') {
     if (!core.CFG.admins.includes(String(chatId))) return send(chatId, 'Not authorized.');
     const h = watchers.health();
+    // ⚠️ NOT A LOOP, AND THIS MAP IS RENDERED AS LOOPS. `jupiter` carries the
+    // request-budget counters, and left in `names` it drew a meaningless
+    // "🟢 jupiter — ran never" row while showing NONE of the numbers it exists
+    // for — a value nobody can read is the same as no value, committed by the
+    // very change that added it. Pulled out and rendered on its own below.
+    const jup = h.jupiter; delete h.jupiter;
     const names = Object.keys(h);
-    if (!names.length) return send(chatId, '🩺 <b>Watcher health</b>\n\nNo loops have run yet.');
     const age = (ms) => ms == null ? 'never' : (ms < 60000 ? Math.round(ms / 1000) + 's' : Math.round(ms / 60000) + 'm') + ' ago';
     const lines = names.map((n) => {
       const x = h[n];
@@ -3646,7 +3651,21 @@ async function onMessageImpl(m) {
       }
       return `${x.stale ? '🔴' : '🟢'} <b>${n}</b> — ran ${age(x.ageMs)}${x.err ? ` · ⚠️ ${esc(x.err.slice(0, 80))}` : ''}${extra}`;
     });
-    return send(chatId, `🩺 <b>Watcher health</b>\n\n${lines.join('\n')}\n\n<i>🔴 = a loop hasn't run in > 3× its interval (likely stuck). Errors show the last failure.</i>`);
+    // THE REQUEST BUDGET, in the one place an operator already looks. `refused`
+    // is the only number that means a trade was lost; `absorbed` is a 429 the
+    // retry got past, which cost latency and nothing else. Rendering them as one
+    // number would make a healthy budget read as a broken one.
+    let jupBlock = '';
+    if (jup) {
+      const bad = jup.sinceRefusedMs != null && jup.sinceRefusedMs < 900000;
+      jupBlock = `\n\n${bad ? '🔴' : '🟢'} <b>Jupiter budget</b> — ${esc(jup.tier)}`
+        + `\n     └ ${jup.requests} request(s) · ${jup.rateLimited} × 429 · ${jup.absorbedByRetry} absorbed by retry`
+        + `\n     └ <b>${jup.refusedTrades}</b> trade(s) refused by our own budget`
+        + (jup.sinceRefusedMs != null ? ` (last ${age(jup.sinceRefusedMs)})` : '')
+        + (bad ? `\n     └ ⚠️ ${esc(String(jup.lastRefusedWhy || 'rate limited'))} — set <code>JUP_API_KEY</code> in tradebot/.env, or trade fewer wallets at once` : '');
+    }
+    if (!names.length) return send(chatId, `🩺 <b>Watcher health</b>\n\nNo loops have run yet.${jupBlock}`);
+    return send(chatId, `🩺 <b>Watcher health</b>\n\n${lines.join('\n')}${jupBlock}\n\n<i>🔴 = a loop hasn't run in > 3× its interval (likely stuck). Errors show the last failure.</i>`);
   }
   if (text.startsWith('/userkey')) return adminUserKey(chatId, text.split(/\s+/)[1]);
   if (text.startsWith('/stats')) return adminStats(chatId);

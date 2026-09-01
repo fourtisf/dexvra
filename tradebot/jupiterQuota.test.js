@@ -361,7 +361,41 @@ test('the watchdog probes the BUDGET, and does so without spending it', async ()
   assert.match(red.detail, /fewer wallets/);
 });
 
-// ── 6. The key is the only thing that raises the ceiling ─────────────────────
+// ── 6. The fact is retrievable, not only printed once ────────────────────────
+
+test('jup:check requires core BEFORE solana, or it reads an empty environment', () => {
+  // ⚠️ ORDER IS THE RULE, NOT PRESENCE, and this repo has already shipped the
+  // wrong version of this guard once: `loadEnv`'s first cut matched the call
+  // ANYWHERE in the file, so deleting the real one at the top left it green.
+  // `core.js` loads tradebot/.env into process.env and `solana.js` reads
+  // JUP_API_KEY at MODULE-EVAL time — so requiring solana first reports an
+  // operator's correctly-set key as missing, which is a diagnostic about
+  // nothing. The assertion compares POSITIONS.
+  const fs = require('node:fs');
+  const src = fs.readFileSync(require.resolve('./scripts/jup-check.js'), 'utf8')
+    .replace(/^\s*\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+  const core = src.indexOf("'..', 'core'");
+  const sol = src.indexOf("'..', 'solana'");
+  assert.ok(core > 0 && sol > 0, 'the check no longer requires both — it cannot be reading the bot\'s own config');
+  assert.ok(core < sol, 'solana is required before core, so JUP_API_KEY is read from an environment that has not been loaded yet');
+});
+
+test('jup:check never prints the key, not even a fragment', () => {
+  // This output is read off a terminal that gets screenshotted. "set, 68 chars,
+  // starts with jup_" answers the question without putting live credentials on
+  // screen — the same rule the boot line follows for the RPC url, which carries
+  // its own key in the path.
+  const fs = require('node:fs');
+  const src = fs.readFileSync(require.resolve('./scripts/jup-check.js'), 'utf8')
+    .replace(/^\s*\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+  // Only the LENGTH and the leading 4 characters (which are the literal scheme
+  // prefix every Jupiter key shares) may be printed.
+  const slices = [...src.matchAll(/key\.slice\(([^)]*)\)/g)].map((m) => m[1].trim());
+  assert.deepEqual(slices, ['0, 4'], 'a slice of the key beyond its 4-char prefix reached the screen');
+  assert.doesNotMatch(src, /console\.log\([^)]*\bkey\b[^)]*\)/, 'the raw key must never be interpolated into output');
+});
+
+// ── 7. The key is the only thing that raises the ceiling ─────────────────────
 
 test('JUP_API_KEY rides jup.ag requests and nothing else', () => {
   // A header applied BY HOST, so an operator's key is never posted to a base it

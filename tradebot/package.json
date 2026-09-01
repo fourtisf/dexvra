@@ -9,6 +9,7 @@
     "start": "node index.js",
     "preflight:solana": "node scripts/solana-preflight.js",
     "preflight:robinhood": "node scripts/robinhood-preflight.js",
+    "jup:check": "node scripts/jup-check.js",
     "abi:check": "node scripts/abi-check.js",
     "venue:check": "node scripts/venue-check.js",
     "launchpads:check": "node scripts/launchpads-check.js",

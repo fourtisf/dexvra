@@ -5808,6 +5808,60 @@ instantly.
 [boot] jupiter: keyless lite tier (metered per IP — set JUP_API_KEY to raise it) · pacing 90ms between requests · 2 retry(ies) on 429/5xx
 ```
 
+### "bagaimana agar masalah ini tidak terjadi lgi" — the answer was in a line that had already scrolled away
+
+The key was set correctly (`OK, baris JUP_API_KEY sekarang berjumlah: 1`), the
+deploy landed, the process restarted — and the verification step came back
+**empty**:
+
+```
+pm2 logs dexvra-tradebot --lines 40 --nostream | grep -F '[jup'
+```
+
+Nothing. On a box where the boot line was certainly printed. ⚠️ **The snipe loop
+writes several lines a second**, so a line printed at boot is past forty within
+seconds — and this file already records that exact failure one feature over:
+the `[curve]` refusal line cost four rounds of investigation because an
+operator's `grep` came back empty on a box producing it. **A fact that lives
+only in a log line is not retrievable**, and handing somebody `--lines 40` is
+handing them a flashlight with the batteries out.
+
+- **`jup:check` asks it on demand**, and asks the harder half too: a key that is
+  set and REFUSED reads identically from the configuration, because the fallback
+  is deliberately fail-safe. So it makes one real request and reports **which
+  base answered** — a keyed box that answers from `lite-api` is a rejected key,
+  and nothing else can tell you that.
+- ⚠️ **It requires `core` BEFORE `solana`, and a test compares the POSITIONS.**
+  `core.js` loads `tradebot/.env` and `solana.js` reads `JUP_API_KEY` at
+  module-eval time, so the other order reports a correctly-set key as missing —
+  a diagnostic about nothing. The same ORDER-not-presence rule `loadEnv.test.js`
+  had to learn after its first cut matched the call anywhere in the file and
+  stayed green over the deletion.
+- ⚠️ **It never prints the key, not even a fragment.** This output is read off a
+  terminal that gets screenshotted — the operator has sent three. Its length and
+  its 4-character scheme prefix answer the question; a test pins that no wider
+  slice can reach the screen, and that guard is mutation-tested.
+- **It names the FILE it read.** "not set" over a path that exists is a missing
+  line in that file; over one that does not, it is an `.env` written to
+  `/opt/dexvra/.env` instead of `/opt/dexvra/tradebot/.env` — a mistake this
+  file already records being made.
+- ⚠️ **It does NOT print the counters.** They live in the RUNNING BOT's process
+  and this is a different one, whose own are all zero. Printing them would be a
+  diagnostic reporting its own state as the server's, which is the defect
+  `trending:check` was caught by. It points at `/health` instead.
+
+⚠️ **AND `/health` WAS RENDERING THE COUNTERS AS A LOOP.** `out.jupiter` was
+added to the same flat map `/health` iterates as background loops, so it drew a
+meaningless `🟢 jupiter — ran never` row and showed **none of the numbers it
+exists for** — "a value nobody can read is the same as no value", committed by
+the change written to end it. It is its own block now, and `refused` (a trade
+lost) is rendered apart from `absorbed` (a 429 the retry got past), because
+collapsing them makes a healthy budget read as a broken one.
+
+```bash
+cd /opt/dexvra/tradebot && npm run jup:check    # is the key live, and is it ACCEPTED?
+```
+
 ### Which of the three it was is MEASURED on the box
 
 ⚠️ Whether Jupiter answers this server today is a property of this box's egress
