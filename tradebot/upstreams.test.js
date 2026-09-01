@@ -45,7 +45,11 @@ test('the swap build is its own probe, not assumed from the quote', () => {
 
 test('critical means "users cannot trade", and is not handed out freely', () => {
   const crit = upstreams.PROBES.filter((p) => p.critical).map((p) => p.key);
-  assert.deepStrictEqual(crit.sort(), ['jupiter.quote', 'jupiter.swap']);
+  // `jupiter.budget` earns it, and the bar it had to clear is worth stating: it
+  // goes red ONLY when a rate limit actually REACHED a caller — i.e. a user
+  // watched a buy fail — never on a 429 the retry absorbed, which cost latency
+  // and nothing else. That distinction is what keeps this list short.
+  assert.deepStrictEqual(crit.sort(), ['jupiter.budget', 'jupiter.quote', 'jupiter.swap']);
   // A blind snipe feed and a card missing its price are real, but they are not
   // the same emergency as every buy failing. An alert where everything is
   // critical is an alert with no priority in it.

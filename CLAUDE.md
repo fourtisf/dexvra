@@ -5817,6 +5817,77 @@ forgetting the 429, reporting the last failure instead of the first, letting the
 pacer off by default, and sending the key to every host. Each fails between one
 and five tests.
 
+### "bagaimana agar masalah ini tidak terjadi lgi" — the watchdog was probing the wrong question
+
+Asked the moment the fix landed, and it is the right question, because
+**everything above fixes the cause we found and nothing above would have TOLD
+anybody.** The five red crosses were detected by a person reading Telegram and
+counting. Nothing in this bot has ever said *"Jupiter refused us fourteen times
+today"* — the same shape as the three-round "trending minimal harus 5" saga and
+the three-round blank-percentage one, and the answer is the same: **watch the
+SYMPTOM, because the causes keep changing.**
+
+⚠️ **AND `upstreams.js` WAS ALREADY GREEN THROUGH THIS OUTAGE.** `jupiter.quote`
+asks ONE question; the buy that failed asked fifteen. A single probe request is
+exactly what a spent per-IP budget still has room for — so the watchdog would
+have gone on printing 🟢 while every multi-wallet buy came back a red cross.
+That is `fonts:check`'s nine green ticks over a banner publishing boxes, one API
+over: **a guard is only honest while it measures the thing that actually runs.**
+
+- **`jupiter.budget` is the probe, and it makes NO REQUEST.** ⚠️ The obvious fix
+  — probe harder, fire five concurrent quotes a sweep — is the monitor causing
+  the outage it monitors. It reads counters taken from the REAL traffic instead,
+  which costs nothing and measures the users' requests rather than its own.
+- ⚠️ **`absorbed` and `refused` are different facts and must never be one
+  number.** A 429 the retry got past cost LATENCY; one that reached the caller
+  cost a TRADE. Alerting on the first is a channel nobody reads by the second
+  hour; not alerting on the second is how this went unseen in the first place.
+  Only `refused` turns the probe red — which is also the bar that earns it
+  `critical`, and `upstreams.test.js` pins the critical set so a fourth cannot
+  be handed one quietly.
+- **A request held on one base and SERVED by the next was never a refusal.** It
+  is counted where the failure leaves the transport, once, or the alert fires on
+  a budget that is working.
+- **It rides the existing watchdog**, so it inherits every rule that machinery
+  already paid for: transition only, a RECOVERY is an alert too, the boot sweep
+  reports an outage it woke up into, and the ops channel gets it.
+- **`/health` carries the same counters**, because the sweep is every ten
+  minutes and an operator looking at a failing buy right now should not have to
+  wait for one.
+
+### ⚠️ A 429 IS THE ONE STATUS THE FAILOVER RULE DOES NOT COVER
+
+Found by the audit round on this very fix. *"Fail over on a TRANSPORT error
+only — an HTTP status means the host answered, and the same request gets the
+same status everywhere else"* has a stated REASON, and that reason is **false of
+a rate limit**: a 429 is a fact about the bucket on THAT HOST, and `api.jup.ag`
+(keyed) and `lite-api.jup.ag` (keyless) have genuinely different ones. Exactly
+the exception the IPFS gateway list already carries for a 404 — a CID is the
+hash of the bytes, so the status is about the gateway and not about the content.
+
+The first cut returned the 429 without ever trying the second base, throwing
+away the one fallback that could still have filled the trade. A 400 still ends
+the lookup outright, which is what the rule was written for.
+
+- ⚠️ **AND THE TEST FOR IT PASSED ON THE BROKEN VERSION.** Two branches reach
+  the next base — "the retries ran out" and "the wait is longer than a trade can
+  afford" — and the test only ever drove the second, because a `Retry-After:
+  600` leaves through it. Deleting the failover from the first broke nothing any
+  test could see. **The mutation is what said so**, not review: a 429 with no
+  `Retry-After` is the case that retries until it runs out, and it is now driven
+  explicitly. A test that passes for the wrong reason is how the next round
+  starts.
+
+```bash
+cd tradebot && SKIP_DOTENV=1 node --test jupiterQuota.test.js upstreams.test.js   # 40 tests, no network
+pm2 logs dexvra-tradebot --lines 50 --nostream | grep -F '[upstream]'              # is the watch armed, and what did it find
+```
+
+Fourteen guarantees are MUTATION-TESTED rather than argued — the ten above plus
+the failover on 429, collapsing `absorbed` into `refused`, not counting a
+refused trade at all, a probe that spends the budget it monitors, and the probe
+losing `critical`. Each fails between one and four tests.
+
 **Config a fix depends on:** nothing — every knob has a working default and the
 fix ships on. ⚠️ But `JUP_API_KEY` in **`tradebot/.env`** (`/opt/dexvra/tradebot/.env`
 — the trade bot reads its OWN `.env`, and that mistake has been made) is the only

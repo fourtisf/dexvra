@@ -2808,6 +2808,20 @@ function health() {
     out.caSnipe.sinceFiredMs = _caSnipeStats.lastFiredAt ? now - _caSnipeStats.lastFiredAt : null;
     out.caSnipe.err = _caSnipeStats.lastErr || null;
   }
+  // OUR OWN REQUEST BUDGET, which is a different question from "is Jupiter up"
+  // and was the answer to five red crosses on one buy. The watchdog sweeps every
+  // ten minutes; an operator looking at a failing buy right now should not have
+  // to wait for it. `refused` is the only number that means a trade was lost —
+  // `absorbed` is a 429 the retry got past, which cost latency and nothing else,
+  // and collapsing the two would make a healthy budget read as a broken one.
+  if (core.chains.isEnabled('solana')) {
+    const j = solana.jupStats();
+    out.jupiter = {
+      tier: solana.jupKeyed() ? 'keyed' : 'keyless (metered per IP)',
+      requests: j.req, rateLimited: j.r429, absorbedByRetry: j.absorbed,
+      refusedTrades: j.refused, sinceRefusedMs: j.sinceRefusedMs, lastRefusedWhy: j.lastRefusedWhy || null,
+    };
+  }
   // Third parties, as of the last watchdog sweep. `/health` answering "the loops
   // are running" while every Solana buy fails at Jupiter is the gap this closes.
   if (_lastUpstream) {

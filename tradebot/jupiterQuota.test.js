@@ -156,6 +156,49 @@ test('a 429 is recorded process-wide so the next request waits instead of spendi
     'a request made during the hold is a 429 we paid for twice');
 });
 
+test('a 429 reaches the OTHER base, because a bucket is not the request', async () => {
+  // ⚠️ The failover rule's own stated reason — "the same request gets the same
+  // status everywhere else" — is FALSE of a rate limit: 429 is a fact about the
+  // bucket on THAT host, and a keyed base and the keyless one have different
+  // ones. The same exception the IPFS gateway list carries for a 404. The first
+  // cut of the retry returned the 429 without ever trying the second base,
+  // which threw away the one fallback that could still have filled the trade.
+  const seen = [];
+  global.fetch = async (url) => {
+    seen.push(String(url));
+    if (String(url).includes('lite-api')) {
+      return { ok: false, status: 429, headers: { get: (k) => (String(k).toLowerCase() === 'retry-after' ? '600' : null) }, json: async () => ({}), text: async () => 'slow down', body: null };
+    }
+    return { ok: true, status: 200, headers: { get: () => null }, json: async () => QUOTE, text: async () => '', body: null };
+  };
+  const q = await solana.getQuote(ARGS);
+  assert.equal(q.outAmount, 2500000n, 'a throttled base must not fail a buy another base can fill');
+  assert.ok(seen.some((u) => u.includes('quote-api.jup.ag')));
+  assert.equal(solana.jupStats().refused, 0, 'nobody was refused — the trade filled');
+});
+
+test('…and also when the RETRIES are what ran out, not the patience', async () => {
+  // ⚠️ THE TEST ABOVE PASSED FOR THE WRONG REASON AND THE MUTATION PROVED IT. A
+  // `Retry-After: 600` leaves through the "longer than a trade can wait" branch,
+  // so removing the failover from the EXHAUSTED-ATTEMPTS branch broke nothing
+  // any test could see. Two branches reach the next base and both have to be
+  // driven; a 429 with no Retry-After is the one that retries until it runs out.
+  solana._resetBudget();
+  const seen = [];
+  global.fetch = async (url) => {
+    seen.push(String(url));
+    if (String(url).includes('lite-api')) {
+      return { ok: false, status: 429, headers: { get: () => null }, json: async () => ({}), text: async () => 'slow down', body: null };
+    }
+    return { ok: true, status: 200, headers: { get: () => null }, json: async () => QUOTE, text: async () => '', body: null };
+  };
+  const q = await solana.getQuote(ARGS);
+  assert.equal(q.outAmount, 2500000n);
+  assert.equal(seen.filter((u) => u.includes('lite-api')).length, solana.JUP_RETRIES + 1, 'every attempt should have been spent before moving on');
+  assert.ok(seen.some((u) => u.includes('quote-api.jup.ag')), 'out of retries is not out of options');
+  assert.equal(solana.jupStats().refused, 0);
+});
+
 test('a 400 is never retried — the same request gets the same status everywhere', async () => {
   // The base-failover rule, unweakened: only 429 and 5xx mean "ask again".
   const calls = scripted([{ status: 400, body: { errorCode: 'COULD_NOT_FIND_ANY_ROUTE' } }]);
@@ -245,7 +288,80 @@ test('a transport failure is still offline, never a rate limit', () => {
   assert.equal(i18n.errorKey('buy failed on Solana: fetch failed'), 'err.offline');
 });
 
-// ── 5. The key is the only thing that raises the ceiling ─────────────────────
+// ── 5. The operator stops being the detector ─────────────────────────────────
+
+test('a refusal is counted; a 429 the retry got past is NOT', async () => {
+  // ⚠️ THESE MUST NOT BE ONE NUMBER. A 429 the retry absorbed cost LATENCY; one
+  // that reached the caller cost a TRADE. Alerting on the first is a channel
+  // nobody reads by the second hour; not alerting on the second is exactly how
+  // five red crosses went unseen until a person counted them in Telegram.
+  scripted([{ status: 429, headers: { 'retry-after': '1' } }, { status: 200 }]);
+  await solana.getQuote(ARGS);
+  const a = solana.jupStats();
+  assert.equal(a.absorbed, 1, 'a rate limit the retry got past is not a lost trade');
+  assert.equal(a.refused, 0);
+  assert.equal(a.r429, 1, '…but it still happened, and the count is the early warning');
+  assert.ok(a.sinceOkMs != null);
+
+  solana._resetBudget();
+  scripted([{ status: 429, headers: { 'retry-after': '600' } }]);
+  await assert.rejects(() => solana.getQuote(ARGS));
+  const b = solana.jupStats();
+  assert.equal(b.refused, 1, 'a rate limit that reached the caller IS a lost trade');
+  assert.ok(b.sinceRefusedMs < 5000);
+  assert.match(b.lastRefusedWhy, /429/);
+});
+
+test('a request held on one base and served by the next is NOT a refusal', async () => {
+  // Booking that as a lost trade would make the alert fire on a budget that is
+  // working — the counter has to mean what the alert claims it means.
+  let n = 0;
+  global.fetch = async (url) => {
+    n++;
+    // The first host refuses hard; the legacy base answers.
+    if (String(url).includes('lite-api')) {
+      return { ok: false, status: 429, headers: { get: (k) => (String(k).toLowerCase() === 'retry-after' ? '600' : null) }, json: async () => ({}), text: async () => 'slow down', body: null };
+    }
+    return { ok: true, status: 200, headers: { get: () => null }, json: async () => QUOTE, text: async () => '', body: null };
+  };
+  // First call: lite refuses (counted), quote-api serves it.
+  const q = await solana.getQuote(ARGS);
+  assert.equal(q.outAmount, 2500000n);
+  const before = solana.jupStats().refused;
+  // Second, different call: lite is now HELD, so it is skipped entirely and
+  // quote-api serves it. Nothing was refused to anybody.
+  await solana.getQuote(Object.assign({}, ARGS, { amountRaw: 777n }));
+  assert.equal(solana.jupStats().refused, before, 'a hold that another base absorbed is not a lost trade');
+});
+
+test('the watchdog probes the BUDGET, and does so without spending it', async () => {
+  // ⚠️ `jupiter.quote` asks ONE question and the failed buy asked fifteen — a
+  // single probe request is exactly what a spent budget still has room for, so
+  // that probe can print 🟢 straight through this outage. And the fix is NOT to
+  // probe harder: a watchdog firing five concurrent quotes every sweep would be
+  // spending the budget it monitors.
+  const upstreams = require('./upstreams');
+  const p = upstreams.PROBES.find((x) => x.key === 'jupiter.budget');
+  assert.ok(p, 'the budget has no probe — the watchdog is back to measuring only reachability');
+  assert.equal(p.critical, true, 'a budget refusing buys is users unable to trade');
+  assert.match(p.costs, /red cross|wallet/i, 'costs must say what the USER loses, not which host is down');
+
+  let calls = 0;
+  global.fetch = async () => { calls++; throw new Error('a budget probe must not make a request'); };
+  const green = await p.run();
+  assert.equal(calls, 0);
+  assert.equal(green.ok, true, 'a clean box is green');
+
+  // …and it goes red on a refusal, naming the knob rather than the host.
+  scripted([{ status: 429, headers: { 'retry-after': '600' } }]);
+  await assert.rejects(() => solana.getQuote(ARGS));
+  const red = await p.run();
+  assert.equal(red.ok, false);
+  assert.match(red.detail, /JUP_API_KEY/, 'a diagnosis with no hands attached is a bug report filed against the owner');
+  assert.match(red.detail, /fewer wallets/);
+});
+
+// ── 6. The key is the only thing that raises the ceiling ─────────────────────
 
 test('JUP_API_KEY rides jup.ag requests and nothing else', () => {
   // A header applied BY HOST, so an operator's key is never posted to a base it

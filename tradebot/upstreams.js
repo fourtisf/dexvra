@@ -41,6 +41,10 @@ const launchpads = require('./launchpads');
 
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';   // always-liquid, so a failure is never "no route"
 const PROBE_LAMPORTS = 10000000n;                                // 0.01 SOL — priced, never sent
+// How recent a refusal has to be to still count as "happening now". Wider than
+// the default sweep (10 min), or a refusal landing just after a sweep is missed
+// entirely and the alert never fires for an outage that is live.
+const BUDGET_WINDOW_MS = Math.max(60000, Number(process.env.JUP_BUDGET_WINDOW_MS || 900000));
 
 /** Wrap a probe so it always resolves, and always within `ms`. */
 function guard(ms, fn) {
@@ -116,6 +120,47 @@ const PROBES = [
       const n = Buffer.from(tx, 'base64').length;
       if (!(n > 100)) throw new Error('swap transaction too small to be real');
       return `tx ${n} bytes`;
+    }),
+  },
+  {
+    // ⚠️ THE PROBE ABOVE ASKS ONE QUESTION. THE BUY THAT FAILED ASKED FIFTEEN.
+    //
+    // A five-wallet buy fires five quotes, five token reads and five swap-builds
+    // in one millisecond at a tier metered per IP — and `jupiter.quote` sails
+    // through a budget that is refusing every one of them, because a single
+    // probe request is exactly what a spent budget still has room for. So this
+    // watchdog was, and would have remained, capable of printing 🟢 straight
+    // through the reported outage. That is `fonts:check`'s nine green ticks over
+    // a banner publishing boxes, one API over: a guard is only honest while it
+    // measures the thing that actually runs.
+    //
+    // ⚠️ AND THE FIX IS NOT TO PROBE HARDER. A watchdog that fired five
+    // concurrent quotes every sweep would be spending the budget it monitors —
+    // the monitor causing the outage. It reads COUNTERS instead, taken from the
+    // real traffic, which costs nothing and measures the users' requests rather
+    // than its own.
+    key: 'jupiter.budget',
+    label: 'Jupiter request budget',
+    critical: true,
+    // What the USER loses, in their words. "lite-api.jup.ag 429" does not tell
+    // an operator whether to stop the bot or finish dinner; this says the buys
+    // are failing for a reason that is OURS.
+    costs: 'buys fail with a red cross on every wallet — our own per-IP request budget, not the token',
+    run: guard(2000, async () => {
+      const s = solana.jupStats();
+      // A REFUSAL IS THE SYMPTOM; AN ABSORBED 429 IS NOT. One that the retry got
+      // past cost latency and nothing else, and alerting on it would be a
+      // channel nobody reads by the second hour. Only a rate limit that REACHED
+      // a caller cost somebody a trade.
+      const fresh = s.sinceRefusedMs != null && s.sinceRefusedMs < BUDGET_WINDOW_MS;
+      const tail = `${s.req} request(s) · ${s.r429} × 429 · ${s.absorbed} absorbed by retry`
+        + (solana.jupKeyed() ? ' · KEYED' : ' · keyless tier');
+      if (fresh) {
+        throw new Error(`${s.refused} buy(s) refused by our own budget, last ${Math.round(s.sinceRefusedMs / 1000)}s ago`
+          + ` — ${s.lastRefusedWhy || 'rate limited'}. ${tail}.`
+          + ' Set JUP_API_KEY in tradebot/.env to raise the ceiling, or trade fewer wallets at once');
+      }
+      return tail;
     }),
   },
   {

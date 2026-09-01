@@ -554,6 +554,40 @@ function _envInt(name, dflt, lo, hi) {
 // them has already noticed gets hammered through by the other, which is the
 // defect `gtPairs.js` names in its own header.
 const _budgets = new Map();
+
+// WHAT THE BUDGET ACTUALLY DID, COUNTED — because the operator was the detector.
+//
+// The five red crosses were reported by a person reading Telegram and counting.
+// Nothing in this bot has ever said "we were refused by Jupiter fourteen times
+// today", so a rate limit that fails trades is invisible until somebody
+// complains — the exact shape this repo has already paid for three times on the
+// trending board and once on the banners.
+//
+// ⚠️ `absorbed` AND `refused` ARE DIFFERENT FACTS AND MUST NOT BE ONE NUMBER. A
+// 429 the retry got past cost LATENCY; a 429 that reached the caller cost a
+// TRADE. Alerting on the first would be a channel nobody reads by the second
+// hour; not alerting on the second is how this went unseen in the first place.
+// Only `refused` is a symptom.
+const _jupStats = { req: 0, r429: 0, absorbed: 0, refused: 0, lastRefusedAt: null, lastRefusedWhy: '', lastOkAt: null };
+/** The counters, plus the ages that make them readable. Cumulative since boot —
+ *  a window is the READER's job (see the `jupiter.budget` probe), because a
+ *  counter that resets itself cannot be diffed by two readers at once. */
+function jupStats() {
+  const now = Date.now();
+  return Object.assign({}, _jupStats, {
+    sinceRefusedMs: _jupStats.lastRefusedAt ? now - _jupStats.lastRefusedAt : null,
+    sinceOkMs: _jupStats.lastOkAt ? now - _jupStats.lastOkAt : null,
+  });
+}
+/** A rate limit that REACHED THE CALLER — i.e. cost somebody a trade. Counted at
+ *  the one place it leaves the transport, never at each place it is noticed, or
+ *  a request held on one base and served by the next would be booked as a
+ *  failure that never happened. */
+function _refused(why) {
+  _jupStats.refused++;
+  _jupStats.lastRefusedAt = Date.now();
+  _jupStats.lastRefusedWhy = String(why || '').slice(0, 160);
+}
 function _budget(host) {
   let b = _budgets.get(host);
   if (!b) { b = { nextAt: 0, holdUntil: 0, why: '' }; _budgets.set(host, b); }
@@ -653,6 +687,19 @@ async function _overBases(bases, get, set, path, init, what) {
   const cur = get();
   const order = cur ? [cur, ...bases.filter((b) => b !== cur)] : bases;
   let last = null;
+  // ⚠️ A 429 IS THE ONE STATUS THE FAILOVER RULE DOES NOT COVER, and the first
+  // cut of this returned it without ever trying the other base. The rule's own
+  // stated reason — "the same request gets the same status everywhere else" —
+  // is FALSE of a rate limit: 429 is a fact about the bucket on THAT HOST, and
+  // `api.jup.ag` (keyed) and `lite-api.jup.ag` (keyless) have genuinely
+  // different ones. Exactly the exception the IPFS gateway list already carries
+  // for a 404: a CID is the hash of the bytes, so the status is about the
+  // gateway and not about the content. A 5xx is the same shape — one
+  // deployment being unwell says nothing about the other.
+  //
+  // So a retryable status keeps the response and moves ON; only when no base can
+  // do better does it become the answer. A 400 still ends the lookup outright.
+  let lastRes = null;
   for (const base of order) {
     const url = base + path;
     const host = hostOf(url);
@@ -668,6 +715,7 @@ async function _overBases(bases, get, set, path, init, what) {
       // exists to end. Same rule the web app's GT client states for its chunks.
       if (held) { last = last || held; break; }
       let r;
+      _jupStats.req++;
       try {
         r = await _fetch(url, Object.assign({}, opt, {
           headers: jupHeaders(url, opt.headers),
@@ -679,7 +727,13 @@ async function _overBases(bases, get, set, path, init, what) {
         break;                                     // transport → the NEXT BASE, the standing rule
       }
       set(base);
-      if (r.ok || !_retryable(r.status) || attempt >= tries) return r;
+      if (r.status === 429) _jupStats.r429++;
+      if (r.ok) { _jupStats.lastOkAt = Date.now(); if (attempt > 0) _jupStats.absorbed++; return r; }
+      // A DETERMINISTIC STATUS ENDS THE WHOLE LOOKUP — the standing rule, and a
+      // 400 is what it was written for: the same request gets the same answer
+      // from every base, so asking another one only doubles the latency.
+      if (!_retryable(r.status)) return r;
+      if (attempt >= tries) { lastRes = lastRes || { r, base }; break; }
       // A 429 is recorded for everything queued behind this request, so the
       // other four wallets wait it out instead of each buying their own.
       const asked = _retryAfterMs(r);
@@ -689,12 +743,21 @@ async function _overBases(bases, get, set, path, init, what) {
       // queued behind this one must know the real number, or they each spend
       // their own 429 discovering it.
       if (r.status === 429) _holdHost(host, wait, `${what} returned 429`);
-      // …and this request waits only as long as a TRADE can afford to.
-      if (wait > JUP_MAX_WAIT_MS || Date.now() + wait > deadline) return r;
+      // …and this request waits only as long as a TRADE can afford to. Out of
+      // patience here is not out of options: the NEXT BASE is tried below.
+      if (wait > JUP_MAX_WAIT_MS || Date.now() + wait > deadline) { lastRes = lastRes || { r, base }; break; }
       try { if (r.body && typeof r.body.cancel === 'function') r.body.cancel(); } catch (_) {}
       await _sleep(wait);
     }
   }
+  // Counted HERE, where the failure leaves the transport — a request held or
+  // throttled on one base and then SERVED by the next was never a refusal, and
+  // booking it as one would make the alert fire on a budget that is working.
+  if (lastRes) {
+    if (lastRes.r.status === 429) _refused(`${what} 429 on every base`);
+    return lastRes.r;   // the caller turns it into the sentence the user reads
+  }
+  if (last && last.rateLimited) _refused(last.message);
   throw last || new Error(`no ${what} base configured`);
 }
 
@@ -1067,13 +1130,16 @@ module.exports = {
   getConnection, solBalance, solBalanceOrNull, splDecimalsOrNull, splBalance, splBalanceOrNull, sendJupiterSwap, sendSplToken, confirmSignature,
   rentExemptMin, transferFee,
   getQuote, getSwapTx, swap, sendSol, splDecimals, jupTokenMeta, splMeta, dexScreener, pumpfunNew,
-  jupErr, jupKeyed: () => !!JUP_API_KEY, jupHeaders,
+  jupErr, jupKeyed: () => !!JUP_API_KEY, jupHeaders, jupStats,
   JUP_MIN_GAP_MS, JUP_RETRIES,
   // ⚠️ THE REQUEST BUDGET IS PROCESS STATE, so a test that trips a 429 leaves a
   // hold behind and the next test reads a rate limit it never caused — which
   // looks exactly like a regression in the code under test. Stated, never
   // inherited: the rule this repo's auto-trend panel helper had to learn.
-  _resetBudget: () => { _budgets.clear(); _jupBase = null; _tokBase = null; _pumpBase = null; _quoteInflight.clear(); },
+  _resetBudget: () => {
+    _budgets.clear(); _jupBase = null; _tokBase = null; _pumpBase = null; _quoteInflight.clear();
+    Object.assign(_jupStats, { req: 0, r429: 0, absorbed: 0, refused: 0, lastRefusedAt: null, lastRefusedWhy: '', lastOkAt: null });
+  },
   _budgets,   // test-only: proves a 429 was recorded once and not paid five times
   _statusQ,   // test-only: proves the batch queue is emptied, not just drained
 };
