@@ -385,8 +385,11 @@ test('JUP_API_KEY moves the bases to the keyed host and sends the header', () =>
     delete require.cache[path];
     const fresh = require('./solana');
     assert.equal(fresh.jupKeyed(), true);
-    assert.match(fresh.JUP_BASES[0], /api\.jup\.ag/, 'the keyed host must lead');
-    assert.ok(fresh.JUP_BASES.some((b) => /lite-api/.test(b)), 'the free tier stays behind it as a fallback');
+    assert.match(fresh.JUP_BASES[0], /^https:\/\/api\.jup\.ag/, 'the keyed host must lead');
+    // Both spellings Jupiter's docs use, because a key on the wrong one is a
+    // 401 and a 401 does not fail over on the standing rule.
+    assert.ok(fresh.JUP_BASES.some((b) => /pro-api\.jup\.ag/.test(b)), 'the other documented paid host was dropped');
+    assert.match(fresh.JUP_BASES[fresh.JUP_BASES.length - 1], /lite-api/, 'the free tier must be LAST — the safety net under a refused key');
     assert.equal(fresh.jupHeaders('https://api.jup.ag/swap/v1/quote')['x-api-key'], 'test-key-abc');
     // …and NOWHERE ELSE. A key posted to a host it does not belong to is a
     // leaked credential; this is a header applied by HOST for that reason.
@@ -395,6 +398,49 @@ test('JUP_API_KEY moves the bases to the keyed host and sends the header', () =>
     assert.equal(fresh.jupHeaders('https://jup.ag.evil.example/quote')['x-api-key'], undefined,
       'the host check must be an anchored suffix, or a lookalike domain harvests the key');
   } finally {
+    if (before === undefined) delete process.env.JUP_API_KEY; else process.env.JUP_API_KEY = before;
+    delete require.cache[path];
+    require('./solana');
+  }
+});
+
+test('a REFUSED key degrades to the keyless tier instead of breaking every buy', async () => {
+  // ⚠️ THE HAZARD THE KEY ITSELF INTRODUCES. Jupiter's docs name the paid host
+  // as both `api.jup.ag` and `pro-api.jup.ag`; a key sent to the wrong one
+  // answers 401, and a 401 is NOT a transport error — so without this, setting
+  // JUP_API_KEY would turn a rate limit into a total outage, i.e. the fix being
+  // strictly worse than the bug. "You are not allowed here" is a fact about the
+  // host+credential pairing, never about the request — the same exception the
+  // 429 gets, for the same reason.
+  const path = require.resolve('./solana');
+  const before = process.env.JUP_API_KEY;
+  const warns = [];
+  const realWarn = console.warn;
+  try {
+    process.env.JUP_API_KEY = 'wrong-key';
+    delete require.cache[path];
+    const fresh = require('./solana');
+    fresh._resetBudget();
+    console.warn = (...a) => warns.push(a.join(' '));
+    const seen = [];
+    global.fetch = async (url) => {
+      seen.push(String(url));
+      if (!String(url).includes('lite-api')) {
+        return { ok: false, status: 401, headers: { get: () => null }, json: async () => ({}), text: async () => 'invalid api key', body: null };
+      }
+      return { ok: true, status: 200, headers: { get: () => null }, json: async () => QUOTE, text: async () => '', body: null };
+    };
+    const q = await fresh.getQuote(ARGS);
+    assert.equal(q.outAmount, 2500000n, 'a bad key must not be able to stop a buy the free tier can serve');
+    assert.ok(seen.some((u) => u.includes('lite-api')), 'the keyless tier must sit LAST in the keyed list as the safety net');
+    // ⚠️ …and it may not be silent: "the key works" and "the key is being
+    // ignored" would otherwise be one observation, which is this repo's most
+    // expensive recurring shape.
+    assert.equal(warns.length, 1, 'a refused key must be said exactly once — not per request, not never');
+    assert.match(warns[0], /JUP_API_KEY/);
+    assert.match(warns[0], /still work/i, 'it must say the buys are fine, or it reads as an outage');
+  } finally {
+    console.warn = realWarn;
     if (before === undefined) delete process.env.JUP_API_KEY; else process.env.JUP_API_KEY = before;
     delete require.cache[path];
     require('./solana');

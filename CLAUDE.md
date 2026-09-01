@@ -5767,7 +5767,34 @@ a moment"*, under a 🔄 Try again button.
 
 The `GECKOTERMINAL_API_KEY` rule, one API over. It moves the bases to
 `api.jup.ag` and sends `x-api-key`; unset is the shipped behaviour and stays
-fully supported — this is headroom, never a prerequisite.
+fully supported — this is headroom, never a prerequisite. The key is issued at
+**`portal.jup.ag`** (the newer Developer Platform front door is
+`developers.jup.ag`); the keyless tier Jupiter documents is **0.5 requests per
+second — 30 a minute**, which is the whole arithmetic of this section: a
+five-wallet buy asks fifteen in one millisecond, i.e. half a minute's allowance
+instantly.
+
+- ⚠️ **THE KEYED HOSTNAME IS A LIST, AND THAT IS NOT TIDINESS.** Jupiter's own
+  documentation names the paid host as BOTH `api.jup.ag` (current, and what the
+  portal's setup page gives) and `pro-api.jup.ag`. A key sent to the wrong one
+  answers **401 — which is not a transport error and therefore does not fail
+  over** on the standing rule, so a wrong default would make SETTING THE KEY
+  break every buy: the fix for the rate limit becoming a worse outage than the
+  rate limit. Current first, the alternative behind it, and **the free tier
+  LAST**, so a refused key degrades to the keyless ceiling rather than to
+  nothing.
+- ⚠️ **"You are not allowed here" is the SECOND exception to the failover
+  rule**, and for the 429's reason: 401/403 is a fact about the host+credential
+  pairing, never about the request — the same key answers 401 on one host and
+  200 next door. **404 is deliberately not in that set**: on the token registry
+  it is a real answer about a mint nobody has listed, and treating it as a host
+  fault would spend a second request on every unknown token, which is the budget
+  this whole section protects.
+- ⚠️ **…and a refused key may not be SILENT.** Falling back is fail-safe, and
+  fail-safe is exactly how "the key works" and "the key is being ignored" become
+  one observation — this file's most expensive recurring shape. Warned once,
+  naming the variable, and saying the buys are still filling so it does not read
+  as an outage.
 
 - **The header is applied by HOST**, anchored (`/(^|\.)jup\.ag$/`), so an
   operator's key is never posted to a base it does not belong to and a lookalike
@@ -5883,10 +5910,12 @@ cd tradebot && SKIP_DOTENV=1 node --test jupiterQuota.test.js upstreams.test.js 
 pm2 logs dexvra-tradebot --lines 50 --nostream | grep -F '[upstream]'              # is the watch armed, and what did it find
 ```
 
-Fourteen guarantees are MUTATION-TESTED rather than argued — the ten above plus
+Seventeen guarantees are MUTATION-TESTED rather than argued — the ten above plus
 the failover on 429, collapsing `absorbed` into `refused`, not counting a
-refused trade at all, a probe that spends the budget it monitors, and the probe
-losing `critical`. Each fails between one and four tests.
+refused trade at all, a probe that spends the budget it monitors, the probe
+losing `critical`, a refused key breaking the buy, that refusal being silent,
+and dropping the second documented paid host. Each fails between one and four
+tests.
 
 **Config a fix depends on:** nothing — every knob has a working default and the
 fix ships on. ⚠️ But `JUP_API_KEY` in **`tradebot/.env`** (`/opt/dexvra/tradebot/.env`

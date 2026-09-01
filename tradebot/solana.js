@@ -63,10 +63,22 @@ const SOL_PATH = "m/44'/501'/0'/0'";
 // it (the `GECKOTERMINAL_API_KEY` rule, one API over): it moves the base to the
 // keyed host and sends `x-api-key`. Unset is the shipped behaviour and stays
 // supported — this is headroom, never a prerequisite.
+//
+// ⚠️ AND THE KEYED HOSTNAME IS A LIST FOR A REASON. Jupiter's own docs describe
+// the paid host as BOTH `api.jup.ag` (the current spelling, and what the portal
+// setup page gives) and `pro-api.jup.ag` (an older/parallel one) — so it is
+// exactly the "which host is current" question this file has already been
+// caught by twice, with a new sting: a key sent to the wrong host answers 401,
+// **which is not a transport error and therefore does not fail over**. Getting
+// it wrong would make setting the key BREAK every buy, i.e. the fix for the
+// rate limit becoming a worse outage than the rate limit. Current first, the
+// alternative behind it, and the free tier LAST so a refused key degrades to
+// the keyless ceiling instead of to nothing (see `_authFault`).
 const JUP_API_KEY = (process.env.JUP_API_KEY || '').trim();
 const JUP_BASE = (process.env.JUP_BASE || '').trim().replace(/\/+$/, '');
 const JUP_BASES = JUP_BASE ? [JUP_BASE] : (JUP_API_KEY ? [
   'https://api.jup.ag/swap/v1',
+  'https://pro-api.jup.ag/swap/v1',
   'https://lite-api.jup.ag/swap/v1',
 ] : [
   'https://lite-api.jup.ag/swap/v1',
@@ -75,6 +87,7 @@ const JUP_BASES = JUP_BASE ? [JUP_BASE] : (JUP_API_KEY ? [
 const JUP_TOKEN_BASE = (process.env.JUP_TOKEN_BASE || '').trim().replace(/\/+$/, '');
 const JUP_TOKEN_BASES = JUP_TOKEN_BASE ? [JUP_TOKEN_BASE] : (JUP_API_KEY ? [
   'https://api.jup.ag/tokens/v1/token',
+  'https://pro-api.jup.ag/tokens/v1/token',
   'https://lite-api.jup.ag/tokens/v1/token',
 ] : [
   'https://lite-api.jup.ag/tokens/v1/token',
@@ -640,6 +653,30 @@ function _holdHost(host, ms, why) {
 // one only doubles the latency of a request that was always going to fail.
 function _retryable(status) { return status === 429 || (status >= 500 && status < 600); }
 
+// ⚠️ "YOU ARE NOT ALLOWED HERE" IS A FACT ABOUT THE HOST+CREDENTIAL PAIRING,
+// never about the request — so it is the second exception to the same
+// failover rule the 429 is, and for the same reason. A key that is right for
+// one Jupiter host and wrong for another answers 401 there and 200 next door.
+//
+// 404 is deliberately NOT in this set: on the token registry it is a real
+// answer about a mint that is simply not listed, and treating it as a host
+// fault would spend a second request on every unknown token — the budget this
+// whole section exists to protect.
+//
+// The fallthrough is FAIL-SAFE: a refused key degrades to the keyless tier and
+// the trade still fills, rather than the key turning a rate limit into a total
+// outage. ⚠️ But it may not be SILENT — "the key works" and "the key is being
+// ignored" would otherwise look identical from Telegram, which is this repo's
+// most expensive recurring shape. Warned once, naming the variable.
+function _authFault(status) { return status === 401 || status === 403; }
+let _keyWarned = false;
+function _noteKeyRefused(host, status) {
+  if (!JUP_API_KEY || _keyWarned) return;
+  _keyWarned = true;
+  console.warn(`[jup] JUP_API_KEY was refused by ${host} (HTTP ${status}) — trying the other Jupiter hosts, then the keyless tier.`
+    + ' Buys still work at the free ceiling; check the key at the Jupiter portal, or pin the right host with JUP_BASE.');
+}
+
 // The base that last answered, so the healthy host is tried first rather than
 // paying the dead one's connect timeout on every single trade.
 let _jupBase = null;
@@ -729,6 +766,9 @@ async function _overBases(bases, get, set, path, init, what) {
       set(base);
       if (r.status === 429) _jupStats.r429++;
       if (r.ok) { _jupStats.lastOkAt = Date.now(); if (attempt > 0) _jupStats.absorbed++; return r; }
+      // An auth refusal is about THIS host and this key, so the next base is a
+      // genuinely different question — see `_authFault`.
+      if (_authFault(r.status)) { _noteKeyRefused(host, r.status); lastRes = lastRes || { r, base }; break; }
       // A DETERMINISTIC STATUS ENDS THE WHOLE LOOKUP — the standing rule, and a
       // 400 is what it was written for: the same request gets the same answer
       // from every base, so asking another one only doubles the latency.
@@ -1139,6 +1179,7 @@ module.exports = {
   _resetBudget: () => {
     _budgets.clear(); _jupBase = null; _tokBase = null; _pumpBase = null; _quoteInflight.clear();
     Object.assign(_jupStats, { req: 0, r429: 0, absorbed: 0, refused: 0, lastRefusedAt: null, lastRefusedWhy: '', lastOkAt: null });
+    _keyWarned = false;
   },
   _budgets,   // test-only: proves a 429 was recorded once and not paid five times
   _statusQ,   // test-only: proves the batch queue is emptied, not just drained
