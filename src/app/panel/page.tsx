@@ -6,6 +6,9 @@ import type { ListingTier } from "@/lib/types";
 import { CHAIN_IDS, CHAINS } from "@/config/chains";
 import { LISTING_TIERS, tierLabel } from "@/lib/packages";
 import { Logo } from "@/components/Logo";
+import { BannerManager } from "@/components/admin/BannerManager";
+import { ChannelBannerManager } from "@/components/admin/ChannelBannerManager";
+import { PromoManager } from "@/components/admin/PromoManager";
 
 const short = (a: string) => (a.length > 16 ? `${a.slice(0, 8)}…${a.slice(-6)}` : a);
 
@@ -30,11 +33,12 @@ export default function AdminDashboard() {
   const [addErr, setAddErr] = useState("");
   const [adding, setAdding] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
-  const [ef, setEf] = useState({ name: "", emoji: "", logoUrl: "", website: "", twitter: "", telegram: "" });
+  const [ef, setEf] = useState({ name: "", emoji: "", logoUrl: "", website: "", twitter: "", telegram: "", overview: "" });
   const [savingEdit, setSavingEdit] = useState(false);
   const [editErr, setEditErr] = useState("");
   const [uploading, setUploading] = useState(false);
   const [search, setSearch] = useState("");
+  const [hrs, setHrs] = useState<Record<string, string>>({}); // per-row trending-hours draft
 
   const load = useCallback(async () => {
     try {
@@ -67,6 +71,18 @@ export default function AdminDashboard() {
       setBusy(null);
     }
   };
+
+  // Set a trending slot to run for an arbitrary number of hours (0/empty clears
+  // it). Stamps trendStart=now, trendExp=now+hours so the site + bot sweeper
+  // honour a real window — not just the on/off Featured flag.
+  const setTrendHours = (id: string, raw: string) => {
+    const h = Math.max(0, Math.round(Number(raw) || 0));
+    if (!h) return patch(id, { trendingRank: null, trendStart: null, trendExp: null });
+    const now = Date.now();
+    return patch(id, { trendingRank: 1, trendStart: now, trendExp: now + h * 3_600_000 });
+  };
+  const remHours = (r: StoredListing): number | null =>
+    r.trendExp ? Math.max(0, Math.ceil((r.trendExp - Date.now()) / 3_600_000)) : null;
 
   const setStatus = async (id: string, status: string) => {
     setBusy(id);
@@ -125,6 +141,7 @@ export default function AdminDashboard() {
       website: r.website ?? "",
       twitter: r.twitter ?? "",
       telegram: r.telegram ?? "",
+      overview: r.overview ?? "",
     });
   };
 
@@ -221,6 +238,15 @@ export default function AdminDashboard() {
           <div className="astat"><div className="k">Trending</div><div className="v">{stats.trending}</div></div>
         </div>
 
+        {/* Homepage carousel "Pumped on Dexvra" showcase (editable example) */}
+        <PromoManager />
+
+        {/* Homepage banner (upload + click-through link) */}
+        <BannerManager />
+
+        {/* Channel-post banner templates (artwork + GIF/video, per kind) */}
+        <ChannelBannerManager />
+
         {/* Pending submissions */}
         <section className="asec">
           <div className="asec-h">Pending submissions <span className="cnt">{pending.length}</span></div>
@@ -313,10 +339,36 @@ export default function AdminDashboard() {
                           type="checkbox"
                           checked={r.trendingRank != null}
                           disabled={busy === r.id}
-                          onChange={(e) => patch(r.id, { trendingRank: e.target.checked ? (r.trendingRank ?? 1) : null })}
+                          onChange={(e) =>
+                            e.target.checked
+                              ? setTrendHours(r.id, hrs[r.id] || "24")
+                              : patch(r.id, { trendingRank: null, trendStart: null, trendExp: null })
+                          }
                         />
                         Featured
                       </label>
+                      <div className="a-trend-hrs">
+                        <input
+                          type="number"
+                          min={1}
+                          className="a-hrs-in"
+                          placeholder="hrs"
+                          value={hrs[r.id] ?? (remHours(r) != null ? String(remHours(r)) : "")}
+                          disabled={busy === r.id}
+                          onChange={(e) => setHrs((s) => ({ ...s, [r.id]: e.target.value }))}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") setTrendHours(r.id, (e.target as HTMLInputElement).value);
+                          }}
+                        />
+                        <button
+                          className="abtn"
+                          disabled={busy === r.id}
+                          onClick={() => setTrendHours(r.id, hrs[r.id] ?? "")}
+                        >
+                          Set
+                        </button>
+                        {remHours(r) != null && <span className="a-hrs-left">{remHours(r)}h left</span>}
+                      </div>
                     </td>
                     <td><span className={`a-status ${r.status}`}>{r.status}</span></td>
                     <td>
@@ -364,6 +416,7 @@ export default function AdminDashboard() {
                             <div className="add-fld"><label>Website</label><input className="a-input" value={ef.website} onChange={setE("website")} placeholder="https://…" /></div>
                             <div className="add-fld"><label>X / Twitter</label><input className="a-input" value={ef.twitter} onChange={setE("twitter")} placeholder="https://x.com/…" /></div>
                             <div className="add-fld"><label>Telegram</label><input className="a-input" value={ef.telegram} onChange={setE("telegram")} placeholder="https://t.me/…" /></div>
+                            <div className="add-fld wide"><label>Overview — short project description (token page + channel posts; empty = none)</label><input className="a-input" value={ef.overview} onChange={setE("overview")} placeholder="1-3 sentences about the project" /></div>
                           </div>
                           {editErr && <div className="login-err" style={{ textAlign: "left" }}>{editErr}</div>}
                           <div className="edit-actions">
