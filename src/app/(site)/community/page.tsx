@@ -2,6 +2,12 @@ import type { Metadata } from "next";
 import { PageHead } from "@/components/PageHead";
 import { BRAND_DOMAIN, BRAND_NAME, SUPPORT_EMAIL, SUPPORT_MAILTO } from "@/config/brand";
 import { SOCIALS, type SocialKind } from "@/config/socials";
+
+// The support card's own kind. It is not in SocialKind because it is not in
+// SOCIALS: that list is the accounts a reader can FOLLOW (every entry is a
+// Telegram or X link with an @handle, and a test says so), and `sameAs` on the
+// Organization record is built from it — a mailto does not belong there.
+type CardKind = SocialKind | "email";
 import { pageMetadata } from "@/lib/seo";
 
 // Through the shared helper so this page gets the canonical and the social card
@@ -15,7 +21,7 @@ export const metadata: Metadata = pageMetadata({
 // Inline so the page has no runtime dependency and renders as static HTML.
 // A group and a bot get their own marks: they are different things to join, and
 // five identical paper planes would tell a reader nothing about which is which.
-function Icon({ kind }: { kind: SocialKind }) {
+function Icon({ kind }: { kind: CardKind }) {
   if (kind === "x") {
     return (
       <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -30,6 +36,14 @@ function Icon({ kind }: { kind: SocialKind }) {
         <path d="M2.8 19.5c1-2.9 3.3-4.3 6.2-4.3s5.2 1.4 6.2 4.3" />
         <circle cx="17" cy="7" r="2.4" />
         <path d="M17 12.2c2 .1 3.5 1.2 4.2 3.1" />
+      </svg>
+    );
+  }
+  if (kind === "email") {
+    return (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+        <rect x="3" y="5.5" width="18" height="13" rx="2.5" />
+        <path d="m3.8 7 8.2 6.2L20.2 7" />
       </svg>
     );
   }
@@ -81,14 +95,25 @@ export default function CommunityPage() {
             <span className="soc-go" aria-hidden="true">↗</span>
           </a>
         ))}
-      </div>
 
-      {/* Where to WRITE, kept apart from the cards above, which are places to
-          follow. It is a plain panel rather than a card in the grid so it does
-          not read as a ninth channel to subscribe to. */}
-      <div className="panel soc-note">
-        <b>✉️ Support.</b> Questions about a listing, a payment or the bots:{" "}
-        <a href={SUPPORT_MAILTO}>{SUPPORT_EMAIL}</a>. This is the only {BRAND_NAME} email address.
+        {/* Where to WRITE. It sits in the grid as a card — the first cut put it
+            in a note below the grid, and on a laptop the grid fills the screen,
+            so "the email is not on the community page" was the first report
+            ("tmbhkkakn di community juga"). Last, because the accounts above are
+            where to start; a mailto, so no target=_blank. */}
+        <a key="support" className="soc-card email" href={SUPPORT_MAILTO}>
+          <span className="soc-ic">
+            <Icon kind="email" />
+          </span>
+          <span className="soc-body">
+            <span className="soc-name">Support</span>
+            <span className="soc-handle">{SUPPORT_EMAIL}</span>
+            <span className="soc-blurb">
+              Questions about a listing, a payment or the bots. This is the only {BRAND_NAME} email address.
+            </span>
+          </span>
+          <span className="soc-go" aria-hidden="true">✉</span>
+        </a>
       </div>
 
       {/* Impersonation is the standard scam against a listing site: a lookalike
@@ -102,7 +127,7 @@ export default function CommunityPage() {
         <b>⚠️ Beware of impersonators.</b> {BRAND_NAME} never sends the first direct message, and never
         asks for an extra fee, a wallet key or a seed phrase. <b>@dexvrabot</b> quotes every price and
         generates every payment address, and the accounts listed on this page — all linked from{" "}
-        <b>{BRAND_DOMAIN}</b> — plus the support address above are the only official ones.
+        <b>{BRAND_DOMAIN}</b> — and the support address beside them are the only official ones.
       </div>
     </section>
   );

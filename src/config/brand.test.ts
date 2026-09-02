@@ -273,16 +273,25 @@ test("the footer links the support address, and the address itself is the label"
   assert.ok(!/SUPPORT_MAILTO\}[^>]*target=/.test(src), "no target=_blank on a mailto");
 });
 
-test("/community names the support address, apart from the channels to follow", () => {
+test("/community shows the support address as a card IN the grid", () => {
   const src = read("src/app/(site)/community/page.tsx");
-  assert.match(src, /href=\{SUPPORT_MAILTO\}>\{SUPPORT_EMAIL\}<\/a>/);
-  // It is not a card in the grid: an inbox is somewhere to write, not somewhere
-  // to subscribe, and a ninth card would read as a ninth channel.
-  const grid = src.slice(src.indexOf('className="soc-grid"'), src.indexOf("</div>", src.indexOf('className="soc-grid"')));
-  assert.ok(!grid.includes("SUPPORT_EMAIL"), "the address must not be rendered inside the socials grid");
+  // The first cut rendered it as a note under the grid, and on a laptop the
+  // grid fills the screen — so the report was that the email was not on the
+  // page at all. It is a card beside the accounts now, and stays one.
+  const grid = src.slice(src.indexOf('className="soc-grid"'), src.indexOf("soc-note"));
+  assert.match(grid, /className="soc-card email" href=\{SUPPORT_MAILTO\}/, "the support card must be inside .soc-grid");
+  assert.match(grid, /\{SUPPORT_EMAIL\}/, "the address itself must be printed on the card");
+  // A mailto opens no tab.
+  assert.ok(!/SUPPORT_MAILTO\}[^>]*target=/.test(src), "no target=_blank on a mailto");
+  // …but it is NOT an entry in SOCIALS: that list feeds `sameAs`, where a
+  // mailto is wrong, and every entry there must be a followable account.
+  const socials = read("src/config/socials.ts");
+  const list = socials.slice(socials.indexOf("export const SOCIALS"), socials.indexOf("];", socials.indexOf("export const SOCIALS")));
+  assert.ok(!/mailto|SUPPORT_/.test(list), "the support address must not be a SOCIALS entry");
+  assert.match(read("src/app/globals.css"), /\.soc-card\.email/, "the card needs its own icon colour");
   // The impersonation note has to cover it — an official mailbox left out of
   // "the only official ones" is one a lookalike can claim.
-  assert.match(src, /support address above/);
+  assert.match(src, /support address beside them/);
 });
 
 test("the Organization record carries the support address", async () => {

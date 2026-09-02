@@ -528,6 +528,7 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
 .soc-card.x .soc-ic{background:rgba(255,255,255,.08);color:#e8e8e8}
 .soc-card.group .soc-ic{background:rgba(80,230,180,.14);color:var(--mint)}
 .soc-card.bot .soc-ic{background:rgba(160,140,255,.16);color:#a08cff}
+.soc-card.email .soc-ic{background:rgba(255,196,80,.14);color:#ffc450}
 .soc-ic svg{width:19px;height:19px}
 .soc-body{display:flex;flex-direction:column;gap:3px;min-width:0}
 .soc-name{display:flex;align-items:center;gap:8px;font-weight:700;font-size:14px;color:var(--txt)}
