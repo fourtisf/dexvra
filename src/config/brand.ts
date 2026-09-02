@@ -22,4 +22,6 @@ export {
   X_URL,
   X_LISTING_URL,
   X_LISTING_HANDLE,
+  SUPPORT_EMAIL,
+  SUPPORT_MAILTO,
 } from "./socials.ts";

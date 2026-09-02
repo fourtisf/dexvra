@@ -242,3 +242,56 @@ test("the group reads as two-way without needing the word 'channel'", async () =
   // never thought about the difference between a group and a channel.
   assert.match(g.blurb, /Anyone can post/i, g.blurb);
 });
+
+// ── The support inbox ───────────────────────────────────────────────────────
+//
+// "tambahin email supported di website" (2026-09-02). One address, defined
+// once beside the accounts, printed by the footer, /community and the
+// Organization record. The tests below read the surfaces rather than the
+// constant alone: a constant nobody renders is an address nobody can find.
+
+test("the support address is one well-formed mailbox on the brand domain", async () => {
+  const { SUPPORT_EMAIL, SUPPORT_MAILTO } = await import("./socials.ts");
+  assert.strictEqual(SUPPORT_EMAIL, "supported@dexvra.io");
+  assert.match(SUPPORT_EMAIL, /^[a-z0-9._-]+@dexvra\.io$/, "an address off the brand domain reads as an impersonator's");
+  assert.strictEqual(SUPPORT_MAILTO, `mailto:${SUPPORT_EMAIL}`);
+  // The address lives in socials.ts and nowhere else. A second literal is the
+  // copy that goes stale when the mailbox moves.
+  for (const f of ["src/app/(site)/layout.tsx", "src/app/(site)/community/page.tsx", "src/lib/seo.ts", "src/config/brand.ts"]) {
+    assert.ok(!read(f).includes("supported@"), `${f} hardcodes the address instead of reading SUPPORT_EMAIL`);
+  }
+});
+
+test("the footer links the support address, and the address itself is the label", () => {
+  const src = read("src/app/(site)/layout.tsx");
+  // A mailto whose label is the word "Support" is useless on a phone with no
+  // mail client and on a locked-down desk; the address as the label can at
+  // least be read and copied.
+  assert.match(src, /<a href=\{SUPPORT_MAILTO\}>\{SUPPORT_EMAIL\}<\/a>/, "footer must render <a href={SUPPORT_MAILTO}>{SUPPORT_EMAIL}</a>");
+  // A mailto opens no tab; target=_blank on one pops a blank window in some
+  // browsers before the mail client takes over.
+  assert.ok(!/SUPPORT_MAILTO\}[^>]*target=/.test(src), "no target=_blank on a mailto");
+});
+
+test("/community names the support address, apart from the channels to follow", () => {
+  const src = read("src/app/(site)/community/page.tsx");
+  assert.match(src, /href=\{SUPPORT_MAILTO\}>\{SUPPORT_EMAIL\}<\/a>/);
+  // It is not a card in the grid: an inbox is somewhere to write, not somewhere
+  // to subscribe, and a ninth card would read as a ninth channel.
+  const grid = src.slice(src.indexOf('className="soc-grid"'), src.indexOf("</div>", src.indexOf('className="soc-grid"')));
+  assert.ok(!grid.includes("SUPPORT_EMAIL"), "the address must not be rendered inside the socials grid");
+  // The impersonation note has to cover it — an official mailbox left out of
+  // "the only official ones" is one a lookalike can claim.
+  assert.match(src, /support address above/);
+});
+
+test("the Organization record carries the support address", async () => {
+  const { organizationLd } = await import("../lib/seo.ts");
+  const { SUPPORT_EMAIL } = await import("./socials.ts");
+  const org = organizationLd() as Record<string, unknown>;
+  assert.strictEqual(org.email, SUPPORT_EMAIL);
+  const cp = org.contactPoint as Record<string, unknown>;
+  assert.strictEqual(cp["@type"], "ContactPoint");
+  assert.strictEqual(cp.email, SUPPORT_EMAIL);
+  assert.strictEqual(cp.contactType, "customer support");
+});

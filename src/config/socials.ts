@@ -24,6 +24,16 @@ export const BOT_URL = "https://t.me/dexvrabot";
 export const TELEGRAM_GROUP_URL = "https://t.me/dexvragroup"; // open two-way chat
 export const TRADEBOT_URL = "https://t.me/dexvratradebot";
 
+// The support inbox. Defined HERE beside the accounts for the same reason they
+// are: the footer, /community and the Organization record all print it, and
+// three copies of one address is how a mailbox change leaves a dead one on
+// the page that matters most. It is deliberately NOT an entry in SOCIALS —
+// that list is the set of accounts a reader can FOLLOW (every entry is a
+// t.me/x.com link with an @handle, and a test says so); an inbox is somewhere
+// to write, not somewhere to subscribe.
+export const SUPPORT_EMAIL = "supported@dexvra.io";
+export const SUPPORT_MAILTO = `mailto:${SUPPORT_EMAIL}`;
+
 // "group" is deliberately its own kind, not a flavour of telegram: a two-way
 // chat and a broadcast channel are different things to join, and a reader who
 // confuses them posts a question into a channel that cannot reply.

@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { PageHead } from "@/components/PageHead";
-import { BRAND_DOMAIN, BRAND_NAME } from "@/config/brand";
+import { BRAND_DOMAIN, BRAND_NAME, SUPPORT_EMAIL, SUPPORT_MAILTO } from "@/config/brand";
 import { SOCIALS, type SocialKind } from "@/config/socials";
 import { pageMetadata } from "@/lib/seo";
 
@@ -83,6 +83,14 @@ export default function CommunityPage() {
         ))}
       </div>
 
+      {/* Where to WRITE, kept apart from the cards above, which are places to
+          follow. It is a plain panel rather than a card in the grid so it does
+          not read as a ninth channel to subscribe to. */}
+      <div className="panel soc-note">
+        <b>✉️ Support.</b> Questions about a listing, a payment or the bots:{" "}
+        <a href={SUPPORT_MAILTO}>{SUPPORT_EMAIL}</a>. This is the only {BRAND_NAME} email address.
+      </div>
+
       {/* Impersonation is the standard scam against a listing site: a lookalike
           channel messages a project mid-listing and asks for a "fee". Naming the
           real handles in one place is the cheapest defence there is.
@@ -94,7 +102,7 @@ export default function CommunityPage() {
         <b>⚠️ Beware of impersonators.</b> {BRAND_NAME} never sends the first direct message, and never
         asks for an extra fee, a wallet key or a seed phrase. <b>@dexvrabot</b> quotes every price and
         generates every payment address, and the accounts listed on this page — all linked from{" "}
-        <b>{BRAND_DOMAIN}</b> — are the only official ones.
+        <b>{BRAND_DOMAIN}</b> — plus the support address above are the only official ones.
       </div>
     </section>
   );

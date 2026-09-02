@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { BOT_URL, BRAND_NAME, TELEGRAM_TRENDING_URL, TELEGRAM_URL, X_LISTING_URL, X_URL } from "@/config/brand";
+import { BOT_URL, BRAND_NAME, SUPPORT_EMAIL, SUPPORT_MAILTO, TELEGRAM_TRENDING_URL, TELEGRAM_URL, X_LISTING_URL, X_URL } from "@/config/brand";
 import { within } from "@/lib/cache";
 import { getFearGreed, getTokensPayload } from "@/lib/providers";
 import { AppProvider } from "@/components/AppState";
@@ -82,6 +82,10 @@ export default async function SiteLayout({ children }: { children: ReactNode }) 
                 {/* "All channels" (→ /community) was removed at the operator's
                     request — the socials above are the real destinations. */}
                 <a href={BOT_URL} target="_blank" rel="noopener noreferrer">Bot</a>
+                {/* The ADDRESS is the label, not the word "Support": a reader
+                    who cannot open a mail client (a phone with none set up,
+                    a locked-down desk) can still read it and copy it. */}
+                <a href={SUPPORT_MAILTO}>{SUPPORT_EMAIL}</a>
               </span>
             </footer>
           </main>

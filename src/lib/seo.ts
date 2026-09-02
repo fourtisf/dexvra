@@ -16,7 +16,7 @@
 // appear at all, which is a different and achievable thing.
 import type { Metadata } from "next";
 import { BRAND_NAME, BRAND_TAGLINE, BRAND_DOMAIN } from "../config/brand.ts";
-import { SOCIALS } from "../config/socials.ts";
+import { SOCIALS, SUPPORT_EMAIL } from "../config/socials.ts";
 import { SITE_ORIGIN, absolute, OG_IMAGE, LOGO_IMAGE } from "../config/site.ts";
 
 export const SITE_DESCRIPTION =
@@ -103,6 +103,16 @@ export function organizationLd() {
     description: SITE_DESCRIPTION,
     slogan: BRAND_TAGLINE,
     sameAs: sameAs(),
+    // The inbox, on the brand record: a "dexvra support" query is exactly what
+    // an impersonator answers first, and a mailbox stated by the entity itself
+    // is the one Google can attribute.
+    email: SUPPORT_EMAIL,
+    contactPoint: {
+      "@type": "ContactPoint",
+      contactType: "customer support",
+      email: SUPPORT_EMAIL,
+      availableLanguage: ["en", "id"],
+    },
   };
 }
 
