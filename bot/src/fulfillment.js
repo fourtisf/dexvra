@@ -193,6 +193,21 @@ async function postMedia(kind, bannerCoin, logoBuffer, logoFileId, logoUrl, badg
 
 // ── Listing (Xpress + Listing & Trending) ────────────────────────────────────
 async function fulfillListing(ctx, order) {
+  // Where the time goes, phase by phase. "The listing is slow" was
+  // unanswerable before this: a tiered listing runs an animated emoji build, a
+  // market read, two ffmpeg clip composites and four media uploads, all serial,
+  // and nothing said which of them was the minute. A phase that never ran is
+  // omitted rather than printed as 0ms — a zero meaning "did not happen" reads
+  // as a finding. Printed for EVERY listing, not past a threshold: a listing is
+  // a paid event a few times an hour, not a hot loop.
+  const _t0 = Date.now();
+  const _t = { at: _t0, marks: [] };
+  const step = (name) => {
+    const now = Date.now();
+    const ms = now - _t.at;
+    _t.at = now;
+    if (ms >= 1) _t.marks.push(`${name}=${ms >= 1000 ? (ms / 1000).toFixed(1) + "s" : ms + "ms"}`);
+  };
   const p = order.payload; // { listingInput, logoFileId?, trendHours }
   const input = { ...p.listingInput };
 
@@ -232,6 +247,7 @@ async function fulfillListing(ctx, order) {
   }
 
   // 3. Create the approved listing (hard step).
+  step("logo");
   const listing = await api.createListing(input);
   log.info(`[fulfil] listing ${listing && listing.id} live: ${input.chain}/${input.address}`);
 
@@ -250,14 +266,17 @@ async function fulfillListing(ctx, order) {
   if (!logoBuffer && input.logoUrl) logoBuffer = await fetchLogoUrl(input.logoUrl);
   // Animated logo custom-emoji (per-token pack, shown inline in channel posts
   // via GramJS). Best-effort — ensureTokenEmoji never throws.
+  step("create");
   await tokenEmoji.ensureTokenEmoji(
     { chain: input.chain, address: input.address, symbol: input.sym },
     logoBuffer,
   );
+  step("emoji");
   const live = await market.fetchMarket(input.chain, input.address).catch(() => null);
   const coin = coinFrom(input, live);
   const bannerCoin = bannerCoinOf(input, live);
   const tierBadge = input.tier === "XPRESS" ? "Xpress Listing" : input.tier ? `${tierLabel(input.tier)} Tier` : null;
+  step("market");
   const listMedia = await postMedia("listing", bannerCoin, logoBuffer, p.logoFileId, input.logoUrl, tierBadge);
 
   // 5 → moved BEFORE the channel posts: tweet first, so the channel post can
@@ -268,12 +287,14 @@ async function fulfillListing(ctx, order) {
   // The tweet carries the SAME artwork as the channel post (listMedia — the
   // admin's GIF/MP4 clip or the composited banner), with the raw logo only as a
   // fallback for the one shape X cannot use, a bare Telegram file_id.
+  step("media");
   const tweetP = x.postListing(coin, listMedia, logoBuffer).catch(() => null);
   tweetP
     .then((id) => (id ? postids.set(input.chain, input.address, { listingTweetId: id }) : null))
     .catch(() => {});
   const tweetId = await Promise.race([tweetP, new Promise((r) => setTimeout(r, X_POST_TIMEOUT_MS, null))]);
   if (tweetId) coin.xUrl = `https://x.com/i/status/${tweetId}`;
+  step("x");
 
   const links = [];
   try {
@@ -308,8 +329,14 @@ async function fulfillListing(ctx, order) {
     log.warn(`[fulfil] listing channel posts: ${e.message}`);
   }
 
+  step("posts");
+
   // 6. Buyer DM (the tweet was posted before the channel posts above).
   await dm(ctx, successListing(coin, links, { hours }), menu.postPurchase(coin.siteUrl));
+  step("dm");
+  log.info(
+    `[fulfil] listing $${input.sym} (${input.tier || "?"}) took ${((Date.now() - _t0) / 1000).toFixed(1)}s — ${_t.marks.join(" ")}`,
+  );
 }
 
 // ── Trending (standalone slot on an already-listed token) ────────────────────

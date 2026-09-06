@@ -113,10 +113,64 @@ async function confirmPayHandler(ctx) {
     }
 
     await orders.setStatus(order.id, "paid").catch(() => {});
+    // The payment is confirmed, so the pending card is spent. Cleared HERE,
+    // while the middleware chain still owns the session: Telegraf writes
+    // ctx.session back after next() resolves, so the same assignment made from
+    // the detached runner below would be dropped on the floor.
+    ctx.session.pendingPayment = null;
+    // ⚠️ FULFILMENT IS DELIBERATELY NOT AWAITED.
+    //
+    // Telegraf is built with handlerTimeout: 120000, and a tiered listing does
+    // not fit in two minutes: an animated custom-emoji build (48 canvas frames
+    // + an ffmpeg bitrate ladder), a market read, TWO ffmpeg composites of the
+    // admin clip (listing + trending), the X tweet raced to X_POST_TIMEOUT_MS,
+    // and three or four video uploads to Telegram — every one of them serial.
+    // Hit for real on 2026-09-06: the buyer tapped Confirm at 14:24, saw
+    // "Running your order — hang tight…", and at 14:26 the ops channel got
+    // "[telegraf] callback_query handler error: Promise timed out after 120000
+    // milliseconds". The timeout does NOT cancel the work — the listing still
+    // went live — so the only thing it changed was that the buyer got an error
+    // instead of the receipt they paid for.
+    //
+    // This is the atrun lesson on the money path: a callback answer is the one
+    // channel with a DEADLINE, so it carries the ACKNOWLEDGEMENT and the RESULT
+    // arrives as a message, which has none. The buyer already has the
+    // "Running your order" toast above; fulfilment posts its own receipt.
+    // .catch is belt-and-braces: runFulfilment already swallows everything,
+    // and an unhandled rejection with nobody awaiting it ends the process.
+    runFulfilment(ctx, order, adminFree).catch(() => {});
+    return;
+  } catch (e) {
+    log.error(`[pay] confirm failed order=${order && order.id}: ${e.message}`);
+    await toast(ctx, tpl.render("payment_snag", { order: order && order.id }));
+  } finally {
+    ctx.session._verifying = false;
+  }
+}
+
+// Orders being fulfilled right now. The session flag cannot do this job: it is
+// cleared when the handler returns, which is now BEFORE fulfilment finishes, so
+// a second tap would start a second run of a paid order. Same guard, same
+// reason, as atRunBusy on the slow ⚡ Run now button.
+const fulfilling = new Set();
+
+/**
+ * Run a paid order to completion, off the callback deadline.
+ *
+ * Never throws: it is already the detached tail of a handler that has returned,
+ * so an exception here has nowhere to go but the process.
+ */
+async function runFulfilment(ctx, order, adminFree) {
+  if (fulfilling.has(order.id)) {
+    log.warn(`[pay] order ${order.id} is already being fulfilled — ignoring the repeat`);
+    return;
+  }
+  fulfilling.add(order.id);
+  const t0 = Date.now();
+  try {
     const { fulfillOrder } = require("../fulfillment");
     await fulfillOrder(ctx, order);
     await orders.setStatus(order.id, "fulfilled").catch(() => {});
-    ctx.session.pendingPayment = null;
     const u = ctx.from || {};
     const usernameTag = u.username
       ? `@${u.username}`
@@ -139,11 +193,15 @@ async function confirmPayHandler(ctx) {
         `<b>Order:</b> <code>${order.id}</code>\n` +
         `<b>Date:</b> ${new Date().toISOString()}`,
     );
+    log.info(`[fulfil] order ${order.id} (${order.kind}) delivered in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
   } catch (e) {
-    log.error(`[pay] confirm/fulfil failed order=${order && order.id}: ${e.message}`);
-    await toast(ctx, tpl.render("payment_snag", { order: order && order.id }));
+    // The buyer has PAID and is holding a "hang tight" toast, so silence here is
+    // the worst outcome. Say so, name the order, and leave it 'paid' rather than
+    // 'fulfilled' so recovery.js can pick it up.
+    log.error(`[pay] fulfil FAILED order=${order && order.id} after ${((Date.now() - t0) / 1000).toFixed(1)}s: ${e.message}`);
+    await toast(ctx, tpl.render("payment_snag", { order: order && order.id })).catch(() => {});
   } finally {
-    ctx.session._verifying = false;
+    fulfilling.delete(order.id);
   }
 }
 
