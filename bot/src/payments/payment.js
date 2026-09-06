@@ -9,7 +9,7 @@
 // funds are already captured, fulfilment must be best-effort and never "refund"
 // on failure — a failed fulfil leaves the order in `paid` for recovery.
 const crypto = require("node:crypto");
-const { isAdminUser } = require("../config/constants");
+const { isAdminUser, FULFIL_SLOW_MS } = require("../config/constants");
 const { answer, toast } = require("../helpers/message");
 const { escapeHtml } = require("../helpers/format");
 const { toSmallest, humanWithSymbol } = require("./units");
@@ -154,6 +154,36 @@ async function confirmPayHandler(ctx) {
 // reason, as atRunBusy on the slow ⚡ Run now button.
 const fulfilling = new Set();
 
+
+/**
+ * Tell the operator when a paid order was slow — the detector that did not
+ * exist.
+ *
+ * Detaching fulfilment from the 120s handlerTimeout removed the FAILURE; it
+ * also removed the only thing that had ever reported one, because that timeout
+ * was what put a line in the ops channel. Every round of "bot lelet merespon"
+ * in this repo was detected by a person waiting on a screen and counting, and
+ * nothing anywhere ever said "the last order took 148 seconds".
+ *
+ * It names the PHASES, because a duration alone sends nobody anywhere: the
+ * whole point of the [fulfil] timing line is that "media=48s emoji=31s" is
+ * actionable and "took 148s" is not. Through log.alert, which de-duplicates —
+ * a busy hour of Diamond listings must not become a channel nobody reads.
+ *
+ * A FAILED order already alerts: log.error reaches ERROR_CHANNEL. This is the
+ * other half — the order that worked, slowly, and told nobody.
+ */
+function slowOrderAlert(order, ms, detail) {
+  if (ms < FULFIL_SLOW_MS) return;
+  const phases = detail && detail.phases && detail.phases.length ? detail.phases.join(" ") : "";
+  log.alert(
+    `🐌 <b>Slow order</b> — ${escapeHtml(String(order.kind))} took <b>${(ms / 1000).toFixed(1)}s</b>\n` +
+      `<b>Order:</b> <code>${escapeHtml(String(order.id))}</code>\n` +
+      (phases ? `<b>Phases:</b> <code>${escapeHtml(phases)}</code>\n` : "") +
+      `The buyer waited this long for their receipt. Nothing failed.`,
+  );
+}
+
 /**
  * Run a paid order to completion, off the callback deadline.
  *
@@ -169,8 +199,9 @@ async function runFulfilment(ctx, order, adminFree) {
   const t0 = Date.now();
   try {
     const { fulfillOrder } = require("../fulfillment");
-    await fulfillOrder(ctx, order);
+    const detail = await fulfillOrder(ctx, order);
     await orders.setStatus(order.id, "fulfilled").catch(() => {});
+    slowOrderAlert(order, Date.now() - t0, detail);
     const u = ctx.from || {};
     const usernameTag = u.username
       ? `@${u.username}`

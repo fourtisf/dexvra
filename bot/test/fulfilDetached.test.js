@@ -14,6 +14,12 @@ const path = require("node:path");
 const os = require("node:os");
 const fss = require("node:fs");
 process.env.BOT_DATA_DIR = fss.mkdtempSync(path.join(os.tmpdir(), "dexvra-fulfil-"));
+// Frozen at require time by config/constants, so it is set before anything is
+// required — and CLAMPED to the 5s floor, which exists so an operator cannot set
+// 0 and flood the ops channel. The test follows the real floor rather than
+// reaching around it: a threshold the shipped code cannot produce proves
+// nothing about the shipped code.
+process.env.FULFIL_SLOW_MS = "1";
 
 const test = require("node:test");
 const assert = require("node:assert");
@@ -81,4 +87,52 @@ test("the pending payment is cleared inside the handler, not from the runner", (
   assert.match(handlerPart, /ctx\.session\.pendingPayment = null;/, "the handler must clear it itself");
   const runner = src.slice(src.indexOf("async function runFulfilment"));
   assert.ok(!/ctx\.session\.pendingPayment\s*=/.test(runner), "the detached runner must not write to the session");
+});
+
+// ── the detector that did not exist ─────────────────────────────────────────
+//
+// Detaching fulfilment removed the 120s FAILURE — and with it the only thing
+// that had ever put a slow order in the ops channel. Every round of "bot lelet
+// merespon" was detected by a person waiting on a screen and counting.
+
+const log = require("../src/helpers/logger");
+
+const drive = async (t, fulfil, waitMs) => {
+  const orig = fulfilment.fulfillOrder;
+  const origAlert = log.alert;
+  t.after(() => {
+    fulfilment.fulfillOrder = orig;
+    log.alert = origAlert;
+  });
+  const alerts = [];
+  log.alert = (html) => alerts.push(html);
+  fulfilment.fulfillOrder = fulfil;
+  await confirmPayHandler(fakeCtx({ ...order, id: `ord_${Math.random()}` }));
+  // The handler returns before fulfilment finishes — that is the whole point of
+  // the change above — so the assertion has to wait for the detached tail, and
+  // the wait must OUTLAST it. Getting this backwards makes every assertion read
+  // "the alert did not fire" about an alert that had not been reached yet.
+  await new Promise((r) => setTimeout(r, waitMs));
+  return alerts;
+};
+
+test("a slow order tells the operator, and names the phase that was slow", async (t) => {
+  const alerts = await drive(t, async () => {
+    // Past the 5s floor. Slow for a unit test, and the alternative — exporting
+    // the predicate and calling it with a fabricated elapsed — would test the
+    // decision while leaving the WIRING (that runFulfilment measures the real
+    // thing and passes it) unpinned, which is the half that breaks.
+    await new Promise((r) => setTimeout(r, 5200));
+    return { phases: ["emoji=31.0s", "media=48.3s"], ms: 5200 };
+  }, 6000);
+  assert.strictEqual(alerts.length, 1, `expected one slow-order alert, got ${alerts.length}`);
+  // A duration alone sends nobody anywhere. The phases are the diagnosis.
+  assert.match(alerts[0], /media=48\.3s/, alerts[0]);
+  assert.match(alerts[0], /emoji=31\.0s/, alerts[0]);
+  assert.match(alerts[0], /Slow order/, alerts[0]);
+});
+
+test("a normal order is silent — an alert per listing is a channel nobody reads", async (t) => {
+  const alerts = await drive(t, async () => ({ phases: ["media=1.2s"], ms: 5 }), 400);
+  assert.strictEqual(alerts.length, 0, `a fast order must not alert:\n${alerts.join("\n")}`);
 });

@@ -231,6 +231,18 @@ const X_RANKUP_ENABLED = bool(env.X_RANKUP_ENABLED, false);
 // then waits for X to transcode it, which a still image never had to do.
 const X_POST_TIMEOUT_MS = Math.max(5000, int(env.X_POST_TIMEOUT_MS, 30000));
 
+// How long a PAID order may take before the ops channel is told. Fulfilment is
+// no longer bounded by Telegraf's 120s handlerTimeout (payments/payment.js runs
+// it detached), and that removed the failure — it also removed the only thing
+// that ever REPORTED a slow order. Every round of "bot lelet" in this repo has
+// been detected by a person waiting on a screen and counting.
+//
+// 90s: under the 120s cliff that used to be a hard kill, so it fires before the
+// state that used to lose a receipt; and above a healthy tiered listing, which
+// legitimately runs an emoji build, two ffmpeg composites and four uploads. An
+// alert on every Diamond listing is a channel nobody reads by the second hour.
+const FULFIL_SLOW_MS = Math.max(5000, int(env.FULFIL_SLOW_MS, 90000));
+
 // ── Rate limiting (telegraf-ratelimit) ───────────────────────────────────────
 const RATE_WINDOW = int(env.RATE_WINDOW, 3000);
 const RATE_LIMIT = int(env.RATE_LIMIT, 20);
@@ -413,6 +425,7 @@ module.exports = {
   X_RANKUP_ENABLED,
   X_GAINERS_ENABLED,
   X_POST_TIMEOUT_MS,
+  FULFIL_SLOW_MS,
   RATE_WINDOW,
   RATE_LIMIT,
   TRENDING_POST_MS,

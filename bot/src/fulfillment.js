@@ -337,6 +337,10 @@ async function fulfillListing(ctx, order) {
   log.info(
     `[fulfil] listing $${input.sym} (${input.tier || "?"}) took ${((Date.now() - _t0) / 1000).toFixed(1)}s — ${_t.marks.join(" ")}`,
   );
+  // Returned, not just logged: the caller decides whether this was slow enough
+  // to tell the operator, and "the order took 148s" sends nobody anywhere —
+  // "media=48s emoji=31s" does.
+  return { phases: _t.marks, ms: Date.now() - _t0 };
 }
 
 // ── Trending (standalone slot on an already-listed token) ────────────────────
