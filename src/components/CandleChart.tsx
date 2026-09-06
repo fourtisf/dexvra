@@ -567,11 +567,19 @@ export function CandleChart({
               referrerPolicy="no-referrer-when-downgrade"
             />
             {/* SAID, not implied. A chart that is not ours must say so — the
-                `via DexScreener` rule one feature over — and the reason our own
-                could not draw is what stops the next round of diagnosis. */}
-            <p className="ck-embed-note">
-              via DexScreener — {feed?.why ?? "our own chart could not be read just now."}
-            </p>
+                `via DexScreener` rule one feature over.
+
+                ⚠️ AND THE REASON IS NOT REPEATED HERE. It used to be, on the
+                stated grounds that "the reason our own could not draw is what
+                stops the next round of diagnosis" — true while that reason was
+                the operator's detailed one, and false the moment it became a
+                visitor sentence. Reported with a screenshot of a DexScreener
+                chart drawing perfectly under the line "Couldn't read the chart
+                just now": a panel contradicting itself, with the false half
+                printed under a chart the reader can plainly see. The diagnosis
+                lives in the LOG now (console.warn in /api/ohlcv), which is
+                where an operator was always going to read it. */}
+            <p className="ck-embed-note">via DexScreener</p>
           </div>
         ) : (status === "none" || status === "error") ? (
           <div className="ck-msg ck-empty">

@@ -178,7 +178,14 @@ test("⚠️ the embed is a FALLBACK, never the default — the ban moved, it di
   const note = CHART.match(/className="ck-embed-note">([\s\S]*?)<\/p>/);
   assert.ok(note, "the embed has no note element");
   assert.match(note[1], /via DexScreener/);
-  assert.match(note[1], /feed\?\.why/, "…and it carries why OUR chart could not be read");
+  // ⚠️ AND IT MAY NOT RESTATE THE FAILURE. This used to demand `feed?.why` in
+  // the note, which was right while that field carried the operator's detail —
+  // and became a panel contradicting itself once it became a visitor sentence:
+  // "Couldn't read the chart just now" printed under a DexScreener chart that
+  // had drawn perfectly. Reported from the live page. The reason goes to the
+  // log; the note is attribution, and attribution only.
+  assert.ok(!/feed\?\.why/.test(note[1]), `the embed note must not repeat a failure over a working chart:\n${note[1]}`);
+  assert.ok(!/couldn't read/i.test(note[1]), note[1]);
 });
 
 test("the embed URL is built in ONE place, and never for a chain DexScreener lacks", () => {
