@@ -65,7 +65,7 @@ const safeJson = (v) => {
  * regenerating credentials that were fine all along.
  *
  * @returns {{kind: string, message: string}} kind ∈ network | newapp-crypto |
- *   permission | auth | ratelimit | duplicate | unknown
+ *   permission | suspended | auth | ratelimit | duplicate | unknown
  */
 function classify(e) {
   const code = e && (e.code || (e.data && e.data.status));
@@ -99,10 +99,40 @@ function classify(e) {
         "The tweet is retried without the contract address; the full card returns by itself once the app is 7 days past authentication.",
     };
   }
+  // Twitter code 64. X uses ONE status and ONE sentence — "Your account is
+  // suspended and is not permitted to access this feature" — for two situations
+  // that need opposite actions:
+  //
+  //   • the account really is suspended → nothing posts at all, and the only
+  //     fix is an appeal to X;
+  //   • the app's ACCESS TIER does not carry the endpoint. v1.1 media/upload is
+  //     not in the Free tier, so a perfectly healthy account gets code 64 on the
+  //     MEDIA upload while its tweets keep going out fine.
+  //
+  // The discriminator is whether the TEXT tweet still lands ("[x] tweeted … id="
+  // in the log) — a suspended account cannot tweet either. This branch exists
+  // because the blanket 403 below claimed the token was READ-ONLY and told the
+  // operator to REGENERATE it: wrong for both causes, and actively harmful
+  // inside the 7-day window, where a fresh authorisation restarts the clock on
+  // the contract-address rule. THIRD time one 403 has needed pulling apart from
+  // the others (network, newapp-crypto, this) and the reason never changes:
+  // one status, several causes, opposite actions. Matched on X's SENTENCE
+  // rather than on the status, the way newapp-crypto is — a suspension can
+  // arrive as 401 too, and the words are what identify it.
+  if (/twitter code 64|"code"\s*:\s*64\b|account is suspended|not permitted to access this feature/i.test(raw)) {
+    return {
+      kind: "suspended",
+      message:
+        `${e.message}${detail ? ` — ${detail}` : ""} (403/64 — X says this account may not use this endpoint. ` +
+        "Either the account is suspended, or this app's access tier does not include it — v1.1 media upload is NOT in the Free tier, " +
+        "which refuses the IMAGE while text tweets keep working. Check whether \"[x] tweeted\" still appears in the log before " +
+        "touching the keys: regenerating them fixes neither cause.)",
+    };
+  }
   if (code === 403) {
     return {
       kind: "permission",
-      message: `${e.message}${detail ? ` — ${detail}` : ""} (403 — the Access Token is READ-ONLY: set the app to "Read and write", then REGENERATE the access token)`,
+      message: `${e.message}${detail ? ` — ${detail}` : ""} (403 — most often the Access Token is READ-ONLY: set the app to "Read and write", then REGENERATE the access token)`,
     };
   }
   if (code === 401) return { kind: "auth", message: `${e.message} (401 — the 4 keys don't match one app, or they were regenerated in the console)` };

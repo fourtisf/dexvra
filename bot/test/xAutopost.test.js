@@ -412,6 +412,42 @@ test("X's new-app crypto rule is not mistaken for a bad access token", () => {
   assert.ok(!/READ-ONLY/.test(res.message), "must not send the operator to regenerate the token");
 });
 
+test("Twitter code 64 is not reported as a read-only access token", () => {
+  // Hit for real on 2026-09-06: three listings composited their GIF perfectly
+  // ("[fulfil] listing media: admin clip + token overlay ✔") and every media
+  // upload came back 403 code 64 — "Your account is suspended and is not
+  // permitted to access this feature." The blanket 403 branch appended
+  // "the Access Token is READ-ONLY … REGENERATE the access token", which is
+  // wrong for BOTH of that status's real causes and actively harmful inside the
+  // 7-day window, where a fresh authorisation restarts the contract-address
+  // clock. Third 403 this classifier has had to pull apart (network,
+  // newapp-crypto, this) and the reason is always the same: one status, several
+  // causes, opposite actions.
+  const { classify } = require("../src/twitter")._diag;
+  const res = classify(
+    Object.assign(new Error("Request failed with code 403"), {
+      code: 403,
+      data: { errors: [{ code: 64, message: "Your account is suspended and is not permitted to access this feature." }] },
+    }),
+  );
+  assert.strictEqual(res.kind, "suspended", res.message);
+  assert.ok(!/READ-ONLY/.test(res.message), `must not send the operator to regenerate the token:\n${res.message}`);
+  // It may not GUESS between the two causes either — the code cannot tell them
+  // apart, so it names both and hands over the discriminator.
+  assert.match(res.message, /suspended/i);
+  assert.match(res.message, /Free tier/, "the access-tier reading must be offered too");
+  assert.match(res.message, /\[x\] tweeted/, "…and the one observation that separates them");
+
+  // The genuine read-only 403 keeps its own answer — this must not swallow it.
+  const readOnly = classify(
+    Object.assign(new Error("Request failed with code 403"), {
+      code: 403,
+      data: { status: 403, detail: "Your client app is not configured with the appropriate oauth1 app permissions." },
+    }),
+  );
+  assert.strictEqual(readOnly.kind, "permission", readOnly.message);
+});
+
 test("a refused listing is retried without its CA, keeping the token link", () => {
   const { stripCryptoAddresses: strip } = require("../src/twitter")._diag;
   const full = x._text.listingText({
