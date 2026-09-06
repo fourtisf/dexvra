@@ -105,8 +105,14 @@ const isOurX = (url) => {
  *
  * Rewriting an entity's url cannot move a single character, and every text
  * swap is length-preserving, so offsets stay correct either way.
+ *
+ * `xOnly` marks a template in the "X Posts" group — the TWEET copy. There is no
+ * Telegram inside a tweet, so a bare @mention there can only be the X account
+ * and is swapped rather than handed back to the operator to read. That is the
+ * one place the ambiguity below does not exist, and leaving those in the
+ * "read these yourself" pile is the manual work this script exists to end.
  */
-function retargetValue(val) {
+function retargetValue(val, xOnly) {
   const isObj = val && typeof val === "object" && val.text != null;
   const text = isObj ? val.text : String(val || "");
   let hits = 0;
@@ -148,6 +154,11 @@ function retargetValue(val) {
     // entirely. A project's own X link and every t.me link are left alone.
     entities = entities.map((e, i) => (ours[i] ? { ...e, url: swap(e.url) } : e));
   }
+
+  // 3b. In a TWEET, a bare @mention has no other candidate. Everywhere else it
+  //     is the Telegram channel on every card this repo ships, which is why the
+  //     general case falls through to the report below.
+  if (xOnly) out = swap(out);
 
   // 4. What is LEFT is reported, never guessed at. A bare `@dexvralisting` with
   //    no link around it is the Telegram channel on every card this repo ships
@@ -195,7 +206,9 @@ function retargetValue(val) {
   const toRead = [];
   for (const key of custom) {
     const val = tpl.getRawValue(key);
-    const { out, hits, ambiguous, isObj, before: text } = retargetValue(val);
+    const m = tpl.meta(key);
+    const xOnly = !!(m && m.group === "X Posts");
+    const { out, hits, ambiguous, isObj, before: text } = retargetValue(val, xOnly);
     if (hits) {
       // The invariant this whole script rests on, ASSERTED rather than trusted:
       // an entity-bearing template whose length moved would have its bold and

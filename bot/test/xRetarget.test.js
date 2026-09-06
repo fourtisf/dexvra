@@ -155,3 +155,26 @@ test("a label that spells the handle out is fixed inside its own entity range", 
   assert.strictEqual(out.text.length, text.length);
   assert.strictEqual(out.entities[0].url, "https://x.com/listingdexvra");
 });
+
+test("in a TWEET a bare mention is swapped — there is no Telegram inside a tweet", () => {
+  // The general rule punts on a bare @mention because on every card this repo
+  // ships that is the Telegram channel. The X Posts group is the one place that
+  // ambiguity does not exist: the copy goes out as a tweet, so the only account
+  // it can mean is the X one. Leaving those in the "read these yourself" pile
+  // is exactly the manual work this script exists to end.
+  write({ x_banner: "📢 Banner Live on Dexvra\n{title} is now featured on @dexvralisting\n{url}" });
+  run("--apply");
+  assert.match(read().x_banner, /featured on @listingdexvra/);
+  assert.ok(!/@dexvralisting/.test(read().x_banner));
+});
+
+test("…and the same bare mention in a TELEGRAM card is still only reported", () => {
+  // The other half of the same rule, and the one that would break links if it
+  // ever became a swap: on a Telegram card @dexvralisting is the channel, which
+  // did not move.
+  write({ tier_chooser: "Every tier includes a launch post on @dexvralisting." });
+  const out = run();
+  assert.match(out, /Read these yourself/, out);
+  assert.match(out, /nothing to rename/, "a Telegram card must never be guessed at");
+  assert.match(read().tier_chooser, /@dexvralisting/, "…and it must be left exactly as it was");
+});
