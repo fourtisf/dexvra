@@ -243,6 +243,25 @@ const X_POST_TIMEOUT_MS = Math.max(5000, int(env.X_POST_TIMEOUT_MS, 30000));
 // alert on every Diamond listing is a channel nobody reads by the second hour.
 const FULFIL_SLOW_MS = Math.max(5000, int(env.FULFIL_SLOW_MS, 90000));
 
+// Deadlines for the DECORATIVE half of a listing. Both steps already declare
+// themselves best-effort in their own comments — and both were unbounded, which
+// is not best-effort but a hang: the fallback only runs if the step FINISHES,
+// and an ffmpeg that never returns never fails either.
+//
+// Reported 2026-09-06: an Xpress listing sat on "Running your order — hang
+// tight…" for ten minutes. What a buyer is owed is the listing, the channel
+// post and the receipt; an animated logo emoji and an overlay composited onto
+// the admin's clip are what they get if those are ready in time.
+//
+//   EMOJI  — 48 canvas frames, an ffmpeg VP9 bitrate ladder, then several
+//            Telegram sticker calls at up to 60s EACH. Skipped past the budget:
+//            the card then renders the plain unicode fallback.
+//   CLIP   — ffmpeg over the admin's GIF/MP4. Past the budget the ladder below
+//            it continues exactly as it does for any other failure: the clip
+//            as-is, then the composited still, then the dynamic banner.
+const EMOJI_BUDGET_MS = Math.max(2000, int(env.EMOJI_BUDGET_MS, 25000));
+const CLIP_BUDGET_MS = Math.max(2000, int(env.CLIP_BUDGET_MS, 60000));
+
 // ── Rate limiting (telegraf-ratelimit) ───────────────────────────────────────
 const RATE_WINDOW = int(env.RATE_WINDOW, 3000);
 const RATE_LIMIT = int(env.RATE_LIMIT, 20);
@@ -426,6 +445,8 @@ module.exports = {
   X_GAINERS_ENABLED,
   X_POST_TIMEOUT_MS,
   FULFIL_SLOW_MS,
+  EMOJI_BUDGET_MS,
+  CLIP_BUDGET_MS,
   RATE_WINDOW,
   RATE_LIMIT,
   TRENDING_POST_MS,

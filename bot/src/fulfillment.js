@@ -11,7 +11,9 @@ const postids = require("./channels/postids");
 const market = require("./marketdata");
 const x = require("./twitter");
 const menu = require("./handlers/menu");
-const { SITE_URL, CHANNELS, X_POST_TIMEOUT_MS, X_TRENDING_ENABLED } = require("./config/constants");
+const { SITE_URL, CHANNELS, X_POST_TIMEOUT_MS,
+  EMOJI_BUDGET_MS,
+  CLIP_BUDGET_MS, X_TRENDING_ENABLED } = require("./config/constants");
 const { tierAnnounces, tierLabel } = require("./config/packages");
 const { fmtPrice, formatNumber } = require("./helpers/format");
 const { isValidTicker, sanitizeTicker } = require("./helpers/ticker");
@@ -21,6 +23,7 @@ const { chainOf } = require("./config/chains");
 const assets = require("./assets");
 const bannerRender = require("./bannerRender");
 const bannerTemplate = require("./bannerTemplate");
+const { bounded } = require("./helpers/bounded");
 const tokenEmoji = require("./tokenEmoji");
 const tpl = require("./templates");
 const log = require("./helpers/logger");
@@ -126,7 +129,12 @@ async function postMedia(kind, bannerCoin, logoBuffer, logoFileId, logoUrl, badg
       // the still artwork. Any failure falls back to the raw clip. Ad/pump/rank clips
       // (advertiser creative / generic hype) are sent as-is.
       if (BANNER_FILL_KINDS.has(kind)) {
-        const filled = await bannerTemplate
+        // ⚠️ BOUNDED. ffmpeg over the admin's GIF has no timeout of its own,
+        // and this sits between a buyer's payment and their receipt. Past the
+        // budget the ladder below continues exactly as it does for any other
+        // failure — the clip as-is, then the still, then the dynamic banner.
+        const filled = await bounded(
+          bannerTemplate
           .composeOntoClip(kind, media, logoBuffer, {
             symbol: bannerCoin.symbol,
             name: bannerCoin.name,
@@ -135,7 +143,13 @@ async function postMedia(kind, bannerCoin, logoBuffer, logoFileId, logoUrl, badg
             mcap: bannerCoin.mcap,
             badge,
           })
-          .catch(() => null);
+          .catch(() => null),
+          CLIP_BUDGET_MS,
+          () => {
+            log.warn(`[fulfil] ${kind} media: overlay composite passed ${CLIP_BUDGET_MS}ms — sending the clip as-is`);
+            return null;
+          },
+        );
         if (filled) {
           log.info(`[fulfil] ${kind} media: admin clip + token overlay ✔`);
           return filled;
@@ -145,7 +159,10 @@ async function postMedia(kind, bannerCoin, logoBuffer, logoFileId, logoUrl, badg
       // A raw .gif would arrive as a file card over MTProto — convert it so it
       // plays inline, the same as the clips composeOntoClip already produces.
       log.info(`[fulfil] ${kind} media: admin ${media.type} clip ✔`);
-      return await bannerTemplate.toInlineClip(media);
+      return await bounded(bannerTemplate.toInlineClip(media), CLIP_BUDGET_MS, () => {
+        log.warn(`[fulfil] ${kind} media: clip→animation passed ${CLIP_BUDGET_MS}ms — sending the file as-is`);
+        return media;
+      });
     }
     // Rank-up has its OWN dynamic banner (rank medallion + big % gain). It can't
     // be a static composited artwork (the rank/% change every alert), so skip
@@ -267,9 +284,15 @@ async function fulfillListing(ctx, order) {
   // Animated logo custom-emoji (per-token pack, shown inline in channel posts
   // via GramJS). Best-effort — ensureTokenEmoji never throws.
   step("create");
-  await tokenEmoji.ensureTokenEmoji(
-    { chain: input.chain, address: input.address, symbol: input.sym },
-    logoBuffer,
+  // ⚠️ BOUNDED. 48 canvas frames, an ffmpeg bitrate ladder and several Telegram
+  // sticker calls at up to 60s EACH — in front of the buyer's receipt, for an
+  // animated logo. Its own header calls it best-effort; past the budget the
+  // card renders the plain unicode fallback, which is what it does anyway on
+  // any box without a pack.
+  await bounded(
+    tokenEmoji.ensureTokenEmoji({ chain: input.chain, address: input.address, symbol: input.sym }, logoBuffer),
+    EMOJI_BUDGET_MS,
+    () => log.warn(`[fulfil] token emoji passed ${EMOJI_BUDGET_MS}ms — posting with the plain fallback`),
   );
   step("emoji");
   const live = await market.fetchMarket(input.chain, input.address).catch(() => null);
