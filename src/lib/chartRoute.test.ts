@@ -168,24 +168,33 @@ test("⚠️ the embed is a FALLBACK, never the default — the ban moved, it di
     !/status === "none" && embedUrl/.test(CHART),
     "a token with no pool must not be handed a third-party empty chart",
   );
-  // And it says it is not ours. A chart the reader cannot attribute is worse
-  // than no chart — the `via DexScreener` rule, one feature over.
+  // ⚠️ AND WE ADD NO CAPTION OF OUR OWN UNDER IT.
   //
-  // ⚠️ ASSERTED INSIDE THE EMBED'S OWN NOTE, not anywhere in the file: the
-  // native DexScreener SOURCE already prints a `via DexScreener` chip, so a
-  // bare match on that string is true of a build where the embed says nothing
-  // at all. The mutant that strips the label survived exactly that.
-  const note = CHART.match(/className="ck-embed-note">([\s\S]*?)<\/p>/);
-  assert.ok(note, "the embed has no note element");
-  assert.match(note[1], /via DexScreener/);
-  // ⚠️ AND IT MAY NOT RESTATE THE FAILURE. This used to demand `feed?.why` in
-  // the note, which was right while that field carried the operator's detail —
-  // and became a panel contradicting itself once it became a visitor sentence:
-  // "Couldn't read the chart just now" printed under a DexScreener chart that
-  // had drawn perfectly. Reported from the live page. The reason goes to the
-  // log; the note is attribution, and attribution only.
-  assert.ok(!/feed\?\.why/.test(note[1]), `the embed note must not repeat a failure over a working chart:\n${note[1]}`);
-  assert.ok(!/couldn't read/i.test(note[1]), note[1]);
+  // This block went the long way round, so the reasoning is worth keeping. It
+  // began as "a chart the reader cannot attribute is worse than no chart", and
+  // demanded a note carrying `via DexScreener` AND `feed?.why`. Both halves
+  // were then reported from the live page:
+  //
+  //   • the reason, because it printed "Couldn't read the chart just now"
+  //     under a DexScreener chart that had drawn perfectly — a panel
+  //     contradicting itself, the false half under the true one;
+  //   • the label, because the embed is a third-party iframe that paints
+  //     "Tracked by DEXSCREENER" with their logo across its own foot. Our line
+  //     said the same thing a second time, one row lower.
+  //
+  // The attribution RULE is sound and is still enforced where it applies — the
+  // `ck-src` chip on the NATIVE DexScreener source, whose candles are drawn in
+  // our own colours and are otherwise indistinguishable from GeckoTerminal's.
+  // What was wrong was carrying it to a surface that self-attributes.
+  assert.ok(
+    !/ck-embed-note/.test(CHART),
+    "the embed captions itself — a second attribution one row lower is noise",
+  );
+  assert.ok(!/ck-embed-note/.test(CSS), "…and its style must go with it, not linger as dead CSS");
+  // The rule it came from is NOT deleted: the native source still says so.
+  const chip = CHART.match(/feed\?\.source === "dexscreener" && \([\s\S]{0,400}?<\/span>/);
+  assert.ok(chip, "the native DexScreener source lost its attribution chip");
+  assert.match(chip[0], /via DexScreener/);
 });
 
 test("the embed URL is built in ONE place, and never for a chain DexScreener lacks", () => {

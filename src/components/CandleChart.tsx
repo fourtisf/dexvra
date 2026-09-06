@@ -566,20 +566,19 @@ export function CandleChart({
               // broken embed is the state this replaces, not a safer one.
               referrerPolicy="no-referrer-when-downgrade"
             />
-            {/* SAID, not implied. A chart that is not ours must say so — the
-                `via DexScreener` rule one feature over.
+            {/* ⚠️ NO NOTE OF OUR OWN. This carried "via DexScreener", on the
+                rule that a chart the reader cannot attribute is worse than no
+                chart — which is TRUE, and is why the `ck-src` chip above stays
+                on the native DexScreener source: those candles are drawn in our
+                colours and are indistinguishable from GeckoTerminal's.
 
-                ⚠️ AND THE REASON IS NOT REPEATED HERE. It used to be, on the
-                stated grounds that "the reason our own could not draw is what
-                stops the next round of diagnosis" — true while that reason was
-                the operator's detailed one, and false the moment it became a
-                visitor sentence. Reported with a screenshot of a DexScreener
-                chart drawing perfectly under the line "Couldn't read the chart
-                just now": a panel contradicting itself, with the false half
-                printed under a chart the reader can plainly see. The diagnosis
-                lives in the LOG now (console.warn in /api/ohlcv), which is
-                where an operator was always going to read it. */}
-            <p className="ck-embed-note">via DexScreener</p>
+                It does not transfer to the EMBED. That is a third-party iframe
+                that paints "Tracked by DEXSCREENER" with their own logo and
+                wordmark across its own foot — the very branding the original
+                ban on this embed was written about. So our line said the same
+                thing a second time, one row below theirs, and the operator
+                asked for it to go. Attribution is not lost here; it was never
+                ours to make in the first place. */}
           </div>
         ) : (status === "none" || status === "error") ? (
           <div className="ck-msg ck-empty">
