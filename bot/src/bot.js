@@ -39,13 +39,32 @@ const rateLimitConfig = {
   onLimitExceeded: (ctx) => log.debug(`[ratelimit] exceeded ${ctx.from && ctx.from.id}`),
 };
 
+// Past this a tap is worth a line — well under Telegraf's 120s handlerTimeout,
+// so a handler on its way to being killed is visible BEFORE it is.
+const SLOW_HANDLER_MS = Math.max(1000, Number(process.env.SLOW_HANDLER_MS) || 8000);
+
 function applyMiddleware(bot) {
   if (middlewareApplied) return bot;
   middlewareApplied = true;
 
-  bot.use((ctx, next) => {
+  bot.use(async (ctx, next) => {
     log.debug(`[upd] ${ctx.updateType} chat=${ctx.chat && ctx.chat.id} from=${ctx.from && ctx.from.id}`);
-    return next();
+    // ⚠️ A HANDLER THAT IS MERELY SLOW LEAVES NO TRACE AT ALL. Only the ones
+    // that reach handlerTimeout are reported, and by then the framework has
+    // killed the promise and the user has been staring at a spinner for two
+    // minutes. This is the tradebot's `[ui] slow cb:` line, which exists for
+    // the same reason and says so: "respon sangat lambat" is measured, not
+    // argued. Silent under the threshold — a fast tap must not write a line
+    // per update into a log the background loops are already filling.
+    ctx.__t0 = Date.now();
+    try {
+      return await next();
+    } finally {
+      const ms = Date.now() - ctx.__t0;
+      if (ms >= SLOW_HANDLER_MS) {
+        log.warn(`[ui] slow ${ctx.updateType} tap=${tapOf(ctx)} handle=${(ms / 1000).toFixed(1)}s`);
+      }
+    }
   });
   bot.use(session({ getSessionKey: generateSessionKey, defaultSession: () => ({}) }));
   bot.use(rateLimit(rateLimitConfig));
@@ -66,8 +85,31 @@ function applyMiddleware(bot) {
  * ms"). Best-effort and never throws: we are already in the failure path, and a
  * second exception here would take the whole update down with it.
  */
+/** Which tap this was, for the log. BOT-GENERATED data only — never message
+ *  text: the import-wallet step takes a private key as a plain message, and
+ *  even a truncated echo of it would land in pm2's log. Callback data is a
+ *  string this bot itself put on the button. */
+function tapOf(ctx) {
+  const cb = ctx && ctx.callbackQuery;
+  if (cb && typeof cb.data === "string") return cb.data.slice(0, 64);
+  const pending = ctx && ctx.session && (ctx.session.awaitingField || ctx.session.awaitingTemplate);
+  if (pending) return `step:${String(pending).slice(0, 40)}`;
+  return "-";
+}
+
 async function onHandlerError(err, ctx) {
-  log.error(`[telegraf] ${ctx && ctx.updateType} handler error: ${err && err.message}`);
+  // ⚠️ IT NAMES THE TAP. Without this the line said `callback_query handler
+  // error: Promise timed out after 120000 milliseconds` and nothing else —
+  // true of all 26 registered callbacks, so every occurrence started a fresh
+  // hunt across the lot. Two of those hunts were mine, and both were guesses.
+  // The elapsed time comes with it, because 120000 means the framework killed
+  // it and anything shorter means the handler threw on its own.
+  const ms = ctx && ctx.__t0 ? Date.now() - ctx.__t0 : null;
+  log.error(
+    `[telegraf] ${ctx && ctx.updateType} handler error` +
+      ` tap=${tapOf(ctx)}${ms == null ? "" : ` after=${(ms / 1000).toFixed(1)}s`}` +
+      `: ${err && err.message}`,
+  );
   try {
     if (ctx && ctx.callbackQuery && ctx.answerCbQuery) {
       await ctx.answerCbQuery("Something went wrong — please try again").catch(() => {});
