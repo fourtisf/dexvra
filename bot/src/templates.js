@@ -155,7 +155,7 @@ const DEFAULTS = {
     "🔹 Go live in **minutes** — no tier, no review.\n\n" +
     "**What you get**\n" +
     "✅ Listed on [dexvra.io](https://dexvra.io)\n" +
-    "🚨 Launch post on [@dexvralisting](https://t.me/dexvralisting)\n" +
+    "🚨 Launch post on Telegram — [@dexvralisting](https://t.me/dexvralisting)\n" +
     "𝕏 Automatic post on X — [@listingdexvra]({xlisting})\n\n" +
     "💎 Want Trending + a tier badge too? Choose **🏆 Listing & Trending**.\n\n" +
     "🔹 Only one step away — **select your network** below to begin:",
@@ -164,7 +164,7 @@ const DEFAULTS = {
     "🔹 Maximum exposure across the entire Dexvra network.\n\n" +
     "**What you get**\n" +
     "✅ Permanent listing on [dexvra.io](https://dexvra.io)\n" +
-    "🚨 Launch post on [@dexvralisting](https://t.me/dexvralisting)\n" +
+    "🚨 Launch post on Telegram — [@dexvralisting](https://t.me/dexvralisting)\n" +
     "🔥 Featured Trending run on [@dexvratrending](https://t.me/dexvratrending)\n" +
     "📢 Announcement headline on [@dexvraio](https://t.me/dexvraio) (top tiers)\n" +
     "𝕏 Automatic post on X — [@listingdexvra]({xlisting})\n" +

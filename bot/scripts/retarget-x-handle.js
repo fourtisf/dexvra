@@ -86,39 +86,85 @@ const isOurX = (url) => {
 };
 
 /**
- * Rewrite one template body. Returns { out, hits, ambiguous }.
+ * Rewrite one saved template VALUE. Returns { out, hits, ambiguous }.
  *
  * Decisions are made per LINK and per URL — never per line and never on the
  * label text, because the label is exactly what is identical between the two
  * accounts.
+ *
+ * ⚠️ A URL DOES NOT HAVE TO BE IN THE TEXT. A template pasted with authored
+ * formatting is stored as `{ text, entities }`, and a `text_link` entity keeps
+ * its target in `entity.url` — nowhere in the text at all. The first cut of
+ * this script scanned the text only and answered "nothing to rename" over a
+ * welcome card whose Official Links row still opened
+ * `https://x.com/dexvralisting?s=11`. A rename tool that reports a clean box
+ * while the link is still wrong is worse than no tool: it ends the search.
+ * (The `?s=11` is the giveaway that it was pasted from the X mobile app — an
+ * operator's hand-made link, which is exactly the kind {xlisting} never gets
+ * used for.)
+ *
+ * Rewriting an entity's url cannot move a single character, and every text
+ * swap is length-preserving, so offsets stay correct either way.
  */
-function retarget(text) {
+function retargetValue(val) {
+  const isObj = val && typeof val === "object" && val.text != null;
+  const text = isObj ? val.text : String(val || "");
   let hits = 0;
-  const swap = (s) => s.replace(new RegExp(OLD, "g"), () => (hits++, NEW));
+  const swap = (s) => String(s).replace(new RegExp(OLD, "g"), () => (hits++, NEW));
 
   // 1. Markdown links: `[label](url)`. Rewritten only when the URL is ours.
-  let out = String(text).replace(/\[([^\]]*)\]\(([^)]*)\)/g, (whole, label, url) =>
+  let out = text.replace(/\[([^\]]*)\]\(([^)]*)\)/g, (whole, label, url) =>
     isOurX(url) ? `[${swap(label)}](${swap(url)})` : whole,
   );
 
   // 2. Bare URLs outside a link — an operator who pasted the profile address
-  //    rather than using {xlisting}. Same host, new handle.
+  //    rather than using {xlisting}. Same host, new handle; any ?s= suffix the
+  //    X app appended is left exactly as it was.
   out = out.replace(new RegExp(`((?:https?://)?(?:www\\.)?(?:x|twitter)\\.com/)@?${OLD}\\b`, "gi"), (_m, pre) => {
     hits++;
     return `${pre}${NEW}`;
   });
 
-  // 3. What is LEFT is reported, never guessed at. A bare `@dexvralisting` with
+  // 3. text_link ENTITIES — the url the reader actually opens, which lives
+  //    outside the text entirely. Only ours; a project's own X link and every
+  //    t.me link are left alone.
+  let entities = isObj ? val.entities : null;
+  if (Array.isArray(entities)) {
+    // ⚠️ WHICH ENTITIES ARE OURS IS DECIDED FIRST, ONCE. isOurX() tests for the
+    // OLD handle, so asking it again after the urls have been rewritten answers
+    // NO for every entity this pass just fixed — and the label swap below then
+    // silently skipped every one of them. Caught by the test, not by reading.
+    const ours = entities.map((e) => Boolean(e && e.type === "text_link" && isOurX(e.url)));
+    // The LABEL that entity covers, when it spells the handle out. Bounded to
+    // the entity's own range, so a mention elsewhere on the card is untouched —
+    // and done BEFORE the url swap, on the ranges as they stand.
+    entities.forEach((e, i) => {
+      if (!ours[i]) return;
+      const covered = out.slice(e.offset, e.offset + e.length);
+      const fixed = swap(covered);
+      if (fixed !== covered) out = out.slice(0, e.offset) + fixed + out.slice(e.offset + e.length);
+    });
+    // …then the url the reader actually opens, which lives outside the text
+    // entirely. A project's own X link and every t.me link are left alone.
+    entities = entities.map((e, i) => (ours[i] ? { ...e, url: swap(e.url) } : e));
+  }
+
+  // 4. What is LEFT is reported, never guessed at. A bare `@dexvralisting` with
   //    no link around it is the Telegram channel on every card this repo ships
   //    — and could be the X account on a card an operator rewrote by hand. The
   //    code cannot tell, so a human does; that is a handful of lines to read,
   //    not the one-by-one edit this script exists to end.
+  const linked = new Set(
+    (Array.isArray(entities) ? entities : [])
+      .filter((e) => e && e.type === "text_link")
+      .map((e) => out.slice(e.offset, e.offset + e.length)),
+  );
   const ambiguous = out
     .split("\n")
-    .filter((line) => new RegExp(`@?${OLD}\\b`, "i").test(line) && !/t\.me\//i.test(line))
+    .filter((line) => new RegExp(`@?${OLD}\\b`, "i").test(line) && !/t\.me\//i.test(line) && !linked.has(line.trim()))
     .map((l) => l.trim());
 
-  return { out, hits, ambiguous };
+  return { out: isObj ? { ...val, text: out, entities } : out, hits, ambiguous, isObj, before: text };
 }
 
 (async () => {
@@ -149,18 +195,17 @@ function retarget(text) {
   const toRead = [];
   for (const key of custom) {
     const val = tpl.getRawValue(key);
-    const isObj = val && typeof val === "object" && val.text != null;
-    const text = isObj ? val.text : String(val);
-    const { out, hits, ambiguous } = retarget(text);
+    const { out, hits, ambiguous, isObj, before: text } = retargetValue(val);
     if (hits) {
       // The invariant this whole script rests on, ASSERTED rather than trusted:
       // an entity-bearing template whose length moved would have its bold and
       // link ranges silently shifted.
-      if (out.length !== text.length) {
-        bad(`${key}: rewrite changed the length (${text.length} → ${out.length}) — refusing, entities would shift`);
+      const outText = isObj ? out.text : out;
+      if (outText.length !== text.length) {
+        bad(`${key}: rewrite changed the length (${text.length} → ${outText.length}) — refusing, entities would shift`);
         continue;
       }
-      changes.push({ key, isObj, val, out, hits, before: text });
+      changes.push({ key, isObj, out, outText, hits, before: text, urlOnly: outText === text });
     }
     if (ambiguous.length) toRead.push({ key, lines: ambiguous });
   }
@@ -170,8 +215,9 @@ function retarget(text) {
   } else {
     for (const c of changes) {
       console.log(`\n  ${c.key}  ${D}(${c.hits} occurrence${c.hits > 1 ? "s" : ""}${c.isObj ? ", has entities" : ""})${O}`);
+      if (c.urlOnly) console.log(`    ${D}(the text is unchanged — the link lives in a formatting entity)${O}`);
       const b = c.before.split("\n");
-      c.out.split("\n").forEach((line, i) => {
+      c.outText.split("\n").forEach((line, i) => {
         if (b[i] !== line) {
           console.log(`    ${R}- ${b[i]}${O}`);
           console.log(`    ${G}+ ${line}${O}`);
@@ -206,7 +252,7 @@ function retarget(text) {
   for (const c of changes) {
     // setTemplate writes the whole value, so an object keeps its entities —
     // which are still correct because the length did not move.
-    await tpl.setTemplate(c.key, c.isObj ? { ...c.val, text: c.out } : c.out);
+    await tpl.setTemplate(c.key, c.out);
   }
   ok(`${changes.length} template(s) now name @${NEW}`);
   dim("  The bot reads templates.json on every render — no restart needed.");

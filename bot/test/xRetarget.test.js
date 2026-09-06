@@ -108,3 +108,50 @@ test("a bare mention with no link is REPORTED, never guessed at", () => {
   assert.match(out, /launch post on @dexvralisting/, out);
   assert.match(out, /nothing to rename/, "it must not silently rewrite an ambiguous mention");
 });
+
+test("⚠️ it follows the url into a formatting ENTITY, where the text never names it", () => {
+  // The reported card: welcome → Official Links → "Dexvra Listing" opened
+  // https://x.com/dexvralisting?s=11. That url is in NO part of the text — a
+  // pasted, formatted message stores its links as text_link entities, and the
+  // first cut of this script scanned the text only and answered "nothing to
+  // rename" over it. A rename tool reporting a clean box while the link is
+  // still wrong is worse than no tool: it ends the search.
+  const text = "🔗 Official Links\nDexvra Listing\nDexvra Announcement";
+  const entities = [
+    { type: "text_link", offset: text.indexOf("Dexvra Listing"), length: 14, url: "https://x.com/dexvralisting?s=11" },
+    // The ANNOUNCEMENT account is a different account and must not move.
+    { type: "text_link", offset: text.indexOf("Dexvra Announcement"), length: 19, url: "https://x.com/dexvraio" },
+    { type: "bold", offset: 0, length: 16 },
+  ];
+  write({ welcome: { text, entities } });
+  run("--apply");
+  const out = read().welcome;
+
+  assert.strictEqual(out.entities[0].url, "https://x.com/listingdexvra?s=11", "the entity url must be repointed");
+  // The ?s= suffix is the operator's own — copied from the X app — and is not
+  // ours to tidy away.
+  assert.match(out.entities[0].url, /\?s=11$/);
+  assert.strictEqual(out.entities[1].url, "https://x.com/dexvraio", "@dexvraio is a different account");
+  assert.strictEqual(out.text, text, "the text carries no url, so it must not change at all");
+  // Nothing moved, so every offset is still correct.
+  assert.deepStrictEqual(
+    out.entities.map((e) => [e.offset, e.length]),
+    entities.map((e) => [e.offset, e.length]),
+  );
+});
+
+test("a label that spells the handle out is fixed inside its own entity range", () => {
+  // A link whose visible text IS the handle, carried by an entity rather than
+  // markdown. The swap is bounded to that entity's range, so a mention of the
+  // Telegram channel elsewhere on the card is untouched.
+  const text = "Follow @dexvralisting on X\nLaunch post on @dexvralisting";
+  const entities = [{ type: "text_link", offset: 7, length: 14, url: "https://x.com/dexvralisting" }];
+  write({ welcome: { text, entities } });
+  run("--apply");
+  const out = read().welcome;
+
+  assert.strictEqual(out.text.slice(7, 21), "@listingdexvra", "the linked label follows its url");
+  assert.match(out.text, /Launch post on @dexvralisting$/, "the unlinked Telegram mention is untouched");
+  assert.strictEqual(out.text.length, text.length);
+  assert.strictEqual(out.entities[0].url, "https://x.com/listingdexvra");
+});
