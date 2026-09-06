@@ -136,7 +136,8 @@ sells Listing / Xpress / Trending / Banner packages, verifies on-chain payment
 
 **X auto-posting** — every listing (paid *and* free auto-listing), plus banner
 ads and pump alerts, is tweeted from
-[@dexvralisting](https://x.com/dexvralisting). Trending Token, the Top Gainers
+[@listingdexvra](https://x.com/listingdexvra) — a different account from the
+Telegram listing channel `@dexvralisting`. Trending Token, the Top Gainers
 board and rank-up alerts are deliberately excluded — only listings, and
 follow-ups to listings, belong on a listing feed. It needs four OAuth
 1.0a keys (`X_API_KEY`, `X_API_KEY_SECRET`, `X_ACCESS_TOKEN`, `X_ACCESS_SECRET`)

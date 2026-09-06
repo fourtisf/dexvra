@@ -6,7 +6,7 @@ const { Telegraf, Markup, session } = require("telegraf");
 const { promises: fs } = require("node:fs");
 const fss = require("node:fs");
 const path = require("node:path");
-const { isAdminUser, ADMIN_BOT_TOKEN, CHANNELS } = require("../config/constants");
+const { isAdminUser, ADMIN_BOT_TOKEN, CHANNELS, X_LISTING_URL, X_LISTING_HANDLE } = require("../config/constants");
 const { getMediaFileId, payloadArgs } = require("../helpers/message");
 const { escapeHtml, fmtPrice, fmtCap, parseCap } = require("../helpers/format");
 const { DATA_DIR } = require("../helpers/persist");
@@ -197,7 +197,11 @@ const SAMPLE_VARS = {
   chains: "solana, bsc, ethereum, base", unsupported: "", lock: "off",
   walletUrl: "https://solscan.io/account/AFqu1M", chartUrl: "https://dexscreener.com/solana/G9j8",
   coinUrlLabel: "dexvra.io/token/solana/G9j8", xUrl: "https://x.com/i/status/1",
-  xlisting: "https://x.com/dexvraio", handle: "@dexvralisting", mention: " @bullcat",
+  // {xlisting} and {handle} are DEXVRA's own X account, so they are READ from
+  // the config rather than typed here: the typed pair had already gone stale —
+  // xlisting named @dexvraio, which is not the account any listing is tweeted
+  // from — so an operator editing an X template previewed the wrong feed.
+  xlisting: X_LISTING_URL, handle: `@${X_LISTING_HANDLE}`, mention: " @bullcat",
   listingUrl: "https://t.me/dexvralisting/6", trendingUrl: "https://t.me/dexvratrending/3",
   announceUrl: "https://t.me/dexvraio/9", linkUrl: "https://bullcat.io",
   title: "The Bull Cat", description: "A community-driven memecoin on Solana.",

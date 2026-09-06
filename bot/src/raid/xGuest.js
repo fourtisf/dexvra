@@ -7,7 +7,7 @@
 //
 //  • NO ACCOUNT IS ATTACHED. That is the entire reason it uses a guest token
 //    rather than a session cookie. The exposure is an IP being throttled, not
-//    the @dexvralisting account the listing, trending and pump pipelines post
+//    the @listingdexvra account the listing, trending and pump pipelines post
 //    from. Do not "improve" this into cookie auth.
 //  • X rotates the GraphQL operation hash on its own schedule. The id is
 //    resolved in THREE tiers — `X_GUEST_QUERY_ID` in .env, then one discovered

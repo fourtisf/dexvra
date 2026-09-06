@@ -22,7 +22,7 @@ Telegram user ──▶ bot (Telegraf, long-polling)
                     │       writer of data/listings.json, no cross-process races)
                     │
                     ├─▶ @dexvralisting / @dexvraio / @dexvratrending   (Bot API posts)
-                    └─▶ X @dexvralisting    every listing (paid + free auto),
+                    └─▶ X @listingdexvra    every listing (paid + free auto),
                                             banner ads, and pump alerts quoting
                                             their listing tweet  (4 keys — see
                                             X-AUTOPOST.md; off until they're set)

@@ -281,7 +281,7 @@ async function startBot() {
  * Name — at boot, in one line — exactly what this process will tweet.
  *
  * The rule is a product decision: only listings, pump alerts and banner ads go
- * on @dexvralisting. The switches that enforce it default to off, but an
+ * on @listingdexvra. The switches that enforce it default to off, but an
  * EXPLICIT value in .env beats a code default, so a stale `X_RANKUP_ENABLED=1`
  * left over from an earlier setup silently reinstated rank-up tweets — and the
  * only place that was visible was the public timeline, eleven hours later.

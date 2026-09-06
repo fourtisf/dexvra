@@ -330,7 +330,7 @@ async function fulfillTrending(ctx, order) {
   );
   const trendMedia = await postMedia("trending", bannerCoin, logoBuffer, null, row.logoUrl, `Trending ${p.hours}H`);
 
-  // Trending is NOT announced on the X listing account by default: @dexvralisting
+  // Trending is NOT announced on the X listing account by default: @listingdexvra
   // is the listing feed, and Trending Token is its own product with its own
   // channel (@dexvratrending). X_TRENDING_ENABLED=1 turns it back on. When it is
   // off there is simply no tweet, and the channel card's "Announce On X" line

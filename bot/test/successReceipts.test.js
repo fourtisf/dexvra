@@ -45,7 +45,7 @@ test("every destination is its own editable line: label written in the template,
     symbol: "$CASHCAT", name: "Cash Cat", tier: "Diamond", tierEmoji: "💎", hours: 48,
     siteUrl: "https://dexvra.io/token/robinhood/0x020b",
     listingUrl: "https://t.me/dexvralisting/8733",
-    xUrl: "https://x.com/dexvralisting/status/207487",
+    xUrl: "https://x.com/listingdexvra/status/207487",
     announceUrl: "https://t.me/dexvraio/11993",
     trendingUrl: "https://t.me/dexvratrending/9106",
     postLinks: "", announceX: "",
@@ -54,7 +54,7 @@ test("every destination is its own editable line: label written in the template,
   const text = tpl.render("success_listing_tiered", vars, { dropEmpty: true }).text;
   for (const line of [
     "🔔 Dexvra Listing: https://t.me/dexvralisting/8733",
-    "🔔 Dexvra Listing (X): https://x.com/dexvralisting/status/207487",
+    "🔔 Dexvra Listing (X): https://x.com/listingdexvra/status/207487",
     "🔔 Dexvra Announcement: https://t.me/dexvraio/11993",
     "🔔 Dexvra Trending: https://t.me/dexvratrending/9106",
   ]) assert.ok(text.includes(line), `missing: ${line}\n---\n${text}`);

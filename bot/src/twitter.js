@@ -2,7 +2,7 @@
 // listing account's 4 OAuth 1.0a keys are present (X_ENABLED) — see
 // config/constants.js for which four and where each comes from in the console.
 //
-// Two accounts are supported: "listing" (@dexvralisting — every listing,
+// Two accounts are supported: "listing" (@listingdexvra — every listing,
 // trending, rank-up, pump and gainers post) and an OPTIONAL "official" second
 // account for banner ads. With X_O_* blank — the normal one-account setup —
 // "official" FALLS BACK to the listing account, so a banner ad still gets

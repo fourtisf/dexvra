@@ -157,7 +157,7 @@ test("{xlisting} resolves in EVERY template, with no call site passing it", () =
 });
 
 test("the X account is never hardcoded — renaming it is one env var", () => {
-  // Three intro cards used to spell https://x.com/dexvralisting into their copy,
+  // Three intro cards used to spell the Dexvra X url into their copy,
   // so X_LISTING_HANDLE was a lie the moment the account was renamed.
   for (const key of tpl.keys()) {
     const raw = tpl.getRaw(key);
@@ -398,7 +398,7 @@ test("X's new-app crypto rule is not mistaken for a bad access token", () => {
   // A brand-new X app may not post contract addresses for its first 7 days.
   // It arrives as a 403 — the same status as a read-only token — so the naive
   // mapping told the operator to regenerate credentials that were perfectly
-  // fine. (Hit for real on the first live listing: @dexvralisting authenticated
+  // fine. (Hit for real on the first live listing: the X account authenticated
   // the same day, and the Catjak card was refused for its CA line.)
   const { classify } = require("../src/twitter")._diag;
   const res = classify(
@@ -571,7 +571,7 @@ test("the tweet is handed the same media object the channel post gets", () => {
 });
 
 test("only LISTING-shaped events tweet: trending and gainers ship off", () => {
-  // @dexvralisting is the listing feed. Trending Token is its own product with
+  // @listingdexvra is the listing feed. Trending Token is its own product with
   // its own channel, and the Top Gainers board is curated by hand — neither
   // belongs on an automated listing account (operator's rule, 2026-07-31).
   // Switches, not deletions: the templates and code paths stay usable.
@@ -615,7 +615,7 @@ test("a pump tweet is only ever a QUOTE of the token's listing tweet", () => {
 });
 
 test("boot names every live X source and warns about anything beyond the rule", () => {
-  // THE RULE: only listings, pump alerts and banner ads reach @dexvralisting.
+  // THE RULE: only listings, pump alerts and banner ads reach @listingdexvra.
   // The switches enforcing it default to off — but an explicit value in .env
   // BEATS a code default, and a stale `X_RANKUP_ENABLED=1` from an earlier setup
   // put rank-up tweets straight back. The only place that was visible was the

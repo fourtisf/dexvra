@@ -93,7 +93,8 @@ const LINKS_ROW =
   `𝕏 [X Alerts]({xlisting})`;
 // The row is the full Dexvra destination set — the three Telegram channels, the
 // site, AND the X account the listing feed is tweeted from ({xlisting} →
-// X_LISTING_URL, @dexvralisting by default). X was previously left out on the
+// X_LISTING_URL, @listingdexvra by default — NOT the Telegram @dexvralisting
+// channel, which is a different account). X was previously left out on the
 // grounds that the token's own social row a few lines above already prints
 // "❌ X"; that reads as a duplicate only if you assume both point at the same
 // account, which they never do — one is the PROJECT's X, this one is DEXVRA's.
@@ -155,7 +156,7 @@ const DEFAULTS = {
     "**What you get**\n" +
     "✅ Listed on [dexvra.io](https://dexvra.io)\n" +
     "🚨 Launch post on [@dexvralisting](https://t.me/dexvralisting)\n" +
-    "𝕏 Automatic post on X — [@dexvralisting]({xlisting})\n\n" +
+    "𝕏 Automatic post on X — [@listingdexvra]({xlisting})\n\n" +
     "💎 Want Trending + a tier badge too? Choose **🏆 Listing & Trending**.\n\n" +
     "🔹 Only one step away — **select your network** below to begin:",
   intro_tiered:
@@ -166,7 +167,7 @@ const DEFAULTS = {
     "🚨 Launch post on [@dexvralisting](https://t.me/dexvralisting)\n" +
     "🔥 Featured Trending run on [@dexvratrending](https://t.me/dexvratrending)\n" +
     "📢 Announcement headline on [@dexvraio](https://t.me/dexvraio) (top tiers)\n" +
-    "𝕏 Automatic post on X — [@dexvralisting]({xlisting})\n" +
+    "𝕏 Automatic post on X — [@listingdexvra]({xlisting})\n" +
     "💎 A ranked tier badge on every post\n\n" +
     "⚠️ Only **Diamond, Gold & Platinum** get the bonus @dexvraio announcement.\n\n" +
     "🔹 Only one step away — **select your network** below to begin:",
@@ -187,7 +188,7 @@ const DEFAULTS = {
     "**What you get**\n" +
     "🖼 A homepage banner with your own click-through link\n" +
     "📢 An announcement on [@dexvraio](https://t.me/dexvraio)\n" +
-    "𝕏 An automatic post on X — [@dexvralisting]({xlisting})\n\n" +
+    "𝕏 An automatic post on X — [@listingdexvra]({xlisting})\n\n" +
     "💰 USD pricing — bigger discounts on longer runs.\n\n" +
     "🔹 Please have your banner ready (GIF, JPG or PNG). Choose a format:",
   listing_ca_prompt:
@@ -208,7 +209,7 @@ const DEFAULTS = {
     "🔝 Featured placement on the Trending board\n" +
     "🔥 Instant activation alert on [@dexvratrending](https://t.me/dexvratrending)\n" +
     "📢 24H & 48H runs also headline on [@dexvraio](https://t.me/dexvraio)\n" +
-    "𝕏 An automatic post on X — [@dexvralisting]({xlisting})\n\n" +
+    "𝕏 An automatic post on X — [@listingdexvra]({xlisting})\n\n" +
     "⌛ Slots run up to **48 hours** — longer runs carry bigger discounts.\n\n" +
     "🔹 Paste the **contract address** of your listed token (or its dexvra.io link):",
   // One token, one listing. Shown whenever a contract that is already on the

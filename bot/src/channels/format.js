@@ -317,7 +317,8 @@ const FOOTER_LABELS = [
   ["Listings", "listing"],
   ["Trending", "trending"],
   ["Announcements", "announce"],
-  // Dexvra's own X account (@dexvralisting) — the last entry in the links row.
+  // Dexvra's own X account (@listingdexvra on X — NOT the Telegram channel of
+  // the same shape) — the last entry in the links row.
   // Two words, not a bare "X", so this never collides with the token's "X"
   // social label a few lines above it.
   ["X Alerts", "xlisting"],

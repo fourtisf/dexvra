@@ -1,7 +1,11 @@
 # X (Twitter) auto-posting — setup
 
 Every listing the bot produces is announced on **X** as well as Telegram, from
-[@dexvralisting](https://x.com/dexvralisting).
+[@listingdexvra](https://x.com/listingdexvra).
+
+> ⚠️ **@listingdexvra (X) and @dexvralisting (Telegram) are two different
+> accounts.** The names are one transposition apart and this page is about the X
+> one only. The Telegram listing channel did not move.
 
 This page is the whole setup: which keys, where they come from, where to put
 them, and how to prove it works before you trust it.
@@ -50,7 +54,7 @@ read-only forever, and every tweet fails with `403 Forbidden`.
 5. **Save**, then go back to *Keys and tokens* and **Regenerate** the Access
    Token pair.
 
-The `Access Token` row should read **`For @dexvralisting — Read and write`**. If
+The `Access Token` row should read **`For @listingdexvra — Read and write`**. If
 it says *Read only*, step 5 hasn't happened yet.
 
 ---
@@ -62,13 +66,18 @@ values into a chat):
 
 ```dotenv
 X_ENABLED=1
-X_LISTING_HANDLE=dexvralisting
-
 X_API_KEY=xxxxxxxxxxxxxxxxxxxxxx
 X_API_KEY_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 X_ACCESS_TOKEN=1234567890123456789-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 X_ACCESS_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
+
+`X_LISTING_HANDLE` is deliberately **not** in that block. It defaults to
+`listingdexvra` in code, and this page's own rule below — *a line set to its
+default today becomes a silent override the day the default moves* — is exactly
+what a redundant copy in `.env` breaks. Set it only if the account is renamed
+again, and `npm run x:check` will tell you when it has been (it compares the
+handle against the account the keys actually post as).
 
 Leave the four blank and nothing breaks — the bot runs exactly as before and
 simply never tweets. It says so once at boot, naming the missing variables.
@@ -77,7 +86,7 @@ simply never tweets. It says so once at boot, naming the missing variables.
 
 `X_O_API_KEY` / `X_O_API_KEY_SECRET` / `X_O_ACCESS_TOKEN` / `X_O_ACCESS_SECRET`
 configure a **second** account used only for banner ads. Leave them blank for
-the normal one-account setup — banner ads then go out from `@dexvralisting` too.
+the normal one-account setup — banner ads then go out from `@listingdexvra` too.
 
 ### Per-source switches
 
@@ -128,7 +137,7 @@ Anything else exits non-zero and names the fix. Secrets are printed masked
 The same check runs at boot and logs one line:
 
 ```
-[start] X auto-posting ✔ posting as @dexvralisting
+[start] X auto-posting ✔ posting as @listingdexvra
 ```
 
 or, when something is wrong:

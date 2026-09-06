@@ -34,7 +34,12 @@ test("listing alerts on X point at the account that actually posts them", () => 
   // credential set, NOT the official one. Until this account was named, the
   // site and every channel post linked @dexvraio for "we also post on X" —
   // which does not carry the listing feed at all.
-  assert.strictEqual(X_LISTING_URL, "https://x.com/dexvralisting");
+  // Renamed 2026-09-06: the X feed moved to @listingdexvra. The TELEGRAM
+  // listing channel did NOT move and is still @dexvralisting — the two names
+  // are one transposition apart, so they are asserted against each other.
+  assert.strictEqual(X_LISTING_URL, "https://x.com/listingdexvra");
+  assert.notStrictEqual(X_LISTING_URL, TELEGRAM_LISTING_URL.replace("t.me", "x.com"),
+    "the X feed and the Telegram channel are different accounts");
   assert.notStrictEqual(X_LISTING_URL, X_URL, "the two accounts must stay distinct");
   const consts = fs.readFileSync(path.join(process.cwd(), "bot/src/config/constants.js"), "utf8");
   const m = consts.match(/const X_LISTING_HANDLE = \(env\.X_LISTING_HANDLE \|\| "([^"]+)"\)/);

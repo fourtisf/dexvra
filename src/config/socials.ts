@@ -18,8 +18,12 @@ export const X_URL = "https://x.com/dexvraio";
 // bot's twitter.js posts every listing, trending and pump alert through the
 // `listing` credential set. Nothing linked it before, so readers who do not use
 // Telegram were sent to @dexvraio, which does not carry that feed.
-export const X_LISTING_URL = "https://x.com/dexvralisting";
-export const X_LISTING_HANDLE = "@dexvralisting";
+// ⚠️ The X account and the TELEGRAM listing channel are different accounts with
+// confusingly similar names — @listingdexvra on X, @dexvralisting on Telegram.
+// Reading either handle for the other sends a follower to a stranger's profile,
+// so both are spelled out here and brand.test.ts pins them apart.
+export const X_LISTING_URL = "https://x.com/listingdexvra";
+export const X_LISTING_HANDLE = "@listingdexvra";
 export const BOT_URL = "https://t.me/dexvrabot";
 export const TELEGRAM_GROUP_URL = "https://t.me/dexvragroup"; // open two-way chat
 export const TRADEBOT_URL = "https://t.me/dexvratradebot";
@@ -115,7 +119,7 @@ export const SOCIALS: Social[] = [
     key: "xlisting",
     kind: "x",
     name: "Listing alerts on X",
-    handle: "@dexvralisting",
+    handle: "@listingdexvra",
     url: X_LISTING_URL,
     blurb: "Every new listing posted to X as it goes live, for people who do not use Telegram.",
   },

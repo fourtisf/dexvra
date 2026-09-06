@@ -146,7 +146,7 @@ const MONGO_DB = env.MONGO_DB || ""; // optional; default DB comes from the URI
 //
 //   X_API_KEY         ← OAuth 1.0a "Consumer Key" (a.k.a. API Key)
 //   X_API_KEY_SECRET  ← OAuth 1.0a "Consumer Secret" (a.k.a. API Key Secret)
-//   X_ACCESS_TOKEN    ← OAuth 1.0a "Access Token"    (Generate, for @dexvralisting)
+//   X_ACCESS_TOKEN    ← OAuth 1.0a "Access Token"    (Generate, for @listingdexvra)
 //   X_ACCESS_SECRET   ← OAuth 1.0a "Access Token Secret"
 //
 // The Access Token pair must read "Read and Write" — a token generated while
@@ -186,8 +186,13 @@ const X_HANDLE = (env.X_HANDLE || "dexvraio").replace(/^@/, "");
 // the gainers board through the `listing` credential set (X_API_KEY…), and only
 // falls back to `official` (X_O_…) for banner ads WHEN a second account is
 // configured. One account is the normal setup: leave X_O_* blank and everything
-// — banner ads included — goes out from @dexvralisting.
-const X_LISTING_HANDLE = (env.X_LISTING_HANDLE || "dexvralisting").replace(/^@/, "");
+// — banner ads included — goes out from @listingdexvra.
+//
+// ⚠️ This is NOT the Telegram listing channel, which is a different account
+// with a confusingly similar name: CHANNELS.listing is @dexvralisting on
+// Telegram (t.me/dexvralisting), this is @listingdexvra on X. The two moved
+// apart on 2026-09-06 and every template that names both carries both.
+const X_LISTING_HANDLE = (env.X_LISTING_HANDLE || "listingdexvra").replace(/^@/, "");
 const X_LISTING_URL = `https://x.com/${X_LISTING_HANDLE}`;
 // Enabled only when the listing account's 4 keys are all present AND not forced off.
 const X_ENABLED = bool(env.X_ENABLED, true) && xComplete("listing");
@@ -196,7 +201,7 @@ const X_ENABLED = bool(env.X_ENABLED, true) && xComplete("listing");
 // an operator may want the X feed to stay purchase-only. Default ON — "every
 // listing gets posted to X" is the operator's rule.
 const X_AUTOLIST_ENABLED = bool(env.X_AUTOLIST_ENABLED, true);
-// The X account is @dexvralisting — a LISTING feed. Operator's rule
+// The X account is @listingdexvra — a LISTING feed. Operator's rule
 // (2026-07-31): only listings belong on it, so the two products that are not
 // listings default OFF:
 //
