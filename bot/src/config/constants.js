@@ -262,6 +262,28 @@ const FULFIL_SLOW_MS = Math.max(5000, int(env.FULFIL_SLOW_MS, 90000));
 const EMOJI_BUDGET_MS = Math.max(2000, int(env.EMOJI_BUDGET_MS, 25000));
 const CLIP_BUDGET_MS = Math.max(2000, int(env.CLIP_BUDGET_MS, 60000));
 
+// ⚠️ THE ONE THAT MADE LISTINGS "ALWAYS" SLOW.
+//
+// fulfilment's market read goes through gtTurn() → gtSlot(PRIO_BACKGROUND) —
+// the shared GeckoTerminal queue, which has NO DEADLINE OF ITS OWN: up to 200
+// entries, released one per GT_MIN_GAP_MS (4s at the shipped 15/min, 12s at 5).
+// Nine background pipelines feed that queue continuously — the trending poster,
+// autoTrend, the pump checker, the buy bot's metadata reads — so a PAID listing
+// sat behind every timer job on the box. Not intermittently: structurally, on
+// every listing, which is exactly how it was reported ("MENGAPA LISTING SELALU
+// DELAY").
+//
+// This repo has already paid for this once, one caller over: the listing FORM's
+// autofill was bounded at LISTING_AUTOFILL_MS for the identical reason ("a
+// user-prompted paste sat in the background tier for minutes"). Fulfilment was
+// never given the same bound, and it matters more — the buyer has PAID by then.
+//
+// The read is ENRICHMENT: price and market cap on the card. The listing itself,
+// the channel post and the receipt do not depend on it, and `coinFrom(input,
+// null)` is already the shipped path for a market that could not be read — the
+// existing `.catch(() => null)` produces exactly the same value.
+const MARKET_BUDGET_MS = Math.max(1000, int(env.MARKET_BUDGET_MS, 8000));
+
 // ── Rate limiting (telegraf-ratelimit) ───────────────────────────────────────
 const RATE_WINDOW = int(env.RATE_WINDOW, 3000);
 const RATE_LIMIT = int(env.RATE_LIMIT, 20);
@@ -447,6 +469,7 @@ module.exports = {
   FULFIL_SLOW_MS,
   EMOJI_BUDGET_MS,
   CLIP_BUDGET_MS,
+  MARKET_BUDGET_MS,
   RATE_WINDOW,
   RATE_LIMIT,
   TRENDING_POST_MS,

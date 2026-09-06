@@ -13,7 +13,8 @@ const x = require("./twitter");
 const menu = require("./handlers/menu");
 const { SITE_URL, CHANNELS, X_POST_TIMEOUT_MS,
   EMOJI_BUDGET_MS,
-  CLIP_BUDGET_MS, X_TRENDING_ENABLED } = require("./config/constants");
+  CLIP_BUDGET_MS,
+  MARKET_BUDGET_MS, X_TRENDING_ENABLED } = require("./config/constants");
 const { tierAnnounces, tierLabel } = require("./config/packages");
 const { fmtPrice, formatNumber } = require("./helpers/format");
 const { isValidTicker, sanitizeTicker } = require("./helpers/ticker");
@@ -295,7 +296,18 @@ async function fulfillListing(ctx, order) {
     () => log.warn(`[fulfil] token emoji passed ${EMOJI_BUDGET_MS}ms — posting with the plain fallback`),
   );
   step("emoji");
-  const live = await market.fetchMarket(input.chain, input.address).catch(() => null);
+  // ⚠️ BOUNDED — this is the step that made listings "always" slow. fetchMarket
+  // queues on gtSlot(PRIO_BACKGROUND) behind every timer job on the box, with no
+  // deadline of its own. Past the budget the card renders from what the buyer
+  // typed, which is the same value the .catch below has always produced.
+  const live = await bounded(
+    market.fetchMarket(input.chain, input.address).catch(() => null),
+    MARKET_BUDGET_MS,
+    () => {
+      log.warn(`[fulfil] market read passed ${MARKET_BUDGET_MS}ms (GT queue) — listing without live price/mcap`);
+      return null;
+    },
+  );
   const coin = coinFrom(input, live);
   const bannerCoin = bannerCoinOf(input, live);
   const tierBadge = input.tier === "XPRESS" ? "Xpress Listing" : input.tier ? `${tierLabel(input.tier)} Tier` : null;
@@ -372,7 +384,15 @@ async function fulfillTrending(ctx, order) {
   const listing = await api.bookTrending(p.chain, p.address, p.hours); // hard step
   log.info(`[fulfil] trending booked ${p.chain}/${p.address} ${p.hours}h`);
 
-  const live = await market.fetchMarket(p.chain, p.address).catch(() => null);
+  // Same bound, same reason — a booked trending slot waits on a buyer too.
+  const live = await bounded(
+    market.fetchMarket(p.chain, p.address).catch(() => null),
+    MARKET_BUDGET_MS,
+    () => {
+      log.warn(`[fulfil] market read passed ${MARKET_BUDGET_MS}ms (GT queue) — trending without live price/mcap`);
+      return null;
+    },
+  );
   const row = listing || { chain: p.chain, address: p.address, sym: p.symbol, name: p.name };
   const coin = coinFrom(row, live);
   const bannerCoin = bannerCoinOf(row, live);

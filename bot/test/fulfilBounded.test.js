@@ -60,6 +60,20 @@ test("both decorative steps in a listing are bounded, and the buyer's are not", 
   assert.match(code, /bounded\([\s\S]{0,400}?composeOntoClip/, "the ffmpeg overlay must be bounded");
   assert.match(code, /bounded\(bannerTemplate\.toInlineClip/, "the gif→mp4 conversion must be bounded");
   assert.match(code, /bounded\(\s*tokenEmoji\.ensureTokenEmoji/, "the animated emoji must be bounded");
+  // ⚠️ THE MARKET READ, which is the one that made listings "always" slow.
+  // fetchMarket queues on gtSlot(PRIO_BACKGROUND) — the shared GeckoTerminal
+  // queue, no deadline of its own, up to 200 entries released one per 4–12s —
+  // so a PAID listing sat behind every timer job on the box. Structural, not
+  // intermittent, which is exactly how it was reported. This repo bounded the
+  // listing FORM's autofill for the identical reason and never bounded
+  // fulfilment, where the buyer has already paid.
+  assert.ok(!/await market\.fetchMarket/.test(code), "every fulfilment market read must be bounded");
+  assert.strictEqual(
+    (code.match(/bounded\(\s*market\.fetchMarket/g) || []).length,
+    2,
+    "both the listing and the trending market reads",
+  );
+
   // ⚠️ And NOT the steps that ARE the product. A deadline on createListing
   // would drop a paid listing on a slow minute — the opposite of the fix.
   for (const hard of ["api.createListing", "api.bookTrending"]) {
