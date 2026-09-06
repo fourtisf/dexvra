@@ -4,6 +4,7 @@ import { cached } from "@/lib/cache";
 import { gtGet } from "@/lib/providers/gt";
 import { readWhy, safeAddress, topPoolAddress } from "@/lib/providers/gtPool";
 import { cachedPool } from "@/lib/providers/poolCache";
+import { publicNote } from "@/lib/publicNote";
 import { TRADES_TTL_MS } from "@/lib/trades";
 import type { Trade } from "@/lib/types";
 
@@ -86,7 +87,9 @@ export async function GET(req: NextRequest) {
     try {
       pool = await cachedPool(network, address, () => topPoolAddress(network, address));
     } catch (err) {
-      return NextResponse.json({ trades: [], why: `Couldn't read recent trades just now (${readWhy(err)}).` });
+      // The DETAIL stays — it just goes to the operator, not to the visitor.
+      console.warn(`[trades] ${network}/${address}: pool lookup failed — ${readWhy(err)}`);
+      return NextResponse.json({ trades: [], why: publicNote("recent trades", err) });
     }
   }
   if (!pool) {
@@ -103,6 +106,12 @@ export async function GET(req: NextRequest) {
     // every failure and answer it by DRAWING TWELVE INVENTED TRADES — see
     // components/TokenTrades. Whatever it renders now, it renders knowing
     // which of the two things happened.
-    return NextResponse.json({ trades: [], why: `Couldn't read recent trades just now (${readWhy(err)}).` });
+    //
+    // …but the reason a VISITOR gets is not the one an operator gets. gt.ts's
+    // refusal names two env vars and this process's budget, and it was being
+    // rendered verbatim on a public token page. publicNote is the one owner of
+    // that translation; the full text goes to the log.
+    console.warn(`[trades] ${network}/${pool}: ${readWhy(err)}`);
+    return NextResponse.json({ trades: [], why: publicNote("recent trades", err) });
   }
 }

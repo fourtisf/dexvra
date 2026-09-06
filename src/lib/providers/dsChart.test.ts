@@ -463,7 +463,19 @@ test("both reasons travel when neither source could be asked", () => {
   // …and the sentence must still carry "couldn't read", because the panel
   // classifies error-vs-answer on that substring and only errors get the fast
   // retry that lets a chart appear the moment a cooldown lifts.
-  assert.match(route, /Couldn't read the chart just now \(\$\{readWhy\(err\)\}\)/);
+  //
+  // ⚠️ ASSERTED AS A PROPERTY, NOT AS THE LITERAL. This used to match
+  // `Couldn't read the chart just now (${readWhy(err)})` — the exact spelling of
+  // the code — so it failed on a fix that kept every one of its guarantees: the
+  // joined reason now goes to the LOG and the visitor gets a translated
+  // sentence, because the raw one names two env vars and this process's budget
+  // and was being rendered on a public token page. What must hold is that the
+  // reason still reaches the operator and the words still reach the panel.
+  assert.match(route, /console\.warn\([^\n]*readWhy\(err\)/, "the full reason must still reach the log");
+  assert.match(route, /publicNote\("the chart", err\)/, "…and the visitor gets the translated one");
+  const note = code(read("src/lib/publicNote.ts"));
+  assert.match(note, /Couldn't read \$\{subject\} just now/, "both branches keep the classifier's words");
+  assert.ok(!/`Live [^`]*\$\{subject\}/.test(note), "a sentence without \"couldn't read\" stops the fast retry");
   assert.match(code(read("src/components/CandleChart.tsx")), /couldn't read/i);
 });
 

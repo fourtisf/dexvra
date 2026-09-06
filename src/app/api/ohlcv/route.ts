@@ -3,6 +3,7 @@ import { cached } from "@/lib/cache";
 import { gtCooldownLeftMs, gtGet, gtInCooldown } from "@/lib/providers/gt";
 import { networkOf, readWhy, safeAddress, topPoolAddress } from "@/lib/providers/gtPool";
 import { cachedPool } from "@/lib/providers/poolCache";
+import { publicNote } from "@/lib/publicNote";
 import { dsCandles, dsChartCovers, dsPairUrl, type DsCandles } from "@/lib/providers/dsChart";
 import { TF, chartPrefOf, normalizeCandles, tfOf, type ChartPref, type Candle, type Timeframe } from "@/lib/ohlcv";
 
@@ -401,6 +402,10 @@ export async function GET(req: NextRequest) {
     // live failure on the server said nothing at all about whether GeckoTerminal
     // had rate-limited us, 404'd, or was unreachable from that box. Three
     // different problems, one shrug, and the operator left to guess.
-    return NextResponse.json(fail(tf, `Couldn't read the chart just now (${readWhy(err)}).`, networkOf(chain), pool));
+    // The visitor gets a sentence; the operator gets the reason. The note this
+    // replaced carried the upstream's own Cloudflare probe
+    // (window.__CF$cv$params={r:'…'}) onto a public token page.
+    console.warn(`[chart] ${chain}/${pool ?? "-"}: ${readWhy(err)}`);
+    return NextResponse.json(fail(tf, publicNote("the chart", err), networkOf(chain), pool));
   }
 }
