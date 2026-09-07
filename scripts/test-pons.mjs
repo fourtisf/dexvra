@@ -3,9 +3,16 @@
 // Uniswap V4 price math and the rolling trade window are all exercised for
 // real. Run: npm run test:pons
 import { registerHooks } from "node:module";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { resolve } from "./ts-alias-hooks.mjs";
 
 registerHooks({ resolve });
+
+// The announce markers persist to DATA_DIR — point it at a throwaway directory
+// before anything reads it, so the tests never touch a real store.
+process.env.DATA_DIR = mkdtempSync(path.join(tmpdir(), "pons-test-"));
 
 const results = [];
 const check = (name, ok, extra = "") => {
@@ -127,6 +134,27 @@ const tradeLog = (trade, index) => ({
   logIndex: `0x${index.toString(16)}`,
 });
 
+const LAUNCHED_TOPIC = abi.topic0("TokenLaunched(address,address,address,address,uint256,uint256)");
+
+const launches = [
+  { block: HEAD_BLOCK - 30, token: TOKEN, curve: CURVE },
+  { block: HEAD_BLOCK - 2000, token: GRAD_TOKEN, curve: GRAD_CURVE },
+];
+
+const launchLog = (launch, index) => ({
+  address: PONS.factoryV2,
+  topics: [
+    LAUNCHED_TOPIC,
+    `0x${addrWord(launch.token)}`,
+    `0x${addrWord(launch.curve)}`,
+    `0x${addrWord("0x7777777777777777777777777777777777777777")}`,
+  ],
+  data: hexResult([addrWord(ZERO), word(1), word(THRESHOLD)]),
+  blockNumber: `0x${launch.block.toString(16)}`,
+  transactionHash: `0x${(index + 100).toString(16).padStart(64, "0")}`,
+  logIndex: `0x${index.toString(16)}`,
+});
+
 const SEL = (sig) => abi.selector(sig);
 
 function ethCallResult(to, data) {
@@ -191,10 +219,16 @@ function handle({ method, params }) {
   }
   if (method === "eth_getLogs") {
     const { address, fromBlock, toBlock } = params[0];
-    if (String(address).toLowerCase() !== CURVE) return [];
     const from = Number(BigInt(fromBlock));
     const to = Number(BigInt(toBlock));
-    return trades.filter((t) => t.block >= from && t.block <= to).map(tradeLog);
+    const target = String(address).toLowerCase();
+    if (target === CURVE) {
+      return trades.filter((t) => t.block >= from && t.block <= to).map(tradeLog);
+    }
+    if (target === PONS.factoryV2) {
+      return launches.filter((l) => l.block >= from && l.block <= to).map(launchLog);
+    }
+    return [];
   }
   throw new Error(`unstubbed method ${method}`);
 }
@@ -336,6 +370,86 @@ check("trade feed is newest first", feed.length === 3 && feed[0].ts >= feed[2].t
 check("trade usd value uses the ETH reference price", feed.length > 0 && near(feed[0].usd, 0.1 * ETH_USD, 1e-9));
 
 check("the fake node was actually driven", rpcRequests > 0, `${rpcRequests} requests`);
+
+// ── Launch feed (the discovery feed and the listing bot's input) ──────────
+const { __resetLaunchFeed } = await import("../src/lib/providers/pons/launches.ts");
+__resetHistories();
+__resetLaunchFeed();
+extsloadCalls = 0;
+
+const feedResult = await pons.fetchPonsLaunchFeed(10);
+check("launch feed finds both TokenLaunched events", feedResult.items.length === 2, `n=${feedResult.items.length}`);
+if (feedResult.items.length === 2) {
+  const [newest, older] = feedResult.items;
+  check("launch feed is newest first", newest.address.toLowerCase() === TOKEN);
+  check("launch feed reads the on-chain ticker", newest.symbol === "PONSY");
+  check("launch feed dates the launch from the head", newest.ageMinutes >= 0 && newest.ageMinutes < 5, String(newest.ageMinutes));
+  check(
+    "launch feed reports curve progress (2 of 10 ETH raised)",
+    near(newest.progressPct, 20, 1e-9),
+    String(newest.progressPct),
+  );
+  check("launch feed prices the launch", near(newest.priceUsd, (12 / 800_000_000) * ETH_USD, 1e-9));
+  check("launch feed flags a graduated launch", older.graduated === true && older.phase === "PoolCreated");
+  check("launch feed links out to Pons", newest.ponsUrl.startsWith(PONS.app));
+}
+
+// ── Channel posts ─────────────────────────────────────────────────────────
+const messages = await import("../src/lib/notify/messages.ts");
+const hostile = {
+  address: TOKEN,
+  chain: "robinhood",
+  symbol: "EVIL",
+  name: '<script>alert("xss")</script> & friends',
+  logo: null,
+  launchedAt: HEAD_TS,
+  ageMinutes: 3,
+  phase: "NotGraduated",
+  graduated: false,
+  nativeQuote: true,
+  creatorTaxBps: 100,
+  progressPct: 42,
+  priceUsd: 0.00006,
+  mcapUsd: 60000,
+  liquidityUsd: 8000,
+  ponsUrl: `${PONS.app}/token/${TOKEN}`,
+  explorerUrl: `${PONS.explorer}/token/${TOKEN}`,
+};
+const launchPost = messages.launchAnnouncement(hostile);
+check("launch post names the token", launchPost.includes("$EVIL"));
+check("launch post shows curve progress", launchPost.includes("bonding curve 42%"));
+check("launch post says it is not a listing", launchPost.includes("not a Dexvra listing"));
+check(
+  "launch post escapes on-chain metadata",
+  !launchPost.includes("<script>") && launchPost.includes("&lt;script&gt;"),
+);
+
+const listingPost = messages.listingAnnouncement({
+  chain: "robinhood",
+  address: TOKEN,
+  sym: "$EVIL",
+  name: "<b>bold</b> name",
+  emoji: "🏹",
+  tier: "BRONZE",
+  listedMin: 0,
+  tax: 1,
+  holders: 0,
+  price: 0.00006,
+  chg24h: 0,
+  mcap: 60000,
+  liq: 8000,
+  vol24h: 0,
+  buyShare: 0.5,
+  tx24h: 0,
+});
+check("listing post announces the go-live", listingPost.includes("Now live on Dexvra"));
+check("listing post links back to the token page", listingPost.includes(`/token/robinhood/${TOKEN}`));
+check("listing post escapes the listing name", !listingPost.includes("<b>bold</b>"));
+
+// A listing may only be announced once, however many times it is approved.
+const notifyState = await import("../src/lib/notify/state.ts");
+check("first approval claims the announcement", (await notifyState.claimListingAnnouncement("l_test")) === true);
+check("re-approval does not re-announce", (await notifyState.claimListingAnnouncement("l_test")) === false);
 
 // ── Report ────────────────────────────────────────────────────────────────
 for (const line of results) console.log(line);

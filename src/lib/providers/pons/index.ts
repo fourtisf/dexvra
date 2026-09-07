@@ -10,6 +10,8 @@ import { readLaunchSnapshots } from "./contracts";
 
 export { fetchPonsMarket, fetchPonsLaunch, fetchPonsTrades, nativeUsd } from "./market";
 export type { PonsLaunchInfo } from "./market";
+export { fetchPonsLaunchFeed, readPonsLaunchEvents } from "./launches";
+export type { PonsLaunchEvent, PonsLaunchFeed, PonsLaunchFeedItem } from "./launches";
 
 /** True when this chain's market data comes from the Pons launchpad. */
 export const isPonsChain = (chain: string): boolean => CHAINS[chain]?.launchpad === "pons-v2";

@@ -48,6 +48,14 @@ export const PONS = {
   historyMinutes: Math.floor(envNumber("PONS_HISTORY_MINUTES", 1440)),
   /** Fallback block time; refined once per process from two real blocks. */
   blockSeconds: envNumber("PONS_BLOCK_SECONDS", 0.25),
+
+  // ── Launch discovery (the TokenLaunched feed and the listing bot) ──────
+  /** How far back the launch feed reaches, and backfills towards. */
+  launchWindowMinutes: Math.floor(envNumber("PONS_LAUNCH_WINDOW_MINUTES", 4320)),
+  /** Log requests spent on the factory per refresh. */
+  launchChunksPerRefresh: Math.floor(envNumber("PONS_LAUNCH_CHUNKS_PER_REFRESH", 8)),
+  /** Newest launches enriched with price and curve state per refresh. */
+  launchEnrichLimit: Math.floor(envNumber("PONS_LAUNCH_ENRICH_LIMIT", 20)),
 } as const;
 
 export const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";

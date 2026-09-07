@@ -10,7 +10,8 @@ open it in a browser and click around before touching the code.
 - **Phase 1 (this)** — read-only discovery: all 14 views, live market data with
   seed-data fallback, PWA install. ✅
 - **Pons v2 / Robinhood Chain** — on-chain market data, trades and safety
-  flags for the one chain no aggregator indexes. ✅
+  flags for the one chain no aggregator indexes, plus launch discovery, an
+  admin listing queue and the Telegram bot. ✅
 - **Phase 2** — wallet auth (SIWS), persistent watchlist, Telegram alerts. ⏳
 - **Phase 3** — paid listings, verification, ad bookings, admin panel. ⏳
 
@@ -99,6 +100,32 @@ Notes a reviewer should know:
 npm run test:pons   # offline: fake JSON-RPC node, no network required
 ```
 
+### Launch discovery, admin queue and the Telegram bot
+
+`TokenLaunched` is emitted once per launch by the factory, so one log stream on
+one address is the whole discovery surface for the chain. Three consumers sit
+on it, and none of them auto-lists anything — Dexvra stays paid-listing only:
+
+- **`GET /api/launches?limit=20`** — recent launches with metadata, price and
+  curve progress. Surfaced on **New Listings** as a *Fresh from Pons* feed,
+  visually distinct and tagged `PONS · UNLISTED` on every card, linking out to
+  Pons rather than into a Dexvra token page.
+- **Admin queue** — the panel shows the same launches with a one-click
+  **List it**, which fills the listing from on-chain data. Promotion stays a
+  deliberate admin action; see [`ADMIN_SETUP.md`](ADMIN_SETUP.md).
+- **Telegram bot** — `GET /api/cron/pons` (secret-protected) posts new launches
+  to a channel, and the admin panel announces every listing that goes LIVE.
+  Unconfigured is a supported state: with `TELEGRAM_BOT_TOKEN` unset, every
+  post is a no-op. The first cron run adopts the current head **without**
+  posting, so wiring the bot up never dumps the backlog into the channel;
+  after that a backlog drains oldest-first, `PONS_BOT_MAX_POSTS` per run, and
+  the marker only advances past what actually went out. Markers persist in
+  `data/notify.json`, so approving a listing twice still posts once.
+
+On-chain names and symbols are attacker-controlled strings that end up in a
+channel post, so they're HTML-escaped and length-capped before sending — with
+a test that asserts it.
+
 The brand name is a placeholder: change it once in `src/config/brand.ts`.
 
 ## Develop
@@ -132,6 +159,19 @@ production:
 | `PONS_HISTORY_MINUTES` | `1440` | trade window kept and backfilled towards |
 | `PONS_BLOCK_SECONDS` | `0.25` | fallback block time (measured at runtime) |
 | `PONS_RPC_TIMEOUT_MS` | `9000` | per-request timeout |
+| `PONS_LAUNCH_WINDOW_MINUTES` | `4320` | how far back the launch feed reaches |
+| `PONS_LAUNCH_CHUNKS_PER_REFRESH` | `8` | log requests spent on the factory per refresh |
+| `PONS_LAUNCH_ENRICH_LIMIT` | `20` | newest launches enriched with price per refresh |
+
+The Telegram bot is entirely optional — leave these unset and it stays a no-op:
+
+| Var | Purpose |
+|---|---|
+| `TELEGRAM_BOT_TOKEN` | bot from @BotFather; the bot must be a channel admin |
+| `TELEGRAM_CHAT_ID` | `@channel` or a `-100…` id |
+| `CRON_SECRET` | required for `/api/cron/pons`; without it the route is 503 |
+| `SITE_URL` | public origin used in the "View on Dexvra" link |
+| `PONS_BOT_MAX_POSTS` | posts per cron run (default `8`) |
 
 A faster RPC wants a bigger `PONS_LOG_CHUNK_BLOCKS` and more chunks per
 refresh — that's the one knob that decides how quickly a cold start reaches

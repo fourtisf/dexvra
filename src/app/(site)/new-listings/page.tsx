@@ -8,6 +8,7 @@ import { CHAINS } from "@/config/chains";
 import { fmtAge, fmtCap, fmtPrice } from "@/lib/format";
 import { scoreTier } from "@/lib/score";
 import { TierTag } from "@/components/TierTag";
+import { PonsLaunchFeed } from "@/components/PonsLaunchFeed";
 
 export default function NewListingsPage() {
   const { data, openDetail } = useApp();
@@ -68,6 +69,8 @@ export default function NewListingsPage() {
           })}
         </div>
       )}
+
+      <PonsLaunchFeed />
     </section>
   );
 }

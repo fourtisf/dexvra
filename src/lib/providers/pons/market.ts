@@ -197,6 +197,31 @@ export async function fetchPonsMarket(addresses: string[]): Promise<Map<string, 
   return out;
 }
 
+export interface LaunchSummary {
+  priceUsd: number | null;
+  mcapUsd: number | null;
+  liquidityUsd: number | null;
+  progressPct: number | null;
+}
+
+/** Price, size and curve progress for one snapshot, without a trade window.
+ *  Used by the launch feed, which reads many launches and can't afford a log
+ *  scan per curve. */
+export function summarise(snapshot: LaunchSnapshot, quoteUsd: number | null): LaunchSummary {
+  const market = quoteUsd ? buildMarket(snapshot, undefined, quoteUsd, Math.floor(Date.now() / 1000)) : null;
+  const threshold = fromUnits(snapshot.launch.graduationThreshold, PONS.nativeDecimals);
+  const raised =
+    snapshot.curve && !snapshot.curve.graduated
+      ? fromUnits(snapshot.curve.realQuoteReserve, PONS.nativeDecimals)
+      : fromUnits(snapshot.launch.sweptQuote, PONS.nativeDecimals);
+  return {
+    priceUsd: market?.priceUsd ?? null,
+    mcapUsd: market?.mcap ?? null,
+    liquidityUsd: market?.liq ?? null,
+    progressPct: threshold > 0 ? Math.min(100, (raised / threshold) * 100) : null,
+  };
+}
+
 // ── Launch detail (the /api/pons surface) ─────────────────────────────────
 export interface PonsLaunchInfo {
   address: string;
