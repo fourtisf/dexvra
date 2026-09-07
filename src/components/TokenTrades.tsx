@@ -45,8 +45,10 @@ const tradeKey = (tr: Trade) => `${tr.ts}:${tr.trader}:${tr.usd.toFixed(2)}`;
 export function TokenTrades({ t }: { t: BoardToken }) {
   const [trades, setTrades] = useState<Trade[] | null>(null);
   const [live, setLive] = useState(false);
-  const network = CHAINS[t.chain]?.geckoNetwork ?? null;
-  const canLive = Boolean(network && t.poolAddress);
+  const chain = CHAINS[t.chain];
+  // Aggregator-indexed chains trade through a pool; a Pons launch trades
+  // through its bonding curve, which the provider reports as the pool.
+  const canLive = Boolean(t.poolAddress && (chain?.geckoNetwork || chain?.launchpad));
 
   useEffect(() => {
     let stop = false;

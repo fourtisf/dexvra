@@ -1,5 +1,6 @@
 import { CHAINS } from "@/config/chains";
 import type { PeriodKey, TxSplit } from "@/lib/types";
+import type { LiveMarket } from "./market";
 
 // GeckoTerminal free API (no key). We fetch live market data for a SPECIFIC
 // set of listed token addresses — Dexvra is paid-listing only, so we never
@@ -7,17 +8,7 @@ import type { PeriodKey, TxSplit } from "@/lib/types";
 const BASE = "https://api.geckoterminal.com/api/v2";
 const HEADERS = { accept: "application/json;version=20230302" };
 
-export interface LiveMarket {
-  priceUsd: number;
-  mcap: number | null;
-  liq: number | null;
-  chg: Record<PeriodKey, number>;
-  vol: Record<PeriodKey, number>;
-  txns: Record<PeriodKey, TxSplit>;
-  ageMinutes: number | null;
-  logoUrl: string | null;
-  poolAddress: string | null; // top pool contract — for the chart embed
-}
+export type { LiveMarket };
 
 const num = (s: unknown): number | null => {
   if (s == null) return null;
@@ -115,4 +106,26 @@ export async function fetchListedMarket(
     if (market) out.set(token.attributes.address.toLowerCase(), market);
   }
   return out;
+}
+
+/**
+ * USD price of one unit of a reference token — used to price chains whose
+ * quote asset GeckoTerminal doesn't index directly (Robinhood Chain trades in
+ * ETH, so the mainnet WETH price is the reference). Throws on failure.
+ */
+export async function fetchTokenPriceUsd(network: string, address: string): Promise<number> {
+  const res = await fetch(`${BASE}/simple/networks/${network}/token_price/${address}`, {
+    headers: HEADERS,
+    signal: AbortSignal.timeout(8000),
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(`GeckoTerminal ${res.status} (price ${network})`);
+  const json = (await res.json()) as {
+    data?: { attributes?: { token_prices?: Record<string, string> } };
+  };
+  const prices = json.data?.attributes?.token_prices ?? {};
+  const raw = prices[address] ?? prices[address.toLowerCase()];
+  const price = num(raw);
+  if (price == null || price <= 0) throw new Error("no reference price");
+  return price;
 }

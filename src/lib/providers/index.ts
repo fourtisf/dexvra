@@ -10,17 +10,21 @@ import {
 import { approvedRows } from "@/lib/store";
 import { dexvraScore } from "@/lib/score";
 import { syntheticTrend, visualFor } from "@/lib/visual";
-import type {
-  BoardToken,
-  ChainHeat,
-  FearGreed,
-  Signal,
-  TokensPayload,
-  WireItem,
+import {
+  PERIOD_KEYS,
+  type BoardToken,
+  type ChainHeat,
+  type FearGreed,
+  type PeriodKey,
+  type Signal,
+  type TokensPayload,
+  type WireItem,
 } from "@/lib/types";
 import { fmtCap } from "@/lib/format";
 import { SEED_FEAR_GREED, fetchFearGreed } from "./feargreed";
-import { fetchListedMarket, type LiveMarket } from "./geckoterminal";
+import { fetchListedMarket } from "./geckoterminal";
+import { coveredPeriods, type LiveMarket } from "./market";
+import { fetchPonsMarket, isPonsChain } from "./pons";
 
 const PRICE_TTL = 30_000;
 const FNG_TTL = 10 * 60_000;
@@ -39,6 +43,25 @@ async function loadRows(): Promise<ListingRow[]> {
   }
 }
 
+/** Market data for one chain's listed addresses, from whichever provider
+ *  covers that chain. Aggregators index most chains; Robinhood Chain has none,
+ *  so its listings are read from the Pons v2 launchpad contracts. */
+function marketFor(chain: string, addresses: string[]): Promise<Map<string, LiveMarket>> {
+  return isPonsChain(chain) ? fetchPonsMarket(addresses) : fetchListedMarket(chain, addresses);
+}
+
+/** Keeps a listing's own figure for any period the provider can't yet back
+ *  with data (the Pons provider fills its trade window incrementally). */
+function mergePeriods<T>(
+  live: Record<PeriodKey, T>,
+  fallback: Record<PeriodKey, T>,
+  covered: Set<PeriodKey>,
+): Record<PeriodKey, T> {
+  const out = {} as Record<PeriodKey, T>;
+  for (const period of PERIOD_KEYS) out[period] = covered.has(period) ? live[period] : fallback[period];
+  return out;
+}
+
 /** Merge live market data onto the paid listings. Any listing without live
  *  data keeps its fallback figures, so the board always renders. */
 async function loadListedTokens(): Promise<BoardToken[]> {
@@ -49,7 +72,7 @@ async function loadListedTokens(): Promise<BoardToken[]> {
   const marketResults = await Promise.allSettled(
     Object.entries(byChain).map(async ([chain, addrs]) => ({
       chain,
-      map: await fetchListedMarket(chain, addrs),
+      map: await marketFor(chain, addrs),
     })),
   );
   const anyLive = marketResults.some((r) => r.status === "fulfilled" && r.value.map.size > 0);
@@ -61,7 +84,11 @@ async function loadListedTokens(): Promise<BoardToken[]> {
   return fallback.map((t) => {
     const m = live.get(t.chain)?.get(t.address.toLowerCase());
     if (!m) return t; // keep fallback figures for this listing
-    const score = dexvraScore({ chg: m.chg, liq: m.liq, taxPct: t.taxPct, txns: m.txns, holders: t.holders });
+    const covered = coveredPeriods(m);
+    const chg = mergePeriods(m.chg, t.chg, covered);
+    const vol = mergePeriods(m.vol, t.vol, covered);
+    const txns = mergePeriods(m.txns, t.txns, covered);
+    const score = dexvraScore({ chg, liq: m.liq, taxPct: t.taxPct, txns, holders: t.holders });
     const v = visualFor(t.symbol);
     return {
       ...t,
@@ -69,11 +96,11 @@ async function loadListedTokens(): Promise<BoardToken[]> {
       priceUsd: m.priceUsd,
       mcap: m.mcap ?? t.mcap,
       liq: m.liq ?? t.liq,
-      chg: m.chg,
-      vol: m.vol,
-      txns: m.txns,
+      chg,
+      vol,
+      txns,
       gradient: v.gradient,
-      trend: syntheticTrend(t.symbol, m.chg["24h"]),
+      trend: syntheticTrend(t.symbol, chg["24h"]),
       score,
       source: "live" as const,
       ageMinutes: m.ageMinutes ?? t.ageMinutes,

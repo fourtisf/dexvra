@@ -133,6 +133,10 @@ export default function TokenPage() {
                   <a href={`https://www.geckoterminal.com/${network}/tokens/${t.address}`} target="_blank" rel="noopener noreferrer" style={{ color: "var(--mint)" }}>
                     Open full chart on GeckoTerminal ↗
                   </a>
+                ) : c?.launchpad === "pons-v2" ? (
+                  <a href={c.buyUrl(t.address)} target="_blank" rel="noopener noreferrer" style={{ color: "var(--mint)" }}>
+                    Price trend · open the live curve on Pons ↗
+                  </a>
                 ) : (
                   `Price trend · ${c?.label ?? t.chain} charts coming soon`
                 )}

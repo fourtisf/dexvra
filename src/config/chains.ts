@@ -1,3 +1,5 @@
+import { ponsExplorerUrl, ponsTokenUrl } from "./pons";
+
 // Adding a chain = adding one entry here. Nothing else in the app may
 // hardcode a chain id.
 export interface ChainConfig {
@@ -8,6 +10,12 @@ export interface ChainConfig {
   geckoNetwork: string | null;
   /** GoPlus numeric chain id for EVM security scans; null = non-EVM */
   goPlusChainId: string | null;
+  /**
+   * Launchpad this chain's market data comes from when no aggregator indexes
+   * it. Robinhood Chain has no GeckoTerminal coverage, so its prices, trades
+   * and safety flags are read from the Pons v2 contracts instead.
+   */
+  launchpad?: "pons-v2";
   /** Address explorer URL for a token address */
   explorer: (address: string) => string;
   /** Buy deeplink — we never swap on-site, only deep-link out */
@@ -63,10 +71,11 @@ export const CHAINS: Record<string, ChainConfig> = {
     id: "robinhood",
     label: "Robinhood",
     color: "#CCFF00",
-    geckoNetwork: null,
-    goPlusChainId: null,
-    explorer: (a) => `https://dexscreener.com/search?q=${a}`,
-    buyUrl: (a) => `https://dexscreener.com/search?q=${a}`,
+    geckoNetwork: null, // no aggregator coverage — see `launchpad`
+    goPlusChainId: null, // GoPlus doesn't cover chain 4663
+    launchpad: "pons-v2",
+    explorer: (a) => ponsExplorerUrl(a),
+    buyUrl: (a) => ponsTokenUrl(a),
     addressPattern: /^0x[a-fA-F0-9]{40}$/,
   },
   tron: {

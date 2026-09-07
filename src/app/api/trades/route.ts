@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { CHAINS } from "@/config/chains";
 import { cached } from "@/lib/cache";
+import { fetchPonsTrades, isPonsChain } from "@/lib/providers/pons";
 import type { Trade } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -59,8 +60,24 @@ async function fetchTrades(network: string, pool: string): Promise<Trade[]> {
 export async function GET(req: NextRequest) {
   const chain = (req.nextUrl.searchParams.get("chain") ?? "").trim();
   const pool = (req.nextUrl.searchParams.get("pool") ?? "").trim();
+  if (!pool || pool.length > 90 || /[^A-Za-z0-9:_-]/.test(pool)) {
+    return NextResponse.json({ trades: [] });
+  }
+
+  // Pons launches have no indexed pool — `pool` is the launch's bonding curve,
+  // and its CurveBuy/CurveSell logs are the trade feed.
+  if (isPonsChain(chain)) {
+    if (!/^0x[a-fA-F0-9]{40}$/.test(pool)) return NextResponse.json({ trades: [] });
+    try {
+      const trades = await cached(`pons:trades:${pool.toLowerCase()}`, TRADES_TTL, () => fetchPonsTrades(pool));
+      return NextResponse.json({ trades });
+    } catch {
+      return NextResponse.json({ trades: [] });
+    }
+  }
+
   const network = CHAINS[chain]?.geckoNetwork;
-  if (!network || !pool || pool.length > 90 || /[^A-Za-z0-9:_-]/.test(pool)) {
+  if (!network) {
     return NextResponse.json({ trades: [] });
   }
   try {

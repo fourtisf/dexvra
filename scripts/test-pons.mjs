@@ -1,0 +1,344 @@
+// Offline unit tests for the Pons v2 provider. No network: a fake JSON-RPC
+// node answers every eth_call / eth_getLogs, so the ABI codec, the curve and
+// Uniswap V4 price math and the rolling trade window are all exercised for
+// real. Run: npm run test:pons
+import { registerHooks } from "node:module";
+import { resolve } from "./ts-alias-hooks.mjs";
+
+registerHooks({ resolve });
+
+const results = [];
+const check = (name, ok, extra = "") => {
+  results.push(`${ok ? "PASS" : "FAIL"} ${name}${extra ? ` — ${extra}` : ""}`);
+};
+const near = (a, b, tolerance = 1e-6) => Math.abs(a - b) <= Math.abs(b) * tolerance + 1e-12;
+
+// ── ABI helpers (independent of the implementation under test) ────────────
+const word = (v) => {
+  let n = BigInt(v);
+  if (n < 0n) n += 1n << 256n;
+  return n.toString(16).padStart(64, "0");
+};
+const addrWord = (a) => a.replace(/^0x/, "").toLowerCase().padStart(64, "0");
+const stringReturn = (s) => {
+  const bytes = Buffer.from(s, "utf8").toString("hex");
+  const padded = bytes.padEnd(Math.ceil(bytes.length / 64) * 64, "0");
+  return `0x${word(32)}${word(s.length)}${padded}`;
+};
+const hexResult = (words) => `0x${words.join("")}`;
+
+// ── keccak / selector vectors ─────────────────────────────────────────────
+const { keccak256Hex } = await import("../src/lib/evm/keccak.ts");
+const abi = await import("../src/lib/evm/abi.ts");
+
+check(
+  "keccak256 of the empty string",
+  keccak256Hex("") === "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
+);
+check(
+  'keccak256 of "abc"',
+  keccak256Hex("abc") === "0x4e03657aea45a94fc7d47ba826c8d667c0d1e6e33a64a036ec44f58fa12d6c45",
+);
+check("ERC-20 transfer selector", abi.selector("transfer(address,uint256)") === "0xa9059cbb");
+check(
+  "ERC-20 Transfer topic",
+  abi.topic0("Transfer(address,address,uint256)") ===
+    "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+);
+
+// ── ABI decoding ──────────────────────────────────────────────────────────
+check(
+  "decodes a negative int24 (tickSpacing)",
+  abi.decodeReturn(["int24"], hexResult([word(-60)]))[0] === -60n,
+);
+check("decodes a string return", abi.decodeReturn(["string"], stringReturn("PONSY"))[0] === "PONSY");
+check(
+  "decodes a mixed static tuple",
+  JSON.stringify(
+    abi.decodeReturn(["address", "bool", "uint16"], hexResult([addrWord("0xabc0000000000000000000000000000000000001"), word(1), word(250)])),
+    (_, v) => (typeof v === "bigint" ? v.toString() : v),
+  ) === '["0xabc0000000000000000000000000000000000001",true,"250"]',
+);
+check("fromUnits keeps 18-decimal precision", near(abi.fromUnits(1_500_000_000_000_000_000n, 18), 1.5));
+
+// ── Fake Pons deployment ──────────────────────────────────────────────────
+const { PONS } = await import("../src/config/pons.ts");
+
+const TOKEN = "0x1111111111111111111111111111111111111111";
+const CURVE = "0x2222222222222222222222222222222222222222";
+const GRAD_TOKEN = "0x3333333333333333333333333333333333333333";
+const GRAD_CURVE = "0x4444444444444444444444444444444444444444";
+const POOL_MANAGER = "0x5555555555555555555555555555555555555555";
+const MEME_HOOK = "0x6666666666666666666666666666666666666666";
+const ZERO = "0x0000000000000000000000000000000000000000";
+const ETH_USD = 4000;
+
+const HEAD_BLOCK = 20_000_000;
+const HEAD_TS = Math.floor(Date.now() / 1000);
+const BLOCK_SECONDS = 0.25;
+
+const ETH = (n) => BigInt(Math.round(n * 1e6)) * 10n ** 12n;
+const TOKENS = (n) => BigInt(Math.round(n * 1e6)) * 10n ** 12n;
+
+// on-curve launch: 10 ETH phantom + 2 ETH raised against 800M tokens left
+const CURVE_QUOTE = ETH(12);
+const CURVE_TOKENS = TOKENS(800_000_000);
+const CURVE_REAL_QUOTE = ETH(2);
+const TOTAL_SUPPLY = TOKENS(1_000_000_000);
+const THRESHOLD = ETH(10);
+
+// graduated launch: 1 token = 0.000002 ETH in a full-range V4 position
+const GRAD_PRICE_ETH = 0.000002;
+const SQRT_PRICE_X96 = BigInt(Math.floor(Math.sqrt(1 / GRAD_PRICE_ETH) * 2 ** 96));
+const POOL_LIQUIDITY = 10n ** 21n;
+
+const launchRecord = ({ token, curve, phase, sweptQuote = 0n }) =>
+  hexResult([
+    addrWord(token), addrWord(curve), addrWord("0x7777777777777777777777777777777777777777"),
+    addrWord("0x8888888888888888888888888888888888888888"), addrWord(ZERO),
+    word(THRESHOLD), word(3000), word(60), word(100), word(1), word(phase),
+    word(sweptQuote), word(0), word(0), word(1),
+  ]);
+
+const trades = [
+  { block: HEAD_BLOCK - 40, kind: "buy", quote: ETH(0.5), tokens: TOKENS(40_000_000) },
+  { block: HEAD_BLOCK - 20, kind: "buy", quote: ETH(0.25), tokens: TOKENS(18_000_000) },
+  { block: HEAD_BLOCK - 10, kind: "sell", quote: ETH(0.1), tokens: TOKENS(6_000_000) },
+];
+
+const BUY_TOPIC = abi.topic0("CurveBuy(address,address,uint256,uint256,uint256,uint256)");
+const SELL_TOPIC = abi.topic0("CurveSell(address,address,uint256,uint256,uint256,uint256)");
+
+const tradeLog = (trade, index) => ({
+  address: CURVE,
+  topics: [
+    trade.kind === "buy" ? BUY_TOPIC : SELL_TOPIC,
+    `0x${addrWord("0x9999999999999999999999999999999999999999")}`,
+    `0x${addrWord("0x9999999999999999999999999999999999999999")}`,
+  ],
+  // fee and tax are zero here, so the AMM leg equals the raw amounts
+  data: hexResult(
+    trade.kind === "buy"
+      ? [word(trade.quote), word(trade.tokens), word(0), word(0)]
+      : [word(trade.tokens), word(trade.quote), word(0), word(0)],
+  ),
+  blockNumber: `0x${trade.block.toString(16)}`,
+  transactionHash: `0x${index.toString(16).padStart(64, "0")}`,
+  logIndex: `0x${index.toString(16)}`,
+});
+
+const SEL = (sig) => abi.selector(sig);
+
+function ethCallResult(to, data) {
+  const target = to.toLowerCase();
+  const sel = data.slice(0, 10);
+
+  if (target === PONS.factoryV2) {
+    if (sel === SEL("getLaunchedToken(address)")) {
+      const argument = `0x${data.slice(10 + 24, 10 + 64)}`;
+      if (argument.toLowerCase() === TOKEN) return launchRecord({ token: TOKEN, curve: CURVE, phase: 0 });
+      if (argument.toLowerCase() === GRAD_TOKEN)
+        return launchRecord({ token: GRAD_TOKEN, curve: GRAD_CURVE, phase: 2, sweptQuote: THRESHOLD });
+      return hexResult(Array.from({ length: 15 }, () => word(0)));
+    }
+    if (sel === SEL("poolManager()")) return hexResult([addrWord(POOL_MANAGER)]);
+    if (sel === SEL("memeHook()")) return hexResult([addrWord(MEME_HOOK)]);
+  }
+
+  if (target === CURVE || target === GRAD_CURVE) {
+    const live = target === CURVE;
+    if (sel === SEL("getReserves()"))
+      return hexResult(live ? [word(CURVE_QUOTE), word(CURVE_TOKENS)] : [word(0), word(0)]);
+    if (sel === SEL("realQuoteReserve()")) return hexResult([word(live ? CURVE_REAL_QUOTE : 0n)]);
+    if (sel === SEL("sellableTokens()")) return hexResult([word(live ? CURVE_TOKENS : 0n)]);
+    if (sel === SEL("graduated()")) return hexResult([word(live ? 0 : 1)]);
+    if (sel === SEL("token()")) return hexResult([addrWord(live ? TOKEN : GRAD_TOKEN)]);
+  }
+
+  if (target === TOKEN || target === GRAD_TOKEN) {
+    if (sel === SEL("decimals()")) return hexResult([word(18)]);
+    if (sel === SEL("totalSupply()")) return hexResult([word(TOTAL_SUPPLY)]);
+    if (sel === SEL("symbol()")) return stringReturn("PONSY");
+    if (sel === SEL("name()")) return stringReturn("Pons Yield");
+    if (sel === SEL("logo()")) return stringReturn("https://cdn.example/ponsy.png");
+  }
+
+  if (target === POOL_MANAGER && sel === SEL("extsload(bytes32)")) {
+    // Two slots are read per pool: slot0 then slot0 + LIQUIDITY_OFFSET. We
+    // don't re-derive the slot here — the first read gets the packed Slot0,
+    // any second read gets the liquidity.
+    extsloadCalls++;
+    return extsloadCalls % 2 === 1
+      ? hexResult([word(SQRT_PRICE_X96)])
+      : hexResult([word(POOL_LIQUIDITY)]);
+  }
+
+  throw new Error(`unstubbed eth_call ${target} ${sel}`);
+}
+
+let extsloadCalls = 0;
+let rpcRequests = 0;
+
+function handle({ method, params }) {
+  if (method === "eth_call") return ethCallResult(params[0].to, params[0].data);
+  if (method === "eth_getBlockByNumber") {
+    const tag = params[0];
+    const number = tag === "latest" ? HEAD_BLOCK : Number(BigInt(tag));
+    return {
+      number: `0x${number.toString(16)}`,
+      timestamp: `0x${Math.round(HEAD_TS - (HEAD_BLOCK - number) * BLOCK_SECONDS).toString(16)}`,
+    };
+  }
+  if (method === "eth_getLogs") {
+    const { address, fromBlock, toBlock } = params[0];
+    if (String(address).toLowerCase() !== CURVE) return [];
+    const from = Number(BigInt(fromBlock));
+    const to = Number(BigInt(toBlock));
+    return trades.filter((t) => t.block >= from && t.block <= to).map(tradeLog);
+  }
+  throw new Error(`unstubbed method ${method}`);
+}
+
+globalThis.fetch = async (url, init) => {
+  const href = String(url);
+  if (href.includes("api.geckoterminal.com")) {
+    return new Response(
+      JSON.stringify({
+        data: { attributes: { token_prices: { [PONS.nativeUsdRef.address]: String(ETH_USD) } } },
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  }
+  if (href === PONS.rpcUrl) {
+    rpcRequests++;
+    const body = JSON.parse(init.body);
+    const respond = (entry) => {
+      try {
+        return { jsonrpc: "2.0", id: entry.id, result: handle(entry) };
+      } catch (err) {
+        return { jsonrpc: "2.0", id: entry.id, error: { message: String(err.message) } };
+      }
+    };
+    const payload = Array.isArray(body) ? body.map(respond) : respond(body);
+    return new Response(JSON.stringify(payload), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }
+  throw new Error(`unexpected fetch ${href}`);
+};
+
+// ── Provider behaviour ────────────────────────────────────────────────────
+const pons = await import("../src/lib/providers/pons/index.ts");
+const { __resetHistories } = await import("../src/lib/providers/pons/trades.ts");
+
+__resetHistories();
+const market = await pons.fetchPonsMarket([TOKEN]);
+const live = market.get(TOKEN);
+
+check("on-curve launch produces a market", Boolean(live));
+if (live) {
+  const expectedPrice = (12 / 800_000_000) * ETH_USD;
+  check("curve spot price", near(live.priceUsd, expectedPrice, 1e-9), `${live.priceUsd} vs ${expectedPrice}`);
+  check("market cap is price × fixed supply", near(live.mcap, expectedPrice * 1e9, 1e-9), String(live.mcap));
+  check("liquidity is the real quote backing", near(live.liq, 2 * ETH_USD, 1e-9), String(live.liq));
+  check("pool address is the bonding curve", live.poolAddress.toLowerCase() === CURVE);
+  check("logo comes from the token contract", live.logoUrl === "https://cdn.example/ponsy.png");
+  check(
+    "5m txns counted from curve logs",
+    live.txns["5m"].buys === 2 && live.txns["5m"].sells === 1,
+    JSON.stringify(live.txns["5m"]),
+  );
+  check(
+    "5m volume is the AMM-leg notional in USD",
+    near(live.vol["5m"], 0.85 * ETH_USD, 1e-9),
+    String(live.vol["5m"]),
+  );
+  // spot 12/800M ETH against the window's opening trade at 0.5/40M ETH
+  check(
+    "5m price change measured against the window's opening trade",
+    near(live.chg["5m"], 20, 1e-9),
+    String(live.chg["5m"]),
+  );
+  check(
+    "coverage is reported and short of a day on a cold start",
+    live.statsCoverageMinutes > 0 && live.statsCoverageMinutes < 1440,
+    String(live.statsCoverageMinutes),
+  );
+}
+
+// A graduated launch prices off the locked Uniswap V4 position.
+__resetHistories();
+const graduated = (await pons.fetchPonsMarket([GRAD_TOKEN])).get(GRAD_TOKEN);
+check("graduated launch produces a market", Boolean(graduated));
+if (graduated) {
+  check(
+    "V4 pool spot price round-trips",
+    near(graduated.priceUsd, GRAD_PRICE_ETH * ETH_USD, 1e-6),
+    `${graduated.priceUsd} vs ${GRAD_PRICE_ETH * ETH_USD}`,
+  );
+  const sqrtP = Number(SQRT_PRICE_X96) / 2 ** 96;
+  check(
+    "V4 pool liquidity counted both sides",
+    near(graduated.liq, (1e21 / sqrtP / 1e18) * 2 * ETH_USD, 1e-6),
+    String(graduated.liq),
+  );
+}
+
+// Periods the window can't back yet must not be published as complete —
+// providers/index.ts keeps the listing's own figure for those.
+const { coveredPeriods } = await import("../src/lib/providers/market.ts");
+if (live) {
+  const covered = coveredPeriods(live);
+  check(
+    "short periods are covered, a full day is not",
+    covered.has("5m") && covered.has("1h") && !covered.has("24h"),
+    [...covered].join(","),
+  );
+  check(
+    "a provider without a coverage claim covers every period",
+    coveredPeriods({ ...live, statsCoverageMinutes: undefined }).size === 4,
+  );
+}
+
+// Unknown addresses must not fabricate a market.
+const unknown = await pons.fetchPonsMarket(["0xdead00000000000000000000000000000000dead"]);
+check("unknown token yields no market", unknown.size === 0);
+
+// An unreachable endpoint must not read as "not a Pons launch".
+const workingFetch = globalThis.fetch;
+globalThis.fetch = async (url, init) =>
+  String(url) === PONS.rpcUrl ? Promise.reject(new Error("connection refused")) : workingFetch(url, init);
+let rpcDownThrew = false;
+try {
+  await pons.fetchPonsLaunch(TOKEN);
+} catch {
+  rpcDownThrew = true;
+}
+check("an unreachable RPC surfaces as an error, not a missing launch", rpcDownThrew);
+globalThis.fetch = workingFetch;
+
+// The scanner reads launch facts rather than heuristics.
+const safety = await pons.scanPonsToken(TOKEN);
+check("scanner recognises the launch", Boolean(safety) && safety.chain === "robinhood");
+if (safety) {
+  const labels = safety.fps.map((f) => f.flag.label);
+  check("scanner reports the locked-liquidity story", labels.includes("Liquidity"));
+  check("scanner reports the creator tax", safety.fps.some((f) => f.flag.label === "Creator tax" && f.flag.value === "1.0%"));
+  check("scanner reports curve progress", labels.includes("Curve progress"));
+}
+
+// Trades surface in the app's shape, newest first.
+__resetHistories();
+const feed = await pons.fetchPonsTrades(CURVE);
+check("trade feed is populated", feed.length === 3, `len=${feed.length}`);
+check("trade feed is newest first", feed.length === 3 && feed[0].ts >= feed[2].ts);
+check("trade usd value uses the ETH reference price", feed.length > 0 && near(feed[0].usd, 0.1 * ETH_USD, 1e-9));
+
+check("the fake node was actually driven", rpcRequests > 0, `${rpcRequests} requests`);
+
+// ── Report ────────────────────────────────────────────────────────────────
+for (const line of results) console.log(line);
+const failed = results.filter((r) => r.startsWith("FAIL")).length;
+console.log(`\n${results.length - failed}/${results.length} passed`);
+process.exit(failed === 0 ? 0 : 1);
