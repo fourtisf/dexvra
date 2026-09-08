@@ -33,6 +33,20 @@ const stringReturn = (s) => {
   return `0x${word(32)}${word(s.length)}${padded}`;
 };
 const hexResult = (words) => `0x${words.join("")}`;
+// five dynamic strings: five offset words, then each length + bytes
+const fiveStrings = (values) => {
+  const heads = [];
+  let tail = "";
+  let cursor = 5 * 32;
+  for (const v of values) {
+    heads.push(word(cursor));
+    const bytes = Buffer.from(v, "utf8").toString("hex");
+    const padded = bytes.padEnd(Math.ceil(bytes.length / 64) * 64, "0");
+    tail += word(v.length) + padded;
+    cursor += 32 + padded.length / 2;
+  }
+  return `0x${heads.join("")}${tail}`;
+};
 
 // ── keccak / selector vectors ─────────────────────────────────────────────
 const { keccak256Hex } = await import("../src/lib/evm/keccak.ts");
@@ -189,6 +203,8 @@ function ethCallResult(to, data) {
     if (sel === SEL("symbol()")) return stringReturn("PONSY");
     if (sel === SEL("name()")) return stringReturn("Pons Yield");
     if (sel === SEL("logo()")) return stringReturn("https://cdn.example/ponsy.png");
+    if (sel === SEL("socials()")) return fiveStrings(["https://x.com/ponsy", "https://t.me/ponsy", "", "https://ponsy.example", "  "]);
+    if (sel === SEL("description()")) return stringReturn("A potato that drips. Community-run, fixed supply, liquidity locked at graduation.");
   }
 
   if (target === POOL_MANAGER && sel === SEL("extsload(bytes32)")) {
@@ -465,6 +481,20 @@ __resetHistories();
 __resetPonsCooldown();
 const recovered = await pons.fetchPonsFallbackMarket("robinhood", [TOKEN]);
 check("it answers again once the chain is reachable", recovered !== null && recovered.size === 1);
+
+// ── The creator's socials, straight off the token ─────────────────────────
+// This is what the listing form autofills from: an indexer has nothing for a
+// token still on its curve, and the launchpad's HTTP paths are a guess.
+__resetHistories();
+const detail = await pons.fetchPonsLaunch(TOKEN);
+check("the launch detail reads the socials", Boolean(detail?.socials));
+check("and the creator's description", (detail?.description || "").startsWith("A potato that drips"));
+if (detail?.socials) {
+  check("a set social comes through", detail.socials.twitter === "https://x.com/ponsy");
+  check("website too", detail.socials.website === "https://ponsy.example");
+  check("an EMPTY field is null, never an empty string", detail.socials.discord === null);
+  check("so is a whitespace-only one", detail.socials.farcaster === null, JSON.stringify(detail.socials.farcaster));
+}
 
 // bot/ owns the "now live" announcement, so this repo must not carry a second
 // copy of it — and the poster must not be able to reach the bot's channel.

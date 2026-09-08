@@ -12,7 +12,14 @@ import { PONS, ponsExplorerUrl, ponsTokenUrl, type GraduationPhase } from "@/con
 import { PERIOD_KEYS, type PeriodKey, type Trade, type TxSplit } from "@/lib/types";
 import { fetchTokenPriceUsd } from "../geckoterminal";
 import type { LiveMarket } from "../market";
-import { readCurveTokenDecimals, readLaunchSnapshots, sortCurrencies, type LaunchSnapshot } from "./contracts";
+import {
+  readCurveTokenDecimals,
+  readLaunchSnapshots,
+  readTokenProfile,
+  sortCurrencies,
+  type LaunchSnapshot,
+  type TokenSocials,
+} from "./contracts";
 import { readCurveHistories, type CurveHistory, type PonsTrade } from "./trades";
 
 const NATIVE_USD_TTL = 60_000;
@@ -248,13 +255,21 @@ export interface PonsLaunchInfo {
   mcapUsd: number | null;
   liquidityUsd: number | null;
   liquidityLocked: boolean;
+  /** What the creator set at launch — the listing form autofills from these. */
+  socials: TokenSocials | null;
+  description: string | null;
   poolFee: number;
   tickSpacing: number;
   explorerUrl: string;
   ponsUrl: string;
 }
 
-function describe(snapshot: LaunchSnapshot, market: LiveMarket | null, quoteUsd: number | null): PonsLaunchInfo {
+function describe(
+  snapshot: LaunchSnapshot,
+  market: LiveMarket | null,
+  quoteUsd: number | null,
+  profile: { socials: TokenSocials; description: string | null } | null,
+): PonsLaunchInfo {
   const { launch, curve, meta } = snapshot;
   const threshold = fromUnits(launch.graduationThreshold, PONS.nativeDecimals);
   const raised = curve && !curve.graduated
@@ -288,6 +303,8 @@ function describe(snapshot: LaunchSnapshot, market: LiveMarket | null, quoteUsd:
     // Graduation locks the V4 position permanently — the locker exposes no
     // withdrawal path at all (PonsV2LaunchLocker).
     liquidityLocked: launch.phase === "PoolCreated",
+    socials: profile?.socials ?? null,
+    description: profile?.description ?? null,
     poolFee: launch.poolFee,
     tickSpacing: launch.tickSpacing,
     explorerUrl: ponsExplorerUrl(launch.token),
@@ -301,14 +318,17 @@ export async function fetchPonsLaunch(address: string): Promise<PonsLaunchInfo |
   const snapshot = snapshots.get(address.toLowerCase());
   if (!snapshot) return null;
 
-  const [quoteUsd, histories] = await Promise.all([
+  const [quoteUsd, histories, profile] = await Promise.all([
     nativeUsd().catch(() => null),
     readCurveHistories([snapshot.launch.curve]).catch(() => new Map<string, CurveHistory>()),
+    // Best-effort: a token whose creator set nothing, and a read that failed,
+    // both leave the form asking — neither may cost the rest of the record.
+    readTokenProfile(snapshot.launch.token).catch(() => null),
   ]);
   const market = quoteUsd
     ? buildMarket(snapshot, histories.get(snapshot.launch.curve.toLowerCase()), quoteUsd, Math.floor(Date.now() / 1000))
     : null;
-  return describe(snapshot, market, quoteUsd);
+  return describe(snapshot, market, quoteUsd, profile);
 }
 
 /** Recent trades on a launch's curve, newest first, in the app's Trade shape. */

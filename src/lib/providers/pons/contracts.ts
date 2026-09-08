@@ -341,6 +341,51 @@ export async function readLaunchSnapshots(addresses: string[]): Promise<Map<stri
   return out;
 }
 
+export interface TokenSocials {
+  twitter: string | null;
+  telegram: string | null;
+  discord: string | null;
+  website: string | null;
+  farcaster: string | null;
+}
+
+export interface TokenProfile {
+  socials: TokenSocials;
+  description: string | null;
+}
+
+/**
+ * What the creator wrote at launch — the five socials and the description —
+ * straight off the token, in one batch.
+ *
+ * ⚠️ Deliberately NOT part of the bulk snapshot. The launch feed reads up to 20
+ * tokens at a time and would pay this on every one of them; the caller that
+ * needs it is the listing form, which asks about ONE token.
+ */
+export async function readTokenProfile(token: string): Promise<TokenProfile | null> {
+  const results = await rpcBatch(
+    PONS.rpcUrl,
+    [call(token, encodeCall("socials()")), call(token, encodeCall("description()"))],
+    PONS.rpcTimeoutMs,
+  );
+  const decoded = ok(results[0], (hex) => decodeReturn(["string", "string", "string", "string", "string"], hex) as string[]);
+  const about = ok(results[1], (hex) => one<string>(["string"], hex));
+  if (!decoded) return null;
+  // A creator who filled nothing in leaves empty strings; "" is not a link.
+  const clean = (v: string): string | null => (v && v.trim() ? v.trim().slice(0, 200) : null);
+  const [twitter, telegram, discord, website, farcaster] = decoded;
+  return {
+    socials: {
+      twitter: clean(twitter),
+      telegram: clean(telegram),
+      discord: clean(discord),
+      website: clean(website),
+      farcaster: clean(farcaster),
+    },
+    description: about && about.trim() ? about.trim().slice(0, 1000) : null,
+  };
+}
+
 const decimalsCache = new Map<string, number>();
 
 /** Decimals of the token a curve dispenses. Cached — it never changes. */

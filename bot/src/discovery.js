@@ -15,6 +15,7 @@
 const ds = require("./dexscreener");
 const poolstrade = require("./poolstrade");
 const launchpads = require("./launchpads");
+const ponsChain = require("./ponsChain");
 const log = require("./helpers/logger");
 
 /**
@@ -174,6 +175,19 @@ async function fetchTokenInfoX(chain, address) {
     extras.push(
       launchpads.fetchTokenInfo(chain, address).catch((e) => {
         log.debug(`[discovery] launchpads ${chain}/${address}: ${e.message}`);
+        return null;
+      }),
+    );
+  }
+  // LAST, and that is the whole safety of it: mergeInfo only ever fills holes,
+  // so the chain answers exactly what no indexer and no pad did — which for a
+  // token still on its curve is everything, and for anything else is nothing.
+  // It is also the only source here that cannot go stale or move: the others
+  // are third-party HTTP, and the Pons pad's host and path are still a guess.
+  if (ponsChain.covers(chain)) {
+    extras.push(
+      ponsChain.fetchTokenInfo(chain, address).catch((e) => {
+        log.debug(`[discovery] pons-chain ${chain}/${address}: ${e.message}`);
         return null;
       }),
     );

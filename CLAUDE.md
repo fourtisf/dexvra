@@ -269,6 +269,65 @@ The one thing an operator has to do is hit **♻️ Reset default** on the
 `review_card` template if they have ever edited it, or the "🚀 Still bonding"
 line will not appear on the listing review card.
 
+### "bot listing masih tidak baca api dari pons v2 maupun v1"
+
+Reported with a screenshot: a Pons contract pasted into the listing flow, and
+the bot answering **"Token Name — What is your project called?"** — the autofill
+having produced nothing at all, about a token whose own contract publishes its
+name, ticker, logo, description and five socials.
+
+**Nothing was broken, and the pad was not the gap.** The autofill has exactly
+three sources and NONE of them reads the chain: `dexscreener` and
+`marketdata.fetchMarket` index POOLS, and a token on a bonding curve has none;
+the launchpad registry asks Pons over HTTP on a host and a path this repo has
+never verified (`verified: false`, and the operator's own `launchpads:check`
+reported the earlier guess unreachable). So the one source that cannot be
+unreachable — the token contract itself — was the one nobody asked.
+
+- **`bot/src/ponsChain.js` asks the WEB APP, and that is the point.** The
+  reader already exists in `src/lib/providers/pons` and is the one owner of
+  what the Pons factory says about a token; this package is CommonJS on Node 18
+  and cannot import a `.ts` module, so a local copy would be a SECOND reader —
+  the exact shape that left `tradebot/solana.js` and `bot/src/marketdata.js`
+  disagreeing about pump.fun's host until Solana discovery went blind for days.
+  Both processes are on the same box, so it is a localhost request.
+- **LAST in `discovery.fetchTokenInfoX`'s extras**, and that is the whole
+  safety of it: `mergeInfo` only ever fills holes, so the chain answers exactly
+  what no indexer and no pad did — for a fresh curve token that is everything,
+  and for anything else it is nothing. Zero behaviour change wherever the
+  existing sources already answer.
+- ⚠️ **A POSITIVE test, because a wiring that does nothing refuses
+  beautifully.** `ponsDiscovery.test.js` drives the real merge with both HTTP
+  sources answering null and asserts the form got filled — the `curveBuyPath`
+  scar, one package over. Mutation-tested: removing the wiring fails both.
+- ⚠️ **`ipfs://` IS REAL ARTWORK AND AN UNUSABLE URL.** `adminValidate`'s
+  `LOGO_RE` takes https or an upload and nothing else, so passing a mint's own
+  logo through verbatim would have failed the WHOLE listing over its picture —
+  the rule the launchpad socials already carry ("losing a link beats losing the
+  listing and the link with it"). Rewritten to a gateway the site's image proxy
+  allows, `PONS_IPFS_GATEWAY` if that one ever needs moving.
+- **`liq`, `vol24` and `pairCreatedAt` stay 0.** They are the fields the
+  auto-lister's gates read by name and 0 is how this repo spells "no data" on
+  them; a curve publishes none of them, and `ok` still follows the INDEXER — a
+  chain record does not make a refusal into an answer.
+- **"Pons never launched this token" (404) and "we could not ask" are different
+  facts**, and only the first is recorded against the address. A transport
+  failure parks the reader for `PONS_CHAIN_COOLDOWN_MS` instead of costing one
+  attempt per paste — the `benched` rule, for the fifth time in this repo.
+- The socials and the description are read from the token in ONE batch and
+  deliberately **only on the single-token path**: the launch feed reads twenty
+  at a time and would pay for it on every one of them.
+
+```bash
+cd bot && node scripts/run-tests.js test/ponsChain.test.js test/ponsDiscovery.test.js   # 10 tests, no network
+cd /opt/dexvra && npm run pons:check    # which of the three layers answers, on the box
+```
+
+**Config a fix depends on:** nothing. `DEXVRA_API_BASE` already points the bot
+at the site and defaults to `http://127.0.0.1:3005`. ⚠️ But the web app must be
+running and on a build that carries `/api/pons` — this is a `bot/` change AND a
+`src/` change, so the deploy is the full one.
+
 ## The banner drew "$???" to 12,607 subscribers
 
 A token listed as **牛来 ($牛来)** went out on the listing card as `$???` and again
