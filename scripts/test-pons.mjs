@@ -484,6 +484,30 @@ delete process.env.PONS_ANNOUNCE_CHAT_ID;
 delete process.env.TELEGRAM_BOT_TOKEN;
 delete process.env.TELEGRAM_CHAT_ID;
 
+// ── The check script carries a PORT of the deployment constants ───────────
+// Production runs Node 18, so scripts/pons-check.mjs cannot import
+// src/config/pons.ts. A drifted default there makes the diagnostic report a
+// healthy box as broken — or point at the wrong factory entirely.
+{
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("./pons-check.mjs", import.meta.url), "utf8");
+  const portOf = (name) => {
+    const m = new RegExp(`process\\.env\\.${name}\\s*\\|\\|\\s*"([^"]+)"`).exec(src);
+    return m ? m[1] : null;
+  };
+  check(
+    "the check script's RPC default equals the app's",
+    portOf("PONS_RPC_URL") === PONS.rpcUrl,
+    `${portOf("PONS_RPC_URL")} vs ${PONS.rpcUrl}`,
+  );
+  check(
+    "the check script's factory default equals the app's",
+    (portOf("PONS_FACTORY") || "").toLowerCase() === PONS.factoryV2,
+    `${portOf("PONS_FACTORY")} vs ${PONS.factoryV2}`,
+  );
+  check("the check script names the chain id the app uses", src.includes(`CHAIN_ID = ${PONS.chainId}`));
+}
+
 // ── Report ────────────────────────────────────────────────────────────────
 for (const line of results) console.log(line);
 const failed = results.filter((r) => r.startsWith("FAIL")).length;
