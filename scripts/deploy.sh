@@ -69,11 +69,26 @@ for pkg in bot tradebot; do
 done
 
 # ── 4. Tests before build ─────────────────────────────────────────────────
-# Both suites are offline, so a box with no egress still runs them. A red test
-# stops the deploy here, while the old build is still the one serving.
-step "Running the test suites"
-npm test
-npm run test:pons
+# Both suites are offline, so a box with egress blocked still runs them, and a
+# red test stops the deploy here while the old build is still the one serving.
+#
+# ⚠️ BOTH NEED NODE 22, AND PRODUCTION RUNS 18. They are `node --test` over
+# `.ts` files, which needs --experimental-strip-types (22.6+). Running them
+# unconditionally makes the script abort on the one box it is written for — a
+# deploy tool that cannot run on the server is "apt-get install is not a fix,
+# it is a request", one feature over. So the box's Node decides, and a skip is
+# LOUD: a silent one would read as a suite that passed.
+NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
+NODE_MINOR="$(node -p 'process.versions.node.split(".")[1]' 2>/dev/null || echo 0)"
+if [ "$NODE_MAJOR" -gt 22 ] || { [ "$NODE_MAJOR" -eq 22 ] && [ "$NODE_MINOR" -ge 6 ]; }; then
+  step "Running the test suites"
+  npm test
+  npm run test:pons
+else
+  step "Skipping the test suites"
+  printf 'node %s cannot strip types — both suites need 22.6+.\n' "$(node -v)"
+  printf 'They are the MERGE gate, not the deploy gate: run them where you develop.\n'
+fi
 
 # ── 5. Build ──────────────────────────────────────────────────────────────
 # `npm run build` stamps NEXT_PUBLIC_BUILD from HEAD; step 7 reads it back out
@@ -87,9 +102,17 @@ step "Restarting"
 command -v pm2 >/dev/null || die "pm2 is not on PATH"
 pm2 restart dexvra --update-env
 if [ "$WITH_BOTS" = "1" ]; then
-  # Only what pm2 actually knows about — the tradebot's process name differs
-  # between boxes, so an absent name is skipped rather than failing the deploy.
-  for proc in dexvra-bot dexvra-adminbot dexvra-tradebot dexvra-trade; do
+  # ⚠️ THE ECOSYSTEM FILE, NOT THE TWO NAMES. CLAUDE.md: bot/ runs BOTH
+  # dexvra-bot and dexvra-adminbot, and restarting one by name leaves the other
+  # on the old code — which fails silently and reads as a missing feature
+  # rather than a stale process.
+  if [ -f bot/ecosystem.config.js ]; then
+    echo "· bot/ (dexvra-bot + dexvra-adminbot)"
+    (cd bot && pm2 restart ecosystem.config.js --update-env)
+  fi
+  # The tradebot is its own process and its name differs between boxes, so an
+  # absent one is skipped rather than failing the deploy.
+  for proc in dexvra-tradebot dexvra-trade; do
     if pm2 describe "$proc" >/dev/null 2>&1; then
       echo "· $proc"
       pm2 restart "$proc" --update-env
