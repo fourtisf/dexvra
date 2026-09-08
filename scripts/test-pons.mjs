@@ -424,6 +424,48 @@ check(
   !launchPost.includes("<script>") && launchPost.includes("&lt;script&gt;"),
 );
 
+// ── The board's last-resort source ────────────────────────────────────────
+// This runs on every market cycle, so the only behaviour that matters is that
+// it can never throw and never keep trying a chain this box cannot reach.
+const { __resetPonsCooldown } = pons;
+__resetHistories();
+__resetLaunchFeed();
+__resetPonsCooldown();
+
+const goodFetch = globalThis.fetch;
+let rpcAttempts = 0;
+globalThis.fetch = async (url, init) => {
+  if (String(url) === PONS.rpcUrl) {
+    rpcAttempts++;
+    throw new Error("connection refused");
+  }
+  return goodFetch(url, init);
+};
+
+const downResult = await pons.fetchPonsFallbackMarket("robinhood", [TOKEN]);
+check("a dead RPC returns null rather than throwing", downResult === null);
+const attemptsAfterFirst = rpcAttempts;
+check("the failing read actually reached the network", attemptsAfterFirst > 0);
+
+await pons.fetchPonsFallbackMarket("robinhood", [TOKEN]);
+check(
+  "a failure parks the reader — the next cycle costs nothing",
+  rpcAttempts === attemptsAfterFirst,
+  `${rpcAttempts} vs ${attemptsAfterFirst}`,
+);
+
+globalThis.fetch = goodFetch;
+__resetPonsCooldown();
+check(
+  "a chain with no launchpad is never read at all",
+  (await pons.fetchPonsFallbackMarket("solana", [TOKEN])) === null,
+);
+
+__resetHistories();
+__resetPonsCooldown();
+const recovered = await pons.fetchPonsFallbackMarket("robinhood", [TOKEN]);
+check("it answers again once the chain is reachable", recovered !== null && recovered.size === 1);
+
 // bot/ owns the "now live" announcement, so this repo must not carry a second
 // copy of it — and the poster must not be able to reach the bot's channel.
 const telegram = await import("../src/lib/notify/telegram.ts");
