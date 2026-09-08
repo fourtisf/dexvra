@@ -83,7 +83,30 @@ export async function rpcBatch(url: string, calls: RpcCall[], timeoutMs = 9000):
       if (!Array.isArray(json)) throw new Error("endpoint did not honour the batch");
       const byId = new Map<number, JsonRpcResponse>();
       (json as JsonRpcResponse[]).forEach((entry, i) => byId.set(typeof entry?.id === "number" ? entry.id : i, entry));
-      slice.forEach((_, i) => results.push(unwrap(byId.get(i))));
+      const answered = slice.map((_, i) => unwrap(byId.get(i)));
+
+      // ⚠️ A BATCHED CALL AND A SINGLE ONE ARE DIFFERENT REQUESTS TO THE SAME
+      // HOST, which is the one case the standing "never retry a status" rule
+      // does not cover — the same exception the logo resolver records for HEAD
+      // versus GET. A node that caps, truncates or rate-limits batched state
+      // reads while serving them perfectly one at a time answers with a
+      // well-formed array whose ITEMS carry the refusal, so the whole-payload
+      // fallback below never fires and every one of them reads as permanent.
+      //
+      // It matters because the callers GROUP: token metadata is dropped unless
+      // BOTH decimals and totalSupply answer, and curve state unless all four
+      // reads do — so one item lost inside an otherwise healthy batch empties a
+      // whole row, which is indistinguishable from a token that has no data.
+      const lost = answered.flatMap((outcome, i) => (outcome.ok ? [] : [i]));
+      if (lost.length > 0) {
+        const again = await sequential(url, lost.map((i) => slice[i]), timeoutMs);
+        // Only a SUCCESS replaces the first answer: a second failure keeps the
+        // batch's own reason, which is the one that explains the shape.
+        lost.forEach((i, k) => {
+          if (again[k]?.ok) answered[i] = again[k];
+        });
+      }
+      results.push(...answered);
     } catch {
       // Batch unsupported or the whole payload failed — retry this slice one
       // call at a time so a single bad call doesn't cost us the rest.

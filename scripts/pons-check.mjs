@@ -120,7 +120,7 @@ try {
 // ── 2. Does it honour BATCHED calls? ──────────────────────────────────────
 // The feed asks 9 eth_calls per token in one batch. A node that caps or
 // refuses batches is the difference between a full row and a row of nulls.
-head("2 · Batched eth_call");
+head("2 · Batched requests (cheap methods)");
 let batchOk = false;
 try {
   const j = await rpc([
@@ -141,10 +141,14 @@ if (batchOk) {
     else { bad(`27-call batch came back with ${Array.isArray(j) ? `${j.length} item(s)` : "a non-array"} — THIS is why metadata is null`); broken++; }
   } catch (e) {
     bad(`27-call batch refused — ${why(e)}`);
-    note("lower PONS_LOG_CHUNKS_PER_REFRESH / the batch size, or pin a paid RPC");
+    note("lower the batch size, or pin a paid RPC");
     broken++;
   }
 }
+// ⚠️ eth_chainId TOUCHES NO STATE, and the app batches eth_call. A node can
+// honour one and cap the other, so a green mark here proves only that batching
+// per se works — section 5 replays the calls the app really sends.
+note("this proves batching works at all; section 5 replays the app's own eth_calls");
 
 // ── 3. Which tokens ───────────────────────────────────────────────────────
 // No placeholder command anywhere: with no argument this asks the running
@@ -170,6 +174,7 @@ if (tokens.length) {
 // Sequentially and individually, so a single failing call is named rather
 // than nulling its whole group the way the app's grouping does.
 let metaFailures = 0;
+const replay = []; // exactly what the app batches: {label, to, data}
 for (const token of tokens) {
   head(`4 · ${token}`);
   let curve = null;
@@ -197,6 +202,7 @@ for (const token of tokens) {
     ["token.logo()", token, SEL.logo, (h) => asString(h) || "(empty)"],
   ];
   for (const [label, to, sel, render] of reads) {
+    replay.push({ label: `${token.slice(0, 10)}… ${label}`, to, data: sel });
     try {
       const raw = await ethCall(to, sel);
       if (!raw || raw === "0x") { bad(`${label} → empty (the contract has no such function, or reverted)`); metaFailures++; continue; }
@@ -204,6 +210,54 @@ for (const token of tokens) {
       try { shown = render(raw); } catch { shown = `undecodable (${raw.slice(0, 26)}…)`; }
       ok(`${label} → ${shown}`);
     } catch (e) { bad(`${label} → ${why(e)}`); metaFailures++; }
+  }
+}
+
+// ── 5. The SAME calls, batched exactly as the app batches them ────────────
+// This is the whole question. Section 4 proves each call answers on its own;
+// the app sends all of them as ONE batched eth_call array, and `meta` is null
+// unless BOTH decimals and totalSupply come back, `curve` unless all four curve
+// reads do. So one call the batch quietly drops nulls a whole group — which is
+// exactly what a feed full of nulls over a healthy chain looks like.
+head("5 · The app's own reads, batched");
+if (!replay.length) {
+  note("no reads to replay");
+} else {
+  for (const size of [9, replay.length]) {
+    if (size > replay.length) continue;
+    const slice = replay.slice(0, size);
+    let answered = 0;
+    const failures = [];
+    try {
+      const j = await rpc(slice.map((c, i) => ({
+        jsonrpc: "2.0", id: i, method: "eth_call", params: [{ to: c.to, data: c.data }, "latest"],
+      })), 20000);
+      if (!Array.isArray(j)) {
+        bad(`batch of ${size} answered with a non-array — the app falls back to one call at a time`);
+        note(String(j?.error?.message || JSON.stringify(j)).slice(0, 200));
+        continue;
+      }
+      const byId = new Map(j.map((e, i) => [typeof e?.id === "number" ? e.id : i, e]));
+      slice.forEach((c, i) => {
+        const e = byId.get(i);
+        // ⚠️ "0x" is an ANSWER shaped like a success and decodes to nothing —
+        // the app reads it as a failed call, so it is counted as one here.
+        if (e && !e.error && e.result && e.result !== "0x") answered++;
+        else failures.push(`${c.label} → ${e?.error?.message || (e ? `empty (${e.result ?? "no result"})` : "missing from the response")}`);
+      });
+      if (failures.length === 0) {
+        ok(`batch of ${size} — all ${answered} answered`);
+      } else {
+        bad(`batch of ${size} — ${answered}/${size} answered, ${failures.length} lost`);
+        for (const f of failures.slice(0, 8)) note(f);
+        if (failures.length > 8) note(`…and ${failures.length - 8} more`);
+        broken++;
+      }
+    } catch (e) {
+      bad(`batch of ${size} refused outright — ${why(e)}`);
+      note("the app retries these one at a time, so this alone is survivable");
+      broken++;
+    }
   }
 }
 
@@ -243,8 +297,8 @@ if (metaFailures) {
   bad(`${metaFailures} contract read(s) failed — that is why symbol, name and price are null`);
   broken++;
 } else if (tokens.length) {
-  ok("every contract read answered — the chain layer is healthy");
-  note("if the feed still shows nulls, the reads are being lost in the BATCH: compare section 2");
+  ok("every contract read answered individually — the chain layer is healthy");
+  note("section 5 is the one that matters: it replays those same calls the way the app sends them");
 }
 console.log(
   broken

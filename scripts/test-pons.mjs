@@ -484,6 +484,55 @@ delete process.env.PONS_ANNOUNCE_CHAT_ID;
 delete process.env.TELEGRAM_BOT_TOKEN;
 delete process.env.TELEGRAM_CHAT_ID;
 
+// ── A batch whose ITEMS fail is not a batch that failed ───────────────────
+// The node answers a well-formed array and puts the refusal inside each entry,
+// so the whole-payload fallback never fires. Every caller here GROUPS its
+// reads, so one lost item empties a whole row — which reads exactly like a
+// token with no data.
+{
+  const { rpcBatch } = await import("../src/lib/evm/rpc.ts");
+  const url = "https://fake.rpc.test/";
+  let batches = 0;
+  let singles = 0;
+  const previous = globalThis.fetch;
+  globalThis.fetch = async (target, init) => {
+    if (String(target) !== url) return previous(target, init);
+    const body = JSON.parse(init.body);
+    const answer = (entry, index) =>
+      // the node serves items 0 and 3 and refuses the rest of the batch
+      index === 0 || index === 3
+        ? { jsonrpc: "2.0", id: entry.id, result: `0x${(index + 1).toString(16).padStart(64, "0")}` }
+        : { jsonrpc: "2.0", id: entry.id, error: { message: "batch limit exceeded" } };
+    if (Array.isArray(body)) {
+      batches++;
+      return new Response(JSON.stringify(body.map(answer)), { status: 200 });
+    }
+    singles++;
+    // one at a time, the same node answers perfectly
+    return new Response(
+      JSON.stringify({ jsonrpc: "2.0", id: body.id, result: `0x${"ab".padStart(64, "0")}` }),
+      { status: 200 },
+    );
+  };
+
+  const calls = Array.from({ length: 6 }, (_, i) => ({ method: "eth_call", params: [{ to: "0x0", data: `0x0${i}` }, "latest"] }));
+  const out = await rpcBatch(url, calls, 2000);
+  globalThis.fetch = previous;
+
+  check("a partly-refused batch still answers every call", out.every((o) => o.ok), out.map((o) => o.ok).join(","));
+  check("the batch is sent once", batches === 1, `${batches} batch(es)`);
+  check(
+    "only the LOST items are retried individually",
+    singles === 4,
+    `${singles} single call(s), expected 4 of 6`,
+  );
+  check(
+    "an item the batch served is not re-asked",
+    out[0].value === `0x${(1).toString(16).padStart(64, "0")}`,
+    String(out[0].value).slice(0, 12),
+  );
+}
+
 // ── The check script carries a PORT of the deployment constants ───────────
 // Production runs Node 18, so scripts/pons-check.mjs cannot import
 // src/config/pons.ts. A drifted default there makes the diagnostic report a
