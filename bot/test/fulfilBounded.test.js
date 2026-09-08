@@ -68,10 +68,20 @@ test("both decorative steps in a listing are bounded, and the buyer's are not", 
   // listing FORM's autofill for the identical reason and never bounded
   // fulfilment, where the buyer has already paid.
   assert.ok(!/await market\.fetchMarket/.test(code), "every fulfilment market read must be bounded");
+  // ⚠️ PINNED TO A COUNT OF TWO, this went red the day the listing's and the
+  // trending slot's identical reads became one owner — a guard failing over
+  // code that keeps its rule. The rule is that fulfilment makes NO unbounded
+  // market read and that both posts reach the market through the bounded one.
   assert.strictEqual(
+    (code.match(/market\.fetchMarket\(/g) || []).length,
     (code.match(/bounded\(\s*market\.fetchMarket/g) || []).length,
-    2,
-    "both the listing and the trending market reads",
+    "a fulfilment market read that is not inside bounded()",
+  );
+  assert.ok(/bounded\(\s*market\.fetchMarket/.test(code), "the market read must be bounded");
+  assert.strictEqual(
+    (code.match(/readPostMarket\(/g) || []).length,
+    3,
+    "one bounded read, and both the listing and the trending post calling it",
   );
 
   // ⚠️ And NOT the steps that ARE the product. A deadline on createListing

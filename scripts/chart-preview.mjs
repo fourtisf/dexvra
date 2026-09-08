@@ -35,6 +35,31 @@ const check = (name, ok, extra = "") => {
   return ok;
 };
 
+/**
+ * A state section that FAILS rather than ABORTING THE RUN.
+ *
+ * ⚠️ ONE STALE WAIT USED TO UN-PROBE EVERY SURFACE BELOW IT. The `.ck-empty`
+ * wait for the "chart unavailable" state stopped matching the moment that
+ * state began rendering DexScreener's embed instead of an apology — and
+ * because a `waitForSelector` THROWS, the harness caught it, printed one
+ * `FAIL harness` line, and never ran the native-fallback chip, the unlisted
+ * page or the ENTIRE phone context. Thirty checks silenced by one changed
+ * panel, which is this script's own subject: a renderer nobody probes is
+ * exactly how a banner shipped boxes for six days.
+ *
+ * Only the STATE sections get this. The interactive sequence above them shares
+ * one page and one accumulated chart state — a throw part-way through a drag
+ * genuinely does invalidate what follows — while each of these reloads the
+ * page and stands alone, so a throw in one must not answer for the others.
+ */
+const section = async (name, fn) => {
+  try {
+    await fn();
+  } catch (e) {
+    check(name, false, String(e.message).split("\n")[0]);
+  }
+};
+
 /** A deterministic random walk. Oldest-first, which is what /api/ohlcv returns
  *  after normalizeCandles — the client is entitled to that and does not re-sort. */
 function candles(n, step) {
@@ -108,6 +133,14 @@ const stub = async (page, mode) => {
   await page.route("**/api/feargreed", (r) =>
     r.fulfill({ json: { value: 55, label: "Neutral", updatedMinutesAgo: 3, source: "live" } }));
   await page.route("**/api/trades**", (r) => r.fulfill({ json: { trades: [], live: false } }));
+  // ⚠️ THE EMBED IS A THIRD-PARTY IFRAME, and this script's contract is that
+  // it runs on a box with no egress and does not depend on what dexscreener.com
+  // did this afternoon. Stubbed, so what is measured is OUR panel — is the
+  // embed there, are the inert controls gone, is there room for it — and
+  // nothing at all about whether their widget draws. That is the honest
+  // boundary: their chart is not ours to test.
+  await page.route("https://dexscreener.com/**", (r) =>
+    r.fulfill({ contentType: "text/html", body: '<!doctype html><title>ds</title><body style="margin:0;background:#0b0d12">' }));
   await page.route("**/api/token-preview**", (r) =>
     r.fulfill({ json: { chain: CHAIN, token: { name: "Floki", symbol: "FLOKI", priceUsd: 0.001186, mcap: 1190000, logoUrl: null, poolAddress: POOL, source: "dexscreener" } } }));
   await page.route("**/api/ohlcv**", (r) => {
@@ -386,16 +419,43 @@ try {
   check("…and the chart is where it started", Math.abs(reset - before) < 6, `${Math.round(before)}px → ${Math.round(reset)}px`);
   mode = "ok";
 
-  // ── the two states with nothing to draw ──────────────────────────────────
-  // They must not read the same: one is about the token, the other about us.
-  for (const [m, want, file] of [["none", /No candles yet/, "chart-empty"], ["error", /Chart unavailable/, "chart-error"]]) {
-    mode = m;
+  // ── the state with nothing to draw ───────────────────────────────────────
+  // "none" is a fact about the TOKEN — no pool has traded yet — so it gets the
+  // apology and deliberately NOT the embed: DexScreener's chart would be just
+  // as empty while implying the failure was ours.
+  await section("the empty state", async () => {
+    mode = "none";
     await page.reload({ waitUntil: "networkidle" });
     await page.waitForSelector(".ck-empty", { timeout: 20000 });
     const text = await page.locator(".ck-empty").innerText();
-    check(`the "${m}" state says which it is`, want.test(text), text.split("\n")[0]);
-    await page.locator(".tp-chart-wrap").screenshot({ path: `${SHOT_DIR}/${file}.png` });
-  }
+    check('the "none" state says it is about the token', /No candles yet/.test(text), text.split("\n")[0]);
+    check("…and nothing is framed over it", (await page.locator(".ck iframe").count()) === 0);
+    await page.locator(".tp-chart-wrap").screenshot({ path: `${SHOT_DIR}/chart-empty.png` });
+  });
+
+  // ── the DexScreener EMBED: what a reader gets when NEITHER source drew ────
+  //
+  // ⚠️ THIS SURFACE HAD NO PROBE AT ALL, and it shipped with TWO TOOLBARS
+  // STACKED ON A PHONE — ours (LIN/LOG, the timeframes, ⤢ Auto) sitting above
+  // DexScreener's own, over their widget squeezed into what was left of a
+  // 360px panel. Every control in our row is INERT over a third-party iframe:
+  // they drive the native renderer, and "a row the engine ignores" is this
+  // repo's own name for what that costs. It was reported from a screenshot,
+  // which is the thing this script exists to make unnecessary — and it was
+  // reported because the one state a busy GeckoTerminal produces was the one
+  // state nothing here rendered.
+  await section("the DexScreener embed", async () => {
+    mode = "error";
+    await page.reload({ waitUntil: "networkidle" });
+    await page.waitForSelector(".ck--embed iframe", { timeout: 20000 });
+    const src = String(await page.locator(".ck--embed iframe").getAttribute("src"));
+    check("a chart neither source could draw frames DexScreener's own", src.includes(`dexscreener.com/${CHAIN}/`), src.slice(0, 64));
+    check("…and our chart controls are DROPPED, not left inert above it", (await page.locator(".ck-ctl").count()) === 0);
+    check("…and the apology it replaces is gone", (await page.locator(".ck-empty").count()) === 0);
+    await page.locator(".tp-chart-wrap").screenshot({ path: `${SHOT_DIR}/chart-embed.png` });
+  });
+  mode = "ok";
+
   // ── the DexScreener fallback, drawn ──────────────────────────────────────
   //
   // A chart drawn from the second source and one drawn from GeckoTerminal are
@@ -403,24 +463,26 @@ try {
   // fires" are the same picture — which is the reassuring reading this repo
   // keeps paying for. The chip is the only tell, and an unseen chip is how it
   // ships mispositioned, mis-cased or over the live dot.
-  mode = "dexscreener";
-  await page.reload({ waitUntil: "networkidle" });
-  await page.waitForSelector(".ck-svg", { timeout: 20000 });
-  check("the fallback still draws a full chart", (await page.locator(".ck-c").count()) > 20);
-  check("…and SAYS it came from DexScreener", (await page.locator(".ck-src").count()) === 1,
-    (await page.locator(".ck-src").count()) ? await page.locator(".ck-src").innerText() : "no chip");
-  // The chip sits in the header row beside the ticker; if it wrapped or
-  // overflowed, the header is taller than the tab strip it shares a line with.
-  const fits = await page.evaluate(() => {
-    const chip = document.querySelector(".ck-src");
-    const head = document.querySelector(".ck-head");
-    if (!chip || !head) return false;
-    const c = chip.getBoundingClientRect();
-    const h = head.getBoundingClientRect();
-    return c.top >= h.top - 0.5 && c.bottom <= h.bottom + 0.5 && c.width > 20;
+  await section("the DexScreener fallback", async () => {
+    mode = "dexscreener";
+    await page.reload({ waitUntil: "networkidle" });
+    await page.waitForSelector(".ck-svg", { timeout: 20000 });
+    check("the fallback still draws a full chart", (await page.locator(".ck-c").count()) > 20);
+    check("…and SAYS it came from DexScreener", (await page.locator(".ck-src").count()) === 1,
+      (await page.locator(".ck-src").count()) ? await page.locator(".ck-src").innerText() : "no chip");
+    // The chip sits in the header row beside the ticker; if it wrapped or
+    // overflowed, the header is taller than the tab strip it shares a line with.
+    const fits = await page.evaluate(() => {
+      const chip = document.querySelector(".ck-src");
+      const head = document.querySelector(".ck-head");
+      if (!chip || !head) return false;
+      const c = chip.getBoundingClientRect();
+      const h = head.getBoundingClientRect();
+      return c.top >= h.top - 0.5 && c.bottom <= h.bottom + 0.5 && c.width > 20;
+    });
+    check("the source chip sits inside the header row", fits);
+    await page.locator(".tp-chart-wrap").screenshot({ path: `${SHOT_DIR}/chart-dexscreener.png` });
   });
-  check("the source chip sits inside the header row", fits);
-  await page.locator(".tp-chart-wrap").screenshot({ path: `${SHOT_DIR}/chart-dexscreener.png` });
   mode = "ok";
 
   // ── the unlisted page: NO chart, and never an embed ──────────────────────
@@ -439,12 +501,14 @@ try {
   // A check that asserts a deleted feature is worse than no check: it trains
   // the reader to ignore the red. It asserts the DECISION now, and
   // `unlisted.test.ts` pins the same thing from the other side.
-  await page.goto(`${BASE}/token/${CHAIN}/9unknown11111111111111111111111111111111111`, { waitUntil: "networkidle" });
-  await page.waitForSelector(".unlisted-wrap, .unlisted", { timeout: 20000 }).catch(() => {});
-  check("an unlisted token gets NO chart — charting is what a listing buys", (await page.locator(".ck-svg").count()) === 0);
-  check("…but it still shows the price it got free with the preview", /\$/.test(await page.locator("body").innerText()));
-  check("and no iframe anywhere on it", (await page.locator("iframe").count()) === 0);
-  await page.screenshot({ path: `${SHOT_DIR}/unlisted.png`, fullPage: true });
+  await section("the unlisted page", async () => {
+    await page.goto(`${BASE}/token/${CHAIN}/9unknown11111111111111111111111111111111111`, { waitUntil: "networkidle" });
+    await page.waitForSelector(".unlisted-wrap, .unlisted", { timeout: 20000 }).catch(() => {});
+    check("an unlisted token gets NO chart — charting is what a listing buys", (await page.locator(".ck-svg").count()) === 0);
+    check("…but it still shows the price it got free with the preview", /\$/.test(await page.locator("body").innerText()));
+    check("and no iframe anywhere on it", (await page.locator("iframe").count()) === 0);
+    await page.screenshot({ path: `${SHOT_DIR}/unlisted.png`, fullPage: true });
+  });
 
   // ── a phone ──────────────────────────────────────────────────────────────
   // `hasTouch` is not decoration: a phone dispatches POINTER events with
@@ -454,29 +518,57 @@ try {
   const mctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, serviceWorkers: "block" });
   const m = await mctx.newPage();
   m.on("pageerror", (e) => errs.push(`(phone) ${e.message}`));
-  await stub(m, () => "ok");
-  await m.goto(`${BASE}/token/${CHAIN}/${ADDR}`, { waitUntil: "networkidle" });
-  await m.waitForSelector(".ck-svg", { timeout: 20000 });
-  const phone = await m.locator(".ck-c").count();
-  // ⚠️ 160 candles across a 330px plot is a 1.6px body — a smear you cannot
-  // read one bar out of. The window narrows to what fits.
-  check("the phone window narrows to candles you can actually see", phone > 20 && phone < drawn, `${phone} of ${drawn}`);
-  check("the page does not scroll sideways", !(await m.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)));
-  // ⚠️ A PHONE TOUCHES THE CHART, and on touch the body drag is deliberately
-  // NOT taken (the page scroller keeps it) — which means the pointerdown
-  // handler returns before it ever captures the pointer, and the pointerup /
-  // pointercancel that follow must cope with that. Every touch-scroll across
-  // the chart goes down this path, so anything thrown here is thrown constantly
-  // and on the one surface most of this token's readers are using.
-  const mplot = await m.locator(".ck-plot").boundingBox();
-  await m.touchscreen.tap(mplot.x + mplot.width * 0.5, mplot.y + mplot.height * 0.5);
-  await m.waitForTimeout(150);
-  const beforeScroll = await m.evaluate(() => window.scrollY);
-  await m.evaluate(() => window.scrollBy(0, 120));
-  await m.waitForTimeout(200);
-  check("a tap on the chart is harmless", errs.length === 0, errs.join(" | "));
-  check("…and the page still scrolls past it", (await m.evaluate(() => window.scrollY)) > beforeScroll);
-  await m.screenshot({ path: `${SHOT_DIR}/phone.png` });
+  // ⚠️ MUTABLE, like the desktop's. Pinned to "ok", the phone could only ever
+  // be shown the healthy chart — and the panel that was actually reported is
+  // the one a busy GeckoTerminal produces.
+  let mmode = "ok";
+  await stub(m, () => mmode);
+  let nativeH = 0;
+  await section("the phone", async () => {
+    await m.goto(`${BASE}/token/${CHAIN}/${ADDR}`, { waitUntil: "networkidle" });
+    await m.waitForSelector(".ck-svg", { timeout: 20000 });
+    const phone = await m.locator(".ck-c").count();
+    nativeH = (await m.locator(".tp-chart-wrap").boundingBox()).height;
+    // ⚠️ 160 candles across a 330px plot is a 1.6px body — a smear you cannot
+    // read one bar out of. The window narrows to what fits.
+    check("the phone window narrows to candles you can actually see", phone > 20 && phone < drawn, `${phone} of ${drawn}`);
+    check("the page does not scroll sideways", !(await m.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)));
+    // ⚠️ A PHONE TOUCHES THE CHART, and on touch the body drag is deliberately
+    // NOT taken (the page scroller keeps it) — which means the pointerdown
+    // handler returns before it ever captures the pointer, and the pointerup /
+    // pointercancel that follow must cope with that. Every touch-scroll across
+    // the chart goes down this path, so anything thrown here is thrown constantly
+    // and on the one surface most of this token's readers are using.
+    const mplot = await m.locator(".ck-plot").boundingBox();
+    await m.touchscreen.tap(mplot.x + mplot.width * 0.5, mplot.y + mplot.height * 0.5);
+    await m.waitForTimeout(150);
+    const beforeScroll = await m.evaluate(() => window.scrollY);
+    await m.evaluate(() => window.scrollBy(0, 120));
+    await m.waitForTimeout(200);
+    check("a tap on the chart is harmless", errs.length === 0, errs.join(" | "));
+    check("…and the page still scrolls past it", (await m.evaluate(() => window.scrollY)) > beforeScroll);
+    await m.screenshot({ path: `${SHOT_DIR}/phone.png` });
+  });
+
+  // ── the embed, ON THE PHONE — the reported picture ────────────────────────
+  //
+  // The panel is sized for OUR chart, which draws one compact axis; their
+  // widget stacks a toolbar, a TradingView plot, a volume pane, a time axis and
+  // a "Tracked by DEXSCREENER" strip into the same box. Measured against the
+  // native panel rather than a magic number, so a design change moves both and
+  // the rule survives it.
+  await section("the embed on a phone", async () => {
+    mmode = "error";
+    await m.reload({ waitUntil: "networkidle" });
+    await m.waitForSelector(".ck--embed iframe", { timeout: 20000 });
+    const embedH = (await m.locator(".tp-chart-wrap").boundingBox()).height;
+    const frameH = (await m.locator(".ck--embed iframe").boundingBox()).height;
+    check("the embed gets a taller panel than our own chart needs", embedH > nativeH + 40, `${Math.round(nativeH)}px → ${Math.round(embedH)}px`);
+    check("…and their widget gets nearly all of it", frameH > embedH * 0.85, `${Math.round(frameH)}px of ${Math.round(embedH)}px`);
+    check("…with our inert control row gone from the header", (await m.locator(".ck-ctl").count()) === 0);
+    check("…and the page still does not scroll sideways", !(await m.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)));
+    await m.screenshot({ path: `${SHOT_DIR}/phone-embed.png` });
+  });
 
   check("no page errors", errs.length === 0, errs.join(" | "));
 } catch (err) {

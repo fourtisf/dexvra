@@ -27,6 +27,7 @@ const bannerTemplate = require("./bannerTemplate");
 const { bounded } = require("./helpers/bounded");
 const tokenEmoji = require("./tokenEmoji");
 const tpl = require("./templates");
+const postFigures = require("./postFigures");
 const log = require("./helpers/logger");
 
 // Kinds whose animated clip is an EMPTY token template — the bot composites the token's
@@ -59,6 +60,35 @@ const BANNER_FILL_KINDS = new Set(["listing", "trending"]);
  * this repo keeps paying for.
  */
 const POST_MARKET = { cheap: true, need: ["priceUsd", "mcap", "liq"] };
+
+/**
+ * The post's market read, bounded — AND THE REASON IT COULD NOT ANSWER.
+ *
+ * Two call sites read this (a listing and a trending slot) and both had their
+ * own copy, which is how the listing half of a rule ends up fixed and the
+ * trending half does not. It exists mainly for the `why`: `fetchMarket`
+ * collapses "the sources refused us" and "this token has no pool" into one
+ * `null`, and the bound above it collapses "the queue was long" into the same
+ * one again — so without capturing it here, the watch below could only ever
+ * report that a figure was missing and never which of the three silences it
+ * was. That distinction is the whole diagnosis.
+ */
+async function readPostMarket(chain, address, label) {
+  let why = null;
+  const live = await bounded(
+    market.fetchMarket(chain, address, POST_MARKET).catch((e) => {
+      why = `the market read threw (${e.message})`;
+      return null;
+    }),
+    MARKET_BUDGET_MS,
+    () => {
+      why = `the market read passed ${MARKET_BUDGET_MS}ms — the shared GeckoTerminal queue`;
+      log.warn(`[fulfil] market read passed ${MARKET_BUDGET_MS}ms (GT queue) — ${label} without live price/mcap`);
+      return null;
+    },
+  );
+  return { live, why };
+}
 
 /** Public t.me link to a specific post in a @username channel. */
 function tmeLink(channel, msgId) {
@@ -326,14 +356,17 @@ async function fulfillListing(ctx, order) {
   // queues on gtSlot(PRIO_BACKGROUND) behind every timer job on the box, with no
   // deadline of its own. Past the budget the card renders from what the buyer
   // typed, which is the same value the .catch below has always produced.
-  const live = await bounded(
-    market.fetchMarket(input.chain, input.address, POST_MARKET).catch(() => null),
-    MARKET_BUDGET_MS,
-    () => {
-      log.warn(`[fulfil] market read passed ${MARKET_BUDGET_MS}ms (GT queue) — listing without live price/mcap`);
-      return null;
-    },
-  );
+  const { live, why: marketWhy } = await readPostMarket(input.chain, input.address, "listing");
+  // ⚠️ REPORTED HERE, NOT AT EACH SURFACE. This one read is what the channel
+  // card, the banner and the tweet all render from, so one order that
+  // published a hole is one alert — the "one fault, one alert" rule. It is
+  // after the read and before the posts because nothing downstream can add a
+  // figure this does not have.
+  postFigures.reportFigures({
+    kind: "listing", chain: input.chain, address: input.address, sym: input.sym,
+    name: input.name, tier: input.tier, live, why: marketWhy,
+    siteUrl: `${SITE_URL}/token/${input.chain}/${input.address}`,
+  });
   const coin = coinFrom(input, live);
   const bannerCoin = bannerCoinOf(input, live);
   const tierBadge = input.tier === "XPRESS" ? "Xpress Listing" : input.tier ? `${tierLabel(input.tier)} Tier` : null;
@@ -411,15 +444,15 @@ async function fulfillTrending(ctx, order) {
   log.info(`[fulfil] trending booked ${p.chain}/${p.address} ${p.hours}h`);
 
   // Same bound, same reason — a booked trending slot waits on a buyer too.
-  const live = await bounded(
-    market.fetchMarket(p.chain, p.address, POST_MARKET).catch(() => null),
-    MARKET_BUDGET_MS,
-    () => {
-      log.warn(`[fulfil] market read passed ${MARKET_BUDGET_MS}ms (GT queue) — trending without live price/mcap`);
-      return null;
-    },
-  );
+  const { live, why: marketWhy } = await readPostMarket(p.chain, p.address, "trending");
   const row = listing || { chain: p.chain, address: p.address, sym: p.symbol, name: p.name };
+  // The same watch on the same promise. A rule applied to one of two siblings
+  // is a rule half-made, and a trending slot is a purchase too.
+  postFigures.reportFigures({
+    kind: "trending", chain: p.chain, address: p.address, sym: row.sym || row.symbol,
+    name: row.name, tier: null, live, why: marketWhy,
+    siteUrl: `${SITE_URL}/token/${p.chain}/${p.address}`,
+  });
   const coin = coinFrom(row, live);
   const bannerCoin = bannerCoinOf(row, live);
   const logoBuffer = await fetchLogoUrl(row.logoUrl);

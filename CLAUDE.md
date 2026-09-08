@@ -8643,6 +8643,110 @@ dividing it**, and the trade list is the one thing on this page with no second
 source at all. This makes the minute go further; it does not add a source that
 does not exist.
 
+### "bagaimana agar masalah ini tidak terjadi lgi" — all three were found in a screenshot
+
+Asked over a clean deploy (`✓ serving 17a95ee`, four processes online), so the
+question is not the deploy. It is that **every one of those three defects was
+detected by a person opening the channel or the token page and counting.**
+Nothing in the bot said *"that post went out with no price"*; nothing in the
+site said *"the panel a busy GeckoTerminal produces has two toolbars on it"*.
+That is the same shape as the six-round trending saga and the three-round blank
+percentage, and the answer is the one this file keeps arriving at: **watch the
+PROMISE, because the causes keep changing.**
+
+Two holes, and each is somebody's own rule broken one surface over.
+
+#### 1. A paid post that publishes a hole now says so
+
+The promise an order buys is that its announcement carries its real market
+figures. `bot/src/postFigures.js` watches exactly that, at the moment the post
+is built.
+
+- **It measures with the RENDERER's own predicate.** `channels/format.js` prints
+  `TBA` for `!(p > 0)`, so that is the test — a watch with its own idea of
+  "missing" eventually disagrees with the post it is watching, which is
+  `fonts:check`'s nine green ticks over a banner publishing boxes.
+- ⚠️ **THE THREE SILENCES GET THREE SENTENCES.** `fetchMarket` collapses "both
+  indexers refused this box" and "this token has no pool" into one `null`, and
+  the `MARKET_BUDGET_MS` bound above it collapses "the queue was long" into the
+  same one again — so the reason is captured AT THE READ (`readPostMarket`) or
+  it cannot be recovered later. *The read timed out* is ours; *an indexer
+  answered and publishes no price* is the token's; *neither returned anything*
+  is the one the box has to settle, and the alert names `market:check` rather
+  than leaving the operator to guess.
+- ⚠️ **A MISSING LIQUIDITY ALONE IS NOT AN ALERT, and that is a judgement.** A
+  token on a bonding curve has no pool depth — `launchpads.js` returns
+  `liquidityUsd: null` deliberately, because a 0 there reads as a rug — so
+  paging on it would be permanently red on every pre-migration listing, which is
+  the state `chart:preview` sat in for weeks. It is still NAMED whenever price
+  or cap fires: three holes and one hole are different pictures.
+- **A healthy post pages nobody**, and the alert is never de-duplicated: each of
+  these is a separate paying customer, and collapsing two would hide one.
+- **One read, one alert, both siblings.** The listing's and the trending slot's
+  market reads were two copies of one thing, which is how a rule gets fixed on
+  one of them; they are `readPostMarket` now, and the watch runs on both.
+- ⚠️ **THE POST IS ALREADY OUT WHEN THIS RUNS**, so a throw here would turn a
+  degraded announcement into a FAILED ORDER — the free-listing report's rule.
+  The name and ticker are whatever the buyer typed and this is sent with
+  `parse_mode: HTML`, where one stray `<` makes Telegram reject the whole
+  message with a 400 that is never retried: an alert that vanishes is the
+  silence being fixed.
+
+#### 2. ⚠️ `chart:preview` HAD NO PROBE FOR THE PANEL THAT WAS REPORTED — and the fix for it turned the whole script red
+
+The mobile defect lived on the DexScreener embed, which is what a reader gets
+whenever neither source can draw. `chart:preview` renders eleven states and that
+was not one of them, so the surface most likely to be seen on a bad minute was
+the only one nobody had looked at. *"The list is the guard"* — a renderer nobody
+probes is exactly how a banner shipped boxes for six days.
+
+⚠️ **And it was worse than a gap.** The `error` state used to render an apology
+and the script waited for `.ck-empty`; the moment that state began rendering the
+embed instead, the wait THREW — so the harness caught it, printed one
+`FAIL harness` line, and **never ran the native-fallback chip, the unlisted page
+or the entire phone context.** 31 checks of 50, silenced by one changed panel,
+on the very run that would have shown the defect. That is the stale-assertion
+failure the script's own header is written about, reintroduced by me in the
+commit that fixed the panel.
+
+- **A state section FAILS, it does not ABORT.** `section()` wraps each one; a
+  throw is one red line and the run continues. Only the state sections get it —
+  the interactive sequence above them shares one page and one accumulated chart
+  state, where a throw part-way through a drag genuinely does invalidate what
+  follows.
+- **The embed is probed on a desktop AND on a phone**, and the phone context is
+  no longer pinned to the healthy chart (`stub(m, () => "ok")` meant the one
+  viewport that mattered could only ever be shown the state that was fine).
+- **Measured against the native panel, never a magic number**, so a design
+  change moves both and the rule survives it. The reported picture is now a
+  printed line: `360px → 480px`, `447px of 480px`.
+- **The iframe is STUBBED**, so this measures OUR panel — is the embed there,
+  are the inert controls gone, is there room for it — and says nothing about
+  whether their widget draws. Their chart is not ours to test, and the script's
+  contract is that it runs on a box with no egress.
+- ⚠️ **Two `npm test` guards pinned a SPELLING and went red over code that keeps
+  their rule** — `bounded(market.fetchMarket` counted twice, and
+  `fetchMarket` call sites counted twice — the moment the two identical reads
+  became one owner. Both assert the property now: no fulfilment market read is
+  unbounded, every one carries `POST_MARKET`, and both posts reach the market
+  through the one bounded read.
+
+```bash
+cd bot && node scripts/run-tests.js test/postFigures.test.js test/postMarket.test.js test/fulfilBounded.test.js
+npm run build && npm start &
+npm run chart:preview     # 50 checks — the embed, on a desktop and on a phone
+```
+
+Eleven guarantees are MUTATION-TESTED rather than argued: liquidity paging on
+its own, the read reason discarded, the alert unescaped, a rendered 0 counting
+as a figure, the trending sibling losing the watch, the market read unbounded,
+trending bypassing the one owner, the read going back to GT-first, the embed
+selector removed, the phone pinned to the healthy chart, and a section aborting
+the run again. Each fails between one and two tests.
+
+**Config a fix depends on:** nothing. The alert goes to the ops channel the
+health monitor already uses; unset, it is a pm2 line like everything else.
+
 ## Conventions
 
 - Tests live beside the code they cover, in `bot/test/`, `tradebot/*.test.js`

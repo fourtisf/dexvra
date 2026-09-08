@@ -104,11 +104,19 @@ test("⚠️ a DexScreener answer MISSING one of the post's fields is not enough
 test("both channel-post market reads go through POST_MARKET", () => {
   const raw = fss.readFileSync(require.resolve("../src/fulfillment.js"), "utf8");
   const code = raw.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  // ⚠️ THIS GUARD USED TO COUNT CALL SITES — `calls.length >= 2` — so it went
+  // red the day the two identical reads were merged into ONE owner
+  // (`readPostMarket`, which also captures WHY a read could not answer, for the
+  // figure watch). That is this repo's own recurring defect: a guard pinned to
+  // a spelling rather than to the rule, red over code that keeps it perfectly.
+  // The rule is that EVERY market read a channel post makes is the cheap
+  // DexScreener-first one, and that BOTH posts go through it.
   const calls = code.match(/market\.fetchMarket\([^)]*\)/g) || [];
-  assert.ok(calls.length >= 2, `expected the listing and trending reads, saw ${calls.length}`);
+  assert.ok(calls.length >= 1, "fulfilment no longer reads the market at all");
   for (const c of calls) {
     assert.match(c, /POST_MARKET/, `a channel post read that is still GT-first: ${c}`);
   }
+  assert.equal((code.match(/readPostMarket\(/g) || []).length, 3, "one definition, and both posts calling it");
   // …and the constant has to name the fields the post actually renders.
   assert.match(code, /POST_MARKET\s*=\s*\{\s*cheap:\s*true,\s*need:\s*\["priceUsd",\s*"mcap",\s*"liq"\]/);
 });

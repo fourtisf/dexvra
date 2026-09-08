@@ -216,6 +216,40 @@ test("the embed URL is built in ONE place, and never for a chain DexScreener lac
   assert.match(OWNER, /embed=1/);
 });
 
+test("⚠️ the embed surface is PROBED — on a desktop and on a phone", () => {
+  // The embed shipped with TWO TOOLBARS STACKED ON A PHONE and was reported
+  // from a screenshot, because `chart:preview` — the script whose whole subject
+  // is that this panel is judged by LOOKING at it — never rendered the one
+  // state a busy GeckoTerminal produces. "The list is the guard": a renderer
+  // nobody probes is exactly how a banner shipped boxes for six days.
+  const PREVIEW = readFileSync(join(process.cwd(), "scripts/chart-preview.mjs"), "utf8");
+  const P = code(PREVIEW);
+  assert.match(P, /\.ck--embed iframe/, "the embed state is never rendered");
+  assert.match(P, /\.ck-ctl"\)\.count\(\)\) === 0/, "nothing asserts the inert controls are dropped");
+  assert.match(P, /phone-embed/, "the embed is not measured on the viewport it was reported on");
+  // ⚠️ THE PHONE CONTEXT WAS PINNED TO THE HEALTHY CHART (`stub(m, () => "ok")`),
+  // so the one viewport that mattered could only ever be shown the state that
+  // was fine. A guard measuring a stack the reader does not use.
+  assert.ok(!/stub\(m, \(\) => "ok"\)/.test(P), "the phone can only be shown the healthy chart");
+  assert.match(P, /stub\(m, \(\) => mmode\)/);
+});
+
+test("⚠️ one stale wait may not un-probe every surface below it", () => {
+  // The `.ck-empty` wait for "chart unavailable" stopped matching the moment
+  // that state began rendering the embed — and because waitForSelector THROWS,
+  // the harness caught it, printed one line, and never ran the fallback chip,
+  // the unlisted page or the entire phone context. Thirty checks silenced by
+  // one changed panel. Each state section is independent (it reloads the page),
+  // so a throw in one is one red line now.
+  const PREVIEW = readFileSync(join(process.cwd(), "scripts/chart-preview.mjs"), "utf8");
+  const P = code(PREVIEW);
+  assert.match(P, /const section = async \(name, fn\) => \{/);
+  assert.match(P, /check\(name, false,/, "a section that throws must be a FAIL line, not a silence");
+  // Every state section goes through it — the empty panel, the embed, the
+  // native fallback, the unlisted page, the phone, and the embed on a phone.
+  assert.ok((P.match(/await section\(/g) || []).length >= 6, "a state section is running unguarded");
+});
+
 test("a poll that fails never blanks a chart that is already drawn", () => {
   // A quiet poll that comes back empty/failed short-circuits while candles are
   // on screen — it no longer re-renders, it just reports the status upward.
