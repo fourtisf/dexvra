@@ -124,9 +124,17 @@ fi
 # Not "did it 200" — a stale process answers 200 perfectly well. This asks the
 # server which commit it is serving and compares it to HEAD.
 step "Verifying"
+# ⚠️ READ IT FROM /api/tokens, NOT FROM THE HTML. `NEXT_PUBLIC_BUILD` is
+# inlined into a bundle whose spelling the minifier owns, so scraping the page
+# degraded to "it answers, but the stamp was not readable" — which is exactly
+# the reassuring non-answer this step exists to refuse. The API returns it as a
+# field, deliberately, and the page is only the fallback.
 EXPECTED="$(git rev-parse --short HEAD)"
-for attempt in 1 2 3 4 5 6 7 8 9 10; do
-  SERVED="$(curl -fsS --max-time 5 http://127.0.0.1:3005/ 2>/dev/null | grep -o 'NEXT_PUBLIC_BUILD[^,}]*' | grep -o '[0-9a-f]\{7,\}' | head -1 || true)"
+for attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+  SERVED="$(curl -fsS --max-time 8 http://127.0.0.1:3005/api/tokens 2>/dev/null \
+    | grep -o '"build" *: *"[^"]*"' | grep -o '[0-9a-f]\{7,\}' | head -1 || true)"
+  [ -n "$SERVED" ] && break
+  SERVED="$(curl -fsS --max-time 5 http://127.0.0.1:3005/ 2>/dev/null | grep -o '[0-9a-f]\{7,40\}' | head -1 || true)"
   [ -n "$SERVED" ] && break
   sleep 2
 done
