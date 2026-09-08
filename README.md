@@ -153,6 +153,10 @@ Other things it feeds:
   name, ticker, logo, description and socials the contract publishes instead of
   asking the project to type them. It reads through the web app rather than
   carrying a second copy of the reader; see CLAUDE.md for why that matters here.
+  The logo is whatever the contract publishes — usually `ipfs://<cid>`, which
+  the bot rewrites to a gateway and the site's `/api/logo` proxy resolves with
+  gateway failover. `tokenLogo()` is the one owner of which schemes may be
+  published, and it allows exactly what those two can render.
 
 No new dependencies: keccak-256, the ABI codec and the JSON-RPC client are in
 `src/lib/evm/` (~300 lines) rather than ethers/viem, and are covered by known

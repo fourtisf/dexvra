@@ -328,6 +328,83 @@ at the site and defaults to `http://127.0.0.1:3005`. ⚠️ But the web app must
 running and on a build that carries `/api/pons` — this is a `bot/` change AND a
 `src/` change, so the deploy is the full one.
 
+#### "ini sudah ada tapi mengapa bot tidak otomatis menambahkan logo projectnya punya logo"
+
+The wiring above landed and worked: the review card for a fresh Pons launch came
+back with the name, the ticker and the X handle filled in — from the chain,
+which is the whole point. **And `Logo: not set`**, about a token whose artwork is
+on its own pad page, whose contract publishes it, and whose `pons:check` on the
+same box printed it:
+
+```
+✓ token.logo() → ipfs://bafkreif3og7rosylkz34ho7mbgzdkyscslhnastl3qszh6qykfwzg6lk3m
+```
+
+**Nothing in the bot was wrong.** `ponsChain.httpsLogo` rewrites `ipfs://` to a
+gateway and has a test that says so; `mergeInfo` fills holes, and the name and
+the ticker prove it ran. The logo never reached it: `readCurvesAndMeta` kept a
+logo only if it matched `/^https?:\/\//`, so **every logo Pons has ever
+published was nulled at the source** — a launchpad pins its artwork on IPFS,
+which is the one scheme that filter refuses.
+
+- **`tokenLogo()` is the ONE owner of what the provider may publish**, pure and
+  in its own module for the reason `logoWrite.ts` and `relist.ts` are: a rule
+  about what may be published is something a source scan cannot tell from a
+  comment about one, so it is tested by being CALLED.
+- **It is still an ALLOWLIST.** `logo()` is free text written by whoever
+  deployed the token, and anyone can launch on a permissionless pad. What it
+  allows is exactly what the two consumers can RENDER — `logoSrc` → `/api/logo`
+  rewrites `ipfs://` to a gateway with failover, and the bot does the same for
+  the form. Publishing a scheme neither can draw turns "no logo" into a broken
+  image, which is worse than the monogram: the monogram at least looks
+  deliberate.
+- ⚠️ **`ar://` is deliberately refused, and that is a judgement.**
+  `arweave.net` is already on the proxy's host allowlist, so an
+  `https://arweave.net/<txid>` logo works today; what does not exist is an
+  `ar://` → gateway rewrite in either consumer. If a Pons token ever ships one,
+  the fix is that rewrite — not a wider test in the provider. Recorded so it is
+  not rediscovered as an oversight.
+- **An on-chain string is unbounded** and this one lands in a JSON payload, a
+  Telegram form and a listing row.
+
+⚠️ **AND `pons:check` PRINTED A GREEN TICK OVER IT FOR THE WHOLE DEPLOY.**
+Sections 1–5 read the CONTRACT; the bot and the site read the APP, and those are
+different stacks — so the check was honest about the chain and silent about the
+only thing the listing form depends on. That is `fonts:check`'s nine green ticks
+over a banner publishing boxes, on a different feature: **a guard is only honest
+while it measures the stack the caller actually uses.**
+
+- **Section 6 asks `/api/pons` for the very fields the form autofills** and
+  names any the app dropped, with the value the contract publishes beside it.
+- **"The creator filled nothing in" and "the app dropped it" are different
+  facts**, and only the second is a red mark — a check that reddened on the
+  first would be permanently red on any pad where most creators skip the
+  artwork, which is the state `chart:preview` sat in for weeks.
+- **One fault, one alert**: a `logo()` that REVERTS is already red in section 4,
+  and blaming the app for it would send the operator to the wrong layer.
+- ⚠️ **It is DRIVEN, not read.** `node --check` proves syntax and the defect
+  here is a runtime shape, so `ponsCheck.test.js` stands up a stub Robinhood
+  node and a stub dexvra server and runs the real script against both — red when
+  the app drops a logo the chain published, green when it serves it.
+- ⚠️ **A guard a mutation run cannot kill is not a guard.** The first cut had
+  `chain === undefined` above `!chain`; the second covers both, the first is
+  dead, and the comment says so rather than carrying a line that claims cover it
+  does not provide.
+
+Mutation-tested: restoring the https-only filter, dropping the allowlist
+entirely, dropping the length bound, the reader bypassing the one owner, the
+check reporting every field as fine, a blank field counting as dropped, and the
+check not asking the app at all each fail between one and three tests.
+
+```bash
+npm test                                # pons/logo (8) + pons/ponsCheck (4)
+cd /opt/dexvra && npm run pons:check    # §6 is the one that measures the app
+```
+
+**Config a fix depends on:** nothing. `PONS_IPFS_GATEWAY` moves the gateway the
+bot rewrites to; `IPFS_GATEWAYS` is the site proxy's own list, and it already
+fails over.
+
 ## The banner drew "$???" to 12,607 subscribers
 
 A token listed as **牛来 ($牛来)** went out on the listing card as `$???` and again

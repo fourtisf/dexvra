@@ -175,6 +175,9 @@ if (tokens.length) {
 // than nulling its whole group the way the app's grouping does.
 let metaFailures = 0;
 const replay = []; // exactly what the app batches: {label, to, data}
+// What the CONTRACT said, per token — section 6 compares it against what the
+// app actually serves for the same token.
+const onChain = new Map();
 for (const token of tokens) {
   head(`4 · ${token}`);
   let curve = null;
@@ -209,6 +212,12 @@ for (const token of tokens) {
       let shown;
       try { shown = render(raw); } catch { shown = `undecodable (${raw.slice(0, 26)}…)`; }
       ok(`${label} → ${shown}`);
+      if (label.startsWith("token.")) {
+        const field = label.slice(6, -2); // token.symbol() → symbol
+        const seen = onChain.get(token) || {};
+        seen[field] = shown === "(empty)" ? "" : shown;
+        onChain.set(token, seen);
+      }
     } catch (e) { bad(`${label} → ${why(e)}`); metaFailures++; }
   }
 }
@@ -261,11 +270,69 @@ if (!replay.length) {
   }
 }
 
-// ── 6. The USD reference price ────────────────────────────────────────────
+// ── 6. What the APP serves for the same token ─────────────────────────────
+// ⚠️ THE SECTIONS ABOVE READ THE CONTRACT, AND THE APP IS WHAT THE BOT AND THE
+// SITE ACTUALLY READ. Those are different stacks, and this check has already
+// printed a green `token.logo() → ipfs://…` over an app that was discarding it
+// — the provider kept only `https://`, so the listing form said `Logo: not set`
+// about a token whose artwork is on its own pad page. A guard is only honest
+// while it measures the stack the caller uses, so this asks /api/pons for the
+// very fields the listing form autofills and names any the app dropped.
+head("6 · The listing autofill, as the app serves it");
+if (!tokens.length) {
+  note("no tokens to compare");
+} else {
+  for (const token of tokens) {
+    const seen = onChain.get(token) || {};
+    let launch = null;
+    try {
+      const r = await fetch(`${SITE}/api/pons?address=${token}`, { signal: AbortSignal.timeout(20000) });
+      if (r.status === 404) { warn(`${token.slice(0, 10)}… — the app says this is not a Pons launch`); broken++; continue; }
+      if (!r.ok) { bad(`${token.slice(0, 10)}… — /api/pons answered HTTP ${r.status}`); broken++; continue; }
+      launch = (await r.json())?.launch || null;
+    } catch (e) {
+      warn(`could not read ${SITE}/api/pons — ${why(e)}`);
+      note("this section says nothing about the app while the server cannot be reached");
+      break;
+    }
+    if (!launch) { bad(`${token.slice(0, 10)}… — /api/pons answered with no launch`); broken++; continue; }
+
+    // Only the fields the form fills in. A value the CHAIN did not publish is
+    // not a defect — "the creator set no logo" and "the app dropped one" are
+    // different facts, and only the second is worth a red mark.
+    const dropped = [];
+    for (const [field, served] of [["symbol", launch.symbol], ["name", launch.name], ["logo", launch.logo]]) {
+      const chain = seen[field];
+      // Two different silences, one answer: section 4 could not read the call
+      // (undefined — already a red mark up there, and one fault gets one
+      // alert), or the creator filled nothing in ("" — not a defect at all).
+      // ⚠️ ONE line, not two: `!chain` covers both, and a separate
+      // `chain === undefined` guard above it is DEAD — a mutation run kills
+      // this line and cannot kill that one, so writing it would be a guard
+      // claiming cover it does not provide.
+      if (!chain) continue;
+      if (served) continue;
+      dropped.push(`${field} — the contract publishes ${String(chain).slice(0, 80)}, the app serves nothing`);
+    }
+    const socials = launch.socials || {};
+    const filled = ["symbol", "name", "logo"].filter((f) => launch[f]).concat(
+      Object.keys(socials).filter((k) => socials[k]),
+    );
+    if (dropped.length) {
+      bad(`${token.slice(0, 10)}… — the app drops ${dropped.length} field(s) the chain published`);
+      for (const d of dropped) note(d);
+      broken++;
+    } else {
+      ok(`${token.slice(0, 10)}… — the form would autofill: ${filled.join(" · ") || "(nothing — the creator filled nothing in)"}`);
+    }
+  }
+}
+
+// ── 7. The USD reference price ────────────────────────────────────────────
 // Layer 3, and it fails on its own: every USD figure on the feed is the curve
 // price multiplied by this, so one refused request nulls all of them while
 // the chain reads are perfect.
-head("6 · GeckoTerminal ETH reference price");
+head("7 · GeckoTerminal ETH reference price");
 try {
   const r = await fetch(`https://api.geckoterminal.com/api/v2/simple/networks/eth/token_price/${WETH}`, {
     headers: { accept: "application/json;version=20230302" },

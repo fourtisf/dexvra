@@ -8,6 +8,7 @@ import { PONS, ZERO_ADDRESS, GRADUATION_PHASES, type GraduationPhase } from "@/c
 import { decodeReturn, encodeCall, type AbiType } from "@/lib/evm/abi";
 import { keccak256 } from "@/lib/evm/keccak";
 import { ethCall, rpcBatch, type RpcOutcome } from "@/lib/evm/rpc";
+import { tokenLogo } from "./logo";
 
 const call = (to: string, data: string) => ethCall(to, data);
 
@@ -195,7 +196,7 @@ async function readCurvesAndMeta(
             totalSupply,
             symbol: symbol ?? "",
             name: name ?? "",
-            logo: logo && /^https?:\/\//i.test(logo) ? logo : null,
+            logo: tokenLogo(logo),
           }
         : null;
 
