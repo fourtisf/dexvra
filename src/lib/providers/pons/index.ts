@@ -6,7 +6,9 @@
 import { CHAINS } from "@/config/chains";
 import { PONS } from "@/config/pons";
 import type { ScanFlag } from "@/lib/types";
+import type { LiveMarket } from "../market";
 import { readLaunchSnapshots } from "./contracts";
+import { fetchPonsMarket } from "./market";
 
 export { fetchPonsMarket, fetchPonsLaunch, fetchPonsTrades, nativeUsd } from "./market";
 export type { PonsLaunchInfo } from "./market";
@@ -19,6 +21,51 @@ export const isPonsChain = (chain: string): boolean => CHAINS[chain]?.launchpad 
 /** Chains this provider covers, in Dexvra's chain ids. */
 export const ponsChains = (): string[] =>
   Object.values(CHAINS).filter((c) => c.launchpad === "pons-v2").map((c) => c.id);
+
+// ── Last-resort market source ─────────────────────────────────────────────
+// The board calls this on every cycle, so it may never reject and may never
+// outrun its own deadline: a chain this box cannot reach must cost one bounded
+// attempt and then nothing. A failure (or a slow answer) parks the reader for
+// COOLDOWN_MS, the way gt.ts parks GeckoTerminal after a 429.
+const DEADLINE_MS = 4_000;
+const COOLDOWN_MS = 5 * 60_000;
+let coolingUntil = 0;
+
+/** Null means "no answer" — never an error, never a hang. */
+export async function fetchPonsFallbackMarket(
+  chain: string,
+  addresses: string[],
+): Promise<Map<string, LiveMarket> | null> {
+  if (!isPonsChain(chain) || addresses.length === 0 || Date.now() < coolingUntil) return null;
+
+  const park = (why: string) => {
+    coolingUntil = Date.now() + COOLDOWN_MS;
+    console.warn(
+      `[market] ${chain}: on-chain launchpad read ${why} — parking it for ${COOLDOWN_MS / 60_000}m ` +
+        `(this is the bottom source; the indexer and the launchpad API are unaffected)`,
+    );
+  };
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const deadline = new Promise<null>((resolve) => {
+      timer = setTimeout(() => resolve(null), DEADLINE_MS);
+    });
+    const result = await Promise.race([fetchPonsMarket(addresses), deadline]);
+    if (result === null) park(`did not answer inside ${DEADLINE_MS}ms`);
+    return result;
+  } catch (err) {
+    park(err instanceof Error ? `failed — ${err.message}` : "failed");
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Test seam: forget the cooldown. */
+export const __resetPonsCooldown = (): void => {
+  coolingUntil = 0;
+};
 
 // ── Scanner ───────────────────────────────────────────────────────────────
 // A Pons launch is unusually legible: the supply is fixed and minted entirely

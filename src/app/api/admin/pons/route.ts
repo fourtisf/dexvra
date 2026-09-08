@@ -4,7 +4,6 @@ import { cached } from "@/lib/cache";
 import { PONS } from "@/config/pons";
 import { buildRow, TIER_KEYS } from "@/lib/adminValidate";
 import { fetchPonsLaunchFeed, type PonsLaunchFeedItem } from "@/lib/providers/pons";
-import { announceListingLive } from "@/lib/notify/announce";
 import { addListing, allListings } from "@/lib/store";
 import type { ListingTier } from "@/lib/types";
 
@@ -88,6 +87,5 @@ export async function POST(req: NextRequest) {
   if (!built.ok) return NextResponse.json({ error: built.error }, { status: 400 });
 
   const listing = await addListing(built.row, { status: "approved", source: "admin" });
-  await announceListingLive(listing.id, listing);
   return NextResponse.json({ listing });
 }

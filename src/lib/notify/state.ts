@@ -9,15 +9,13 @@ export interface NotifyState {
   lastLaunchTs: number;
   /** Recently announced launch addresses — guards equal/interpolated stamps. */
   launches: string[];
-  /** Listing ids already announced as LIVE. */
-  listings: string[];
 }
 
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), "data");
 const FILE = path.join(DATA_DIR, "notify.json");
 const KEEP = 300;
 
-const EMPTY: NotifyState = { lastLaunchTs: 0, launches: [], listings: [] };
+const EMPTY: NotifyState = { lastLaunchTs: 0, launches: [] };
 
 let cache: NotifyState | null = null;
 let writeChain: Promise<void> = Promise.resolve();
@@ -30,7 +28,6 @@ async function load(): Promise<NotifyState> {
     cache = {
       lastLaunchTs: Number(parsed.lastLaunchTs) || 0,
       launches: Array.isArray(parsed.launches) ? parsed.launches.map(String) : [],
-      listings: Array.isArray(parsed.listings) ? parsed.listings.map(String) : [],
     };
   } catch {
     cache = { ...EMPTY };
@@ -53,7 +50,6 @@ function mutate<T>(fn: (state: NotifyState) => { next: NotifyState; result: T })
     await persist({
       lastLaunchTs: next.lastLaunchTs,
       launches: next.launches.slice(-KEEP),
-      listings: next.listings.slice(-KEEP),
     });
     return result;
   });
@@ -83,15 +79,6 @@ export const primeLaunchMarker = (newestTs: number): Promise<void> =>
     next: { ...state, lastLaunchTs: Math.max(state.lastLaunchTs, newestTs) },
     result: undefined,
   }));
-
-/** Claims a listing id for announcement; false when it was already claimed, so
- *  re-approving a listing can't re-post it. */
-export const claimListingAnnouncement = (id: string): Promise<boolean> =>
-  mutate((state) =>
-    state.listings.includes(id)
-      ? { next: state, result: false }
-      : { next: { ...state, listings: [...state.listings, id] }, result: true },
-  );
 
 /** Test seam. */
 export const __resetNotifyCache = (): void => {

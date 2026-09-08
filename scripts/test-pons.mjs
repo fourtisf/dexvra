@@ -424,32 +424,23 @@ check(
   !launchPost.includes("<script>") && launchPost.includes("&lt;script&gt;"),
 );
 
-const listingPost = messages.listingAnnouncement({
-  chain: "robinhood",
-  address: TOKEN,
-  sym: "$EVIL",
-  name: "<b>bold</b> name",
-  emoji: "🏹",
-  tier: "BRONZE",
-  listedMin: 0,
-  tax: 1,
-  holders: 0,
-  price: 0.00006,
-  chg24h: 0,
-  mcap: 60000,
-  liq: 8000,
-  vol24h: 0,
-  buyShare: 0.5,
-  tx24h: 0,
-});
-check("listing post announces the go-live", listingPost.includes("Now live on Dexvra"));
-check("listing post links back to the token page", listingPost.includes(`/token/robinhood/${TOKEN}`));
-check("listing post escapes the listing name", !listingPost.includes("<b>bold</b>"));
-
-// A listing may only be announced once, however many times it is approved.
-const notifyState = await import("../src/lib/notify/state.ts");
-check("first approval claims the announcement", (await notifyState.claimListingAnnouncement("l_test")) === true);
-check("re-approval does not re-announce", (await notifyState.claimListingAnnouncement("l_test")) === false);
+// bot/ owns the "now live" announcement, so this repo must not carry a second
+// copy of it — and the poster must not be able to reach the bot's channel.
+const telegram = await import("../src/lib/notify/telegram.ts");
+check("the web app announcer has no listing message", messages.listingAnnouncement === undefined);
+process.env.TELEGRAM_BOT_TOKEN = "bot-suite-token";
+process.env.TELEGRAM_CHAT_ID = "@botsuitechannel";
+check(
+  "the bot suite's credentials do not configure this announcer",
+  telegram.telegramConfigured() === false,
+);
+process.env.PONS_ANNOUNCE_BOT_TOKEN = "own-token";
+process.env.PONS_ANNOUNCE_CHAT_ID = "@ownchannel";
+check("its own credentials do", telegram.telegramConfigured() === true);
+delete process.env.PONS_ANNOUNCE_BOT_TOKEN;
+delete process.env.PONS_ANNOUNCE_CHAT_ID;
+delete process.env.TELEGRAM_BOT_TOKEN;
+delete process.env.TELEGRAM_CHAT_ID;
 
 // ── Report ────────────────────────────────────────────────────────────────
 for (const line of results) console.log(line);

@@ -40,7 +40,7 @@ export function PonsLaunchFeed({ limit = 12 }: { limit?: number }) {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const tick = async () => {
       try {
-        const res = await fetch(`/api/launches?limit=${limit}`, { cache: "no-store" });
+        const res = await fetch(`/api/pons/launches?limit=${limit}`, { cache: "no-store" });
         const json = (await res.json()) as FeedResponse;
         if (!stop) setFeed(json);
       } catch {

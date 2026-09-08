@@ -1,10 +1,15 @@
-// Telegram channel poster. Unconfigured is a supported state: every call
-// becomes a no-op rather than an error, so nothing in the app depends on the
-// bot being set up.
+// Telegram poster for the web app's launch announcements.
+//
+// ⚠️ ITS OWN CREDENTIALS ON PURPOSE — `PONS_ANNOUNCE_*`, never the bot suite's
+// `TELEGRAM_*`. bot/ already discovers and posts launches (bot/src/discovery.js,
+// autoLister.js); if this read the same variables, every box that runs the bot
+// would silently start double-posting the moment this shipped. Two announcers
+// on one channel is not a config mistake anyone would think to look for.
+// Unset is the normal state: every call becomes a no-op, not an error.
 const API = "https://api.telegram.org";
 
-const token = () => (process.env.TELEGRAM_BOT_TOKEN ?? "").trim();
-const chatId = () => (process.env.TELEGRAM_CHAT_ID ?? "").trim();
+const token = () => (process.env.PONS_ANNOUNCE_BOT_TOKEN ?? "").trim();
+const chatId = () => (process.env.PONS_ANNOUNCE_CHAT_ID ?? "").trim();
 
 export const telegramConfigured = (): boolean => Boolean(token() && chatId());
 
