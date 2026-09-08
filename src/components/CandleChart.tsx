@@ -438,8 +438,23 @@ export function CandleChart({
       ? Math.min(PAD_T + geo.priceH - 10, Math.max(PAD_T + 10, geo.yOf(last.c)))
       : 0;
 
+  /**
+   * Is the panel showing DEXSCREENER'S OWN CHART rather than ours?
+   *
+   * ⚠️ EVERY CONTROL IN OUR HEADER IS INERT WHILE IT IS. LIN/LOG, the
+   * timeframes and ⤢ Auto all drive the native renderer; over a third-party
+   * iframe they do nothing at all — and the embed carries its OWN timeframe row
+   * (`1s 1m 5m 15m 1h 4h D`) immediately beneath ours. On a phone that is two
+   * rows of timeframe buttons stacked, one of which cannot work, above a chart
+   * squeezed into what is left of a 360px panel. "A row the engine ignores" is
+   * this repo's own name for it, and it costs the most exactly where there is
+   * least room.
+   */
+  const embedSrc = status === "error" ? embedUrl : null;
+  const showEmbed = embedSrc !== null;
+
   return (
-    <div className="ck">
+    <div className={`ck${showEmbed ? " ck--embed" : ""}`}>
       <div className="ck-head">
         <div className="ck-title">
           <span className="ck-sym">{symbol}</span>
@@ -474,6 +489,9 @@ export function CandleChart({
             </span>
           )}
         </div>
+        {/* Dropped, never disabled: a greyed-out row still costs the height,
+            and the reader is looking at a chart that already has controls. */}
+        {!showEmbed && (
         <div className="ck-ctl">
           {/* The escape hatch, and the TELL. It is only here while the axis is
               no longer the data's own — so a screenshot of a stretched chart
@@ -522,6 +540,7 @@ export function CandleChart({
             ))}
           </div>
         </div>
+        )}
       </div>
 
       <div
@@ -555,10 +574,10 @@ export function CandleChart({
             `status === "none"` deliberately does NOT get it — that is a fact
             about the TOKEN (no pool has traded yet), and their chart would be
             just as empty while implying the failure was ours. */}
-        {status === "error" && embedUrl ? (
+        {showEmbed ? (
           <div className="ck-embed">
             <iframe
-              src={embedUrl}
+              src={embedSrc}
               title={`${symbol} chart on DexScreener`}
               loading="lazy"
               // Their chart is a TradingView widget: it needs scripts and its

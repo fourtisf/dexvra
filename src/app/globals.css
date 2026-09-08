@@ -1963,6 +1963,29 @@ body{
    the page does not resize between the two. */
 .ck-embed{position:absolute;inset:0;display:flex;flex-direction:column}
 .ck-embed iframe{flex:1;width:100%;border:0;background:var(--panel)}
+/* ⚠️ THEIR WIDGET NEEDS MORE ROOM THAN OURS, AND THE PANEL WAS SIZED FOR OURS.
+   Inside that iframe DexScreener stacks its own toolbar, the TradingView plot,
+   a volume pane, a time axis and a "Tracked by DEXSCREENER" strip. Our native
+   chart draws one compact axis and nothing else, so 360px on a phone is right
+   for it and squeezes theirs into an unreadable band with the last time label
+   clipped mid-digit — which is exactly what was reported.
+
+   `:has()` rather than a prop threaded down to the page: whether the embed is
+   on screen is state inside CandleChart, and a second copy of that decision in
+   the page component is how the two come to disagree. A browser without
+   `:has()` simply keeps today's height, which is the behaviour being replaced —
+   it degrades to the bug, never past it. */
+/* The activity line under an unreadable trade feed — a real reading from the
+   pool's own counts, in the microlabel voice so it reads as a fact about the
+   token rather than a second apology. See components/TokenTrades. */
+.trades-act{margin-top:9px;display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:6px;font-family:var(--fm);font-size:11.5px;color:var(--muted)}
+.trades-act .ta-b{color:var(--mint);font-weight:700}
+.trades-act .ta-s{color:var(--red);font-weight:700}
+.trades-act .ta-dot{color:var(--faint)}
+.trades-act .ta-w{width:100%;text-align:center;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--faint)}
+.ck--embed .ck-head{padding:7px 10px}
+@media (max-width:960px){ .tp-chart-wrap:has(.ck--embed){height:560px} }
+@media (max-width:640px){ .tp-chart-wrap:has(.ck--embed){height:480px} }
 
 /* ────────────────────────────────────────────────────────────────────────── */
 /* ── Pons discovery feed ───────────────────────────────────────────────────

@@ -545,7 +545,10 @@ test("this provider is DexScreener's DATA, never its widget", () => {
   // every token page.
   const chart = read("src/components/CandleChart.tsx");
   assert.equal((chart.match(/<iframe/gi) ?? []).length, 1, "the embed must stay a single fallback");
-  assert.match(chart, /status === "error" && embedUrl/);
+  // The PROPERTY — that the embed is reachable only from the error state — not
+  // the line that happened to express it. See chartRoute.test.ts, where the
+  // same guard had to be un-pinned from its own spelling.
+  assert.match(chart, /status === "error" \? embedUrl : null/);
 });
 
 test("?source pins ONE upstream, and it is part of the cache key", () => {

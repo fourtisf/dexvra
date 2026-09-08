@@ -163,9 +163,17 @@ test("⚠️ the embed is a FALLBACK, never the default — the ban moved, it di
   // Gated on the ERROR state — not on "none", which is a fact about the TOKEN
   // (nothing has traded yet), where their chart is just as empty while implying
   // the failure was ours.
-  assert.match(CHART, /status === "error" && embedUrl \? \(/);
+  //
+  // ⚠️ THE PROPERTY, NOT THE SPELLING. This asserted the literal
+  // `status === "error" && embedUrl ? (` and therefore went red the day the two
+  // decisions were collapsed into one owner — over code that keeps the rule
+  // perfectly. Pinning a line rather than a rule is this repo's own recurring
+  // defect (the four-way pool-TTL guard, the `{ ok: true,` build stamp), and it
+  // costs a reader a failing suite with nothing wrong.
+  assert.match(CHART, /status === "error" \? embedUrl : null/, "the embed is reachable only from the error state");
+  assert.match(CHART, /const showEmbed = embedSrc !== null;/, "…through one owner the class and the iframe share");
   assert.ok(
-    !/status === "none" && embedUrl/.test(CHART),
+    !/status === "none"[^\n]*embedUrl/.test(CHART),
     "a token with no pool must not be handed a third-party empty chart",
   );
   // ⚠️ AND WE ADD NO CAPTION OF OUR OWN UNDER IT.

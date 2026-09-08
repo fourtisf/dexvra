@@ -34,6 +34,32 @@ const log = require("./helpers/logger");
 // rank-up clips are generic/advertiser media and are sent as-is.
 const BANNER_FILL_KINDS = new Set(["listing", "trending"]);
 
+/**
+ * How a channel post reads the market — DEXSCREENER FIRST.
+ *
+ * ⚠️ "Market cap: TBA · Price: TBA" WENT OUT TO 12,528 SUBSCRIBERS over a token
+ * the site was pricing at $0.001004 on a $950.2K cap in the same minute. Nothing
+ * was down: `fetchMarket` is GT-FIRST, `fetchGT` waits on
+ * `gtSlot(PRIO_BACKGROUND)` — the shared GeckoTerminal queue, which has NO
+ * DEADLINE OF ITS OWN and sits behind every timer job on the box at 5 releases a
+ * minute — and the MARKET_BUDGET_MS bound below then fired with DexScreener
+ * NEVER ASKED. The listing form paid for this exact shape one module over
+ * ("bot tidak merespon untuk paket listing setelah di minta drop ca"); a paid
+ * announcement is the same defect on the surface a customer screenshots.
+ *
+ * The post renders exactly three market figures — price, market cap and
+ * liquidity (`coinVars` in channels/format.js) — and DexScreener publishes all
+ * three for free, off a per-IP budget nothing else here competes for. So this
+ * is the CHEAP read: `need` names the fields, DexScreener answers only when it
+ * has all of them, and anything short of that falls through to GeckoTerminal
+ * exactly as before with its answer REUSED rather than re-asked.
+ *
+ * It is an ORDER, never a second reader — same two sources, same merge, one
+ * different sequence. A third private idea of "is GeckoTerminal up" is what
+ * this repo keeps paying for.
+ */
+const POST_MARKET = { cheap: true, need: ["priceUsd", "mcap", "liq"] };
+
 /** Public t.me link to a specific post in a @username channel. */
 function tmeLink(channel, msgId) {
   return `https://t.me/${String(channel).replace(/^@/, "")}/${msgId}`;
@@ -301,7 +327,7 @@ async function fulfillListing(ctx, order) {
   // deadline of its own. Past the budget the card renders from what the buyer
   // typed, which is the same value the .catch below has always produced.
   const live = await bounded(
-    market.fetchMarket(input.chain, input.address).catch(() => null),
+    market.fetchMarket(input.chain, input.address, POST_MARKET).catch(() => null),
     MARKET_BUDGET_MS,
     () => {
       log.warn(`[fulfil] market read passed ${MARKET_BUDGET_MS}ms (GT queue) — listing without live price/mcap`);
@@ -386,7 +412,7 @@ async function fulfillTrending(ctx, order) {
 
   // Same bound, same reason — a booked trending slot waits on a buyer too.
   const live = await bounded(
-    market.fetchMarket(p.chain, p.address).catch(() => null),
+    market.fetchMarket(p.chain, p.address, POST_MARKET).catch(() => null),
     MARKET_BUDGET_MS,
     () => {
       log.warn(`[fulfil] market read passed ${MARKET_BUDGET_MS}ms (GT queue) — trending without live price/mcap`);

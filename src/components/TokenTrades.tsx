@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { BoardToken, Trade } from "@/lib/types";
 import { CHAINS } from "@/config/chains";
 import { fmtNum, fmtPrice } from "@/lib/format";
+import { figureReading } from "@/lib/home";
 import { TRADES_POLL_MS } from "@/lib/trades";
 
 function ago(ts: number): string {
@@ -36,7 +37,46 @@ const short = (a: string) => (a.length > 10 ? `${a.slice(0, 4)}…${a.slice(-4)}
 // 8s, so every poll was a guaranteed upstream miss. lib/trades keeps the two
 // together — the chart learnt the same rule as `pollMsFor`.
 const POLL_MS = TRADES_POLL_MS;
+/** The ceiling the failure back-off climbs to — still often enough that a feed
+ *  which recovers is picked up inside a minute and a half. */
+const MAX_POLL_MS = 96_000;
 const tradeKey = (tr: Trade) => `${tr.ts}:${tr.trader}:${tr.usd.toFixed(2)}`;
+
+/**
+ * What the panel can still SAY when the trade list cannot be read.
+ *
+ * ⚠️ "PERBAIKI TRANSAKSINYA, AMBIL AJA SEMUA DARI DEXSCREENER KALO GECKO
+ * TERMINAL DELAY" — and the honest half of that is: a trade LIST has exactly
+ * ONE free source. GeckoTerminal publishes `/pools/{pool}/trades`; DexScreener
+ * publishes no per-trade endpoint on any documented host (`latest/dex/tokens`,
+ * `latest/dex/pairs`, `token-pairs/v1`, `search` — none of them returns
+ * individual fills), and its own site reads them off `io.dexscreener.com`,
+ * which answers this box 403. A second source for the ROWS does not exist to be
+ * wired, and shipping a guess that cannot fire reads exactly like one that
+ * never helps.
+ *
+ * What DexScreener DOES publish is the pool's own buy/sell counts and volume —
+ * and they are already in hand: `t.txns` and `t.vol` ride the board payload
+ * this component is handed, so this costs NOT ONE REQUEST. An apology over an
+ * empty table, on a token doing 1.3K transactions a day, is strictly worse than
+ * the true sentence "1,247 buys · 812 sells · $34.2K in the last 24h".
+ *
+ * ⚠️ ONLY FROM A LIVE ROW. `figureReading` is the one owner of "is this figure
+ * a measurement or a captured-at-listing default", and a seed row's zeros are
+ * not a quiet market — they are numbers nobody took. Rendering those here would
+ * be the fabricated reading this repo refuses everywhere else, one panel over.
+ */
+function activity(t: BoardToken): { buys: number; sells: number; vol: number | null } | null {
+  if (t.source !== "live") return null;
+  const tx = t.txns?.["24h"];
+  if (!tx) return null;
+  const buys = Number(tx.buys) || 0;
+  const sells = Number(tx.sells) || 0;
+  // Zero trades in a day is a READING and a real answer about the token — but
+  // it is the same answer the empty table already gives, so it adds nothing.
+  if (buys + sells <= 0) return null;
+  return { buys, sells, vol: figureReading(t, t.vol?.["24h"] ?? null) };
+}
 
 export function TokenTrades({ t }: { t: BoardToken }) {
   const [trades, setTrades] = useState<Trade[] | null>(null);
@@ -72,7 +112,27 @@ export function TokenTrades({ t }: { t: BoardToken }) {
       `/api/trades?chain=${encodeURIComponent(t.chain)}&address=${encodeURIComponent(t.address)}` +
       (t.poolAddress ? `&pool=${encodeURIComponent(t.poolAddress)}` : "");
 
+    // ⚠️ A BUSY GECKOTERMINAL WAS BEING ASKED HARDER, NOT LESS.
+    //
+    // This route is one of the app's biggest GT consumers — every open token
+    // page polls it every ~12s — against a budget of a handful of requests a
+    // minute for the WHOLE box, shared with the board, the pools and the
+    // candles. So the state the reader reported ("live data is busy") is a
+    // state in which this panel alone can spend five requests a minute proving
+    // the same refusal, per open tab, for ever. That is the CoinGecko sweep's
+    // defect and `dsChart`'s 403 retry, on a third caller.
+    //
+    // A failure therefore BACKS OFF and a success resets it — and a hidden tab
+    // is not asked at all, because nobody is reading it. Neither costs a
+    // visitor anything: the panel keeps the rows it has, and the first poll
+    // after the tab comes forward is immediate.
+    let wait: number = POLL_MS;
+
     const tick = async () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        timer = setTimeout(tick, POLL_MS);
+        return;
+      }
       try {
         const r = await fetch(url, { cache: "no-store" });
         const j = (await r.json()) as { trades?: Trade[]; why?: string | null };
@@ -81,6 +141,7 @@ export function TokenTrades({ t }: { t: BoardToken }) {
           setTrades(j.trades);
           setLive(true);
           setWhy(null);
+          wait = POLL_MS;
         } else {
           // A poll that fails never blanks a panel that already has REAL
           // trades — the pool did not stop trading because one request did not
@@ -88,14 +149,16 @@ export function TokenTrades({ t }: { t: BoardToken }) {
           setLive(false);
           setTrades((prev) => (prev && prev.length ? prev : []));
           setWhy(j.why ?? "Couldn't read recent trades just now.");
+          wait = Math.min(wait * 2, MAX_POLL_MS);
         }
       } catch {
         if (stop) return;
         setLive(false);
         setTrades((prev) => (prev && prev.length ? prev : []));
         setWhy("Couldn't read recent trades just now.");
+        wait = Math.min(wait * 2, MAX_POLL_MS);
       } finally {
-        if (!stop) timer = setTimeout(tick, POLL_MS);
+        if (!stop) timer = setTimeout(tick, wait);
       }
     };
     tick();
@@ -108,6 +171,9 @@ export function TokenTrades({ t }: { t: BoardToken }) {
   }, [t.chain, t.address, t.poolAddress]);
 
   const sym = useMemo(() => t.symbol.replace(/^\$/, ""), [t.symbol]);
+  // Computed from the token in hand, so it is ready before the first poll and
+  // survives every one that fails.
+  const act = useMemo(() => activity(t), [t]);
 
   return (
     <div className="trades panel" style={{ padding: 0 }}>
@@ -140,7 +206,32 @@ export function TokenTrades({ t }: { t: BoardToken }) {
           // The state that used to be filled with invented rows. It says which
           // of the two reasons it is — a token with no pool and a feed we could
           // not read need different reactions from the reader.
-          <div className="trades-none">{why ?? "No trades to show."}</div>
+          <div className="trades-none">
+            <div>{why ?? "No trades to show."}</div>
+            {/* The reader came here to see whether the token is trading. When
+                the per-trade feed cannot answer that, the pool's own counts
+                can — and they are already on the page. */}
+            {act && (
+              <div className="trades-act">
+                {/* ⚠️ GROUPED, NEVER ABBREVIATED. `fmtNum` gives "1.2K",
+                    which is right for a market cap and wrong for a COUNT of
+                    transactions: 1,247 and 1,299 both render "1.2K", and the
+                    number a reader came for is how many trades there were.
+                    `qty()` in the trade bot's receipt carries the same rule for
+                    the same reason. */}
+                <span className="ta-b">{act.buys.toLocaleString("en-US")} buys</span>
+                <span className="ta-dot">·</span>
+                <span className="ta-s">{act.sells.toLocaleString("en-US")} sells</span>
+                {act.vol != null && (
+                  <>
+                    <span className="ta-dot">·</span>
+                    <span>${fmtNum(act.vol)} volume</span>
+                  </>
+                )}
+                <span className="ta-w">in the last 24h · via DexScreener</span>
+              </div>
+            )}
+          </div>
         ) : (
           trades.map((tr) => (
             <div className={`trades-row ${tr.kind}`} key={tradeKey(tr)}>

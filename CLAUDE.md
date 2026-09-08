@@ -8489,6 +8489,160 @@ pm2 logs dexvra --lines 300 --nostream | grep -F '[logos]'   # is it working, an
 npm run logos:check -- --bad                                  # …and WHICH rows are broken
 ```
 
+## "mengapa mc dan price TBA" — the post's market read was queued behind every timer job
+
+An **Xpress Listing** went out to 12,528 subscribers reading
+
+```
+📊 Market cap: TBA ·  Price: TBA
+```
+
+…about a token dexvra.io was pricing at **$0.001004 on a $950.2K cap** in the
+same minute, with $131.2K of liquidity and 1.3K transactions that day. Nothing
+was down, and nothing about the token was missing.
+
+**`fulfillment.js` called `fetchMarket` with no opts, which is GT-FIRST.**
+`fetchGT` waits on `gtSlot(PRIO_BACKGROUND)` — the shared GeckoTerminal queue,
+which has **no deadline of its own** and releases at the keyless budget behind
+every timer job on the box — and the `MARKET_BUDGET_MS` bound (8s) then fired
+**with DexScreener never asked at all**. So the one figure a paying customer
+screenshots was decided by a queue that had nothing to do with their token.
+
+- **The post renders exactly three market figures** — price, market cap and
+  liquidity (`coinVars` in `channels/format.js`) — and DexScreener publishes all
+  three for free, off a budget nothing else here competes for. `POST_MARKET` is
+  `{ cheap: true, need: ["priceUsd", "mcap", "liq"] }`.
+- **It is an ORDER, never a second reader.** Same two sources, same merge, one
+  different sequence — the rule `fetchMarket`'s own header states. A DexScreener
+  answer missing any of the three still falls through to GeckoTerminal exactly
+  as before, with its answer REUSED rather than re-asked.
+- **Both call sites**, listing and trending: they render the same three fields
+  through the same `coinFrom`/`bannerCoinOf` pair, and a fix applied to one of
+  two siblings is a fix half-made — this file's own scar, three features over.
+- ⚠️ **This is the listing form's defect on a different surface.** *"bot tidak
+  merespon untuk paket listing setelah di minta drop ca"* was the same queue,
+  the same tier, and the same conclusion: a **user-prompted** read may not sit
+  in the background lane. The form was bounded and this was not.
+
+```bash
+cd bot && node scripts/run-tests.js test/postMarket.test.js   # 4 tests, no network
+```
+
+Mutation-tested: restoring the GT-first read fails the source guard, and the
+behavioural test asserts GeckoTerminal is not asked **at all** when DexScreener
+has all three.
+
+**Config a fix depends on:** nothing. `GECKOTERMINAL_API_KEY` in `bot/.env`
+still raises the real ceiling rather than dividing it — this only stops a post
+spending it on a question DexScreener answers for free.
+
+## "perbaiki tampilan chartnya di mobile" — two rows of timeframe buttons, one of them dead
+
+The same screenshot, one panel down: our chart header — `$HACHIKO`, `LIN LOG`,
+`5m 15m 1h 4h 1d` — sitting **directly above DexScreener's own** `1s 1m 5m 15m
+1h 4h D` toolbar inside the embed, on a 390px phone, over a chart squeezed into
+what was left of a 360px panel with the last time label clipped mid-digit.
+
+**Every control in our header is INERT while the embed is on screen.** LIN/LOG,
+the timeframes and ⤢ Auto all drive the native renderer; over a third-party
+iframe they do nothing at all. "A row the engine ignores" is this repo's own
+name for it, and it costs the most exactly where there is least room.
+
+- **Dropped, never disabled.** A greyed-out row still costs the height, and the
+  reader is looking at a chart that already has controls.
+- **ONE owner.** `embedSrc = status === "error" ? embedUrl : null` and
+  `showEmbed = embedSrc !== null` — the class, the controls and the iframe's
+  `src` all read the same value, so they cannot disagree, and TypeScript
+  narrows the `src` rather than needing a second condition.
+- **The panel grows, and only for the embed.** Their widget stacks a toolbar,
+  the TradingView plot, a volume pane, a time axis and a "Tracked by
+  DEXSCREENER" strip; ours draws one compact axis. `:has(.ck--embed)` rather
+  than a prop threaded into the page — whether the embed is on screen is state
+  inside `CandleChart`, and a second copy of that decision in the page component
+  is how the two come to disagree. ⚠️ A browser without `:has()` keeps today's
+  height, which is the behaviour being replaced: it degrades to the bug, never
+  past it.
+- **The embed is still never the DEFAULT.** That ban stands and is pinned in
+  two files; only the alternative to an apology moved.
+
+Measured in a real browser at 390×844, both fallback states forced:
+
+| | before | after |
+| --- | --- | --- |
+| chart panel | 360px | **480px** |
+| our header | 46px, two rows, controls inert | **31px**, ticker only |
+| the embed itself | ~290px | **447px** |
+
+⚠️ **Two existing guards broke, and they were the ones that were wrong.** Both
+`chartRoute.test.ts` and `dsChart.test.ts` pinned the LITERAL
+`status === "error" && embedUrl ? (` rather than the property, so they went red
+over code that keeps the rule perfectly. That is this file's own recurring
+defect (the four-way pool-TTL guard, the `{ ok: true,` build stamp); both assert
+the property now, and both still fail when the embed is made unconditional.
+
+## "perbaiki transaksinya, ambil aja semua dari dexscreener kalo gecko terminal delay"
+
+The third panel: `Couldn't read recent trades just now — live data is busy`,
+over a token doing **1.3K transactions a day**.
+
+⚠️ **THE HONEST HALF FIRST: A TRADE LIST HAS EXACTLY ONE FREE SOURCE.**
+GeckoTerminal publishes `/pools/{pool}/trades`. DexScreener publishes **no**
+per-trade endpoint on any documented host — `latest/dex/tokens`,
+`latest/dex/pairs`, `token-pairs/v1`, `search`, none of them returns individual
+fills — and its own site reads them off `io.dexscreener.com`, which answers this
+box **403**. A second source for the ROWS does not exist to be wired, and
+shipping a guess that cannot fire reads exactly like one that never helps.
+
+**What DexScreener DOES publish is already in hand.** `t.txns` and `t.vol` ride
+the board payload the panel is handed, so the fallback costs **not one
+request**: where the table can only apologise, it now also states the pool's own
+activity.
+
+```
+Couldn't read recent trades just now — live data is busy…
+1,247 buys · 812 sells · $34.2K volume
+IN THE LAST 24H · VIA DEXSCREENER
+```
+
+- ⚠️ **ONLY FROM A LIVE ROW.** `figureReading` is the one owner of "is this
+  figure a measurement or a captured-at-listing default", and a seed row's zeros
+  are numbers nobody took. Rendering those as activity is the fabricated reading
+  this repo refuses everywhere else, one panel over.
+- ⚠️ **GROUPED, NEVER ABBREVIATED.** `fmtNum` gives `1.2K`, which is right for a
+  market cap and wrong for a COUNT: 1,247 and 1,299 both render `1.2K`, and how
+  many trades there were is the number the reader came for. The trade bot's
+  `qty()` carries this rule for the same reason.
+- **Zero trades in a day is a READING** and a real answer — but it is the same
+  answer the empty table already gives, so it adds nothing and is not printed.
+
+**And the panel was asking a busy upstream HARDER, not less.** `/api/trades` is
+one of the app's biggest GT consumers — every open token page polls it every
+~12s — against a budget of a handful of requests a minute for the whole box,
+shared with the board, the pools and the candles. So the reported state is one
+in which this panel alone can spend five requests a minute proving the same
+refusal, per open tab, for ever. That is the CoinGecko sweep's defect and
+`dsChart`'s 403 retry, on a third caller.
+
+- **A failure backs off** (doubling to `MAX_POLL_MS`, 96s) **and a success
+  resets it** — one blip must not slow the panel for the rest of the session.
+- **A hidden tab is not polled at all.** Nobody is reading it, and the first
+  poll after it comes forward is immediate.
+- Neither costs a visitor anything: the panel keeps the rows it has.
+
+```bash
+npm test    # tokenTrades (9) — the panel guards, comment-stripped
+```
+
+Mutation-tested: the back-off never reaching the scheduler, a seed row rendering
+activity, the inert chart controls returning, and the phone panel staying sized
+for our own chart each fail exactly one test.
+
+**Config a fix depends on:** nothing — but ⚠️ **`GECKOTERMINAL_API_KEY` in the
+repo-root `.env` is still the only thing that raises the ceiling rather than
+dividing it**, and the trade list is the one thing on this page with no second
+source at all. This makes the minute go further; it does not add a source that
+does not exist.
+
 ## Conventions
 
 - Tests live beside the code they cover, in `bot/test/`, `tradebot/*.test.js`
