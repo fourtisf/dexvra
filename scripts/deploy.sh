@@ -54,8 +54,13 @@ fi
 # ── 3. Dependencies ───────────────────────────────────────────────────────
 # `npm ci` from the lockfile, never `npm install`: a deploy must install the
 # versions that were tested, not resolve new ones on the box.
+#
+# WITH devDependencies, deliberately. `--omit=dev` looks right for a server and
+# is wrong here: the build happens ON this box, and next build needs typescript
+# and the @types packages to compile at all. Omitting them fails the build with
+# a message about TypeScript not being installed, several minutes in.
 step "Installing dependencies"
-npm ci --omit=dev --no-audit --no-fund 2>/dev/null || npm ci --no-audit --no-fund
+npm ci --no-audit --no-fund
 for pkg in bot tradebot; do
   if [ -f "$pkg/package-lock.json" ]; then
     echo "· $pkg"
@@ -82,7 +87,9 @@ step "Restarting"
 command -v pm2 >/dev/null || die "pm2 is not on PATH"
 pm2 restart dexvra --update-env
 if [ "$WITH_BOTS" = "1" ]; then
-  for proc in dexvra-bot dexvra-adminbot dexvra-tradebot; do
+  # Only what pm2 actually knows about — the tradebot's process name differs
+  # between boxes, so an absent name is skipped rather than failing the deploy.
+  for proc in dexvra-bot dexvra-adminbot dexvra-tradebot dexvra-trade; do
     if pm2 describe "$proc" >/dev/null 2>&1; then
       echo "· $proc"
       pm2 restart "$proc" --update-env
