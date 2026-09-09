@@ -122,3 +122,74 @@ test("BOTH fulfilment paths read through readPostMarket AND report", () => {
   assert.equal((src.match(/market\.fetchMarket\(/g) || []).length, 1, "one market read for both posts");
   assert.ok(/POST_MARKET/.test(src), "and it is still the DexScreener-first order");
 });
+
+// ── THE ARTWORK IS THE OTHER HALF OF THE SAME PROMISE ────────────────────────
+//
+// The round that built this watch covered the FIGURES and stopped. The very
+// next paid post went out with TBA on both figures AND the Dexvra mark where
+// $WROTE's own logo belongs — and only the second half reached nobody, because
+// the banner renders a missing logo as a deliberate-looking fallback. A lost
+// logo is INVISIBLE BY DESIGN, which is exactly why it needs the watch more
+// than the figures do.
+
+const artArgs = (art) => args({ art });
+
+test("a logo the listing HAS and we could not fetch is an alert on its own", () => {
+  // Every figure published. The picture did not, and nothing else would say so.
+  const html = pf.figureAlert(artArgs({ wanted: true, got: false, url: "https://ipfs.io/ipfs/bafk" }));
+  assert.ok(html, "a healthy-figures post with lost artwork must still page");
+  assert.match(html, /its own artwork/);
+  assert.match(html, /Dexvra mark/);
+  assert.match(html, /bafk/, "the url that would not load is the diagnosis");
+});
+
+test("⚠️ …but a listing that never had a logo pages NOBODY", () => {
+  // The Dexvra mark is the DESIGN for a logoless token, not a degraded card.
+  // Paging here would be permanently red on every listing whose owner uploaded
+  // nothing — the state `chart:preview` sat in for weeks.
+  assert.equal(pf.figureAlert(artArgs({ wanted: false, got: false, url: null })), null);
+  assert.equal(pf.figureAlert(artArgs(undefined)), null, "a caller that does not know must not page");
+  assert.equal(pf.artworkLost(undefined), false);
+  assert.equal(pf.artworkLost({ wanted: false, got: false }), false);
+  assert.equal(pf.artworkLost({ wanted: true, got: true }), false);
+  assert.equal(pf.artworkLost({ wanted: true, got: false }), true);
+});
+
+test("one post is ONE alert, naming both halves and both scripts", () => {
+  const html = pf.figureAlert(args({
+    live: null,
+    art: { wanted: true, got: false, url: "https://ipfs.io/ipfs/bafk" },
+  }));
+  assert.match(html, /without price · market cap · liquidity · its own artwork/);
+  // Different layers, different scripts — a logo that will not load and an
+  // indexer that will not answer send an operator to different places.
+  assert.match(html, /market:check/);
+  assert.match(html, /logos:check/);
+  assert.equal(html.split("\n").filter((l) => /Run <code>/.test(l)).length, 2);
+});
+
+test("⚠️ a post whose ONLY hole is the picture does not blame the market read", () => {
+  // "Why: neither DexScreener nor GeckoTerminal returned anything" over a post
+  // that published a price and a cap sends the operator to the wrong layer.
+  const html = pf.figureAlert(artArgs({ wanted: true, got: false, url: "https://x/y.png" }));
+  assert.ok(!/^Why:/m.test(html), `the market sentence must not appear:\n${html}`);
+  assert.ok(!/market:check/.test(html), "nor the market script");
+});
+
+test("BOTH fulfilment paths report the artwork, from the buffer the banner gets", () => {
+  // A source scan, because the alternative is booting the whole order flow —
+  // and the defect this guards is a call site that quietly stops passing `art`.
+  const src = require("node:fs").readFileSync(require.resolve("../src/fulfillment.js"), "utf8");
+  const reports = src.match(/reportFigures\(\{[\s\S]*?\n  \}\);/g) || [];
+  assert.equal(reports.length, 2, "a listing and a trending slot");
+  for (const r of reports) {
+    assert.match(r, /art: \{/, `every report carries the artwork:\n${r}`);
+    assert.match(r, /got: !!logoBuffer/, "…read off the buffer, never re-fetched from the url");
+  }
+  // ⚠️ AND THE TRENDING FETCH MUST SIT ABOVE ITS WATCH. It used to be below,
+  // and a watch cannot report artwork it has not seen yet.
+  const fetchAt = src.indexOf("const logoBuffer = await fetchLogoUrl(row.logoUrl);");
+  const watchAt = src.indexOf('kind: "trending", chain: p.chain');
+  assert.ok(fetchAt > 0 && watchAt > 0);
+  assert.ok(fetchAt < watchAt, "the trending logo is fetched BEFORE the watch reads it");
+});

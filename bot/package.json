@@ -28,6 +28,7 @@
     "listings:nostables": "node scripts/listings-stables.js",
     "listings:fix": "node scripts/fix-listings.js",
     "listing:check": "node scripts/listing-check.js",
+    "post:check": "node scripts/post-check.js",
     "x:retarget": "node scripts/retarget-x-handle.js"
   },
   "engines": {

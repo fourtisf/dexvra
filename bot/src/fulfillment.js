@@ -428,6 +428,10 @@ async function fulfillListing(ctx, order) {
     kind: "listing", chain: input.chain, address: input.address, sym: input.sym,
     name: input.name, tier: input.tier, live, why: marketWhy,
     siteUrl: `${SITE_URL}/token/${input.chain}/${input.address}`,
+    // The other half of the same promise, read off the BUFFER the banner is
+    // about to be handed rather than re-derived from the url — a second fetch
+    // would be asking a different question from the one the artwork asked.
+    art: { wanted: !!(p.logoFileId || input.logoUrl), got: !!logoBuffer, url: input.logoUrl },
   });
   const coin = coinFrom(input, live);
   const bannerCoin = bannerCoinOf(input, live);
@@ -510,14 +514,18 @@ async function fulfillTrending(ctx, order) {
   const row = listing || { chain: p.chain, address: p.address, sym: p.symbol, name: p.name };
   // The same watch on the same promise. A rule applied to one of two siblings
   // is a rule half-made, and a trending slot is a purchase too.
+  // ⚠️ FETCHED BEFORE THE WATCH, not after it. This used to sit below, and the
+  // watch cannot report artwork it has not seen yet — a rule applied to one of
+  // two siblings is a rule half-made, which is what this whole watch is about.
+  const logoBuffer = await fetchLogoUrl(row.logoUrl);
   postFigures.reportFigures({
     kind: "trending", chain: p.chain, address: p.address, sym: row.sym || row.symbol,
     name: row.name, tier: null, live, why: marketWhy,
     siteUrl: `${SITE_URL}/token/${p.chain}/${p.address}`,
+    art: { wanted: !!row.logoUrl, got: !!logoBuffer, url: row.logoUrl },
   });
   const coin = coinFrom(row, live);
   const bannerCoin = bannerCoinOf(row, live);
-  const logoBuffer = await fetchLogoUrl(row.logoUrl);
   // Reuses the pack made at listing time; builds one now if it never existed.
   await tokenEmoji.ensureTokenEmoji(
     { chain: p.chain, address: p.address, symbol: row.sym || row.symbol },
@@ -811,4 +819,9 @@ module.exports = {
   // url. See bannerLogo.test.js.
   _fetchLogoUrl: fetchLogoUrl,
   _photoSource: photoSource,
+  // The post's own market read, exported so `post:check` DRIVES it rather than
+  // asking the indexers its own way. A check with a second copy of the question
+  // is how `fonts:check` printed nine green ticks over a banner publishing
+  // boxes — it measured a font stack that renderer did not draw with.
+  _readPostMarket: readPostMarket,
 };

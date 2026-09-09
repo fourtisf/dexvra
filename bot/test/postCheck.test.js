@@ -1,0 +1,138 @@
+// "bagaimana agar masalah ini tidak terjadi lgi" — asked after a paid Xpress
+// card reached 12,523 subscribers reading `Market cap: TBA · Price: TBA` with
+// the Dexvra mark where $WROTE's own logo belongs.
+//
+// `postFigures` watches both halves and alerts — but a watch fires AFTER a
+// customer has paid for the degraded post. `post:check` is the half that runs
+// BEFORE, on the box, where the causes can actually be told apart.
+//
+// ⚠️ THE VERDICT IS TESTED BY BEING CALLED, not by parsing terminal output.
+// "A logoless listing is fine", "a token nobody indexes is honest" and "a logo
+// that would not load is ours" are behavioural rules, and a source scan cannot
+// tell a rule from a comment about one — the `logoWrite.ts` contract.
+const path = require("node:path");
+const os = require("node:os");
+const fss = require("node:fs");
+process.env.BOT_DATA_DIR = fss.mkdtempSync(path.join(os.tmpdir(), "dexvra-postcheck-"));
+
+const test = require("node:test");
+const assert = require("node:assert");
+const { verdict } = require("../scripts/post-check.js");
+const pf = require("../src/postFigures");
+
+const row = (over = {}) => ({ chain: "robinhood", address: "0xabc", sym: "WROTE", logoUrl: null, ...over });
+const A = (over = {}) => ({ live: { priceUsd: 1, mcap: 2, liq: 3 }, why: null, holes: [], lostArt: false, ...over });
+
+test("a post with every figure and its artwork is ok", () => {
+  assert.equal(verdict(A()), "ok");
+});
+
+test("a listing that never had a logo is still ok — the mark is the DESIGN", () => {
+  // ⚠️ Written as `verdict(A())` this was byte-identical to the test above it
+  // and covered nothing. What is actually being asserted is the DERIVATION the
+  // check makes from a row: no logoUrl means nothing was WANTED, so nothing was
+  // lost. Paging here would be permanently red on every listing whose owner
+  // uploaded nothing.
+  const noLogo = row({ logoUrl: null });
+  const lostArt = pf.artworkLost({ wanted: !!noLogo.logoUrl, got: false });
+  assert.equal(lostArt, false, "nothing was lost — nothing was ever given");
+  assert.equal(verdict(A({ lostArt })), "ok");
+
+  const withLogo = row({ logoUrl: "https://ipfs.io/ipfs/bafk" });
+  assert.equal(pf.artworkLost({ wanted: !!withLogo.logoUrl, got: false }), true);
+});
+
+test("a curve with no liquidity is ok — that is not a key figure", () => {
+  // launchpads.js returns liquidityUsd null deliberately, because a 0 reads as
+  // a rug. Reddening here would be red on every pre-migration listing.
+  assert.equal(verdict(A({ holes: ["liquidity"], live: { priceUsd: 1, mcap: 2, liq: null } })), "ok");
+});
+
+test("⚠️ a token NOBODY indexes is HONEST, not a fault", () => {
+  // The post is telling the truth. A check that reddened here would be
+  // permanently red on this box — the state `chart:preview` sat in for weeks,
+  // which trains the reader to ignore the red.
+  const a = A({ live: null, why: null, holes: ["price", "market cap", "liquidity"] });
+  assert.equal(verdict(a), "honest");
+});
+
+test("…but a read that DID NOT FINISH is ours", () => {
+  // "We could not ask" is a budget or an outage on this box, and it renders
+  // identically to the honest case on the card. That distinction IS the check.
+  const a = A({ live: null, why: "the market read passed 8000ms", holes: ["price", "market cap"] });
+  assert.equal(verdict(a), "fault");
+});
+
+test("…and so is an indexer that answered with no price", () => {
+  const a = A({ live: { priceUsd: null, mcap: null, liq: 5 }, holes: ["price", "market cap"] });
+  assert.equal(verdict(a), "fault");
+});
+
+test("⚠️ a LOST LOGO is a fault even when every figure published", () => {
+  // The reported defect, and the one a watch on the figures alone could never
+  // see: the banner draws a missing logo as a deliberate-looking fallback.
+  assert.equal(verdict(A({ lostArt: true })), "fault");
+});
+
+test("⚠️ …and it outranks the honest-silence reading", () => {
+  // A token nobody indexes CAN still have artwork we failed to fetch. Letting
+  // "honest" win there would hide the logo half behind the figures half —
+  // exactly the way this round's defect hid behind the last round's.
+  const a = A({ live: null, why: null, holes: ["price", "market cap", "liquidity"], lostArt: true });
+  assert.equal(verdict(a), "fault");
+});
+
+test("⚠️ the check DRIVES the post's own functions rather than asking its own way", () => {
+  // `fonts:check` printed nine green ticks over a banner publishing boxes
+  // because it measured a font stack that renderer did not draw with, and
+  // `trending:check` reported 44 refusals where the bot reported 25. A check
+  // with a second copy of the question proves nothing about the post.
+  const src = fss.readFileSync(require.resolve("../scripts/post-check.js"), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "");
+  assert.match(src, /fulfil\._readPostMarket\(/, "the post's own bounded, DexScreener-first read");
+  assert.match(src, /fulfil\._fetchLogoUrl\(/, "…and the post's own logo fetch, through /api/logo");
+  assert.match(src, /postFigures\.missingFigures\(/, "…and the RENDERER's predicate for what publishes as TBA");
+  assert.match(src, /postFigures\.artworkLost\(/);
+  // The three ways it could grow its own idea of the question.
+  assert.ok(!/require\(['"]\.\.\/src\/marketdata['"]\)/.test(src), "never its own market read");
+  assert.ok(!/fetchMarket\(/.test(src), "never a second call into the indexers");
+  assert.ok(!/api\/logo\?u=/.test(src), "never its own proxy url");
+});
+
+test("the build stamp is printed — every round began with a check read off a stale checkout", () => {
+  const src = fss.readFileSync(require.resolve("../scripts/post-check.js"), "utf8");
+  assert.match(src, /build\.stamp\(\)/);
+});
+
+test("⚠️ no pasteable command carries a bracketed blank", () => {
+  // This repo has had a placeholder pasted into a live shell four times, and
+  // bash reads `<` and `>` as redirects — the command dies before the script
+  // runs, which reads as a broken tool rather than an unfilled blank. With no
+  // arguments this script asks the SITE for real listings instead.
+  const src = fss.readFileSync(require.resolve("../scripts/post-check.js"), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "");
+  for (const line of src.split("\n")) {
+    if (!/npm run|node scripts/.test(line)) continue;
+    assert.ok(!/<[a-zA-Z]|\[[a-zA-Z]+\]/.test(line), `a pasteable line with a blank in it: ${line.trim()}`);
+  }
+  assert.match(src, /api\.getListings\(\)/, "no argument means ask the site for REAL tokens");
+});
+
+test("⚠️ one argument is refused, never silently answered with other tokens", () => {
+  // `post:check -- 0xabc` names a token and omits its chain. Falling through to
+  // "the newest listings" would answer a question nobody asked, with nothing on
+  // screen saying the argument was dropped — and the operator would read a
+  // green result as being about THEIR token.
+  //
+  // Driven, because this is a CLI branch: it exits before any network call, so
+  // spawning it costs nothing and a source scan could not tell the fallthrough
+  // from the refusal.
+  const { spawnSync } = require("node:child_process");
+  const script = require.resolve("../scripts/post-check.js");
+  const r = spawnSync(process.execPath, [script, "0xabc"], { encoding: "utf8", timeout: 30_000 });
+  assert.strictEqual(r.status, 1, "a half-named token is a refusal, not a different answer");
+  assert.match(r.stdout, /BOTH its chain and its address/);
+  assert.ok(!/newest listing\(s\), assembled/.test(r.stdout), "it must NOT check other tokens instead");
+});

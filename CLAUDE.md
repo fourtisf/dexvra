@@ -8665,6 +8665,96 @@ running and on a build that carries `/api/pons` and `/api/logo`, so this is a
 `PONS_IPFS_GATEWAY` moves the gateway the bot rewrites to; `IPFS_GATEWAYS` is
 the site proxy's own list and already fails over.
 
+#### "bagaimana agar masalah ini tidak terjadi lgi" — the watch covered half a promise
+
+Asked straight after, and it is the right question for the fourth time: two
+rounds of TBA and one of the artwork, **every one of them detected by a person
+opening the channel and screenshotting it.**
+
+⚠️ **AND A WATCH FOR EXACTLY THIS ALREADY EXISTED.** `postFigures` was built one
+round earlier, on this very promise, and it would have caught the TBA. It
+watched the FIGURES and stopped there — so the next paid post published TBA on
+both figures *and* the Dexvra mark where $WROTE's own logo belongs, and only the
+second half reached nobody. **A watch on half a promise is how the other half
+keeps being found by screenshot**, and it is this file's own "a lesson applied
+to one branch of an if/else is a lesson half-learnt", one module over.
+
+- ⚠️ **A LOST LOGO IS INVISIBLE BY DESIGN, which is why it needs the watch MORE
+  than the figures do.** `TBA` at least looks wrong; the banner renders a missing
+  logo as the Dexvra mark, which is the DESIGN for a logoless token and looks
+  entirely deliberate. Nothing about a lost one is distinguishable from a project
+  that uploaded nothing.
+- ⚠️ **So "the project gave us no logo" and "we could not fetch the one they gave
+  us" had to become different facts.** Only the second is a red mark — paging on
+  the first would be permanently red on every listing whose owner uploaded
+  nothing, the state `chart:preview` sat in for weeks. It is the line
+  `pons:check` §6 already draws between a creator who filled nothing in and an
+  app that dropped it.
+- **`got` is read from the BUFFER the renderer was handed**, never re-derived by
+  fetching the url again — a watch that re-asked would be answering a different
+  question from the one the banner asked, and could report success over a post
+  that drew the mark.
+- **ONE post is ONE alert**, naming both halves and BOTH scripts: a logo that
+  will not load and an indexer that will not answer are different layers, and
+  `market:check` and `logos:check` send the operator to different places. The
+  market sentence is dropped entirely when the only hole was the picture — a
+  `Why: neither DexScreener nor GeckoTerminal returned anything` printed over a
+  post that published a price and a cap sends them to the wrong one.
+- ⚠️ **The trending path fetched its logo BELOW its own watch**, so that sibling
+  could not have reported artwork it had not seen yet. Moved above it — the
+  half-made-fix shape this whole section is about, found while wiring it.
+
+**And a watch fires after a customer has already paid.** So `post:check` is the
+half that runs BEFORE, on the box, where the causes can actually be told apart:
+
+```bash
+cd bot && npm run post:check                      # the newest listings, assembled as a post assembles them
+cd bot && npm run post:check -- robinhood 0xfCd4CdEabe055315b1036A189eA54ca627Df390a
+```
+
+- ⚠️ **IT DRIVES THE POST'S OWN FUNCTIONS** — `_readPostMarket` (bounded,
+  DexScreener-first, budget included) and `_fetchLogoUrl` (through `/api/logo`,
+  gateway failover included), with `missingFigures` as the verdict. A check with
+  a second copy of the question is precisely how `fonts:check` printed nine green
+  ticks over a banner publishing boxes and how `trending:check` reported 44
+  refusals where the bot reported 25. A test refuses it growing its own market
+  read, its own indexer call, or its own proxy url.
+- ⚠️ **THREE VERDICTS, and the middle one is what keeps it readable.** `ok` ·
+  `honest` (nothing anywhere knows this token — the post telling the truth) ·
+  `fault` (a hole this box could have filled). Only `fault` turns the exit code,
+  so green means "the next post is safe" rather than "the script ran". A LOST
+  LOGO outranks `honest`, or the artwork half would hide behind the figures half
+  exactly as it did in production.
+- **No argument means ASK THE SITE for real listings.** This file's oldest rule,
+  broken four times: a command an operator can paste must contain only real
+  values, and bash reads `<` and `>` as redirects. A test scans the script for a
+  bracketed blank on any line carrying a shell verb.
+- **It prints the build stamp**, because every round of this has begun with
+  somebody reading a check as a statement about the fix they just deployed.
+
+So the layers, each closing a hole the others cannot:
+
+| layer | stops |
+| --- | --- |
+| the curve read, started with the indexers | a token with no pool publishing TBA |
+| the logo fetched through `/api/logo` | one dead gateway costing the artwork |
+| `postFigures` watching figures AND artwork | the operator being the detector |
+| `post:check` + the build stamp | "is the next listing going to be fine?", and a check read off a stale checkout |
+
+⚠️ **The remaining hole is the deploy, because it is not code.** The server only
+ever runs `main`, and this touches `bot/` AND `src/` — the bot's fix depends on
+the web app carrying `/api/pons` and `/api/logo`, so a `pm2 restart dexvra-bot`
+without the rebuild leaves the curve unpriceable and the logo unfetchable while
+the bot's own sha looks correct. `npm run post:check` printing the stamp is the
+cheapest tell.
+
+Four guarantees are MUTATION-TESTED rather than argued: the watch ignoring the
+artwork, a logoless listing paging anyway, the market sentence printed over an
+artwork-only hole, and the trending sibling losing its report — plus five on the
+check: an honest silence reported as a fault, the lost logo no longer
+outranking it, a lost logo alone ceasing to be a fault, the check growing its
+own market read, and a half-named token silently answered with other tokens.
+
 ## "perbaiki tampilan chartnya di mobile" — two rows of timeframe buttons, one of them dead
 
 The same screenshot, one panel down: our chart header — `$HACHIKO`, `LIN LOG`,
