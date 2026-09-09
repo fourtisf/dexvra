@@ -39,6 +39,7 @@ require('../src/config/loadEnv').loadEnv();
 const fulfil = require('../src/fulfillment');
 const postFigures = require('../src/postFigures');
 const api = require('../src/api/dexvra');
+const launchpads = require('../src/launchpads');
 const build = require('../src/helpers/build');
 const { chainOf } = require('../src/config/chains');
 
@@ -112,13 +113,30 @@ function report(row, a) {
   (unknown ? warn : bad)(head);
   if (keyHole) {
     note(`would publish: ${a.holes.join(' · ')} as TBA`);
+    // ⚠️ "NO LAUNCHPAD HAD IT" AND "NO LAUNCHPAD COVERS THIS CHAIN" ARE
+    // DIFFERENT FACTS, and this line asserted the first for both. `$JOVI` on
+    // Tron read `no indexer and no launchpad returned anything for this token`
+    // — but `padsFor('tron')` is EMPTY, so no launchpad was asked at all. That
+    // is "we could not ask" dressed as "nothing is there", this repo's most
+    // repeated rule, in the sentence written to explain a silence.
+    //
+    // It stays a ⚠️ rather than becoming a fault: this box genuinely cannot
+    // fill that hole today, and reddening here would be permanently red on
+    // every chain with no pre-migration source. What changes is that the
+    // operator can now tell a token nobody has ever heard of from a CHAIN we
+    // have no launchpad for — the second is a gap in this repo, not in the
+    // market, and only one of them is worth acting on.
+    const padded = launchpads.covers(row.chain);
     note(a.why
       ? `the read did not finish: ${a.why}`
       : a.live
         ? 'an indexer answered and publishes no price/cap for it'
-        : 'no indexer and no launchpad returned anything for this token');
+        : padded
+          ? 'no indexer and no launchpad returned anything for this token'
+          : `no indexer had it, and no launchpad covers ${row.chain} — a token still on a bonding curve there has no source at all`);
     if (!unknown) note('→ npm run market:check -- ' + row.chain);
-    if (unknown) note('nothing to fix here — this is the post being honest');
+    if (unknown && padded) note('nothing to fix here — this is the post being honest');
+    if (unknown && !padded) note(`honest about the token — but adding a ${row.chain} launchpad to shared/launchpads/pads.js is what would price a pre-migration one`);
   }
   if (a.lostArt) {
     note(`the row HAS a logo and it did not load — the banner would draw the Dexvra mark`);

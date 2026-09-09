@@ -8885,6 +8885,45 @@ cd bot && node scripts/run-tests.js test/curvePost.test.js   # 10 tests, no netw
 Mutation-tested: GT unbounded again, the slice forced on callers that never
 asked for one, and the post no longer declaring its budget — each fails a test.
 
+##### …and the green run's one ⚠️ was a sentence claiming a source we do not have
+
+`post:check` on `build c528bcc` is **green** — `Every post assembled here would
+publish its figures and its artwork`. `$GG` prices (`0.00001338 · mcap
+13382.9`) off pump.fun, which is the slice above working, and correctly notes
+its liquidity prints as `—` because a bonding curve has no pool depth.
+
+The one mark left is `$JOVI` on **Tron**, and reading its sentence is the point:
+
+```
+⚠ $JOVI — JOVI  tron/TSCs1xL6rCxt477W9hdoGK2kqD6u2Mc94r
+  no indexer and no launchpad returned anything for this token
+  nothing to fix here — this is the post being honest
+```
+
+⚠️ **`padsFor('tron')` IS EMPTY.** No launchpad returned anything because none
+was ASKED — there is no Tron pad in the registry at all. That is *"we could not
+ask"* dressed as *"nothing is there"*, this repo's most repeated rule, in the
+one sentence whose whole job is explaining a silence. And the line under it then
+closed the question: *nothing to fix here.*
+
+- **It stays ⚠️, never a fault**, and that is deliberate: this box genuinely
+  cannot fill that hole today, and reddening would be permanently red on every
+  chain with no pre-migration source — the `chart:preview` state.
+- **What changes is that the two are now distinguishable.** A token nobody has
+  ever heard of and a CHAIN this repo has no launchpad for are different
+  problems, and only the second is ours. The sentence names the chain and says a
+  pre-migration token there has no source at all.
+- ⚠️ **NO PAD WAS ADDED ON THE STRENGTH OF ONE TOKEN.** Tron's launchpad is
+  SunPump, and adding it is the documented cheap move (`verified: false`,
+  env-overridable, measured by `launchpads:check` on the box) — but nothing here
+  establishes that `$JOVI` is a bonding-curve token rather than one no indexer
+  covers, and guessing a host, a path AND a field shape off an assumption about
+  the symptom is building on two guesses instead of one. The check now says what
+  is missing; adding it is a decision with a measurement behind it.
+
+Mutation-tested: the sentence claiming a pad was asked again, and "nothing to
+fix here" printed over a chain with no pad — each fails a test.
+
 ## "perbaiki tampilan chartnya di mobile" — two rows of timeframe buttons, one of them dead
 
 The same screenshot, one panel down: our chart header — `$HACHIKO`, `LIN LOG`,

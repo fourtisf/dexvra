@@ -136,3 +136,32 @@ test("⚠️ one argument is refused, never silently answered with other tokens"
   assert.match(r.stdout, /BOTH its chain and its address/);
   assert.ok(!/newest listing\(s\), assembled/.test(r.stdout), "it must NOT check other tokens instead");
 });
+
+test("⚠️ 'no launchpad HAD it' and 'no launchpad COVERS this chain' are different facts", () => {
+  // `$JOVI` on Tron read `no indexer and no launchpad returned anything for
+  // this token` — but `padsFor('tron')` is EMPTY, so no launchpad was asked at
+  // all. That is "we could not ask" dressed as "nothing is there", in the one
+  // sentence whose whole job is explaining a silence.
+  const launchpads = require("../src/launchpads");
+  assert.equal(launchpads.covers("solana"), true, "precondition: solana has pads");
+  assert.equal(launchpads.covers("tron"), false, "precondition: tron has none — the reported case");
+
+  const src = fss
+    .readFileSync(require.resolve("../scripts/post-check.js"), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "");
+  assert.match(src, /launchpads\.covers\(row\.chain\)/, "the sentence must ask whether a pad exists");
+  assert.match(src, /no launchpad covers \$\{row\.chain\}/, "…and say so when none does");
+  // ⚠️ And the reassuring line may not be printed over a chain we simply never
+  // wired a source for: there IS something to fix there, just not on this box
+  // today, and "nothing to fix here" would close the question.
+  assert.match(src, /unknown && padded\) note\('nothing to fix here/);
+});
+
+test("…but a chain with no pad is still ⚠️, never a fault", () => {
+  // It stays honest: this box genuinely cannot fill that hole, and reddening
+  // would be permanently red on every chain with no pre-migration source —
+  // the state `chart:preview` sat in for weeks.
+  const a = A({ live: null, why: null, holes: ["price", "market cap", "liquidity"] });
+  assert.equal(verdict(a), "honest");
+});
