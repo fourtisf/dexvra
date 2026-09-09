@@ -40,6 +40,10 @@ function homeText() {
     `≥ +${c.minGainPct}%`,
     c.minMcapUsd ? `MC ≥ ${fmtCap(c.minMcapUsd)}` : null,
     c.minLiqUsd ? `liq ≥ ${fmtCap(c.minLiqUsd)}` : null,
+    // Said on the HOME screen, not only under ⚙️: the preview a tap away is
+    // rendered without a single figure, and an admin who forgot the toggle
+    // (or inherited it) would read that as the numbers having gone missing.
+    c.showPct ? null : "% hidden",
   ].filter(Boolean).join(" · ");
   const lines = [
     "📊 <b>Banner Top Gainers</b>",
@@ -87,6 +91,7 @@ function setText() {
     `🏦 <b>Minimum market cap:</b> ${c.minMcapUsd ? fmtCap(c.minMcapUsd) : "off"}`,
     `💧 <b>Minimum liquidity:</b> ${c.minLiqUsd ? fmtCap(c.minLiqUsd) : "off"}`,
     `🗓 <b>Date line on the banner:</b> ${c.showDate ? "yes" : "no"}`,
+    `📈 <b>Percentage gain (banner + caption):</b> ${c.showPct ? "yes" : "no — the board ranks by it, but no figure is printed"}`,
     `🏦 <b>Market cap in the caption:</b> ${c.showMcap ? "yes" : "no"}`,
     `🎨 <b>Background artwork:</b> ${hasBg() ? "custom" : "built-in gradient"}`,
     "",
@@ -106,6 +111,7 @@ function setKb() {
       Markup.button.callback(`${mark(c.showDate)} Date line`, "gn_date"),
       Markup.button.callback(`${mark(c.showMcap)} MC in caption`, "gn_mcap"),
     ],
+    [Markup.button.callback(`${mark(c.showPct)} % gain on banner + caption`, "gn_pct")],
     [Markup.button.callback(`${mark(c.pin)} Pin the post`, "gn_pin"), Markup.button.callback("🎨 Background", "gn_bg")],
     [Markup.button.callback("♻️ Reset settings", "gn_reset")],
     [Markup.button.callback("⬅ Back", "gn")],
@@ -245,6 +251,7 @@ async function sendPreview(ctx, template, { fresh = true, note = "" } = {}) {
     template: id,
     coins,
     dateText: cfg.showDate ? gainers.dateText(cfg.tz) : "",
+    showPct: cfg.showPct,
     bgPath: bgForRender(),
   });
   if (!image) {
@@ -252,7 +259,7 @@ async function sendPreview(ctx, template, { fresh = true, note = "" } = {}) {
     return null;
   }
 
-  const caption = gainers.captionPayload(coins, { tz: cfg.tz, showMcap: cfg.showMcap });
+  const caption = gainers.captionPayload(coins, { tz: cfg.tz, showMcap: cfg.showMcap, showPct: cfg.showPct });
   // Trimmed by channels/post's own fitter, so the preview is capped exactly the
   // way the real post will be (word boundary, no split surrogate, entities past
   // the cut dropped) instead of by a naive slice that could leave a dangling
@@ -398,11 +405,12 @@ function register(bot, deps) {
       template: sess.template,
       coins,
       dateText: cfg.showDate ? gainers.dateText(cfg.tz) : "",
+      showPct: cfg.showPct,
       bgPath: bgForRender(),
     });
     if (!image) return ctx.reply("⚠️ The banner didn't render — nothing was posted.", HTML);
     const channel = cfgStore.targetChannel(cfg);
-    const caption = gainers.captionPayload(coins, { tz: cfg.tz, showMcap: cfg.showMcap });
+    const caption = gainers.captionPayload(coins, { tz: cfg.tz, showMcap: cfg.showMcap, showPct: cfg.showPct });
     const job = await store.request({
       image,
       caption,
@@ -413,7 +421,7 @@ function register(bot, deps) {
       // admin-posted banner reached the channel and nothing else, while the
       // identical DAILY banner was tweeted. Built here because this is where the
       // coin objects are; the X client only exists in the main process.
-      xList: gainers.listText(coins, { showMcap: cfg.showMcap }),
+      xList: gainers.listText(coins, { showMcap: cfg.showMcap, showPct: cfg.showPct }),
       xDate: cfg.showDate ? gainers.dateText(cfg.tz) : "",
       by: `@${ctx.from.username || ctx.from.id}`,
       pin: cfg.pin,
@@ -524,6 +532,7 @@ function register(bot, deps) {
   }));
   bot.action("gn_date", toggle("showDate"));
   bot.action("gn_mcap", toggle("showMcap"));
+  bot.action("gn_pct", toggle("showPct"));
   bot.action("gn_pin", toggle("pin"));
 
   bot.action(/^gn_dt:(.+)$/, cb(async (ctx) => {

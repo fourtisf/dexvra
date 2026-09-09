@@ -3,6 +3,7 @@
 //   node scripts/gainers-preview.js            # sample data, all templates
 //   node scripts/gainers-preview.js --live     # LIVE data from the real sources
 //   node scripts/gainers-preview.js --live list5
+//   node scripts/gainers-preview.js --no-pct   # what the admin's "% gain OFF" publishes
 //
 // Sample mode needs no network, no DB and no bot token — it is the fastest way
 // to see what a layout change did. --live goes through gainers.topGainers(), so
@@ -20,6 +21,9 @@ const gainers = require("../src/gainers");
 const OUT = process.env.OUT_DIR || "/tmp";
 const args = process.argv.slice(2);
 const live = args.includes("--live");
+// The panel's 📈 toggle, for LOOKING at: a layout with its headline figure
+// removed is judged by the render, not by the test that proves it is gone.
+const showPct = !args.includes("--no-pct");
 const only = args.filter((a) => !a.startsWith("--"));
 
 // Real tokens, believable figures — a preview should look like a real board.
@@ -56,12 +60,12 @@ const SAMPLE = [
     } else {
       coins = SAMPLE.slice(0, n).map((c) => ({ ...c, url: `https://dexvra.io/token/${c.chain}/${c.address}` }));
     }
-    const buf = await gb.render({ template: id, coins, dateText, bgPath: process.env.GAINERS_BG || "" });
+    const buf = await gb.render({ template: id, coins, dateText, showPct, bgPath: process.env.GAINERS_BG || "" });
     if (!buf) {
       console.error(`${id}: render returned null`);
       continue;
     }
-    const out = path.join(OUT, `gainers-${id}.png`);
+    const out = path.join(OUT, `gainers-${id}${showPct ? "" : "-nopct"}.png`);
     fs.writeFileSync(out, buf);
     console.log(`rendered ${out} (${(buf.length / 1024).toFixed(0)} KB, ${gb.labelOf(id)})`);
   }

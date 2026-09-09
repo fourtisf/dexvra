@@ -1155,6 +1155,7 @@ function rowBase(ctx, S, { x, w, y, h, first, leader, accent }) {
 
 /** list5 — the Dexvra board: one panel, real columns, sparklines. */
 function layoutList(ctx, S, spec, coins) {
+  const showPct = spec.showPct !== false;
   const x = PAD * S;
   const w = (REF_W - 2 * PAD) * S;
   const n = coins.length;
@@ -1164,7 +1165,9 @@ function layoutList(ctx, S, spec, coins) {
   // length ∝ the real pct, never eased — and the widest bar always belongs to
   // rank 1 because gainers.js sorts by the same number.
   const cChg = x + w - 28 * S;
-  const cMcap = x + w - 268 * S;
+  // With the figure column gone the cap takes the edge, or the table reads as
+  // two columns with a hole where a third used to be.
+  const cMcap = showPct ? x + w - 268 * S : cChg;
   const barL = x + 620 * S;
   const barR = cMcap - 176 * S;
   const maxPct = Math.max(...coins.map((c) => Math.abs(Number(c.pct) || 0)), 1e-9);
@@ -1177,12 +1180,17 @@ function layoutList(ctx, S, spec, coins) {
       w,
       h: BAND_H * S,
       accent: spec.accent,
+      // With the percentage OFF the "24h gain" bar column and the "24h" figure
+      // column are not drawn, so their headings go too — a heading over an
+      // empty column is a table with a hole in it, not a table with a column
+      // hidden. The bar IS the percentage, drawn as length: keeping it while
+      // hiding the number would publish the figure by another route.
       head: [
         { x: x + 52 * S, label: "#", align: "right" },
         { x: x + 78 * S, label: "Token" },
-        { x: (barL + barR) / 2, label: "24h gain", align: "center" },
+        ...(showPct ? [{ x: (barL + barR) / 2, label: "24h gain", align: "center" }] : []),
         { x: cMcap, label: "Market cap", align: "right" },
-        { x: cChg, label: "24h", align: "right" },
+        ...(showPct ? [{ x: cChg, label: "24h", align: "right" }] : []),
       ],
     },
     ({ top, height }) => {
@@ -1212,30 +1220,33 @@ function layoutList(ctx, S, spec, coins) {
         ctx.restore();
         // chain chip beside the ticker, like the site's tier tag
 
-        // the gain bar: a faint full-length track, the real value over it
-        const zoneW = barR - barL;
-        const bh = 14 * S;
-        const up = (Number(c.pct) || 0) >= 0;
-        roundRect(ctx, barL, cy - bh / 2, zoneW, bh, bh / 2);
-        ctx.fillStyle = "rgba(255,255,255,.05)";
-        ctx.fill();
-        const frac = Math.max(0.035, Math.min(1, Math.abs(Number(c.pct) || 0) / maxPct));
-        const bw = zoneW * frac;
-        roundRect(ctx, barL, cy - bh / 2, bw, bh, bh / 2);
-        const bg2 = ctx.createLinearGradient(barL, 0, barL + bw, 0);
-        bg2.addColorStop(0, up ? SITE.mintDeep : SITE.downTo);
-        bg2.addColorStop(1, up ? SITE.upFrom : SITE.downFrom);
-        ctx.save();
-        ctx.shadowColor = hexA(up ? SITE.mint : SITE.red, 0.35);
-        ctx.shadowBlur = 12 * S;
-        ctx.fillStyle = bg2;
-        ctx.fill();
-        ctx.restore();
-        // lit end-point, the sparkline's own grammar
-        ctx.beginPath();
-        ctx.arc(barL + bw, cy, 3.4 * S, 0, Math.PI * 2);
-        ctx.fillStyle = "#EAFFF5";
-        ctx.fill();
+        // the gain bar: a faint full-length track, the real value over it —
+        // drawn only while the percentage is shown (see `head` above).
+        if (showPct) {
+          const zoneW = barR - barL;
+          const bh = 14 * S;
+          const up = (Number(c.pct) || 0) >= 0;
+          roundRect(ctx, barL, cy - bh / 2, zoneW, bh, bh / 2);
+          ctx.fillStyle = "rgba(255,255,255,.05)";
+          ctx.fill();
+          const frac = Math.max(0.035, Math.min(1, Math.abs(Number(c.pct) || 0) / maxPct));
+          const bw = zoneW * frac;
+          roundRect(ctx, barL, cy - bh / 2, bw, bh, bh / 2);
+          const bg2 = ctx.createLinearGradient(barL, 0, barL + bw, 0);
+          bg2.addColorStop(0, up ? SITE.mintDeep : SITE.downTo);
+          bg2.addColorStop(1, up ? SITE.upFrom : SITE.downFrom);
+          ctx.save();
+          ctx.shadowColor = hexA(up ? SITE.mint : SITE.red, 0.35);
+          ctx.shadowBlur = 12 * S;
+          ctx.fillStyle = bg2;
+          ctx.fill();
+          ctx.restore();
+          // lit end-point, the sparkline's own grammar
+          ctx.beginPath();
+          ctx.arc(barL + bw, cy, 3.4 * S, 0, Math.PI * 2);
+          ctx.fillStyle = "#EAFFF5";
+          ctx.fill();
+        }
 
         const mono = (val, cxx, color, size = 19 * S) => {
           ctx.save();
@@ -1310,7 +1321,7 @@ function layoutGridDense(ctx, S, spec, coins) {
   const x = PAD * S;
   const w = (REF_W - 2 * PAD) * S;
   const cChg = x + w - 26 * S;
-  const cMcap = x + w - 170 * S;
+  const cMcap = spec.showPct !== false ? x + w - 170 * S : cChg;
   boardPanel(
     ctx,
     S,
@@ -1324,7 +1335,8 @@ function layoutGridDense(ctx, S, spec, coins) {
         { x: x + 50 * S, label: "#", align: "right" },
         { x: x + 74 * S, label: "Token" },
         { x: cMcap, label: "MCap", align: "right" },
-        { x: cChg, label: "24h", align: "right" },
+        // no heading over a column that is not drawn (see layoutList)
+        ...(spec.showPct !== false ? [{ x: cChg, label: "24h", align: "right" }] : []),
       ],
     },
     ({ top, height }) => {
@@ -1377,7 +1389,7 @@ function layoutGridDense(ctx, S, spec, coins) {
 function rankedPanel(ctx, S, spec, coins, { x, y, w, h, rank0, cap = 128 }) {
   if (!coins.length) return;
   const cChg = x + w - 22 * S;
-  const cMcap = x + w - 158 * S;
+  const cMcap = spec.showPct !== false ? x + w - 158 * S : cChg;
   boardPanel(
     ctx,
     S,
@@ -1388,7 +1400,8 @@ function rankedPanel(ctx, S, spec, coins, { x, y, w, h, rank0, cap = 128 }) {
         { x: x + 46 * S, label: "#", align: "right" },
         { x: x + 70 * S, label: "Token" },
         { x: cMcap, label: "MCap", align: "right" },
-        { x: cChg, label: "24h", align: "right" },
+        // no heading over a column that is not drawn (see layoutList)
+        ...(spec.showPct !== false ? [{ x: cChg, label: "24h", align: "right" }] : []),
       ],
     },
     ({ top, height }) => {
@@ -1697,7 +1710,7 @@ function layoutSpotlight(ctx, S, spec, coins) {
   const rest = coins.slice(1);
   const px = hx + heroW + gapX;
   const cChg = px + panelW - 22 * S;
-  const cMcap = px + panelW - 158 * S;
+  const cMcap = spec.showPct !== false ? px + panelW - 158 * S : cChg;
   boardPanel(
     ctx,
     S,
@@ -1711,7 +1724,8 @@ function layoutSpotlight(ctx, S, spec, coins) {
         { x: px + 46 * S, label: "#", align: "right" },
         { x: px + 70 * S, label: "Token" },
         { x: cMcap, label: "MCap", align: "right" },
-        { x: cChg, label: "24h", align: "right" },
+        // no heading over a column that is not drawn (see layoutList)
+        ...(spec.showPct !== false ? [{ x: cChg, label: "24h", align: "right" }] : []),
       ],
     },
     ({ top, height }) => {
@@ -2228,14 +2242,19 @@ async function loadBackground(cv, bgPath) {
  * @param {string} o.template   template id (see TEMPLATE_IDS)
  * @param {Array}  o.coins      gainers.js coins (each may carry a `logo` Buffer)
  * @param {string} o.dateText   date line, or "" to hide it
+ * @param {boolean} o.showPct   false → no percentage figure anywhere on the artwork
  * @param {string} o.bgPath     optional admin-uploaded background artwork
  * @param {number} o.scale      output scale (1 = 1600×900)
  * @returns {Promise<Buffer|null>} PNG/JPEG buffer, or null on ANY failure
  */
-async function render({ template = DEFAULT_TEMPLATE, coins = [], dateText = "", bgPath = "", scale = 1 } = {}) {
+async function render({ template = DEFAULT_TEMPLATE, coins = [], dateText = "", showPct = true, bgPath = "", scale = 1 } = {}) {
   const cv = canvasLib();
   if (!cv) return null;
-  const spec = specOf(template);
+  // A COPY, carrying the switch: the shipped spec objects are shared by every
+  // render, and two posts rendering concurrently with different settings
+  // must not see each other's flag. Every layout and every board helper
+  // already receives `spec`, so this is the one place the toggle is decided.
+  const spec = { ...specOf(template), showPct: showPct !== false };
   const list = (coins || []).filter(Boolean).slice(0, spec.n);
   if (!list.length) return null; // nothing real to show → the caller posts nothing
   try {
@@ -2249,7 +2268,13 @@ async function render({ template = DEFAULT_TEMPLATE, coins = [], dateText = "", 
 
     // One formatter for the % on the artwork AND in the caption (helpers/format),
     // so a banner can never print a different number than the text beside it.
-    for (const c of list) c.pctLabel = fmtPct(c.pct);
+    //
+    // And ONE owner of whether it is drawn at all: every layout reads the
+    // figure off `c.pctLabel`, and bigPct/pctChip draw nothing for "", so the
+    // admin's toggle is decided here once rather than in seventeen call sites —
+    // a layout added later cannot forget it. The sparklines stay: they are
+    // normalised to their own span and carry direction only, never the number.
+    for (const c of list) c.pctLabel = spec.showPct ? fmtPct(c.pct) : "";
     await decodeLogos(cv, list);
     const bg = await loadBackground(cv, bgPath);
 

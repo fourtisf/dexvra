@@ -2916,6 +2916,68 @@ cd bot && node scripts/run-tests.js test/gainersSample.test.js test/gainersFilte
 **Config a fix depends on:** nothing — but `minMcapUsd` is a live setting, so an
 operator who wants the old unfiltered board sets it to `0`.
 
+### "presentase kenaikan bisa di on ofin" — one switch, three surfaces
+
+Asked with a screenshot of the Top Gainers post: the banner carrying
+`+2163%` and the caption repeating it under every ticker. The operator wants
+to be able to publish the RANKING without the FIGURES — and the caption
+builders already took a `showPct` that nothing wired (`listMarkup` and
+`listText` both defaulted it to `true` and no caller ever passed it), which is
+how a half-feature sits in a codebase for a year: it looks done from inside
+the module.
+
+- **ONE boolean, `showPct`, in `gainersConfig`** — read by the daily poster in
+  the main bot and by the preview/post/tweet in the admin bot, and handed to
+  the artwork, the Telegram caption and the tweet together. Three switches
+  would eventually disagree, and a banner shouting +2163% under a caption that
+  says nothing leaves the reader deciding which one is true.
+- **The artwork decides it ONCE.** Every layout draws the figure off
+  `c.pctLabel`, and `bigPct`/`pctChip` draw nothing for `""`, so the switch is
+  applied where the label is made rather than in seventeen call sites — a
+  layout added later cannot forget it. ⚠️ **It rides a COPY of the spec**: the
+  shipped spec objects are shared by every render, and stamping the flag onto
+  one would let the preview and the daily post, rendering at once, read each
+  other's setting. Pinned by a test that runs two renders concurrently.
+- **The list5 gain BAR goes with the figure.** It is the percentage drawn as
+  LENGTH, and keeping it while hiding the number would publish the figure by
+  another route. Its heading goes too, and so does every board's `24h`
+  column heading — grid10 shipped with an empty column under a `24H` heading
+  on the first cut, found by LOOKING at the render — and the market cap takes
+  the edge so the table reads as two columns rather than two with a hole.
+- **The sparklines STAY.** They are normalised to their own span and carry
+  direction only, never the number.
+- **The space is left, not re-composed.** A card designed around a 102px
+  figure has a quieter middle with it gone; re-flowing eleven layouts for an
+  optional figure is a design pass judged by looking, and what was asked for
+  is on/off. Recorded so it is not rediscovered as an oversight.
+- **The panel says so twice**: a `📈 % gain on banner + caption` toggle under
+  ⚙️ Settings, and `% hidden` in the home screen's filter line — the preview a
+  tap away renders without a single figure, and an admin who inherited the
+  setting would read that as the numbers having gone missing.
+- ⚠️ **A HEADING IS NOT ONE `fillText`.** `microLabel` tracks its letters by
+  hand — one draw PER GLYPH — so the first guard, a predicate on whole strings,
+  matched nothing and passed vacuously over grid10's stray heading. The test
+  re-joins single-glyph draws into runs and counts `24H` mentions against
+  hero1's (the layout with no board) rather than against zero, because the
+  header strip legitimately says `LIVE · 24H` on every template. A guard that
+  cannot see what the renderer does is `fonts:check`'s nine green ticks again.
+
+Ten guarantees are MUTATION-TESTED rather than argued: the label ignoring the
+switch, the bar drawn regardless, a heading left ungated, the spec shared
+instead of copied, the poster's caption and the panel's preview each forgetting
+the switch, the caption builder ignoring it, `set()` not persisting it, the
+button wired to nothing, and the switch defaulting to hidden. Each fails
+between one and two tests.
+
+```bash
+cd bot && node scripts/run-tests.js test/gainersPct.test.js test/gainersMenuWiring.test.js   # 22 tests, no network
+cd bot && node scripts/gainers-preview.js --no-pct                                            # every layout as the OFF setting publishes it
+```
+
+**Config a fix depends on:** nothing — it ships ON, which is what every install
+publishes today. This touches `bot/` only, so the deploy is the ecosystem
+restart and no web rebuild.
+
 ## "Beberapa token tidak punya logo" — and a guess that outranked the answer
 
 Reported with a screenshot of the board: `$BTCB`, `$SHIB`, `$TRUMP` drawing the

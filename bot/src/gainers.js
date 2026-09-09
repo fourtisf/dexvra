@@ -546,7 +546,7 @@ function listMarkup(coins, { showPct = true, showMcap = false } = {}) {
  *  `xUrl` is the board's own tweet when it has one; dropEmpty then removes the
  *  "Announce On X" line (and its blank separator) on the runs that have none —
  *  a dead label under a leaderboard is worse than no line. */
-function captionPayload(coins, { tz = "Asia/Jakarta", showMcap = false, xUrl = "" } = {}) {
+function captionPayload(coins, { tz = "Asia/Jakarta", showMcap = false, showPct = true, xUrl = "" } = {}) {
   const tpl = require("./templates");
   const { channelLinks } = require("./channels/format");
   return tpl.render(
@@ -554,7 +554,7 @@ function captionPayload(coins, { tz = "Asia/Jakarta", showMcap = false, xUrl = "
     {
       date: dateText(tz),
       count: String(coins.length),
-      list: listMarkup(coins, { showMcap }),
+      list: listMarkup(coins, { showMcap, showPct }),
       xUrl: xUrl || "",
       ...channelLinks(),
     },

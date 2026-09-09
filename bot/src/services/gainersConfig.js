@@ -41,6 +41,12 @@ const DEFAULTS = {
   minMcapUsd: 1_000_000, // market-cap floor (0 = off)
   showDate: true,
   showMcap: false, // market cap in the CAPTION (the artwork always shows it)
+  // THE PERCENTAGE, on the artwork AND in the caption/tweet together. ON by
+  // default — a gainers board with no gains printed is a list of tickers — and
+  // switchable because an operator may want exactly that: the ranking without
+  // the figures. One flag for both surfaces, or the banner says +2163% under a
+  // caption that says nothing, and a reader is left deciding which is true.
+  showPct: true,
   pin: false,
 };
 
@@ -62,7 +68,7 @@ const templateIds = () => require("../gainersBanner").TEMPLATE_IDS;
 function get() {
   const c = loadJSONSync(FILE, {}) || {};
   const g = { ...DEFAULTS };
-  for (const k of ["daily", "showDate", "showMcap", "pin"]) {
+  for (const k of ["daily", "showDate", "showMcap", "showPct", "pin"]) {
     if (typeof c[k] === "boolean") g[k] = c[k];
   }
   if (TIME_RE.test(String(c.dailyTime || ""))) g.dailyTime = normalizeTime(c.dailyTime);
@@ -101,7 +107,7 @@ function validTz(tz) {
  *  show them what was wrong instead of silently storing the default. */
 async function set(patch = {}) {
   const next = { ...get() };
-  for (const k of ["daily", "showDate", "showMcap", "pin"]) {
+  for (const k of ["daily", "showDate", "showMcap", "showPct", "pin"]) {
     if (typeof patch[k] === "boolean") next[k] = patch[k];
   }
   if (patch.dailyTime != null) {

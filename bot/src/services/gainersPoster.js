@@ -76,6 +76,7 @@ async function postNow({ template = null, by = "schedule" } = {}) {
     template: id,
     coins: res.coins,
     dateText: cfg.showDate ? gainers.dateText(cfg.tz) : "",
+    showPct: cfg.showPct,
     bgPath: cfgStore.bgForRender(),
   });
   if (!image) return { ok: false, reason: "banner render failed" };
@@ -86,7 +87,7 @@ async function postNow({ template = null, by = "schedule" } = {}) {
   // ordering every other post type uses. The line drops itself when there is no
   // tweet, so a slow or unconfigured X costs the link and nothing else.
   const xUrl = await tweetGainers(res.coins, image, cfg);
-  const caption = gainers.captionPayload(res.coins, { tz: cfg.tz, showMcap: cfg.showMcap, xUrl });
+  const caption = gainers.captionPayload(res.coins, { tz: cfg.tz, showMcap: cfg.showMcap, showPct: cfg.showPct, xUrl });
   const msg = await post.sendPhoto(channel, { source: image }, caption, { pin: cfg.pin });
   if (!msg || !msg.message_id) return { ok: false, reason: `${channel} refused the post — is the bot an admin there?` };
   const symbols = res.coins.map((c) => c.symbol);
@@ -117,7 +118,7 @@ async function tweetBoard(list, dateText, image) {
 
 /** The daily auto-post's tweet — builds the plain-text board from the coins. */
 const tweetGainers = (coins, image, cfg) =>
-  tweetBoard(gainers.listText(coins, { showMcap: cfg.showMcap }), cfg.showDate ? gainers.dateText(cfg.tz) : "", image);
+  tweetBoard(gainers.listText(coins, { showMcap: cfg.showMcap, showPct: cfg.showPct }), cfg.showDate ? gainers.dateText(cfg.tz) : "", image);
 
 /** An admin-queued banner's tweet. Its copy was built by the admin bot and
  *  travelled on the job; a job queued before this existed has no xList and is

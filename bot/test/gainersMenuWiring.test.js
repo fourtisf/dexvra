@@ -295,3 +295,19 @@ test.afterEach(() => {
   Telegram.prototype.callApi = REAL_CALL_API; // never leave the prototype patched
 });
 test.after(() => fs.rmSync(DIR, { recursive: true, force: true }));
+
+test("📈 the percentage toggle flips showPct from the panel, and the settings screen says so", async () => {
+  // "bisakah anda buat fitur kaya presentase kenaikan bisa di on ofin" — the
+  // switch is a tap, not an .env line, and the tap has to reach the store the
+  // MAIN bot's poster reads. Driven through a real callback update: a source
+  // scan would pass on a `gn_pct` button wired to nothing.
+  const cfg = require("../src/services/gainersConfig");
+  await cfg.set({ showPct: true });
+  const h = harness();
+  await h.tap("gn_pct");
+  assert.strictEqual(cfg.get().showPct, false, "the tap did not reach the store");
+  assert.match(h.sent().join("\n"), /Percentage gain[^\n]*\bno\b/, "the settings screen still claims the figure is shown");
+  await h.tap("gn_pct");
+  assert.strictEqual(cfg.get().showPct, true);
+  assert.match(h.sent().join("\n"), /Percentage gain[^\n]*\byes\b/);
+});
