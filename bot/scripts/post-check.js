@@ -42,6 +42,7 @@ const api = require('../src/api/dexvra');
 const launchpads = require('../src/launchpads');
 const build = require('../src/helpers/build');
 const { chainOf } = require('../src/config/chains');
+const { DEXVRA_API_BASE } = require('../src/config/constants');
 
 const G = '\x1b[32m', R = '\x1b[31m', Y = '\x1b[33m', D = '\x1b[2m', X = '\x1b[0m';
 const ok = (m) => console.log(`  ${G}✓${X} ${m}`);
@@ -61,13 +62,18 @@ const DEFAULT_N = Math.max(1, Number(process.env.POST_CHECK_N) || 5);
  */
 async function assemble(row) {
   const { live, why } = await fulfil._readPostMarket(row.chain, row.address, 'post:check');
-  const logoBytes = row.logoUrl ? await fulfil._fetchLogoUrl(row.logoUrl) : null;
+  // The X form: the bytes AND the facts behind them — which gateway served it
+  // and how fast, or the proxy's per-gateway reason when none did. The check
+  // drives the post's own fetch, never its own idea of one.
+  const art = row.logoUrl ? await fulfil._fetchLogoUrlX(row.logoUrl) : null;
+  const logoBytes = art ? art.bytes : null;
   return {
     live,
     why,
     holes: postFigures.missingFigures(live),
     lostArt: postFigures.artworkLost({ wanted: !!row.logoUrl, got: !!logoBytes }),
     logoBytes,
+    art,
   };
 }
 
@@ -102,7 +108,18 @@ function report(row, a) {
 
   if (level === 'ok') {
     ok(head);
-    note(`price ${a.live.priceUsd} · mcap ${a.live.mcap} · ${row.logoUrl ? 'artwork loads' : 'no logo on file (the Dexvra mark is the design)'}`);
+    const artLine = !row.logoUrl
+      ? 'no logo on file (the Dexvra mark is the design)'
+      : a.art && a.art.source === 'upload'
+        ? 'artwork loads (our own upload)'
+        : `artwork loads${a.art && a.art.via ? ` via ${a.art.via}` : ''}`;
+    note(`price ${a.live.priceUsd} · mcap ${a.live.mcap} · ${artLine}`);
+    // A GREEN row whose artwork came from a public gateway is green TODAY. That
+    // is the flip: the same url loaded on two deploys and failed on two with no
+    // code change. Pinning it makes today's answer permanent.
+    if (row.logoUrl && a.art && a.art.source !== 'upload') {
+      note(`— from a public gateway; pin it so no post ever asks one again: npm run post:check -- ${row.chain} ${row.address} --pin`);
+    }
     // A missing liquidity is normal on a curve and is never a failure here —
     // launchpads.js returns null deliberately, because a 0 reads as a rug.
     if (a.holes.length) note(`liquidity would print as — (a bonding curve has no pool depth)`);
@@ -141,15 +158,57 @@ function report(row, a) {
   if (a.lostArt) {
     note(`the row HAS a logo and it did not load — the banner would draw the Dexvra mark`);
     note(row.logoUrl);
-    note('→ npm run logos:check -- ' + row.chain + ' ' + row.address);
+    if (a.art && (a.art.status || a.art.why)) note(`/api/logo answered ${a.art.status || '?'}${a.art.why ? `: ${a.art.why}` : ''}`);
+    // ONE owner of the class — postFigures.artFailure — shared with the alert.
+    const f = postFigures.artFailure(a.art || {});
+    note(f.sentence);
+    note('→ ' + postFigures.artRemedy(f.cls, row.chain, row.address));
   }
   return level !== 'fault';
 }
 
+/**
+ * --pin: the ONE write this check may make, and only for a token named on the
+ * command line. It DRIVES fulfil._pinLogo with the bytes that just loaded in
+ * this run — never a guess — then re-reads the new url through the X form,
+ * which for an upload is a localhost read with no gateway anywhere in it.
+ */
+async function pinRow(row, a) {
+  if (!row.logoUrl) return note('nothing to pin — no logo on file');
+  if (a.art && a.art.source === 'upload') return note('nothing to pin — already our own upload');
+  if (!a.logoBytes) return note('nothing to pin — the artwork did not load in this run, so there are no bytes to keep');
+  const before = row.logoUrl;
+  const after = await fulfil._pinLogo(row, before, a.logoBytes);
+  if (after === before) return bad(`not pinned — the row no longer holds that url, the upload was declined, or INTERNAL_API_TOKEN is unset (see the [fulfil] line above)`);
+  const check = await fulfil._fetchLogoUrlX(after);
+  if (check.bytes && check.source === 'upload') return ok(`pinned — artwork now served from this box: ${after}`);
+  bad(`pinned to ${after} but it did not read back (${check.status || 'no answer'}) — check data/uploads and the media route`);
+}
+
+/** The web app's build, off the same field deploy.sh verifies, or null. */
+async function webBuild() {
+  try {
+    const r = await fetch(`${DEXVRA_API_BASE}/api/tokens`, { signal: AbortSignal.timeout(2000) });
+    const j = await r.json();
+    return j && typeof j.build === 'string' ? j.build.replace(/\+dirty$/, '') : null;
+  } catch {
+    return null;
+  }
+}
+
 async function main() {
-  console.log(`\nWould the next paid post publish complete?   ${D}build ${build.stamp()}${X}\n`);
+  // ⚠️ BOTH STAMPS. This fix is bot AND src, and the two processes can sit on
+  // different builds — a check run mid-`npm run build` reads a Next server on
+  // a replaced build, which answers every request with a 400 that used to
+  // print as "no gateway served it". That was the one cause of run 4's line
+  // nothing in the log could rule out.
+  const web = await webBuild();
+  const botSha = build.stamp().replace(/\+dirty$/, '');
+  console.log(`\nWould the next paid post publish complete?   ${D}build ${build.stamp()} · web ${web || 'unknown (site cold)'}${X}\n`);
+  if (web && web !== botSha) bad(`the web app is serving ${web} but this checkout is ${botSha} — a run mid-deploy is about the deploy, not the artwork`);
 
   const argv = process.argv.slice(2).filter((a) => !a.startsWith('-'));
+  const wantPin = process.argv.slice(2).includes('--pin');
   let rows;
 
   if (argv.length >= 2) {
@@ -165,6 +224,12 @@ async function main() {
     const found = await api.findListing(chain, address).catch(() => null);
     rows = [found || { chain, address, sym: null, name: null, logoUrl: null }];
     if (!found) note('not a listing on the site — checking the market read for that address anyway');
+  } else if (wantPin) {
+    // ⚠️ --pin WRITES, and it writes to a listing somebody may have paid for.
+    // Five rows on one flag is the hazard; a named token is the contract.
+    bad('--pin needs the token named: its chain AND its address.');
+    note('Run it with no arguments first — the green rows print the exact --pin line for each.');
+    process.exit(1);
   } else if (argv.length === 1) {
     // ⚠️ ONE ARGUMENT IS NOT "no argument". Falling through to the newest
     // listings here would silently answer a question nobody asked — the
@@ -204,6 +269,7 @@ async function main() {
       continue;
     }
     if (!report(row, a)) bad_++;
+    if (wantPin) await pinRow(row, a);
   }
 
   console.log('');

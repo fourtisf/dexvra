@@ -122,3 +122,51 @@ test("the rows array is not mutated", () => {
   applyLostUpload(rows, "solana", "mint");
   assert.equal(rows[0].logoUrl, UPLOAD);
 });
+
+// ── applyPinnedLogo: a COMPARE-AND-SWAP, never an overwrite ─────────────────
+import { applyPinnedLogo } from "./logoWrite.ts";
+
+const PIN_FROM = "https://ipfs.io/ipfs/bafybeibk74wtpsgccfehq4zatxgorv5pwfmtpy7qo7hj6kbvko5nmvokba";
+const PIN_TO = "/api/media/0123456789abcdef01234567.png";
+const pinRow = (logoUrl?: string, address = "BzAtM6svpCCHxjH7ZzNqBiPSm2D2v7K257damascpump") =>
+  ({ chain: "solana", address, logoUrl }) as never;
+
+test("pins when the row still holds exactly fromUrl", () => {
+  const out = applyPinnedLogo([pinRow(PIN_FROM)], "solana", "BzAtM6svpCCHxjH7ZzNqBiPSm2D2v7K257damascpump", PIN_FROM, PIN_TO);
+  assert.equal(out.wrote, true);
+  assert.equal((out.rows[0] as { logoUrl?: string }).logoUrl, PIN_TO);
+});
+
+test("⚠️ refuses a row that now holds a DIFFERENT logo — the admin-changed race", () => {
+  const rows = [pinRow("https://cdn.example/new.png")];
+  const out = applyPinnedLogo(rows, "solana", "BzAtM6svpCCHxjH7ZzNqBiPSm2D2v7K257damascpump", PIN_FROM, PIN_TO);
+  assert.equal(out.wrote, false);
+  assert.equal(out.rows, rows, "the same array back — nothing written");
+  assert.equal((rows[0] as { logoUrl?: string }).logoUrl, "https://cdn.example/new.png");
+});
+
+test("⚠️ a pin is not a FILL — a blank row is left blank", () => {
+  // A blank may have been cleared on purpose; filling is applyResolvedLogo's job.
+  const out = applyPinnedLogo([pinRow(undefined)], "solana", "BzAtM6svpCCHxjH7ZzNqBiPSm2D2v7K257damascpump", PIN_FROM, PIN_TO);
+  assert.equal(out.wrote, false);
+});
+
+test("⚠️ toUrl must be OUR upload shape — this path may only ever point a row at our disk", () => {
+  const out = applyPinnedLogo([pinRow(PIN_FROM)], "solana", "BzAtM6svpCCHxjH7ZzNqBiPSm2D2v7K257damascpump", PIN_FROM, "https://other.example/x.png");
+  assert.equal(out.wrote, false);
+});
+
+test("fromUrl must be external — an upload is never re-pinned", () => {
+  const out = applyPinnedLogo([pinRow(PIN_TO)], "solana", "BzAtM6svpCCHxjH7ZzNqBiPSm2D2v7K257damascpump", PIN_TO, PIN_TO);
+  assert.equal(out.wrote, false);
+});
+
+test("touches only chain+address — address case-insensitive, chain exact", () => {
+  const rows = [pinRow(PIN_FROM, "bzatm6svpcchxjh7zznqbipsm2d2v7k257damascpump"), pinRow(PIN_FROM, "OTHER")];
+  const out = applyPinnedLogo(rows, "solana", "BzAtM6svpCCHxjH7ZzNqBiPSm2D2v7K257damascpump", PIN_FROM, PIN_TO);
+  assert.equal(out.wrote, true);
+  assert.equal((out.rows[0] as { logoUrl?: string }).logoUrl, PIN_TO);
+  assert.equal((out.rows[1] as { logoUrl?: string }).logoUrl, PIN_FROM, "a different address is untouched");
+  const wrongChain = applyPinnedLogo([pinRow(PIN_FROM)], "bsc", "BzAtM6svpCCHxjH7ZzNqBiPSm2D2v7K257damascpump", PIN_FROM, PIN_TO);
+  assert.equal(wrongChain.wrote, false);
+});

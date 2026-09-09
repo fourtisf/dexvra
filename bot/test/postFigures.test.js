@@ -185,11 +185,58 @@ test("BOTH fulfilment paths report the artwork, from the buffer the banner gets"
   for (const r of reports) {
     assert.match(r, /art: \{/, `every report carries the artwork:\n${r}`);
     assert.match(r, /got: !!logoBuffer/, "…read off the buffer, never re-fetched from the url");
+    // …and the facts the fetch returned, so the alert can say WHICH refusal.
+    // ⚠️ INSIDE THE `art:` SUB-BLOCK. Matched against the whole call this was
+    // satisfied by the figures' own `why: marketWhy` — a mutant that dropped the
+    // artwork's why survived while the test claimed to cover it.
+    const art = /art: \{([\s\S]*?)\}/.exec(r);
+    assert.ok(art, "an art block");
+    assert.match(art[1], /reached:/, "the proxy's reached rides with the artwork");
+    assert.match(art[1], /why:/, "…and its why, or the alert cannot say which refusal");
   }
   // ⚠️ AND THE TRENDING FETCH MUST SIT ABOVE ITS WATCH. It used to be below,
   // and a watch cannot report artwork it has not seen yet.
-  const fetchAt = src.indexOf("const logoBuffer = await fetchLogoUrl(row.logoUrl);");
+  // The X form now — the fetch that also carries reached/status/why.
+  const fetchAt = src.indexOf("const logoFetch = await fetchLogoUrlX(row.logoUrl);");
   const watchAt = src.indexOf('kind: "trending", chain: p.chain');
   assert.ok(fetchAt > 0 && watchAt > 0);
   assert.ok(fetchAt < watchAt, "the trending logo is fetched BEFORE the watch reads it");
+});
+
+
+// ── artFailure: ONE owner of the class, shared by the alert and the check ────
+//
+// The classes send an operator to different places, and the proxy's
+// x-logo-why is what separates them. Tested by CALLING it.
+
+test("artFailure classes a refusal by what the proxy actually said", () => {
+  assert.equal(pf.artFailure({ reached: false }).cls, "web-app");
+  assert.equal(pf.artFailure({ reached: true, status: 404, why: "ipfs.io: served text/html after 900ms" }).cls, "not-an-image");
+  // ⚠️ A 429 is a gateway refusing THIS SERVER — not cold content. Classing it
+  // as "no gateway had it" sends the operator to pin something a pin cannot fix.
+  assert.equal(pf.artFailure({ reached: true, status: 404, why: "ipfs.io: no answer after 5000ms; gateway.pinata.cloud: HTTP 429 after 310ms" }).cls, "gateway-refusing");
+  assert.equal(pf.artFailure({ reached: true, status: 400, why: null }).cls, "refused-by-us");
+  assert.equal(pf.artFailure({ reached: true, status: 404, why: "ipfs.io: no answer after 5000ms; dweb.link: no answer after 4800ms" }).cls, "no-gateway-had-it");
+  assert.equal(pf.artFailure({ reached: true, status: 502, why: null }).cls, "web-app");
+});
+
+test("artRemedy names the ONE command per class, with real values", () => {
+  assert.equal(pf.artRemedy("no-gateway-had-it", "solana", "BzAt"), "npm run post:check -- solana BzAt --pin");
+  assert.equal(pf.artRemedy("gateway-refusing", "solana", "BzAt"), "npm run post:check -- solana BzAt --pin");
+  assert.equal(pf.artRemedy("not-an-image", "solana", "BzAt"), "npm run logos:check -- solana BzAt");
+  assert.equal(pf.artRemedy("refused-by-us", "solana", "BzAt"), "npm run logos:check -- solana BzAt");
+});
+
+test("⚠️ the alert carries the proxy's verdict, the class sentence and the --pin line", () => {
+  const html = pf.figureAlert(args({
+    art: { wanted: true, got: false, url: "https://ipfs.io/ipfs/bafk", reached: true, status: 404, why: "ipfs.io: no answer after 5000ms; dweb.link: no answer after 4800ms" },
+  }));
+  assert.match(html, /\/api\/logo answered 404: ipfs\.io: no answer after 5000ms/);
+  assert.match(html, /flips with gateway cache state/, "the class sentence, from the one owner");
+  assert.match(html, /npm run post:check -- bsc 0xabc --pin/, "the remedy carries the order's real values");
+  assert.ok(!/logos:check/.test(html), "not the deterministic remedy for a flaky class");
+});
+
+test("…and a healthy post with pinned artwork still pages nobody", () => {
+  assert.equal(pf.figureAlert(args({ art: { wanted: true, got: true, url: "/api/media/0123456789abcdef01234567.png", reached: true, status: 200, why: null } })), null);
 });

@@ -14,7 +14,7 @@ function fillSeedSocials(r: { sym: string; website?: string; twitter?: string; t
   if (!r.telegram) r.telegram = s.telegram;
 }
 import { kvGet, kvSet, mongoConfigured } from "./mongo";
-import { applyLostUpload, applyResolvedLogo, healUploadUrls } from "./logoWrite";
+import { applyLostUpload, applyPinnedLogo, applyResolvedLogo, healUploadUrls } from "./logoWrite";
 import { keepStatus, mergeRelist } from "./relist";
 
 // Mongo mirror key for this store (doc _id in the `web` collection).
@@ -248,6 +248,19 @@ export async function updateListing(id: string, patch: Partial<ListingRow>): Pro
  * Returns whether a row was actually written, so a sweep can report how much of
  * its work became permanent instead of only living in this process's memory.
  */
+/** Point a row that still holds `fromUrl` at our own copy `toUrl` — the CAS in
+ *  lib/logoWrite, run inside `mutate` so the compare and the swap are one
+ *  atomic edit against the live rows and the Mongo mirror. */
+export async function pinLogo(chain: string, address: string, fromUrl: string, toUrl: string): Promise<boolean> {
+  let wrote = false;
+  await mutate((rows) => {
+    const out = applyPinnedLogo(rows, chain, address, fromUrl, toUrl);
+    wrote = out.wrote;
+    return out.rows as StoredListing[];
+  });
+  return wrote;
+}
+
 export async function setResolvedLogo(chain: string, address: string, logoUrl: string): Promise<boolean> {
   let wrote = false;
   await mutate((rows) => {

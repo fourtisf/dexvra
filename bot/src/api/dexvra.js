@@ -188,6 +188,17 @@ async function canCreate() {
 }
 
 /** Best-effort health check of the internal API + token. */
+/**
+ * Point a listing at OUR OWN COPY of its artwork — a compare-and-swap on the
+ * site (lib/logoWrite applyPinnedLogo): true only when the row still held
+ * `fromUrl`. `false` is an ordinary answer, not an error — an admin changed the
+ * logo in the window, and their decision wins.
+ */
+async function pinLogo({ chain, address, fromUrl, toUrl }) {
+  const out = await call("POST", "/api/internal/listings/pin-logo", { chain, address, fromUrl, toUrl });
+  return Boolean(out && out.pinned);
+}
+
 async function ping() {
   try {
     await getListings();
@@ -211,5 +222,6 @@ module.exports = {
   expireTrending,
   bookBanner,
   uploadImage,
+  pinLogo,
   ping,
 };

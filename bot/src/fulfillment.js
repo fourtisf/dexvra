@@ -212,8 +212,20 @@ function proxiedLogo(base, logoUrl) {
  */
 const LOGO_PROXY_MS = 15_000;
 
-async function fetchLogoUrl(logoUrl) {
-  if (!logoUrl) return null;
+/**
+ * The facts behind a logo fetch — `{bytes, reached, status, why, via, source}`.
+ *
+ * `fetchLogoUrl` below is this with everything but the bytes thrown away, and
+ * fulfilment's behaviour is byte-identical through it. The X form exists
+ * because the WATCH and the CHECK need the rest: `why` is the proxy's own
+ * per-gateway reason (x-logo-why), `via` which gateway served it and how fast
+ * (x-logo-via), `source` whether it was our own upload, the proxy, or a raw
+ * fallback. "A value nobody can read is the same as no value" — and until now
+ * the only reader of x-logo-why in the repo was logos:check.
+ */
+async function fetchLogoUrlX(logoUrl) {
+  const none = { bytes: null, reached: false, status: 0, why: null, via: null, source: null };
+  if (!logoUrl) return none;
   // An upload is our own file on our own disk — nothing to fail over to, no
   // third-party host to vouch for, and no public round trip: it is read over
   // DEXVRA_API_BASE (localhost), not SITE_URL. ⚠️ In EITHER spelling — the
@@ -221,11 +233,11 @@ async function fetchLogoUrl(logoUrl) {
   // ours too, and sending it to the proxy is how a banner lost artwork sitting
   // on this machine while the warn blamed "no gateway". See helpers/mediaUrl.
   const own = mediaPath(logoUrl);
-  if (own) return (await readImage(`${DEXVRA_API_BASE}${own}`)).bytes;
-  if (!logoUrl.startsWith("http")) return (await readImage(`${SITE_URL}${logoUrl}`)).bytes;
+  if (own) return { ...(await readImage(`${DEXVRA_API_BASE}${own}`)), source: "upload" };
+  if (!logoUrl.startsWith("http")) return { ...(await readImage(`${SITE_URL}${logoUrl}`)), source: "upload" };
 
   const viaProxy = await readImage(proxiedLogo(DEXVRA_API_BASE, logoUrl), LOGO_PROXY_MS);
-  if (viaProxy.bytes) return viaProxy.bytes;
+  if (viaProxy.bytes) return { ...viaProxy, source: "proxy" };
   // ⚠️ A REFUSAL BY THE PROXY IS AN ANSWER AND IS NOT RETRIED DIRECTLY: it
   // means neither the site nor this banner may render that url, and drawing it
   // here would put a picture in the channel that the token's own page cannot
@@ -238,6 +250,7 @@ async function fetchLogoUrl(logoUrl) {
   // trending slot), and a shared "was the proxy up" variable would be read by
   // whichever call happened to look after somebody else's write.
   const direct = viaProxy.reached ? { bytes: null } : await readImage(logoUrl);
+  if (direct.bytes) return { ...direct, source: "direct" };
   if (!direct.bytes) {
     // Never silent again — and never one sentence for two facts. A proxy that
     // ANSWERED means no gateway had this CID as an image, which is about the
@@ -253,11 +266,67 @@ async function fetchLogoUrl(logoUrl) {
         : `[fulfil] logo unreadable — /api/logo did not answer in ${LOGO_PROXY_MS}ms (is the web app up?), banner falls back to the Dexvra mark: ${logoUrl}`,
     );
   }
-  return direct.bytes;
+  // The proxy's facts travel back — reached/status/why are ITS answer; the raw
+  // fallback that also failed adds nothing an operator can act on.
+  return { ...viaProxy, bytes: null, source: viaProxy.reached ? "proxy" : "direct" };
 }
 
-/** `{bytes, reached}` — `reached` is whether the HOST answered at all, which is
- *  a different fact from whether it gave us an image. */
+/** The bytes and nothing else — see fetchLogoUrlX. */
+async function fetchLogoUrl(logoUrl) {
+  return (await fetchLogoUrlX(logoUrl)).bytes;
+}
+
+/**
+ * PIN THE ARTWORK: upload the bytes a post just verified to /api/media and
+ * point the row at our own copy, so no later render asks a gateway for it.
+ *
+ * ⚠️ THIS IS WHAT ENDS "mengapa selalu seperti ini". $GG's picture was a link
+ * to a public IPFS gateway; whether that gateway had the CID cached changed
+ * hour by hour, and the same code loaded it on two deploys and failed on two.
+ * A logo that has loaded ONCE is bytes in hand — the bot already owns both
+ * primitives (api.uploadImage → data/uploads → /api/media; an authenticated
+ * store write), and every consumer already understands the upload shape.
+ *
+ * Returns the url THIS post should render from: the pinned copy, or the
+ * original when nothing was pinned. BEST-EFFORT and BOUNDED: a pin may never
+ * cost a paid post, so a refused CAS, a failed upload, an SVG the upload route
+ * declines, or a hang past PIN_LOGO_MS all return the original url — and a
+ * late completion still lands in the store for the next post.
+ *
+ * The write on the site is a compare-and-swap (applyPinnedLogo): if an admin
+ * changed the logo between this fetch and this pin, their decision wins and
+ * `pinned:false` comes back, which is logged and not an error.
+ */
+const PIN_LOGO_MS = 4_000;
+async function pinLogo(row, logoUrl, bytes) {
+  if (!logoUrl || !bytes) return logoUrl;
+  if (mediaPath(logoUrl)) return logoUrl; // already ours, in either spelling
+  if (!/^https?:\/\//i.test(logoUrl)) return logoUrl;
+  const work = (async () => {
+    const toUrl = await api.uploadImage(bytes, "logo.png", "image/png");
+    if (!toUrl) return logoUrl;
+    const pinned = await api.pinLogo({ chain: row.chain, address: row.address, fromUrl: logoUrl, toUrl });
+    if (pinned) {
+      log.info(`[fulfil] logo pinned to our disk: ${row.chain}/${row.address} ${logoUrl} → ${toUrl}`);
+      return toUrl;
+    }
+    log.info(`[fulfil] logo pin skipped — the row no longer holds that url: ${row.chain}/${row.address}`);
+    return logoUrl;
+  })().catch((e) => {
+    // An SVG or an unsniffable file is declined by the upload route; a dead
+    // site refuses the call. Neither may cost the post — the original url is
+    // exactly what it would have rendered from before this existed.
+    log.info(`[fulfil] logo pin declined — ${e && e.message ? e.message : e}; rendering from ${logoUrl}`);
+    return logoUrl;
+  });
+  return bounded(work, PIN_LOGO_MS, () => {
+    log.warn(`[fulfil] logo pin passed ${PIN_LOGO_MS}ms — rendering this post from ${logoUrl}; a late pin still lands for the next one`);
+    return logoUrl;
+  });
+}
+
+/** `{bytes, reached, status, why, via}` — `reached` is whether the HOST answered
+ *  at all, which is a different fact from whether it gave us an image. */
 async function readImage(url, timeoutMs = 12000) {
   try {
     const r = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
@@ -267,11 +336,11 @@ async function readImage(url, timeoutMs = 12000) {
     // function threw it away, so an allowlist 400, a directory listing, a dead
     // gateway and a Next process on a replaced build all printed "no gateway
     // served it as an image". Three lenses found it independently.
-    const why = typeof r.headers?.get === "function" ? r.headers.get("x-logo-why") : null;
-    if (!r.ok) return { bytes: null, reached: true, status: r.status, why: why || null };
-    return { bytes: Buffer.from(await r.arrayBuffer()), reached: true, status: r.status, why: null };
+    const hdr = (k) => (typeof r.headers?.get === "function" ? r.headers.get(k) : null) || null;
+    if (!r.ok) return { bytes: null, reached: true, status: r.status, why: hdr("x-logo-why"), via: null };
+    return { bytes: Buffer.from(await r.arrayBuffer()), reached: true, status: r.status, why: null, via: hdr("x-logo-via") };
   } catch {
-    return { bytes: null, reached: false, status: 0, why: null };
+    return { bytes: null, reached: false, status: 0, why: null, via: null };
   }
 }
 
@@ -455,7 +524,15 @@ async function fulfillListing(ctx, order) {
   }
 
   // 4. Channel posts (best-effort) — dynamic per-token banners.
-  if (!logoBuffer && input.logoUrl) logoBuffer = await fetchLogoUrl(input.logoUrl);
+  let logoFetch = null;
+  if (!logoBuffer && input.logoUrl) {
+    logoFetch = await fetchLogoUrlX(input.logoUrl);
+    logoBuffer = logoFetch.bytes;
+  }
+  // PIN IT, before reportFigures/postMedia/photoSource read the url, so THIS
+  // post renders from our own copy and Telegram is handed /api/media on the
+  // last-resort path. A Telegram-uploaded logo is already ours (p.logoFileId).
+  if (logoBuffer && input.logoUrl && !p.logoFileId) input.logoUrl = await pinLogo(input, input.logoUrl, logoBuffer);
   // Animated logo custom-emoji (per-token pack, shown inline in channel posts
   // via GramJS). Best-effort — ensureTokenEmoji never throws.
   step("create");
@@ -487,7 +564,10 @@ async function fulfillListing(ctx, order) {
     // The other half of the same promise, read off the BUFFER the banner is
     // about to be handed rather than re-derived from the url — a second fetch
     // would be asking a different question from the one the artwork asked.
-    art: { wanted: !!(p.logoFileId || input.logoUrl), got: !!logoBuffer, url: input.logoUrl },
+    art: {
+      wanted: !!(p.logoFileId || input.logoUrl), got: !!logoBuffer, url: input.logoUrl,
+      reached: logoFetch ? logoFetch.reached : true, status: logoFetch ? logoFetch.status : 0, why: logoFetch ? logoFetch.why : null,
+    },
   });
   const coin = coinFrom(input, live);
   const bannerCoin = bannerCoinOf(input, live);
@@ -573,12 +653,14 @@ async function fulfillTrending(ctx, order) {
   // ⚠️ FETCHED BEFORE THE WATCH, not after it. This used to sit below, and the
   // watch cannot report artwork it has not seen yet — a rule applied to one of
   // two siblings is a rule half-made, which is what this whole watch is about.
-  const logoBuffer = await fetchLogoUrl(row.logoUrl);
+  const logoFetch = await fetchLogoUrlX(row.logoUrl);
+  const logoBuffer = logoFetch.bytes;
+  if (logoBuffer && row.logoUrl) row.logoUrl = await pinLogo(row, row.logoUrl, logoBuffer);
   postFigures.reportFigures({
     kind: "trending", chain: p.chain, address: p.address, sym: row.sym || row.symbol,
     name: row.name, tier: null, live, why: marketWhy,
     siteUrl: `${SITE_URL}/token/${p.chain}/${p.address}`,
-    art: { wanted: !!row.logoUrl, got: !!logoBuffer, url: row.logoUrl },
+    art: { wanted: !!row.logoUrl, got: !!logoBuffer, url: row.logoUrl, reached: logoFetch.reached, status: logoFetch.status, why: logoFetch.why },
   });
   const coin = coinFrom(row, live);
   const bannerCoin = bannerCoinOf(row, live);
@@ -874,6 +956,9 @@ module.exports = {
   // the fixed version call fetch() with a url, and only DRIVING them says which
   // url. See bannerLogo.test.js.
   _fetchLogoUrl: fetchLogoUrl,
+  _fetchLogoUrlX: fetchLogoUrlX,
+  _pinLogo: pinLogo,
+  _PIN_LOGO_MS: PIN_LOGO_MS,
   _photoSource: photoSource,
   _LOGO_PROXY_MS: LOGO_PROXY_MS,
   // The post's own market read, exported so `post:check` DRIVES it rather than

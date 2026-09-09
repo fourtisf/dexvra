@@ -9011,6 +9011,102 @@ next failure will say which gateway said what. Making a logo that has loaded
 ONCE never depend on a gateway again is a separate change (pin the bytes to
 `/api/media` at fulfilment) and is recorded below if and when it lands.
 
+##### "mengaoa selalalu seperti ini whats wrong?" — a logo that has loaded ONCE never asks a gateway again
+
+Build `ac3502a`, the same `$GG` CID red again, and **zero lines changed on that
+path between the green run and this one.** That is the answer to "why is it
+always like this": the path was STATELESS over a STATEFUL third party. Whether
+a public IPFS gateway holds a CID that minute is a fact about the gateway's
+cache, and nothing in this repo remembered artwork it had already held in its
+own memory — every paid post re-rolled the same dice on a file that, being
+content-addressed, **cannot ever change**. Four rounds of gateway tuning (the
+pin's host, the ladder order, the reasons, the budgets) each raised the odds
+and none of them could take the roll away.
+
+**The post PINS what it fetched.** The bytes the post just rendered from are
+uploaded to `/api/media` — the same route the listing form's own upload goes
+through — and the row's `logoUrl` is moved onto it. From then on the artwork is
+a file on this disk, the `mediaPath` branch every reader already serves in
+microseconds, and no gateway is ever asked again for that token.
+
+- **`applyPinnedLogo` is a COMPARE-AND-SET, and every clause is a way a
+  background write could do harm.** `toUrl` must be OUR upload (a stranger's
+  url written as "pinned" is the regression this exists to end); `fromUrl` must
+  be an external http(s) url (an upload is already pinned; a blank is a
+  decision — `applyResolvedLogo`'s asymmetry, pointing the same way); and the
+  row must STILL hold `fromUrl` at the moment of the write. An admin who set a
+  different logo between the read and the write wins, silently, which is what
+  makes a write nobody is watching safe. Pure, in `logoWrite.ts` beside the
+  other two rules about what may touch a `logoUrl`, because "never overwrites"
+  is a mutation property a source scan cannot tell from a comment.
+- **`store.pinLogo` runs it inside `mutate`** and the internal route
+  (`POST /api/internal/listings/pin-logo`) does nothing but call it — deliberately
+  NOT a PATCH on the general listings route, which is an unconditional write.
+- **On the bot it is BEST-EFFORT and BOUNDED** (`PIN_LOGO_MS`, 4s): an upload
+  the site declines (an SVG, an unsniffable file), a CAS that says the row moved
+  on, a dead site and a hang all return the ORIGINAL url — exactly what the
+  post rendered from before this existed — and a late pin still lands for the
+  next post. A pin may never cost the announcement it exists to protect.
+- **Skipped where there is nothing to pin**: a buyer who uploaded a file
+  (`p.logoFileId`) is already ours; a url `mediaPath` recognises in either
+  spelling is already ours; a fetch that failed has no bytes, and its REASON
+  goes to the alert instead.
+- **Both siblings**, listing and trending — a fix applied to one of two
+  siblings is a fix half-made, this file's own scar three sections up.
+
+**The alert and the check now say WHICH kind of failure it was, and the
+remedy carries real values.** `artFailure` reads `/api/logo`'s own
+`x-logo-why` into five classes — `web-app` (the proxy did not answer: a
+deploy, not artwork) · `not-an-image` (a gateway served HTML — a directory CID;
+a pin cannot help, the stored url needs a different logo) · `gateway-refusing`
+(401/403/429 — refusing THIS SERVER, not missing content) · `refused-by-us`
+(400 with no reason — our own allowlist or redirect guard, deterministic) ·
+`no-gateway-had-it` (flips with cache state and is NOT a regression) — and
+`artRemedy` prints the `post:check … --pin` line with the order's own chain
+and address filled in for the two flaky classes, and the `logos:check` line for
+the deterministic ones — real values, never a bracketed blank. A sentence that sends an operator to pin a directory CID
+is the wrong-setting misdiagnosis this file keeps paying for.
+
+- **`post:check` prints the `--pin` line under every green external row**,
+  because the moment to pin is while it loads. ⚠️ **`--pin` is the ONE write
+  the check may make, and it is refused without a named token**: a diagnostic
+  that writes to every paid row it can see is not a diagnostic.
+- **The header prints BOTH build stamps** — this checkout's and the one the
+  web app reports on `/api/tokens` — and a mismatch is red: a run mid-deploy is
+  about the deploy, not the artwork, and this session read three of them as
+  artwork.
+- **Every gateway outcome carries its elapsed ms** and a 200 names its server
+  (`x-logo-via: pump.mypinata.cloud 1834ms`), so "no gateway had it" separates
+  from "the first three spent the budget and the fourth was never reached".
+  ⚠️ The guard for that scans per LINE: the first `why.push` nests a template
+  literal, and a backtick-delimited scan stops at the inner one and goes red on
+  the code it exists to approve.
+
+Considered and refused, with the reason, so it is not re-proposed: racing two
+gateways per render (doubles the load on the source that is flaking), memoing
+the bytes in-process (dies at restart, and this box is redeployed constantly),
+retry-once (another 12s on the buyer's critical path), and pinning only from
+the check (the check is not the path that runs). Sixteen guarantees are
+MUTATION-TESTED rather than argued — eight on the bot's pin path, seven on the
+site's CAS and route, and the per-line elapsed-ms guard — and each fails
+between one and three tests.
+
+```bash
+cd bot && node scripts/run-tests.js test/logoPin.test.js test/postCheck.test.js test/postFigures.test.js
+npm test                                                 # logoWrite · pinLogoRoute · logoGateways
+cd /opt/dexvra/bot && npm run post:check                 # every green external row prints its own --pin line
+```
+
+⚠️ **This touches `bot/` AND `src/`**, so the deploy is the full one
+(`bash /opt/dexvra/scripts/deploy.sh --with-bots`), and a post-check run
+between the two restarts prints the mismatch line rather than a verdict.
+
+**Config a fix depends on:** nothing. A row listed before this keeps its
+gateway url until its next paid post or an operator's `--pin`; a buyer's own
+upload was never on a gateway. Whether a given gateway serves a given CID
+today is still measured on the box, which is why `IPFS_GATEWAYS` stays
+env-overridable.
+
 ## "perbaiki tampilan chartnya di mobile" — two rows of timeframe buttons, one of them dead
 
 The same screenshot, one panel down: our chart header — `$HACHIKO`, `LIN LOG`,

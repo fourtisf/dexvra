@@ -74,6 +74,54 @@ export function applyResolvedLogo<T extends LogoRow>(
  * what may then be written, kept pure so "only an upload, only this row" is
  * driven by a test instead of read off the source.
  */
+/**
+ * Swap an EXTERNAL logo for OUR OWN COPY of the same bytes — a COMPARE-AND-SWAP,
+ * never an overwrite.
+ *
+ * WHY THIS EXISTS. `$GG`'s artwork loaded on two deploys and failed on two with
+ * zero lines changed on the logo path: the row pointed at a public IPFS
+ * gateway, and whether that gateway had the CID cached changed hour by hour.
+ * Nothing REMEMBERED an immutable, content-addressed picture, so every paid
+ * post re-ran a cold three-gateway lookup inside a 12s window. A logo that has
+ * loaded ONCE is bytes in hand; this points the row at our own copy so no later
+ * banner, Telegram photo, tweet or board ever asks a gateway for it again.
+ *
+ * ⚠️ IT IS A CAS, AND EACH GUARD IS A RULE THIS FILE ALREADY KEEPS:
+ *   · `toUrl` must be OUR upload shape — this path may only ever point a row at
+ *     our own disk, never at a second external host;
+ *   · `fromUrl` must be an external https url — an upload is never re-pinned;
+ *   · the row must STILL hold exactly `fromUrl` — an admin who changed the logo
+ *     between the bot's fetch and its pin wins, which is the asymmetry
+ *     `applyResolvedLogo` exists to keep ("a caller can be wrong about what it
+ *     is holding, and the store cannot");
+ *   · a BLANK is never filled — that is `applyResolvedLogo`'s job, and a blank
+ *     may have been cleared on purpose.
+ * A dedicated rule rather than the PATCH route because `updateListing` writes
+ * unconditionally and would re-fill a logo an admin had just cleared.
+ */
+export function applyPinnedLogo<T extends LogoRow>(
+  rows: T[],
+  chain: string,
+  address: string,
+  fromUrl: string,
+  toUrl: string,
+): { rows: T[]; wrote: boolean } {
+  const to = String(toUrl ?? "").trim();
+  if (!isUpload(to)) return { rows, wrote: false };
+  const from = String(fromUrl ?? "").trim();
+  if (!/^https?:\/\//i.test(from)) return { rows, wrote: false };
+  const want = String(address ?? "").toLowerCase();
+  if (!want || !chain) return { rows, wrote: false };
+  let wrote = false;
+  const next = rows.map((r) => {
+    if (wrote || r.chain !== chain || String(r.address ?? "").toLowerCase() !== want) return r;
+    if (String(r.logoUrl ?? "").trim() !== from) return r; // the decision moved on — leave it
+    wrote = true;
+    return { ...r, logoUrl: to };
+  });
+  return wrote ? { rows: next, wrote } : { rows, wrote: false };
+}
+
 export function applyLostUpload<T extends LogoRow>(
   rows: T[],
   chain: string,

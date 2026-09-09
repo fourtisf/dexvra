@@ -91,7 +91,10 @@ test("⚠️ the check DRIVES the post's own functions rather than asking its ow
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/^\s*\/\/.*$/gm, "");
   assert.match(src, /fulfil\._readPostMarket\(/, "the post's own bounded, DexScreener-first read");
-  assert.match(src, /fulfil\._fetchLogoUrl\(/, "…and the post's own logo fetch, through /api/logo");
+  // The X form now — the same fetch, returning the facts beside the bytes. A
+  // guard pinned to the old spelling went red over code that keeps the rule.
+  assert.match(src, /fulfil\._fetchLogoUrlX\(/, "…and the post's own logo fetch, through /api/logo, with its facts");
+  assert.ok(!/fulfil\._fetchLogoUrl\(/.test(src), "never the bare form — the check needs the why/via to say anything");
   assert.match(src, /postFigures\.missingFigures\(/, "…and the RENDERER's predicate for what publishes as TBA");
   assert.match(src, /postFigures\.artworkLost\(/);
   // The three ways it could grow its own idea of the question.
@@ -164,4 +167,53 @@ test("…but a chain with no pad is still ⚠️, never a fault", () => {
   // the state `chart:preview` sat in for weeks.
   const a = A({ live: null, why: null, holes: ["price", "market cap", "liquidity"] });
   assert.equal(verdict(a), "honest");
+});
+
+
+// ── --pin: the ONE write a check may make, and only for a named token ────────
+
+test("⚠️ --pin without a named token is REFUSED — five rows on one flag is the hazard", () => {
+  const { spawnSync } = require("node:child_process");
+  const script = require.resolve("../scripts/post-check.js");
+  const r = spawnSync(process.execPath, [script, "--pin"], { encoding: "utf8", timeout: 30_000 });
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stdout, /--pin needs the token named/);
+  assert.ok(!/newest listing\(s\), assembled/.test(r.stdout), "it must NOT go on to assemble anything");
+});
+
+test("⚠️ the check never writes outside the --pin branch", () => {
+  // A diagnostic must never write. `_pinLogo` may appear exactly once, inside
+  // pinRow, and pinRow is only ever called under `wantPin`.
+  const src = fss
+    .readFileSync(require.resolve("../scripts/post-check.js"), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "");
+  const calls = src.match(/fulfil\._pinLogo\(/g) || [];
+  assert.strictEqual(calls.length, 1, "one call site");
+  const fn = src.slice(src.indexOf("async function pinRow("), src.indexOf("async function webBuild("));
+  assert.match(fn, /fulfil\._pinLogo\(/, "…and it is inside pinRow");
+  assert.match(src, /if \(wantPin\) await pinRow\(row, a\);/, "pinRow runs only under --pin");
+  // …and a pin reads its result back through the X form's upload branch.
+  assert.match(fn, /fulfil\._fetchLogoUrlX\(after\)/);
+});
+
+test("the header prints BOTH build stamps — bot and web can sit on different builds", () => {
+  const src = fss.readFileSync(require.resolve("../scripts/post-check.js"), "utf8");
+  assert.match(src, /async function webBuild\(\)/);
+  assert.match(src, /\/api\/tokens/, "the same field deploy.sh verifies");
+  assert.match(src, /web \$\{web \|\| 'unknown \(site cold\)'\}/);
+  assert.match(src, /serving \$\{web\} but this checkout is \$\{botSha\}/, "a mismatch is said, not assumed");
+});
+
+test("a green external logo prints the real-valued --pin line; an upload does not", () => {
+  const src = fss
+    .readFileSync(require.resolve("../scripts/post-check.js"), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "");
+  assert.match(src, /a\.art\.source !== 'upload'/, "gated on the source the fetch reported");
+  assert.match(src, /npm run post:check -- \$\{row\.chain\} \$\{row\.address\} --pin/, "real values from the row, never a bracketed blank");
+  // …and a red row prints the proxy's verdict and the ONE owner's class, never its own copy.
+  assert.match(src, /postFigures\.artFailure\(/);
+  assert.match(src, /postFigures\.artRemedy\(/);
+  assert.ok(!/served text\/html/.test(src), "the classification lives in postFigures, not here");
 });

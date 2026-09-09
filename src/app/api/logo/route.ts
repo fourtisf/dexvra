@@ -98,10 +98,15 @@ const IPFS_GATEWAYS: string[] = (process.env.IPFS_GATEWAYS ?? "")
           // that minute. $GG loaded on two deploys and failed on two with zero
           // lines changed on this path; that flip is this omission.
           "https://pump.mypinata.cloud/ipfs/",
-          "https://dweb.link/ipfs/",
+          // dweb.link is ipfs.io's SIBLING (the same backend), so with the
+          // caller's ipfs.io url in slot one it was spending a 5s slot re-asking
+          // what had just failed. Ordered so four serial tries are three
+          // distinct operators. A judgement the box has to measure — which is
+          // why IPFS_GATEWAYS stays env-overridable.
           "https://gateway.pinata.cloud/ipfs/",
-          "https://nftstorage.link/ipfs/",
           "https://w3s.link/ipfs/",
+          "https://dweb.link/ipfs/",
+          "https://nftstorage.link/ipfs/",
         ],
   );
 
@@ -235,6 +240,11 @@ export async function GET(req: NextRequest) {
     // for two hundred logos.
     if (i > 0 && Date.now() > deadline) break;
     let url = tries[i];
+    // Elapsed per gateway rides on the reason: "ipfs.io: no answer after 5000ms"
+    // and "gateway.pinata.cloud: HTTP 429 after 310ms" send an operator to
+    // different places, and a bare status could not tell them apart.
+    const t0 = Date.now();
+    const ms = () => `${Date.now() - t0}ms`;
     let res: Response | null = null;
     try {
       // ⚠️ REDIRECTS ARE FOLLOWED BY HAND, and every hop is re-checked against
@@ -269,7 +279,7 @@ export async function GET(req: NextRequest) {
     }
 
     if (!res || !res.ok) {
-      why.push(`${url.hostname}: ${res ? `HTTP ${res.status}` : "no answer"}`);
+      why.push(`${url.hostname}: ${res ? `HTTP ${res.status}` : "no answer"} after ${ms()}`);
       void res?.body?.cancel().catch(() => {});
       continue;
     }
@@ -278,7 +288,7 @@ export async function GET(req: NextRequest) {
       // A gateway that answers 200 with an HTML "not found" page is a miss, not
       // an image — the same thing a CDN does when it will not admit one. It is
       // ALSO what a directory CID looks like, which is why the type is recorded.
-      why.push(`${url.hostname}: served ${ct.split(";")[0]}`);
+      why.push(`${url.hostname}: served ${ct.split(";")[0]} after ${ms()}`);
       void res.body?.cancel().catch(() => {});
       continue;
     }
@@ -293,12 +303,18 @@ export async function GET(req: NextRequest) {
     try {
       buf = Buffer.from(await res.arrayBuffer());
     } catch {
-      continue; // the body died mid-download; another gateway may finish
+      // The body died mid-download; another gateway may finish. RECORDED —
+      // this case used to push nothing, and reported as a bare 404.
+      why.push(`${url.hostname}: body died after ${ms()}`);
+      continue;
     }
     if (!buf.length || buf.length > 3_000_000) return new NextResponse(null, { status: 404 });
     return new NextResponse(buf, {
       status: 200,
       headers: {
+        // Which gateway answered, and how fast — the fact that makes "loaded on
+        // run 3, failed on run 4" READABLE after the fact.
+        "x-logo-via": `${url.hostname} ${ms()}`,
         "content-type": ct,
         "cache-control": "public, max-age=86400, s-maxage=604800, stale-while-revalidate=86400",
         // An SVG logo is a DOCUMENT when opened directly, and a document served

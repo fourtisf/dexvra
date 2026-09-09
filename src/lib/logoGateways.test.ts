@@ -34,3 +34,30 @@ test("the pin's host is allowlisted, or the ladder entry could never fire", () =
   // fire — which reads exactly like one that never helps.
   assert.match(src, /"mypinata\.cloud"/);
 });
+
+// ── the reason the route carries, in full ────────────────────────────────────
+//
+// Three lenses found the bot printing one sentence for every refusal because
+// the proxy's reason never reached it. The route now says which gateway said
+// what AND how long it took, names the one that served a 200, and records the
+// one case that used to push nothing (a body that died mid-download).
+
+test("⚠️ every recorded gateway outcome carries elapsed ms", () => {
+  // Per LINE, not per template literal: the first push nests a template
+  // (`${res ? \`HTTP …\` : "no answer"}`), and a backtick-delimited scan stops
+  // at the inner one and reports the outer push as having no elapsed time —
+  // a guard that goes red on the code it exists to approve.
+  const pushes = src.split("\n").filter((l) => /why\.push\(/.test(l));
+  assert.ok(pushes.length >= 3, `expected the three outcomes recorded, found ${pushes.length}`);
+  for (const p of pushes) assert.match(p, /\$\{ms\(\)\}/, `no elapsed on: ${p.trim()}`);
+});
+
+test("a 200 names the gateway that served it (x-logo-via)", () => {
+  assert.match(src, /"x-logo-via": `\$\{url\.hostname\} \$\{ms\(\)\}`/);
+});
+
+test("⚠️ a body that died mid-download is RECORDED, not a bare 404", () => {
+  // This case used to `continue` with nothing pushed, so it reported exactly
+  // like a CID nobody had.
+  assert.match(src, /why\.push\(`\$\{url\.hostname\}: body died after \$\{ms\(\)\}`\)/);
+});

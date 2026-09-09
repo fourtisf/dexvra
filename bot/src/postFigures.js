@@ -71,6 +71,48 @@ const KEY_FIGURES = new Set(["price", "market cap"]);
  * question from the one the banner asked, and could answer yes over a post that
  * drew the mark.
  */
+/**
+ * WHICH KIND of artwork failure — pure, ONE owner shared by the ops alert and
+ * post:check, because two copies of this classification would drift into two
+ * plausible-looking sentences.
+ *
+ * The classes matter because they send an operator to different places, and
+ * the proxy's `x-logo-why` (built from gateway outcomes) is what separates
+ * them. A 429 from a gateway is that gateway refusing THIS SERVER, not missing
+ * content; `served text/html` is a directory CID no pin can help; "no answer"
+ * from every gateway is the cold-cache flip that a pin ENDS.
+ */
+function artFailure({ reached, status, why } = {}) {
+  const w = String(why || "");
+  if (!reached) {
+    return { cls: "web-app", sentence: "/api/logo did not answer — is dexvra mid-deploy? This is about the web app, not the artwork." };
+  }
+  if (/served text\/html/i.test(w)) {
+    return { cls: "not-an-image", sentence: "a gateway served HTML, not an image — this is a directory CID; the stored url needs a different logo, a pin cannot help." };
+  }
+  if (/HTTP (401|403|429)\b/.test(w)) {
+    return { cls: "gateway-refusing", sentence: "a gateway is refusing THIS SERVER (401/403/429) — not missing content; it may clear, or IPFS_GATEWAYS needs a different first entry." };
+  }
+  if (status === 400 && !w) {
+    return { cls: "refused-by-us", sentence: "our own proxy refused the url (allowlist or redirect guard) — deterministic; the stored url is the problem." };
+  }
+  if (w) {
+    return { cls: "no-gateway-had-it", sentence: "no gateway had it inside the budget — this flips with gateway cache state and is not a regression; pin it so no post asks a gateway again." };
+  }
+  if (status >= 500 || (status > 0 && status !== 404)) {
+    return { cls: "web-app", sentence: `/api/logo answered ${status} with no reason — a non-logo response; check the web app.` };
+  }
+  return { cls: "no-gateway-had-it", sentence: "no gateway served it as an image — pin it so no post asks a gateway again." };
+}
+
+/** The one-command remedy for a flaky class, with REAL values from the order. */
+function artRemedy(cls, chain, address) {
+  if (cls === "no-gateway-had-it" || cls === "gateway-refusing") {
+    return `npm run post:check -- ${chain} ${address} --pin`;
+  }
+  return `npm run logos:check -- ${chain} ${address}`;
+}
+
 function artworkLost(art) {
   return !!(art && art.wanted && !art.got);
 }
@@ -124,6 +166,12 @@ function figureAlert({ kind, chain, address, sym, name, tier, live, why, siteUrl
     lostArt
       ? `Artwork: this listing HAS a logo and it could not be fetched — the banner drew the Dexvra mark instead.${art.url ? ` <code>${esc(art.url)}</code>` : ""}`
       : "",
+    // The proxy's own verdict and its CLASS — never one sentence for every
+    // refusal. Built from upstream hostnames and content types, so escaped.
+    lostArt && (art.status || art.why)
+      ? `/api/logo answered ${esc(art.status || "?")}${art.why ? `: ${esc(art.why)}` : ""}`
+      : "",
+    lostArt ? esc(artFailure(art).sentence) : "",
     `<code>${esc(address)}</code>`,
     siteUrl ? esc(siteUrl) : "",
     // A count is not a diagnosis. These are the scripts that separate the causes
@@ -131,7 +179,7 @@ function figureAlert({ kind, chain, address, sym, name, tier, live, why, siteUrl
     // indexer or a CDN answers this server is a property of its egress today,
     // not of this code.
     keyMissing.length ? `Run <code>npm run market:check -- ${esc(chain)}</code> on the box.` : "",
-    lostArt ? `Run <code>npm run logos:check -- ${esc(chain)} ${esc(address)}</code> on the box.` : "",
+    lostArt ? `Run <code>${esc(artRemedy(artFailure(art).cls, chain, address))}</code> on the box.` : "",
   ]
     .filter(Boolean)
     .join("\n");
@@ -156,4 +204,4 @@ function reportFigures(args) {
   }
 }
 
-module.exports = { missingFigures, artworkLost, figureAlert, reportFigures, KEY_FIGURES };
+module.exports = { missingFigures, artworkLost, artFailure, artRemedy, figureAlert, reportFigures, KEY_FIGURES };
