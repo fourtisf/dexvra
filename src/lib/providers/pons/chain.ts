@@ -21,7 +21,7 @@ let secondsPerBlock: number | null = null;
 export async function chainHead(): Promise<ChainHead> {
   const now = Date.now();
   if (headCache && now - headCache.at < HEAD_TTL_MS) return headCache.value;
-  const block = await rpcSend<RpcBlockHeader>(PONS.rpcUrl, getBlock("latest"), PONS.rpcTimeoutMs);
+  const block = await rpcSend<RpcBlockHeader>(PONS.rpcUrls, getBlock("latest"), PONS.rpcTimeoutMs);
   const value = { number: Number(BigInt(block.number)), ts: Number(BigInt(block.timestamp)) };
   headCache = { at: now, value };
   return value;
@@ -33,7 +33,7 @@ export async function blockSeconds(head: ChainHead): Promise<number> {
   const span = Math.min(100_000, Math.max(1, head.number - 1));
   try {
     const older = await rpcSend<RpcBlockHeader>(
-      PONS.rpcUrl,
+      PONS.rpcUrls,
       getBlock(`0x${(head.number - span).toString(16)}`),
       PONS.rpcTimeoutMs,
     );

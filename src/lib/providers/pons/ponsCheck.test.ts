@@ -48,9 +48,13 @@ const ANSWER: Record<string, string> = {
  *  difference between the shipped bug and the fix. */
 type ChainLogo = true | false | "revert"; // published · left blank · the call fails
 
-type Quote = "coinbase" | "none" | undefined;
+type Quote = "coinbase" | "none" | "no-spot" | "rpc-refused" | undefined;
 
 async function stub(appLogo: boolean, chainLogo: ChainLogo = true, quote: Quote = undefined) {
+  // "rpc-refused": the node answers HTTP 429 to every eth_call (the cheap
+  // methods still answer, as the box showed), and the app serves the record
+  // its own refused read produced.
+  const rpcRefused = quote === "rpc-refused";
   const rpc = (req: { id?: number; method?: string; params?: { data?: string }[] }) => {
     if (req.method === "eth_chainId") return { jsonrpc: "2.0", id: req.id, result: "0x1237" };
     if (req.method === "eth_blockNumber") return { jsonrpc: "2.0", id: req.id, result: "0x1" };
@@ -75,6 +79,12 @@ async function stub(appLogo: boolean, chainLogo: ChainLogo = true, quote: Quote 
       req.on("data", (c) => (body += c));
       req.on("end", () => {
         const parsed = JSON.parse(body || "{}");
+        const entries = Array.isArray(parsed) ? parsed : [parsed];
+        if (rpcRefused && entries.some((e: { method?: string }) => e?.method === "eth_call")) {
+          res.writeHead(429, { "content-type": "text/plain" });
+          res.end("rate limited");
+          return;
+        }
         send(200, Array.isArray(parsed) ? parsed.map(rpc) : rpc(parsed));
       });
       return;
@@ -94,6 +104,15 @@ async function stub(appLogo: boolean, chainLogo: ChainLogo = true, quote: Quote 
           ...(quote === "coinbase" ? { priceUsd: 0.0000048, mcapUsd: 4494.71, quoteUsdSource: "coinbase", marketWhy: null } : {}),
           ...(quote === "none"
             ? { priceUsd: null, mcapUsd: null, priceQuote: 1.5e-9, quoteUsdSource: null, marketWhy: "no USD reference for ETH — coinbase: Coinbase 503; dexscreener: DexScreener 403; geckoterminal: rate limited" }
+            : {}),
+          // A current build whose curve READ answered and produced no spot —
+          // `priceQuote` is an explicit null and `readWhy` is null. Not the
+          // node and not the ladder.
+          ...(quote === "no-spot"
+            ? { priceUsd: null, mcapUsd: null, priceQuote: null, quoteSymbol: "ETH", quoteUsdSource: null, readWhy: null, marketWhy: "the curve and the pool answered no price" }
+            : {}),
+          ...(quote === "rpc-refused"
+            ? { name: null, symbol: null, logo: null, priceUsd: null, mcapUsd: null, priceQuote: null, quoteSymbol: "ETH", quoteUsdSource: null, readWhy: "rpc 429 (rate limited)", marketWhy: "could not read the curve — rpc 429 (rate limited)" }
             : {}),
         },
       });
@@ -191,6 +210,17 @@ test("…and RED when every rung refused, carrying the ladder's own sentence", a
   assert.match(out, /priceQuote, in ETH\) are unaffected/, "the chain's own answer is stated as intact");
 });
 
+// ⚠️ A curve that ANSWERED no price is neither the node nor the ladder. The
+// first cut printed the ladder's sentences ("every rung refuses",
+// "GECKOTERMINAL_API_KEY…") under ANY marketWhy, directly above three probes
+// showing every rung answering — over a record whose priceQuote was null.
+test("…and a curve that answered no price is a warning about the CURVE, never the ladder", async () => {
+  const out = section7(await run(true, true, "no-spot"));
+  assert.match(out, /⚠ no ETH price to convert — the curve and the pool answered no price/);
+  assert.doesNotMatch(out, /✗/, `no red mark:\n${out}`);
+  assert.doesNotMatch(out, /EVERY rung refuses|GECKOTERMINAL_API_KEY/);
+});
+
 test("…and a record with no USD figure and no reason is a warning, never a fault", async () => {
   // An ERC-20-quoted launch, or an app build older than the ladder.
   const out = section7(await run(true, true, undefined));
@@ -208,4 +238,25 @@ test("⚠️ the verdict is the app's read — a direct probe never turns the co
   assert.ok(loop.length > 0, "the probe loop exists");
   assert.doesNotMatch(loop, /\bbad\(|broken\+\+/, "a direct probe may not turn the verdict");
   assert.match(sec, /launch\.marketWhy/, "the verdict reads the app's own reason");
+});
+
+// ── A node that refuses is named ONCE, and nothing is measured over it ──────
+//
+// The box: HTTP 429 from the public Robinhood RPC, printed as one ✗ per
+// token, then "the creator filled nothing in" over an app whose own read had
+// failed, then the ladder's sentences over a curve the node refused to read
+// — under three probes showing every rung answering — then "the chain layer
+// is healthy". Four sections, each measuring the limit and reporting it as a
+// fact about something else.
+test("⚠️ HTTP 429 from the node is one line about the node — not a fact about every token", async () => {
+  const out = (await run(true, true, "rpc-refused")).replace(/\x1B\[[0-9;]*m/g, "");
+  assert.match(out, /the RPC is rate-limiting this box — HTTP 429/);
+  assert.equal((out.match(/getLaunchedToken failed/g) || []).length, 0, "no per-token ✗ over one refusal");
+  assert.match(out, /skipped — the node is rate-limiting/, "section 5 does not replay into the limit");
+  assert.doesNotMatch(out, /the creator filled nothing in/, "section 6 makes no claim about the creator over a refused read");
+  assert.match(out, /the app's own read failed: rpc 429/);
+  assert.doesNotMatch(out, /every USD figure on the feed is null while EVERY rung refuses/, "section 7 does not blame the ladder for a refused curve read");
+  assert.match(out, /no ETH price to convert — the curve could not be read: rpc 429/);
+  assert.match(out, /the node rate-limited this box \(HTTP 429\)/, "the verdict names the node");
+  assert.doesNotMatch(out, /the chain layer is healthy/, "…and does not call the chain layer healthy over it");
 });

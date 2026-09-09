@@ -7,7 +7,7 @@
 import { PONS, ZERO_ADDRESS, GRADUATION_PHASES, type GraduationPhase } from "@/config/pons";
 import { decodeReturn, encodeCall, type AbiType } from "@/lib/evm/abi";
 import { keccak256 } from "@/lib/evm/keccak";
-import { ethCall, rpcBatch, type RpcOutcome } from "@/lib/evm/rpc";
+import { unanswered, ethCall, rpcBatch, type RpcOutcome } from "@/lib/evm/rpc";
 import { tokenLogo } from "./logo";
 
 const call = (to: string, data: string) => ethCall(to, data);
@@ -76,6 +76,13 @@ export interface LaunchSnapshot {
   curve: CurveState | null;
   meta: TokenMeta | null;
   pool: PoolState | null;
+  /** The node's own reason when the curve or the token metadata could not be
+   *  READ — null when they were. A `curve: null` with a reason is "the RPC
+   *  refused to say"; without one it is "the curve answered nothing". The
+   *  first was rendered as the second for a whole deploy: name, symbol, logo
+   *  and price all null, "the creator filled nothing in", TBA on the post —
+   *  over a public node answering HTTP 429. */
+  readWhy: string | null;
 }
 
 const ok = <T,>(outcome: RpcOutcome<unknown> | undefined, decode: (hex: string) => T): T | null => {
@@ -91,11 +98,32 @@ const one = <T,>(types: AbiType[], hex: string): T => decodeReturn(types, hex)[0
 
 // ── Launch records ────────────────────────────────────────────────────────
 export async function readLaunchRecords(addresses: string[]): Promise<Map<string, LaunchRecord>> {
+  return (await readLaunchRecordsX(addresses)).records;
+}
+
+/**
+ * The records AND the addresses whose read FAILED, with the node's reason.
+ *
+ * ⚠️ AN ADDRESS WHOSE RECORD COULD NOT BE READ IS NOT "NOT A PONS LAUNCH".
+ * `readLaunchRecords` OMITS a failed address, and an omitted address reads
+ * downstream exactly like one Pons never launched. The all-fail throw below
+ * has always covered the single-address read (`fetchPonsLaunch`) — but it
+ * carried NO REASON ("Pons RPC unavailable"), so a 429 and a dead socket
+ * were one sentence on the box; and a refused item inside a healthy
+ * multi-address batch was simply dropped, with nothing anywhere saying
+ * which. The reason travels now, per address, so a caller can tell "the
+ * node refused to say" from "not a Pons launch" — the two answers the bot
+ * memos differently.
+ */
+export async function readLaunchRecordsX(
+  addresses: string[],
+): Promise<{ records: Map<string, LaunchRecord>; failed: Map<string, string> }> {
   const out = new Map<string, LaunchRecord>();
-  if (addresses.length === 0) return out;
+  const failed = new Map<string, string>();
+  if (addresses.length === 0) return { records: out, failed };
 
   const results = await rpcBatch(
-    PONS.rpcUrl,
+    PONS.rpcUrls,
     addresses.map((address) => call(PONS.factoryV2, encodeCall("getLaunchedToken(address)", [address]))),
     PONS.rpcTimeoutMs,
   );
@@ -105,6 +133,8 @@ export async function readLaunchRecords(addresses: string[]): Promise<Map<string
     const decoded = ok(results[i], (hex) => decodeReturn(LAUNCHED_TOKEN_TYPES, hex));
     if (!decoded) {
       failures++;
+      const r = results[i];
+      failed.set(address.toLowerCase(), r && !r.ok ? r.error : "undecodable answer");
       return;
     }
     const [
@@ -140,8 +170,11 @@ export async function readLaunchRecords(addresses: string[]): Promise<Map<string
   // An address Pons never launched still answers — with a zeroed record. Every
   // call failing means the endpoint is down, which callers must be able to
   // tell apart from "not a Pons launch".
-  if (failures === addresses.length) throw new Error("Pons RPC unavailable");
-  return out;
+  if (failures === addresses.length) {
+    const why = [...failed.values()][0];
+    throw new Error(`Pons RPC unavailable${why ? ` — ${why}` : ""}`);
+  }
+  return { records: out, failed };
 }
 
 // ── Curve + token metadata ────────────────────────────────────────────────
@@ -158,16 +191,28 @@ const PER_TOKEN_CALLS = CURVE_CALLS.length + TOKEN_CALLS.length;
 
 async function readCurvesAndMeta(
   records: LaunchRecord[],
-): Promise<Map<string, { curve: CurveState | null; meta: TokenMeta | null }>> {
+): Promise<Map<string, { curve: CurveState | null; meta: TokenMeta | null; why: string | null }>> {
   const calls = records.flatMap((r) => [
     ...CURVE_CALLS.map((sig) => call(r.curve, encodeCall(sig))),
     ...TOKEN_CALLS.map((sig) => call(r.token, encodeCall(sig))),
   ]);
-  const results = await rpcBatch(PONS.rpcUrl, calls, PONS.rpcTimeoutMs);
+  const results = await rpcBatch(PONS.rpcUrls, calls, PONS.rpcTimeoutMs);
 
-  const out = new Map<string, { curve: CurveState | null; meta: TokenMeta | null }>();
+  const out = new Map<string, { curve: CurveState | null; meta: TokenMeta | null; why: string | null }>();
   records.forEach((record, index) => {
     const base = index * PER_TOKEN_CALLS;
+    // The FIRST read of this token's nine that the node did NOT ANSWER — a
+    // refusal, a dead socket, a timeout. ⚠️ Not the first that FAILED: a
+    // `logo()` that reverts is the contract answering "no logo", an
+    // `execution reverted` on a curve read is the curve answering, and
+    // calling either "the node refused" would re-key a perfectly healthy
+    // record under the short TTL for ever (readWhy → unpricedByUs) and send
+    // the check to blame the node for a token's own answer. And it is read
+    // whether or not curve/meta decoded: name, symbol and logo can be refused
+    // while decimals and totalSupply answer, and that record is still one
+    // OUR reason left incomplete.
+    const own = results.slice(base, base + PER_TOKEN_CALLS);
+    const refused = own.find((r) => unanswered(r)) as { ok: false; error: string } | undefined;
     const reserves = ok(results[base], (hex) => decodeReturn(["uint256", "uint256"], hex) as bigint[]);
     const realQuote = ok(results[base + 1], (hex) => one<bigint>(["uint256"], hex));
     const sellable = ok(results[base + 2], (hex) => one<bigint>(["uint256"], hex));
@@ -200,7 +245,8 @@ async function readCurvesAndMeta(
           }
         : null;
 
-    out.set(record.token.toLowerCase(), { curve, meta });
+    const why = refused ? refused.error : null;
+    out.set(record.token.toLowerCase(), { curve, meta, why });
   });
   return out;
 }
@@ -255,7 +301,7 @@ let cachedFactoryWiring: Promise<{ poolManager: string; memeHook: string } | nul
 export function readFactoryWiring(): Promise<{ poolManager: string; memeHook: string } | null> {
   cachedFactoryWiring ??= (async () => {
     const results = await rpcBatch(
-      PONS.rpcUrl,
+      PONS.rpcUrls,
       [
         call(PONS.factoryV2, encodeCall("poolManager()")),
         call(PONS.factoryV2, encodeCall("memeHook()")),
@@ -294,7 +340,7 @@ async function readPoolStates(records: LaunchRecord[]): Promise<Map<string, Pool
   });
 
   const results = await rpcBatch(
-    PONS.rpcUrl,
+    PONS.rpcUrls,
     slots.flatMap((s) => [
       call(wiring.poolManager, encodeCall("extsload(bytes32)", [s.slot0])),
       call(wiring.poolManager, encodeCall("extsload(bytes32)", [s.liquidity])),
@@ -318,9 +364,17 @@ async function readPoolStates(records: LaunchRecord[]): Promise<Map<string, Pool
 /** One batched snapshot per address: launch record, curve state, metadata and
  *  — for graduated launches — the V4 pool. Unknown addresses are omitted. */
 export async function readLaunchSnapshots(addresses: string[]): Promise<Map<string, LaunchSnapshot>> {
-  const records = await readLaunchRecords(addresses);
+  return (await readLaunchSnapshotsX(addresses)).snapshots;
+}
+
+/** The snapshots AND the addresses whose launch RECORD could not be read —
+ *  see `readLaunchRecordsX` for why an omitted address is not an answer. */
+export async function readLaunchSnapshotsX(
+  addresses: string[],
+): Promise<{ snapshots: Map<string, LaunchSnapshot>; failed: Map<string, string> }> {
+  const { records, failed } = await readLaunchRecordsX(addresses);
   const list = [...records.values()];
-  if (list.length === 0) return new Map();
+  if (list.length === 0) return { snapshots: new Map(), failed };
 
   const graduated = list.filter((r) => r.phase === "PoolCreated");
   const [details, pools] = await Promise.all([
@@ -337,9 +391,10 @@ export async function readLaunchSnapshots(addresses: string[]): Promise<Map<stri
       curve: detail?.curve ?? null,
       meta: detail?.meta ?? null,
       pool: pools.get(key) ?? null,
+      readWhy: detail?.why ?? null,
     });
   }
-  return out;
+  return { snapshots: out, failed };
 }
 
 export interface TokenSocials {
@@ -365,7 +420,7 @@ export interface TokenProfile {
  */
 export async function readTokenProfile(token: string): Promise<TokenProfile | null> {
   const results = await rpcBatch(
-    PONS.rpcUrl,
+    PONS.rpcUrls,
     [call(token, encodeCall("socials()")), call(token, encodeCall("description()"))],
     PONS.rpcTimeoutMs,
   );
@@ -395,11 +450,11 @@ export async function readCurveTokenDecimals(curve: string): Promise<number> {
   const hit = decimalsCache.get(key);
   if (hit !== undefined) return hit;
 
-  const [tokenResult] = await rpcBatch(PONS.rpcUrl, [call(curve, encodeCall("token()"))], PONS.rpcTimeoutMs);
+  const [tokenResult] = await rpcBatch(PONS.rpcUrls, [call(curve, encodeCall("token()"))], PONS.rpcTimeoutMs);
   const token = ok(tokenResult, (hex) => one<string>(["address"], hex));
   if (!token || token === ZERO_ADDRESS) return 18;
 
-  const [decimalsResult] = await rpcBatch(PONS.rpcUrl, [call(token, encodeCall("decimals()"))], PONS.rpcTimeoutMs);
+  const [decimalsResult] = await rpcBatch(PONS.rpcUrls, [call(token, encodeCall("decimals()"))], PONS.rpcTimeoutMs);
   const decimals = ok(decimalsResult, (hex) => Number(one<bigint>(["uint8"], hex)));
   const value = decimals != null && decimals >= 0 && decimals <= 36 ? decimals : 18;
   decimalsCache.set(key, value);

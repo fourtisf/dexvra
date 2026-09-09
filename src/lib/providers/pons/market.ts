@@ -15,6 +15,7 @@ import type { LiveMarket } from "../market";
 import {
   readCurveTokenDecimals,
   readLaunchSnapshots,
+  readLaunchSnapshotsX,
   readTokenProfile,
   sortCurrencies,
   type LaunchSnapshot,
@@ -294,8 +295,14 @@ export async function fetchPonsMarket(addresses: string[]): Promise<Map<string, 
  * every reader — the bot on its 5s clock included — for twenty seconds after
  * the ladder has recovered.
  */
-export function unpricedByUs(launch: Pick<PonsLaunchInfo, "priceUsd" | "priceQuote" | "quoteSymbol"> | null): boolean {
+export function unpricedByUs(
+  launch: Pick<PonsLaunchInfo, "priceUsd" | "priceQuote" | "quoteSymbol"> & { readWhy?: string | null } | null,
+): boolean {
   if (!launch) return false;
+  // A record whose curve or metadata the node would not READ is ours too —
+  // the RPC's worst minute, not the token's — and must not be served for the
+  // full TTL any more than a ladder failure is.
+  if (launch.readWhy) return true;
   return launch.priceUsd == null && launch.priceQuote != null && launch.quoteSymbol != null;
 }
 
@@ -357,6 +364,10 @@ export interface PonsLaunchInfo {
    *  ERC-20". Null when they are present. "We could not price it" and "nobody
    *  prices it" are different facts, and the bot's post watch prints this one. */
   marketWhy: string | null;
+  /** The node's reason when the curve or the token metadata could not be READ
+   *  — name, symbol, logo and price missing for OUR reason (the RPC refused
+   *  or failed), never the creator's. Null when the reads answered. */
+  readWhy: string | null;
   liquidityLocked: boolean;
   /** What the creator set at launch — the listing form autofills from these. */
   socials: TokenSocials | null;
@@ -376,12 +387,19 @@ function describe(
 ): PonsLaunchInfo {
   const quoteUsd = quote.usd;
   const spotQuote = spotQuoteOf(snapshot, history);
+  // Three different holes, three sentences — and the middle one had two
+  // causes under one sentence: "the curve and the pool answered no price" was
+  // printed for a curve the node REFUSED to read (HTTP 429), which sent the
+  // check, the alert and the operator to the ETH/USD ladder over a node that
+  // was rate-limiting the box.
   const marketWhy = market
     ? null
     : !snapshot.launch.nativeQuote
       ? "quoted in an ERC-20, not ETH — no USD reference for an arbitrary quote asset"
       : spotQuote == null
-        ? "the curve and the pool answered no price"
+        ? snapshot.readWhy
+          ? `could not read the curve — ${snapshot.readWhy}`
+          : "the curve and the pool answered no price"
         : quote.why ?? "no USD reference";
   const { launch, curve, meta } = snapshot;
   const threshold = fromUnits(launch.graduationThreshold, PONS.nativeDecimals);
@@ -415,6 +433,7 @@ function describe(
     liquidityUsd: market?.liq ?? null,
     quoteUsdSource: market && quoteUsd ? quote.source : null,
     marketWhy,
+    readWhy: snapshot.readWhy,
     // Graduation locks the V4 position permanently — the locker exposes no
     // withdrawal path at all (PonsV2LaunchLocker).
     liquidityLocked: launch.phase === "PoolCreated",
@@ -429,9 +448,21 @@ function describe(
 
 /** Full launch detail for one token, or null when Pons never launched it. */
 export async function fetchPonsLaunch(address: string): Promise<PonsLaunchInfo | null> {
-  const snapshots = await readLaunchSnapshots([address]);
+  const { snapshots, failed } = await readLaunchSnapshotsX([address]);
   const snapshot = snapshots.get(address.toLowerCase());
-  if (!snapshot) return null;
+  // ⚠️ "Could not read the launch record" is NOT "not a Pons launch". A null
+  // here becomes a 404 on /api/pons, and the bot memos a 404 as "Pons never
+  // launched this" for the life of its process — so a refused read that
+  // reached here as null would mark a live curve token as never launched,
+  // permanently, over a rate limit. A throw is a 503, which parks the bot's
+  // reader and is asked again. For ONE address the all-fail throw inside
+  // `readLaunchRecordsX` fires first; this keeps the rule true if this read
+  // is ever batched, and it is the rule rather than a comment about one.
+  if (!snapshot) {
+    const why = failed.get(address.toLowerCase());
+    if (why) throw new Error(`Pons RPC: ${why}`);
+    return null;
+  }
 
   // ⚠️ THE SIDE READS ARE BOUNDED, because the bot reads this route on a 5s
   // clock (PONS_CHAIN_MS) for a paid post's figures. The histories feed only

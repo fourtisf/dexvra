@@ -168,3 +168,13 @@ test("…while a 404 IS the memo, and lastWhy has nothing to say about it", asyn
   assert.strictEqual(pons.lastWhy("robinhood", LAUNCH.address), null, "'not a Pons launch' is an answer, not a failure");
   pons._reset();
 });
+
+// The node's own reason rides the record: name/symbol/logo/price null for OUR
+// reason (the RPC refused) must reach the post's alert as that, never as "the
+// token has nothing".
+test("toInfo carries the node's reason when the app's read failed", () => {
+  const info = pons.toInfo({ ...LAUNCH, name: null, symbol: null, logo: null, priceUsd: null, priceQuote: null, readWhy: "rpc 429 (rate limited)", marketWhy: "could not read the curve — rpc 429 (rate limited)" });
+  assert.strictEqual(info.readWhy, "rpc 429 (rate limited)");
+  assert.match(String(info.marketWhy), /could not read the curve/);
+  assert.strictEqual(pons.toInfo(LAUNCH).readWhy, null, "an answered read has nothing to explain");
+});

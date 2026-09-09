@@ -128,7 +128,7 @@ export async function readCurveHistories(curves: string[]): Promise<Map<string, 
 
   const plan = unique.flatMap((curve) => planRanges(curve, head.number, oldestWanted));
   const results = await rpcBatch(
-    PONS.rpcUrl,
+    PONS.rpcUrls,
     plan.map((range) =>
       getLogs({
         address: range.curve,

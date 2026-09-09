@@ -141,6 +141,9 @@ function toInfo(launch) {
     // they are not. "We could not price it" and "nobody prices it" are
     // different facts, and the post watch prints this one.
     marketWhy: launch.marketWhy ? str(launch.marketWhy, 240) : null,
+    // The node's reason when name/symbol/logo/price are null for OUR reason
+    // (the RPC refused or failed) — never the creator's.
+    readWhy: launch.readWhy ? str(launch.readWhy, 240) : null,
     quoteUsdSource: launch.quoteUsdSource ? str(launch.quoteUsdSource, 24) : null,
   };
 }

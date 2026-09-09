@@ -120,7 +120,7 @@ export async function readPonsLaunchEvents(): Promise<{ events: PonsLaunchEvent[
 
   if (plan.length > 0) {
     const results = await rpcBatch(
-      PONS.rpcUrl,
+      PONS.rpcUrls,
       plan.map((range) =>
         getLogs({
           address: PONS.factoryV2,

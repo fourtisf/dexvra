@@ -256,6 +256,18 @@ function handle({ method, params }) {
 let quoteMode = "coinbase";
 // When set, every RPC batch carrying an eth_getLogs never answers.
 let hangLogs = false;
+// "ok" · "refuse-curve" (HTTP 429 to any eth_call aimed at the curve or the
+// token — the launch RECORD still answers) · "refuse-all" (429 to everything).
+let rpcMode = "ok";
+let refusedRpc = 0;
+// "revert-logo": token.logo() REVERTS — the contract answering "no logo".
+// "limit-meta": the node answers the batch 200 but the symbol/name/logo
+// ITEMS carry `-32005 rate limit exceeded` (some public nodes do this per
+// call) while decimals/totalSupply and the curve answer. `singleRetries`
+// counts the refused selectors re-asked ONE AT A TIME afterwards — the
+// hammering — and must stay 0.
+let singleRetries = 0;
+const META_SELS = () => [SEL("symbol()"), SEL("name()"), SEL("logo()")];
 const refused = () => new Response("busy", { status: 503, headers: { "content-type": "text/plain" } });
 
 globalThis.fetch = async (url, init) => {
@@ -291,7 +303,23 @@ globalThis.fetch = async (url, init) => {
     if (hangLogs && (Array.isArray(body) ? body : [body]).some((e) => e && e.method === "eth_getLogs")) {
       return new Promise(() => {});
     }
+    const entries = Array.isArray(body) ? body : [body];
+    const aimedAt = (e) => String(e?.params?.[0]?.to || "").toLowerCase();
+    if (rpcMode === "refuse-all" || (rpcMode === "refuse-curve" && entries.some((e) => e && e.method === "eth_call" && [CURVE, TOKEN].includes(aimedAt(e))))) {
+      refusedRpc++;
+      return new Response("rate limited", { status: 429, headers: { "retry-after": "1" } });
+    }
     const respond = (entry) => {
+      const sel = String(entry?.params?.[0]?.data || "").slice(0, 10);
+      if (entry?.method === "eth_call" && aimedAt(entry) === TOKEN && META_SELS().includes(sel)) {
+        if (rpcMode === "limit-meta") {
+          if (!Array.isArray(body)) singleRetries++;
+          return { jsonrpc: "2.0", id: entry.id, error: { code: -32005, message: "rate limit exceeded" } };
+        }
+        if (rpcMode === "revert-logo" && sel === SEL("logo()")) {
+          return { jsonrpc: "2.0", id: entry.id, error: { code: 3, message: "execution reverted" } };
+        }
+      }
       try {
         return { jsonrpc: "2.0", id: entry.id, result: handle(entry) };
       } catch (err) {
@@ -715,6 +743,72 @@ delete process.env.TELEGRAM_CHAT_ID;
   check("a launch is still described while its log walk hangs", slow != null && slow.priceUsd > 0, String(slow?.priceUsd));
   check("…inside the side-read bound", elapsed < SIDE_MS + 1500, `${Math.round(elapsed)}ms against ${SIDE_MS}ms`);
   check("…and the walk was genuinely stalled, not skipped", elapsed >= SIDE_MS - 50, `${Math.round(elapsed)}ms`);
+  __resetHistories();
+}
+
+// ── A node that REFUSES is named — never rendered as a token with nothing in it ─
+// The box: the public Robinhood RPC answered HTTP 429, the app's curve/meta
+// batch failed, and the record went out with name, symbol, logo and price all
+// null and the sentence "the curve and the pool answered no price" — read by
+// the check as "the creator filled nothing in" and by the post as TBA. Driven
+// through the real fetchPonsLaunch against a node that refuses.
+{
+  const { __resetRpc } = await import("../src/lib/evm/rpc.ts");
+  __resetRpc();
+  __resetHistories();
+  pons.__resetNativeUsd();
+  quoteMode = "coinbase";
+  rpcMode = "refuse-curve";
+  refusedRpc = 0;
+  const degraded = await pons.fetchPonsLaunch(TOKEN);
+  check("a launch whose CURVE the node refused still answers — the record read worked", degraded != null);
+  check("…and carries the node's reason", /429/.test(String(degraded?.readWhy)), String(degraded?.readWhy));
+  check("…marketWhy names the READ, not the ladder", /could not read the curve — .*429/.test(String(degraded?.marketWhy)), String(degraded?.marketWhy));
+  check("…name is null WITH a reason — never 'the creator filled nothing in'", degraded?.name === null && degraded?.readWhy != null);
+  check("…and the route would not cache it for the full TTL", pons.unpricedByUs(degraded) === true);
+  check("…the refusing host was asked once per batch — never one call at a time", refusedRpc <= 2, `${refusedRpc} refused request(s)`);
+  __resetRpc();
+
+  rpcMode = "refuse-all";
+  refusedRpc = 0;
+  let threw = null;
+  try { await pons.fetchPonsLaunch(TOKEN); } catch (e) { threw = e; }
+  check("a launch RECORD the node refused THROWS (a 503 the bot parks on) — never null (a 404 the bot memos as 'never launched')", threw != null && /429/.test(String(threw?.message)), String(threw?.message));
+  check("…again without hammering", refusedRpc <= 2, `${refusedRpc} refused request(s)`);
+  __resetRpc();
+
+  // ⚠️ A REVERT IS THE CONTRACT ANSWERING, NOT THE NODE REFUSING. The first
+  // cut took the first FAILED outcome of the nine as "the node did not
+  // answer" — so a token whose logo() reverts (no such function, an older
+  // token) would carry readWhy "execution reverted", be re-keyed under the
+  // 3s TTL for ever by unpricedByUs, and send the check to blame the node.
+  rpcMode = "revert-logo";
+  __resetHistories();
+  pons.__resetNativeUsd();
+  const reverted = await pons.fetchPonsLaunch(TOKEN);
+  check("a logo() that REVERTS is the token's answer — readWhy stays null", reverted != null && reverted.readWhy === null, String(reverted?.readWhy));
+  check("…the record is otherwise whole (name, price)", reverted?.name === "Pons Yield" && reverted?.logo === null && Number(reverted?.priceUsd) > 0, `${reverted?.name} ${reverted?.logo} ${reverted?.priceUsd}`);
+  check("…and it is NOT re-keyed under the short TTL", pons.unpricedByUs(reverted) === false);
+  __resetRpc();
+
+  // ⚠️ AND A PARTIAL REFUSAL IS STILL OUR REASON. Decimals and totalSupply
+  // answer (so `meta` decodes), the curve answers (so there is a price), and
+  // symbol/name/logo come back `-32005 rate limit exceeded` per item. The
+  // old rule — readWhy only when curve or meta failed to decode — left this
+  // record with readWhy null, name "" and a full TTL: "the creator filled
+  // nothing in", cached, over a node saying no.
+  rpcMode = "limit-meta";
+  singleRetries = 0;
+  __resetHistories();
+  pons.__resetNativeUsd();
+  const partial = await pons.fetchPonsLaunch(TOKEN);
+  check("a per-ITEM rate limit on name/symbol carries the node's reason", /rate limit/.test(String(partial?.readWhy)), String(partial?.readWhy));
+  check("…with the reads that answered kept (decimals, price)", partial?.decimals === 18 && Number(partial?.priceUsd) > 0, `${partial?.decimals} ${partial?.priceUsd}`);
+  check("…name is null WITH a reason", partial?.name === null && partial?.readWhy != null);
+  check("…the record is re-keyed under the short TTL", pons.unpricedByUs(partial) === true);
+  check("…and the refused items were NOT re-asked one at a time", singleRetries === 0, `${singleRetries} single retries`);
+  __resetRpc();
+  rpcMode = "ok";
   __resetHistories();
 }
 

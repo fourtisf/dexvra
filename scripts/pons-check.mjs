@@ -174,11 +174,20 @@ if (tokens.length) {
 // Sequentially and individually, so a single failing call is named rather
 // than nulling its whole group the way the app's grouping does.
 let metaFailures = 0;
+// ⚠️ A 429 FROM THE NODE IS ABOUT THIS BOX, NOT ABOUT THE TOKEN — and this
+// check printed it as one ✗ per token, then went on reading, then reported
+// "the creator filled nothing in" and "every rung refuses" over the same
+// refusal, then a verdict line that called the chain layer healthy. Every
+// process on the box shares that node; this check's own serial reads were
+// part of the load. So it is named ONCE, the reads stop, and the sections
+// below say they could not measure rather than measuring the limit.
+let rateLimited = false;
+const isRateLimit = (e) => /HTTP 429/.test(why(e));
 const replay = []; // exactly what the app batches: {label, to, data}
 // What the CONTRACT said, per token — section 6 compares it against what the
 // app actually serves for the same token.
 const onChain = new Map();
-for (const token of tokens) {
+tokenLoop: for (const token of tokens) {
   head(`4 · ${token}`);
   let curve = null;
   try {
@@ -191,7 +200,10 @@ for (const token of tokens) {
     ok(`launch record — curve ${curve}`);
     note(`pairToken ${pair}${pair === "0x0000000000000000000000000000000000000000" ? " (native ETH)" : " — an ERC-20 quote, so USD figures are skipped by design"}`);
     note(`creator tax ${(tax / 100).toFixed(2)}%`);
-  } catch (e) { bad(`getLaunchedToken failed — ${why(e)}`); broken++; continue; }
+  } catch (e) {
+    if (isRateLimit(e)) { rateLimited = true; break tokenLoop; }
+    bad(`getLaunchedToken failed — ${why(e)}`); broken++; continue;
+  }
 
   const reads = [
     ["curve.getReserves()", curve, SEL.getReserves, (h) => `quote ${asNum(wordAt(h, 0))} · token ${asNum(wordAt(h, 1))}`],
@@ -218,8 +230,19 @@ for (const token of tokens) {
         seen[field] = shown === "(empty)" ? "" : shown;
         onChain.set(token, seen);
       }
-    } catch (e) { bad(`${label} → ${why(e)}`); metaFailures++; }
+    } catch (e) {
+      if (isRateLimit(e)) { rateLimited = true; break tokenLoop; }
+      bad(`${label} → ${why(e)}`); metaFailures++;
+    }
   }
+}
+if (rateLimited) {
+  head("4 · The node");
+  bad("the RPC is rate-limiting this box — HTTP 429 to this check's own reads");
+  note("every process on this box shares that node (the site, the bot, the trade bot), and this check just added its own serial reads");
+  note("a 429 says nothing about the chain or the app, only about the quota — the reads stopped here rather than spend more of it");
+  note("PONS_RPC_URL in the repo-root .env takes a comma-separated list: a host that refuses is parked and the next takes the same calls, so a second node is a line, not a deploy");
+  broken++;
 }
 
 // ── 5. The SAME calls, batched exactly as the app batches them ────────────
@@ -229,7 +252,9 @@ for (const token of tokens) {
 // reads do. So one call the batch quietly drops nulls a whole group — which is
 // exactly what a feed full of nulls over a healthy chain looks like.
 head("5 · The app's own reads, batched");
-if (!replay.length) {
+if (rateLimited) {
+  note("skipped — the node is rate-limiting; a replay now would measure the limit, not the batch");
+} else if (!replay.length) {
   note("no reads to replay");
 } else {
   for (const size of [9, replay.length]) {
@@ -297,6 +322,27 @@ if (!tokens.length) {
     }
     if (!launch) { bad(`${token.slice(0, 10)}… — /api/pons answered with no launch`); broken++; continue; }
 
+    const socials = launch.socials || {};
+    const filled = ["symbol", "name", "logo"].filter((f) => launch[f]).concat(
+      Object.keys(socials).filter((k) => socials[k]),
+    );
+    // ⚠️ THE APP'S OWN READ FAILED — name, symbol and logo are null for the
+    // NODE's reason, and "the creator filled nothing in" would be a claim
+    // about a person made over a 429. The record says so itself now.
+    if (launch.readWhy) {
+      bad(`${token.slice(0, 10)}… — the app's own read failed: ${launch.readWhy}`);
+      note("that is the node (section 4), not the app — symbol, name and logo are null for OUR reason, not the creator's");
+      if (!rateLimited) broken++;
+      continue;
+    }
+    // …and with no contract reads of our own (section 4 did not get that far)
+    // there is nothing to compare against: say so, never guess who left the
+    // fields blank.
+    if (!onChain.has(token)) {
+      warn(`${token.slice(0, 10)}… — could not compare: this check's own contract reads did not answer (section 4); the app serves ${filled.join(" · ") || "nothing"} for the form`);
+      continue;
+    }
+
     // Only the fields the form fills in. A value the CHAIN did not publish is
     // not a defect — "the creator set no logo" and "the app dropped one" are
     // different facts, and only the second is worth a red mark.
@@ -314,10 +360,6 @@ if (!tokens.length) {
       if (served) continue;
       dropped.push(`${field} — the contract publishes ${String(chain).slice(0, 80)}, the app serves nothing`);
     }
-    const socials = launch.socials || {};
-    const filled = ["symbol", "name", "logo"].filter((f) => launch[f]).concat(
-      Object.keys(socials).filter((k) => socials[k]),
-    );
     if (dropped.length) {
       bad(`${token.slice(0, 10)}… — the app drops ${dropped.length} field(s) the chain published`);
       for (const d of dropped) note(d);
@@ -359,16 +401,34 @@ head("7 · The ETH/USD reference, as the app serves it");
   }
   if (launch) {
     const px = Number(launch.priceUsd);
+    // ⚠️ FOUR different reasons for a null priceUsd, and the ladder is only
+    // ONE of them. The first cut printed the ladder's sentences ("every rung
+    // refuses", "GECKOTERMINAL_API_KEY…") under ANY marketWhy — directly above
+    // three probes showing every rung answering — over a curve the node had
+    // refused to read. The record's own fields say which it is.
     if (px > 0) {
       ok(`${tokens[0].slice(0, 10)}… priced at $${px.toPrecision(4)} — ETH reference from ${launch.quoteUsdSource || "(source not reported — an older build?)"}`);
       note("the ladder is Coinbase spot → DexScreener (WETH) → GeckoTerminal; the first rung that answers wins");
+    } else if (launch.readWhy) {
+      warn(`no ETH price to convert — the curve could not be read: ${launch.readWhy}`);
+      note("that is the node (section 4), not the ETH/USD ladder — the probes below say whether the ladder itself answers from this box");
+    } else if (launch.quoteSymbol === null) {
+      note("quoted in an ERC-20, not ETH — no USD reference by design");
+    } else if (launch.priceQuote === null) {
+      // `=== null`, not `== null`: the app serialises priceQuote on every
+      // record (a number, or an explicit null when the curve answered no
+      // price). A record with NO such field is a build older than the
+      // ladder, and that is the last branch — claiming "the curve answered
+      // no price" about a record that never carried the field is a claim
+      // nobody measured.
+      warn("no ETH price to convert — the curve and the pool answered no price; the ladder cannot be judged from this record");
     } else if (launch.marketWhy) {
       bad(`no USD price — ${launch.marketWhy}`);
       note("every USD figure on the feed is null while EVERY rung refuses; the chain reads (and priceQuote, in ETH) are unaffected");
       note("Coinbase and DexScreener are keyless — a box they refuse is an egress fact; GECKOTERMINAL_API_KEY raises only the last rung's ceiling");
       broken++;
     } else {
-      warn("the app reports no USD price and no reason — an ERC-20-quoted launch, or a build older than the ladder");
+      warn("the app reports no USD price and no reason — a build older than the ladder");
     }
   }
 
@@ -394,15 +454,21 @@ head("7 · The ETH/USD reference, as the app serves it");
       return Number(prices[WETH] ?? prices[WETH.toLowerCase()]);
     }],
   ];
+  let answering = 0;
   for (const [name, fn] of probes) {
     try {
       const px = await fn();
-      if (px > 0) note(`${name} → ETH = $${px.toLocaleString("en-US", { maximumFractionDigits: 2 })}`);
+      if (px > 0) { answering++; note(`${name} → ETH = $${px.toLocaleString("en-US", { maximumFractionDigits: 2 })}`); }
       else note(`${name} → answered, but with no usable price`);
     } catch (e) {
       note(`${name} → ${why(e)}`);
     }
   }
+  // A summary, and never the verdict: which rungs THIS box can reach is an
+  // egress fact, and the app's own record above is what the post reads.
+  if (answering === probes.length) ok("every rung of the ETH/USD ladder answers from this box");
+  else if (answering) warn(`${answering} of ${probes.length} rungs answer from this box`);
+  else warn("no rung of the ETH/USD ladder answers from this box — an egress fact, and the reason a curve token would print TBA");
 }
 
 // ── Verdict ───────────────────────────────────────────────────────────────
@@ -413,7 +479,10 @@ try {
   if (j.build) console.log(`  ${C.d}serving build ${j.build}${C.x}`);
 } catch {}
 
-if (metaFailures) {
+if (rateLimited) {
+  bad("the node rate-limited this box (HTTP 429) — sections 4–7 measured that limit, not the app");
+  note("wait a minute and run this again; if it repeats, the box has outgrown the public node — give PONS_RPC_URL a second host");
+} else if (metaFailures) {
   bad(`${metaFailures} contract read(s) failed — that is why symbol, name and price are null`);
   broken++;
 } else if (tokens.length) {

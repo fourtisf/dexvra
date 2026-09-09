@@ -24,7 +24,17 @@ export const PONS = {
   chain: "robinhood",
   /** Robinhood Chain — EVM L2 on the Arbitrum Orbit stack, ETH gas token. */
   chainId: 4663,
-  rpcUrl: env("PONS_RPC_URL", "https://rpc.mainnet.chain.robinhood.com"),
+  rpcUrl: env("PONS_RPC_URL", "https://rpc.mainnet.chain.robinhood.com").split(",")[0].trim(),
+  /** The same variable as a LIST — comma-separated, first host asked first.
+   *  A node that refuses this box (HTTP 429 from the public Robinhood RPC, on
+   *  a box where the site, the bot, the trade bot and every check share one
+   *  IP) is parked and the next host takes the same calls, so a second node
+   *  is a line in `.env`, not a deploy. `rpcUrl` stays the first entry for
+   *  the callers that need one. */
+  rpcUrls: env("PONS_RPC_URL", "https://rpc.mainnet.chain.robinhood.com")
+    .split(",")
+    .map((u) => u.trim())
+    .filter(Boolean),
   explorer: env("PONS_EXPLORER", "https://robinhoodchain.blockscout.com"),
   app: env("PONS_APP", "https://ponsfamily.com"),
   /** Path segment of a token's page on that app — see `ponsTokenUrl`. */

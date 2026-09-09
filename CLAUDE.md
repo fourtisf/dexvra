@@ -9438,6 +9438,142 @@ npm run test:pons                                                    # 86 checks
 node --test --experimental-strip-types src/lib/providers/pons/ponsRoute.test.ts
 ```
 
+#### "liat ini" — the check's red was the NODE, and four sections rendered it as facts about the token
+
+Three screenshots off the box on `9d5b1ce`. `post:check` for the WROTE curve
+token: **✓ priced 0.000004255 · mcap 4255.64 · artwork via
+gateway.pinata.cloud, adopted from the contract** — the feature this round
+exists for, working. And `pons:check`, red:
+
+```
+4 · 0xfCd4…   ✗ getLaunchedToken failed — HTTP 429
+6 · …         the form would autofill: (nothing — the creator filled nothing in)
+7 · …         ✗ no USD price — the curve and the pool answered no price
+              every USD figure on the feed is null while EVERY rung refuses …
+                coinbase → $2492.4   dexscreener → $2491.9   geckoterminal → $2492.1
+Verdict       ✓ every contract read answered individually — the chain layer is healthy
+              ✗ Something is broken
+```
+
+Read that again: three ladder rungs answering, under a sentence saying every
+rung refuses; a creator accused of filling nothing in, about a token whose
+contract the same run could not read; a chain layer called healthy two lines
+above "something is broken". **The whole screen is one fact — the public
+Robinhood RPC was rate-limiting this box — rendered four different ways as
+facts about the token, the creator and the ladder.** The site, the bot, the
+trade bot and the check all share that node, and the check had just added
+nine serial reads per token of its own.
+
+- ⚠️ **A REFUSED BATCH WAS RETRIED ONE CALL AT A TIME.** `rpc.ts` degraded to
+  sequential calls when "the endpoint did not honour the batch" — and a 429 to
+  the whole payload took that branch, so twenty-seven serial requests went
+  into a host that had just said no, each refused in turn, each pushing every
+  process on the box further past the limit. That is the CoinGecko sweep's
+  defect, the DexScreener 403 retry's and `gt.ts`'s, one transport over. A
+  refusal now (401/403/429, or a JSON-RPC ITEM saying "rate limit" — some
+  nodes answer 200 with `-32005` per call) PARKS the host (Retry-After
+  honoured, clamped 1–10s) and the same calls go to the NEXT host; a
+  sequential run that meets a refusal stops there; with no host left every
+  call fails with the refusal NAMED. A transport error, a 5xx and an
+  un-honoured batch still degrade one call at a time, exactly as before —
+  those say nothing about a quota.
+- ⚠️ **AND THERE WAS NO NEXT HOST.** "Never one hardcoded host" is this file's
+  first rule about upstreams, and `PONS_RPC_URL` was one url. It is a
+  comma-separated LIST now (`rpcUrls`; `rpcUrl` stays the first entry for the
+  places that print it), every chain read is handed the list, and
+  `ponsRpcHosts.test.ts` scans the provider for a read handed the first host
+  alone — a single such site works on a healthy node and never fails over,
+  which is the reassuring reading.
+- ⚠️ **THE REASON WAS DISCARDED AT THE FIRST DECODE.** `ok()` turned every
+  failed outcome into `null`, so a curve and a token the node REFUSED to read
+  became `curve: null, meta: null` — byte-identical to a curve that answered
+  nothing and a creator who typed nothing. `describe()` then wrote "the curve
+  and the pool answered no price", the form autofilled nothing, and the check
+  reported both as facts. `readWhy` rides every snapshot (the first of the
+  token's nine reads the node did not answer), `marketWhy` says *could not
+  read the curve — rpc 429*, and the all-fail throw on the record read carries
+  the reason it never used to ("Pons RPC unavailable" was the whole sentence;
+  a 429 and a dead socket were one line).
+- ⚠️ **A REFUSED-READ RECORD WAS CACHED FOR THE FULL TTL**, and the bot read it
+  on its 5s clock — the round above closed this hole for the ladder and left
+  it open for the node. `unpricedByUs()` counts `readWhy` now, so such a record
+  is re-keyed under `UNPRICED_TTL` like a ladder failure; `ponsChain.toInfo`
+  carries it, so the bot's `lastWhy`, the post alert and the remedy name the
+  node rather than the token.
+- ⚠️ **THE CHECK KEPT READING INTO THE LIMIT, THEN REPLAYED THE BATCH INTO IT.**
+  One 429 printed a per-token ✗, the loop went on to the next nine reads, and
+  section 5 then sent the app's own batch into the same bucket — a diagnostic
+  spending the quota it was diagnosing, and printing the limit it caused as
+  nine separate contract failures. It stops at the FIRST 429 now: one
+  `4 · The node` block, section 5 skipped and saying why, sections 6 and 7
+  reading `readWhy` off the app's record ("the app's own read failed: rpc 429"
+  is about the node, never the creator; "no ETH price to convert — the curve
+  could not be read" is about the node, never the ladder), and a verdict that
+  names the node once instead of "healthy" over "broken".
+- **`=== null`, not `== null`, on the record's `priceQuote`.** The app
+  serialises it on every record — a number, or an explicit null when the curve
+  answered no price. A record with NO such field is a build older than the
+  ladder, and claiming "the curve answered no price" about a record that never
+  carried the field is a claim nobody measured; the driven test for that
+  branch is what caught the first cut.
+- ⚠️ **AND "THE NODE ANSWERED WITH AN ERROR" IS NOT "THE NODE DID NOT ANSWER".**
+  The first cut of `readWhy` took the first FAILED outcome of a token's nine
+  reads as the node's refusal — and a `logo()` that REVERTS (no such function,
+  an older token) is the contract answering "no logo". That record would have
+  carried `readWhy: execution reverted`, been re-keyed under the 3s TTL for
+  ever by `unpricedByUs` (the bot's 5s clock behind it), and sent the check to
+  blame the node for a token's own answer. The other direction was open too:
+  name, symbol and logo can be refused per ITEM while decimals and totalSupply
+  answer, and gating `readWhy` on curve/meta failing to decode left that
+  record with no reason, `name: ""` and the full TTL — "the creator filled
+  nothing in", cached, over a node saying no. So the OUTCOME says which it
+  was: `RpcOutcome` carries `unanswered` for a failure that is ours or the
+  transport's (a refusal, a dead socket, a timeout, no host left, an item
+  missing from the array), never for the node's own error, and `readWhy` is
+  the first UNANSWERED read of the nine whether or not the rest decoded. A
+  text match on "reverted" at the caller would have been a fourth private
+  idea of failure. ⚠️ Two of the flag's four sites were DEAD — every refused
+  outcome is carried to `batchSlice`'s final fill, which flags it again — and
+  the mutation run said so (removing them changed nothing), so the flag has
+  one owner per path now and the comment says which.
+- **Recorded for accuracy:** the single-address record read has ALWAYS thrown
+  when it failed (the all-fail check), so `fetchPonsLaunch` never answered
+  null → 404 → the bot's "never launched" memo over a refusal. What was
+  missing there was the reason in the throw, and a refused item inside a
+  healthy multi-address batch being dropped with nothing saying which. The
+  doc comments say that rather than describing a defect that did not exist.
+
+Twenty-seven guarantees are MUTATION-TESTED rather than argued — on the
+client: a refusal retried singly, not parked, Retry-After unclamped, a refusal
+not carried to the next host, an item-level limit re-asked, a sequential run
+not stopping, a benched host still asked, a 5xx parking the host, a refusal
+not flagged unanswered, a dead socket not flagged, a missing item not flagged,
+a revert flagged; on the provider: the first FAILED read taken as the refusal,
+`readWhy` gated on the decode again, `marketWhy` ignoring it, `unpricedByUs`
+ignoring it, the throw carrying no reason, the record dropping it, a read
+handed one host; on the check: a per-token ✗ over one 429, the creator blamed,
+the ladder blamed, "healthy" over a rate limit, an absent field read as null,
+section 5 replaying into the limit; and the bot dropping `readWhy`. Each fails
+between one and four tests; two more written for the flag's redundant sites
+SURVIVED, and that is what removed the sites.
+
+```bash
+node --test --experimental-strip-types src/lib/evm/rpc.test.ts                       # 10: the bench, the failover, no hammering, answered vs unanswered
+node --test --experimental-strip-types src/lib/providers/pons/ponsCheck.test.ts      # 10: the check, driven against a node that answers 429
+node --test --experimental-strip-types src/lib/providers/pons/ponsRpcHosts.test.ts   # every read takes the host list
+npm run test:pons                                                                    # 102: a refused read carries its reason, a revert does not, neither is cached long
+cd bot && node scripts/run-tests.js test/ponsChain.test.js
+cd /opt/dexvra && npm run pons:check                                                 # after the deploy — one block about the node, or none
+```
+
+**Config a fix depends on:** nothing to turn on. ⚠️ But whether the public node
+rate-limits this box is a property of the box's own traffic today, and the
+only thing that RAISES that ceiling rather than dividing it is a second node:
+`PONS_RPC_URL` in the **repo-root** `.env` takes a comma-separated list, the
+public host first and a paid or private Robinhood Chain RPC after it — a host
+that refuses is parked and the next takes the same calls, so it is a line, not
+a deploy. This touches `bot/` AND `src/`, so the deploy is the full one.
+
 ## "perbaiki tampilan chartnya di mobile" — two rows of timeframe buttons, one of them dead
 
 The same screenshot, one panel down: our chart header — `$HACHIKO`, `LIN LOG`,
