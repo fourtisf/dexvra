@@ -45,6 +45,41 @@ const GATEWAY = (process.env.PONS_IPFS_GATEWAY || 'https://ipfs.io/ipfs/').repla
 
 let coolingUntil = 0;
 
+/**
+ * Addresses the Pons factory never launched — a PERMANENT fact, memoed.
+ *
+ * `fetchPonsLaunch` resolves a launch BY ADDRESS off the factory, not by
+ * scanning a window, so a 404 says the factory does not know this token and no
+ * amount of waiting changes that. Remembering it is what makes asking the chain
+ * CONCURRENTLY with the indexers affordable: without it every graduated
+ * Robinhood token would pay a localhost round trip on every poll of nine
+ * background pipelines, and the read is only started up front because being
+ * fourth in a serial queue is what made the fix inert.
+ *
+ * ⚠️ ONLY A 404 IS MEMOED. "We could not ask" parks the reader instead (see
+ * `coolingUntil`) — writing a transport failure down here would mark a live
+ * curve as "never launched" for the life of the process, which is the TBA this
+ * whole module exists to end, made permanent.
+ *
+ * Bounded, and evicted oldest-first: a set that only ever grows is a leak
+ * anybody can drive by pasting addresses.
+ */
+const NOT_PONS_MAX = 5000;
+const notPons = new Set();
+
+const memoKey = (chain, address) => `${chain}/${String(address).toLowerCase()}`;
+
+function rememberNotPons(chain, address) {
+  const k = memoKey(chain, address);
+  if (notPons.has(k)) return;
+  if (notPons.size >= NOT_PONS_MAX) {
+    // Sets iterate in insertion order, so the first key is the oldest.
+    const oldest = notPons.values().next();
+    if (!oldest.done) notPons.delete(oldest.value);
+  }
+  notPons.add(k);
+}
+
 /** Chains the Pons pad declares, read from the registry rather than a second
  *  hardcoded list — the rule tradebot/launchpads.js had to learn after its own
  *  hand-written chain map silently dropped a whole pad. */
@@ -111,6 +146,9 @@ function toInfo(launch) {
  */
 async function fetchTokenInfoX(chain, address) {
   if (!covers(chain)) return { ok: true, why: null, info: null };
+  // An answer we already have. `ok` is true because this IS the answer — Pons
+  // never launched it — and the caller must not read it as a source that failed.
+  if (notPons.has(memoKey(chain, address))) return { ok: true, why: 'not a Pons launch', info: null };
   if (Date.now() < coolingUntil) return { ok: false, why: 'parked after a recent failure', info: null };
 
   const url = `${DEXVRA_API_BASE}/api/pons?address=${encodeURIComponent(address)}`;
@@ -128,7 +166,10 @@ async function fetchTokenInfoX(chain, address) {
 
   // 404 is an ANSWER about the token — Pons did not launch it. Anything else
   // non-2xx is about us, and parks.
-  if (res.status === 404) return { ok: true, why: 'not a Pons launch', info: null };
+  if (res.status === 404) {
+    rememberNotPons(chain, address);
+    return { ok: true, why: 'not a Pons launch', info: null };
+  }
   if (!res.ok) {
     coolingUntil = Date.now() + COOLDOWN_MS;
     const why = `site answered ${res.status}`;
@@ -143,7 +184,10 @@ async function fetchTokenInfoX(chain, address) {
     return { ok: false, why: 'unreadable answer', info: null };
   }
   const launch = body && body.launch;
-  if (!launch || !launch.address) return { ok: true, why: 'not a Pons launch', info: null };
+  if (!launch || !launch.address) {
+    rememberNotPons(chain, address);
+    return { ok: true, why: 'not a Pons launch', info: null };
+  }
   return { ok: true, why: null, info: toInfo(launch) };
 }
 
@@ -155,6 +199,11 @@ async function fetchTokenInfo(chain, address) {
 /** Test seam. */
 const _reset = () => {
   coolingUntil = 0;
+  // ⚠️ The memo is persistent by design and the suite shares one process, so a
+  // test that left it behind would answer the next test's request without a
+  // fetch — the leaked-state scar this repo carries for the probe rotation and
+  // the auto-trend panel. Stated here rather than inherited.
+  notPons.clear();
 };
 
 module.exports = { covers, fetchTokenInfo, fetchTokenInfoX, httpsLogo, toInfo, _reset };

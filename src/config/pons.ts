@@ -27,6 +27,8 @@ export const PONS = {
   rpcUrl: env("PONS_RPC_URL", "https://rpc.mainnet.chain.robinhood.com"),
   explorer: env("PONS_EXPLORER", "https://robinhoodchain.blockscout.com"),
   app: env("PONS_APP", "https://ponsfamily.com"),
+  /** Path segment of a token's page on that app — see `ponsTokenUrl`. */
+  tokenPath: env("PONS_TOKEN_PATH", "launchpad").replace(/^\/+|\/+$/g, ""),
 
   /** PonsV2LaunchFactory — emits TokenLaunched / LaunchSwept / PoolGraduated. */
   factoryV2: env("PONS_FACTORY", "0x7eD598BcEf8bd9Edd8C97A195C6d13f40801EC7e").toLowerCase(),
@@ -64,5 +66,23 @@ export const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 export const GRADUATION_PHASES = ["NotGraduated", "Swept", "PoolCreated", "Rescued"] as const;
 export type GraduationPhase = (typeof GRADUATION_PHASES)[number];
 
-export const ponsTokenUrl = (address: string): string => `${PONS.app}/token/${address}`;
+/**
+ * The token's page on Pons — `/launchpad/<address>`, NOT `/token/<address>`.
+ *
+ * ⚠️ THIS WAS `/token/`, AND EVERY LINK THIS REPO GENERATED 404'd. The path was
+ * never measured; it was assumed from the shape of every other explorer here
+ * (`ponsExplorerUrl` beside it really is `/token/`, which is what made the
+ * guess look right). The operator settled it by sending a screenshot with their
+ * own address bar in it:
+ *
+ *     https://www.ponsfamily.com/launchpad/0xfCd4CdEabe055315b1036A189eA54ca627Df390a
+ *
+ * A dead link is the quiet kind of wrong: it reaches the listing review card
+ * and the "🚀 Still bonding" line as ordinary blue text, and nothing anywhere
+ * says the destination does not exist — the reader simply concludes the pad is
+ * broken. `PONS_TOKEN_PATH` makes a future move a line in `.env` rather than a
+ * deploy, the contract every guessed launchpad path in this repo carries.
+ */
+export const ponsTokenUrl = (address: string): string =>
+  `${PONS.app}/${PONS.tokenPath}/${address}`;
 export const ponsExplorerUrl = (address: string): string => `${PONS.explorer}/token/${address}`;

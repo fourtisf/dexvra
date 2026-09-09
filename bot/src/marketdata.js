@@ -5,6 +5,7 @@
 // DexScreener only; chains neither indexes → null (posts show TBA).
 const { chainOf } = require("./config/chains");
 const launchpads = require("./launchpads");
+const ponsChain = require("./ponsChain");
 const log = require("./helpers/logger");
 
 const GT = "https://api.geckoterminal.com/api/v2";
@@ -439,6 +440,77 @@ async function fillFromLaunchpad(chain, address, out) {
     log.debug(`[market] launchpad ${chain}/${address}: ${e.message}`);
     return null;
   });
+  return mergeCurve(out, lp);
+}
+
+/**
+ * The CURVE CONTRACT, after the HTTP pad — the one source that cannot be
+ * unreachable.
+ *
+ * ⚠️ "Market cap: TBA · Price: TBA" WENT OUT AGAIN, and the round before had
+ * fixed a different cause. $WROTE was 1% along a Pons bonding curve, so it has
+ * NO POOL and neither indexer can price it however cheaply they are asked —
+ * and the leg above then asks Pons over HTTP on a host and a path this repo has
+ * never verified (`verified: false`), which the operator's own
+ * `launchpads:check` reports unreachable. So every source in this function was
+ * either structurally blind to a curve or a guess, while ponsfamily.com showed
+ * $0.000004 on a $4,494.71 cap in the same minute.
+ *
+ * This file already knows the answer and says it one module over: *"the one
+ * source that cannot be unreachable — the token contract itself — was the one
+ * nobody asked."* That was wired into `discovery.fetchTokenInfoX` for the
+ * LISTING FORM and nowhere else, so the form autofilled a name and a ticker
+ * off the chain and the post announcing the very same token printed TBA.
+ *
+ * Order is the SAME as discovery's (pads, then chain) rather than a second
+ * private precedence for the same two sources — two orders is how the form and
+ * the post come to disagree about a token's price.
+ *
+ * ⚠️ BUT THE REQUEST IS STARTED AT THE TOP OF `fetchMarket`, NOT HERE, AND
+ * WITHOUT THAT THIS WHOLE FIX SHIPS INERT. Precedence is about which ANSWER
+ * wins; it must not decide who gets to ASK. Read serially this is fourth in a
+ * queue inside the post's 8s ceiling — DexScreener misses, GeckoTerminal waits
+ * on `gtSlot(PRIO_BACKGROUND)` which has no deadline of its own, the launchpad
+ * spends 6s discovering that its guessed host is unreachable — so the contract
+ * would be asked with about two seconds left of an 8s budget, against its own
+ * 5s timeout, and the post would print TBA exactly as it did before. A wiring
+ * that does nothing refuses beautifully.
+ *
+ * Starting it up front costs an INDEXED Robinhood token one localhost request
+ * whose answer is then thrown away — bounded by `covers` (Robinhood only), by
+ * the route's own cache, and by the reader's memo of the tokens Pons never
+ * launched, which is the answer for every graduated token on the chain.
+ */
+function startChainRead(chain, address) {
+  if (!ponsChain.covers(chain)) return null;
+  // ⚠️ `.catch` AT CREATION, not at the await. Nothing awaits this promise on
+  // the path where the indexers answered everything, and an unhandled
+  // rejection ends the process on Node 18.
+  return ponsChain.fetchTokenInfoX(chain, address).catch((e) => {
+    log.debug(`[market] pons-chain ${chain}/${address}: ${e.message}`);
+    return null;
+  });
+}
+
+async function fillFromChain(chain, address, out, started) {
+  if (!ponsChain.covers(chain)) return out;
+  const r = await (started || startChainRead(chain, address));
+  // "We could not ask" and "Pons never launched this token" are different
+  // facts, and only the second is about the token — but neither fills anything,
+  // so the distinction is only worth a line for whoever reads the log.
+  if (r && !r.ok && r.why) log.debug(`[market] pons-chain ${chain}/${address}: ${r.why}`);
+  return mergeCurve(out, r && r.info);
+}
+
+/**
+ * Fill an indexer record's holes from a pre-migration source, or build one from
+ * scratch when the indexers had nothing at all.
+ *
+ * One merge for both curve sources: they answer the same fields in the same
+ * shape, and a second copy of these rules is how the pad leg and the chain leg
+ * would come to disagree about whether a curve has a volume.
+ */
+function mergeCurve(out, lp) {
   if (!lp) return out;
   const base = out || {};
   return {
@@ -487,6 +559,9 @@ async function fetchMarket(chain, address, opts = {}) {
   // It is not a second idea of how these hosts fail — same two readers, same
   // merge below, one different ORDER — because a third private answer to "is
   // GeckoTerminal up" is what this repo keeps paying for.
+  // Started HERE so it runs alongside the indexers rather than behind them —
+  // see fillFromChain's header for the arithmetic that makes this load-bearing.
+  const chainP = startChainRead(chain, address);
   const dsFirst = opts.cheap ? await fetchDS(chain, address) : null;
   // ⚠️ THE CHEAP ANSWER HAS TO CARRY WHAT THIS CALLER ACTUALLY READS.
   //
@@ -554,6 +629,10 @@ async function fetchMarket(chain, address, opts = {}) {
   // indexed token must not pay a launchpad round trip on every poll, and nine
   // background pipelines call this on timers.
   if (!out || !out.priceUsd || !out.mcap) out = await fillFromLaunchpad(chain, address, out);
+  // Re-tested, not chained onto the line above: the pad may have answered some
+  // of it, and a token whose price arrived but whose cap did not is still a
+  // post that prints TBA on one of the two figures it exists to carry.
+  if (!out || !out.priceUsd || !out.mcap) out = await fillFromChain(chain, address, out, chainP);
   // EVERY TRENDING ROW CARRIES A PERCENTAGE — the operator's rule, and this is
   // the last place that can still make it true from published data. Only
   // reached when every source above came back with no reading, so an indexed,

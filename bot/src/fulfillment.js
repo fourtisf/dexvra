@@ -11,7 +11,7 @@ const postids = require("./channels/postids");
 const market = require("./marketdata");
 const x = require("./twitter");
 const menu = require("./handlers/menu");
-const { SITE_URL, CHANNELS, X_POST_TIMEOUT_MS,
+const { SITE_URL, DEXVRA_API_BASE, CHANNELS, X_POST_TIMEOUT_MS,
   EMOJI_BUDGET_MS,
   CLIP_BUDGET_MS,
   MARKET_BUDGET_MS, X_TRENDING_ENABLED } = require("./config/constants");
@@ -124,7 +124,12 @@ async function dm(ctx, payload, keyboard) {
 function photoSource(logoFileId, logoUrl) {
   if (logoFileId) return logoFileId;
   if (!logoUrl) return null;
-  if (logoUrl.startsWith("http")) return logoUrl;
+  // ⚠️ TELEGRAM FETCHES THIS URL ITSELF, so it gets the same gateway failover
+  // and the same allowlist the site gives a browser — and the PUBLIC origin,
+  // not DEXVRA_API_BASE, because localhost:3005 is not a place Telegram can
+  // reach. Handing it a bare ipfs.io url is the defect above on the one path
+  // where the fallback is no picture at all.
+  if (logoUrl.startsWith("http")) return proxiedLogo(SITE_URL, logoUrl);
   return `${SITE_URL}${logoUrl}`; // /api/media/... → public dexvra.io URL
 }
 
@@ -144,16 +149,73 @@ function coinFrom(row, live) {
   };
 }
 
-/** Fetch a token logo into a Buffer for the banner renderer (URL case). */
+/**
+ * A token logo as bytes, THROUGH THE SITE'S OWN IMAGE PROXY.
+ *
+ * ⚠️ THE BANNER DREW THE DEXVRA DIAMOND OVER A TOKEN WHOSE ARTWORK WE HAD.
+ * This used to `fetch(logoUrl)` raw, and a Pons launch pins its picture on
+ * IPFS: `ponsChain.httpsLogo` rewrites `ipfs://<cid>` to ONE hardcoded gateway
+ * (`PONS_IPFS_GATEWAY`, ipfs.io), so a gateway that has not pinned that CID
+ * answers 404, this returned null, and the fallback artwork shipped to 12,523
+ * subscribers — silently, because the `catch` said nothing at all.
+ *
+ * That is this repo's oldest rule ("never one hardcoded host") and its most
+ * expensive one ("a guard is only honest while it measures the stack the
+ * caller actually uses") in the same three lines. `/api/logo` is the ONE owner
+ * of "can this url be rendered": it extracts the CID and FAILS OVER across
+ * `IPFS_GATEWAYS` (a CID is the hash of the bytes, so a 404 is a fact about the
+ * gateway and not about the artwork), it re-checks every redirect hop, it
+ * refuses a 200 carrying HTML, and it carries the hotlink allowlist. Going
+ * around it meant the site could draw a logo the channel could not — and
+ * fixing the gateway list for the website, which this repo has already done,
+ * bought the banners nothing.
+ *
+ * It is asked over `DEXVRA_API_BASE` (localhost) because WE are the one
+ * fetching: same box, no public round trip. `photoSource` needs the public
+ * origin instead, because Telegram fetches that one.
+ */
+function proxiedLogo(base, logoUrl) {
+  return `${base}/api/logo?u=${encodeURIComponent(logoUrl)}`;
+}
+
 async function fetchLogoUrl(logoUrl) {
   if (!logoUrl) return null;
-  const url = logoUrl.startsWith("http") ? logoUrl : `${SITE_URL}${logoUrl}`;
+  // An upload is our own file on our own disk — nothing to fail over to, and
+  // no third-party host to vouch for.
+  if (!logoUrl.startsWith("http")) return (await readImage(`${SITE_URL}${logoUrl}`)).bytes;
+
+  const viaProxy = await readImage(proxiedLogo(DEXVRA_API_BASE, logoUrl));
+  if (viaProxy.bytes) return viaProxy.bytes;
+  // ⚠️ A REFUSAL BY THE PROXY IS AN ANSWER AND IS NOT RETRIED DIRECTLY: it
+  // means neither the site nor this banner may render that url, and drawing it
+  // here would put a picture in the channel that the token's own page cannot
+  // show. Only the proxy being UNREACHABLE falls through — a web app mid-deploy
+  // must not cost every listing its artwork, and a direct read is exactly what
+  // this function did before.
+  //
+  // `reached` travels back with the bytes rather than living in a module-level
+  // flag: several logos are fetched concurrently here (a listing and its
+  // trending slot), and a shared "was the proxy up" variable would be read by
+  // whichever call happened to look after somebody else's write.
+  const direct = viaProxy.reached ? { bytes: null } : await readImage(logoUrl);
+  if (!direct.bytes) {
+    // Never silent again. "The project gave us no logo" and "we could not fetch
+    // the one they gave us" are different facts, and the banner renders them
+    // identically — as the Dexvra mark.
+    log.warn(`[fulfil] logo unusable, banner falls back to the Dexvra mark: ${logoUrl}`);
+  }
+  return direct.bytes;
+}
+
+/** `{bytes, reached}` — `reached` is whether the HOST answered at all, which is
+ *  a different fact from whether it gave us an image. */
+async function readImage(url) {
   try {
     const r = await fetch(url, { signal: AbortSignal.timeout(12000) });
-    if (!r.ok) return null;
-    return Buffer.from(await r.arrayBuffer());
+    if (!r.ok) return { bytes: null, reached: true };
+    return { bytes: Buffer.from(await r.arrayBuffer()), reached: true };
   } catch {
-    return null;
+    return { bytes: null, reached: false };
   }
 }
 
@@ -743,4 +805,10 @@ module.exports = {
   fulfillMassDm,
   postMedia,
   _successBanner: successBanner, // buyer copy — tested directly (see banner.test.js)
+  // The artwork path. Exported because "the banner drew the Dexvra mark over a
+  // token whose logo we had" is invisible to a source scan: both the broken and
+  // the fixed version call fetch() with a url, and only DRIVING them says which
+  // url. See bannerLogo.test.js.
+  _fetchLogoUrl: fetchLogoUrl,
+  _photoSource: photoSource,
 };

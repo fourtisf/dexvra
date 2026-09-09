@@ -8536,6 +8536,135 @@ has all three.
 still raises the real ceiling rather than dividing it — this only stops a post
 spending it on a question DexScreener answers for free.
 
+### …and it went out TBA again, because a curve has no pool to be cheap about
+
+"mengapa ketika listing price mc tba pdahal sudah ada price dan mc" (2026-09-09),
+with the Xpress card for **Wallet Route ($WROTE)** on Robinhood reading
+`Market cap: TBA · Price: TBA`, and beside it the operator's browser on
+ponsfamily.com showing `$0.000004` on a `$4,494.71` cap in the same minute.
+
+The round above is deployed and is not the cause. **$WROTE is 1% along a PONS
+BONDING CURVE**, so it has no pool at all — and every source the post's read
+could reach was either structurally blind to that or a guess:
+
+| source | on a curve token |
+| --- | --- |
+| DexScreener (now first, and cheap) | indexes POOLS — nothing |
+| GeckoTerminal | indexes POOLS — nothing |
+| `fillFromLaunchpad` | asks Pons over HTTP on a host and path this repo has never verified (`verified: false`), which the operator's own `launchpads:check` reports unreachable |
+| **the curve contract** | **has the price, and was never asked** |
+
+**This file already wrote the answer down, one feature over, and then wired it
+to one caller.** *"The one source that cannot be unreachable — the token
+contract itself — was the one nobody asked."* `ponsChain` went into
+`discovery.fetchTokenInfoX` for the LISTING FORM and nowhere else, so the form
+autofilled a name, a ticker and an X handle off the chain and **the paid post
+announcing that very token printed TBA on both figures.** A source wired to one
+surface is not a source the next surface has.
+
+- ⚠️ **AND THE OBVIOUS WIRING SHIPS INERT.** Precedence decides which ANSWER
+  wins; it must not decide who gets to ASK. Read in the natural place — after
+  the pads, where the hole-filling rule puts it — the contract is FOURTH inside
+  the post's 8s ceiling: DexScreener misses, GeckoTerminal waits on
+  `gtSlot(PRIO_BACKGROUND)` which has no deadline of its own, the launchpad
+  spends 6s discovering its guessed host is unreachable, and the chain read
+  starts with about two seconds left against its own 5s timeout. It would have
+  passed every test and printed TBA on the box. The request is STARTED with the
+  indexers and merged in at the end, so ordering and scheduling stay separate
+  questions. `.catch` at CREATION — nothing awaits it on the path where the
+  indexers answered, and an unhandled rejection ends the process on Node 18.
+- **The MEMO is what makes that affordable.** `fetchPonsLaunch` resolves a launch
+  BY ADDRESS off the factory rather than scanning a window, so *"Pons never
+  launched this"* is permanent — remembered, bounded, evicted oldest-first, and
+  every graduated Robinhood token then costs one localhost request ever instead
+  of one per poll across nine background pipelines.
+- ⚠️ **ONLY A 404 IS MEMOED.** Writing a transport failure down would mark a
+  live curve as "never launched" for the life of the process — this section's
+  own TBA, made permanent and immune to the park expiring, because the memo is
+  checked above it. A failure parks the reader instead.
+- **Order is the SAME as discovery's** (pads, then chain) rather than a second
+  private precedence for the same two sources: two orders is how the form and
+  the post come to disagree about one token's price.
+- ⚠️ **The "a live pool reading still wins" test was VACUOUS.** Its fixture gave
+  GeckoTerminal a complete record, which closes the `!priceUsd || !mcap` gate —
+  so the chain leg never ran and inverting the merge's precedence left it green.
+  It was asserting the GATE while claiming to assert the RULE. A partial indexer
+  answer is the only shape that reaches the merge with a reading already in hand.
+- ⚠️ **So was the fail-safe test.** It drove a transport failure, called
+  `_reset()`, and looked at the next request — and `_reset()` clears the memo,
+  i.e. exactly the thing under test, so memoing a failure survived the mutation
+  run untouched. A park and a memo both suppress the second request; only
+  `{ok, why}` tells them apart, and that distinction IS the rule.
+
+### "lalu lgo juga bermasalah" — the banner drew through a stack the site had already fixed
+
+The same card, drawing the **Dexvra diamond** where $WROTE's artwork belongs —
+for a token whose picture is on its own pad page and whose contract publishes it.
+
+Nothing upstream was broken. `tokenLogo` had already been fixed to publish the
+`ipfs://<cid>` the contract carries, and `ponsChain.httpsLogo` rewrites that to
+one gateway. Then `fetchLogoUrl` fetched that url **RAW**: ipfs.io had not
+pinned the CID, `!r.ok` returned null, the fallback shipped to 12,523
+subscribers — and the `catch` said nothing at all.
+
+**"Never one hardcoded host" and "a guard is only honest while it measures the
+stack the caller actually uses", in the same three lines.** The SITE has had
+gateway failover since the `$BREAKING` round; the banners went around
+`/api/logo` entirely, so fixing the website's gateway list bought the channel
+nothing — the site could draw a logo the channel could not.
+
+- **`/api/logo` is the ONE owner of "can this url be rendered"** and it already
+  does all of it: extracts the CID and fails over across `IPFS_GATEWAYS` (a CID
+  is the hash of the bytes, so a 404 is a fact about the GATEWAY), re-checks
+  every redirect hop, refuses a 200 carrying HTML, carries the hotlink
+  allowlist. Asked over `DEXVRA_API_BASE` — same box, no public round trip.
+- ⚠️ **A REFUSAL by the proxy is an ANSWER and is not retried raw.** Falling back
+  on a refusal would defeat the allowlist and put a picture in the channel that
+  the token's own page cannot draw. Only the proxy being UNREACHABLE falls
+  through — a web app mid-deploy must not cost every listing its artwork.
+- ⚠️ **`photoSource` proxies too, over the PUBLIC origin**, because TELEGRAM
+  fetches that one and `127.0.0.1:3005` is not a place Telegram can reach. It is
+  the same defect on the one path whose fallback is no picture at all.
+- ⚠️ **The reachability verdict travels WITH the bytes.** The first cut kept it
+  in a module-level flag, and a listing and its trending slot are fetched
+  concurrently here — whichever call looked second would read somebody else's
+  write. Pinned by a test that refuses one url and kills the proxy for the other.
+- **It is never silent again.** "The project gave us no logo" and "we could not
+  fetch the one they gave us" are different facts and the banner renders them
+  identically, as the Dexvra mark.
+
+### "add api pons v2 …/launchpad/0xfCd4…" — the link we generated was a 404
+
+The operator sent the canonical URL, and their address bar settled a third
+defect nobody had measured: `ponsTokenUrl` built **`/token/<address>`** and Pons
+serves **`/launchpad/<address>`**. The path was assumed from the shape of
+`ponsExplorerUrl` directly beside it — which really is `/token/` — and that is
+exactly what made the guess look right.
+
+A dead link is the quiet kind of wrong: it reaches the listing review card and
+the "🚀 Still bonding" line as ordinary blue text, so a reader who taps it
+concludes the launchpad is broken rather than that we built the url.
+`PONS_TOKEN_PATH` makes the next move a line in `.env`, the contract every
+guessed launchpad path in this repo carries.
+
+```bash
+cd bot && node scripts/run-tests.js test/curvePost.test.js test/bannerLogo.test.js   # 15 tests, no network
+npm test                                                                             # site: pons/ponsUrl
+```
+
+Ten guarantees are MUTATION-TESTED rather than argued: dropping the chain
+leg, inverting the merge's precedence, reading the chain serially, memoing a
+transport failure, dropping the memo, fetching the logo raw, retrying a refusal
+raw, leaving `photoSource` unproxied, proxying over the public origin from the
+bot, and restoring the `/token/` path. Each fails between one and five tests.
+
+**Config a fix depends on:** nothing — `DEXVRA_API_BASE` already points the bot
+at the site and defaults to `http://127.0.0.1:3005`. ⚠️ **But the web app must be
+running and on a build that carries `/api/pons` and `/api/logo`, so this is a
+`bot/` change AND a `src/` change and the deploy is the full one.**
+`PONS_IPFS_GATEWAY` moves the gateway the bot rewrites to; `IPFS_GATEWAYS` is
+the site proxy's own list and already fails over.
+
 ## "perbaiki tampilan chartnya di mobile" — two rows of timeframe buttons, one of them dead
 
 The same screenshot, one panel down: our chart header — `$HACHIKO`, `LIN LOG`,
