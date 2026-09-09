@@ -26,6 +26,7 @@ const test = require("node:test");
 const assert = require("node:assert");
 const market = require("../src/marketdata");
 const ponsChain = require("../src/ponsChain");
+const fulfil = require("../src/fulfillment");
 
 const WROTE = "0xfCd4CdEabe055315b1036A189eA54ca627Df390a";
 
@@ -239,5 +240,122 @@ test('"Pons never launched this token" costs nothing and is not an error', async
     assert.strictEqual(m, null, "no source had it, and nothing was invented");
   } finally {
     restore();
+  }
+});
+
+// ── THE GECKOTERMINAL STAGE MAY NOT EAT THE WHOLE BUDGET ─────────────────────
+//
+// `$GG`, a pump.fun Solana token, published `price · market cap · liquidity as
+// TBA` on a box where pump.fun answers fine and the pad is `verified: true`.
+// DexScreener misses a bonding curve, the GT read then queues on
+// gtSlot(PRIO_BACKGROUND) — which has NO DEADLINE OF ITS OWN — and it spent the
+// caller's entire 8s, so `fillFromLaunchpad` two lines below was never reached.
+//
+// The chain leg was fixed for exactly this one round earlier. The pad leg one
+// line above it was left serial: a lesson applied to one branch is a lesson
+// half-learnt.
+
+// ⚠️ A REAL MINT, NOT A LABEL. The first cut used `"GGmint"`, and the launchpad
+// registry refuses an address that cannot be a Solana mint before it makes any
+// request — so the test reported the pad as never asked while the code was
+// working perfectly. A test measuring its own fake, which is why this is the
+// address off the operator's own screenshot.
+const GG = "BzAtM6svpCCHxjH7ZzNqBiPSm2D2v7K257damascpump";
+
+/** A pump.fun-shaped answer from the launchpad registry's HTTP pad. */
+const PUMP = {
+  mint: GG,
+  name: "Green God",
+  symbol: "GG",
+  image_uri: "https://ipfs.io/ipfs/bafyGG",
+  usd_market_cap: 61234,
+  price_usd: 0.0000612,
+  real_token_reserves: 500000000000000,
+};
+
+test("⚠️ a slow GT does not cost the LAUNCHPAD its turn", async () => {
+  // ⚠️ DRIVEN THROUGH `_readPostMarket`, THE REAL CALLER, and that is what makes
+  // this test mean anything. The first cut called `fetchMarket` directly and
+  // only asserted the pad was EVENTUALLY asked — which is true of the broken
+  // code too, because `fetchGT` has an 8s timeout of its own and the pad is
+  // reached after it, just far too late. All three mutants survived. What the
+  // post actually cares about is whether a price arrives INSIDE
+  // MARKET_BUDGET_MS, so the bound has to be in the test.
+  const orig = global.fetch;
+  const asked = [];
+  global.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes("geckoterminal")) {
+      asked.push("gt");
+      // The reported state: the shared queue, never arriving inside the budget.
+      //
+      // ⚠️ UNREF'd, and that is the opposite of the rule `bounded` states — for
+      // the opposite reason. Nothing is waiting on this once the caller's bound
+      // fires, so a reffed timer just holds the file's event loop open for its
+      // full duration after the test has passed. `node --test` waits for that,
+      // and the suite pays it. The scar this file's own header names, pointing
+      // the other way.
+      await new Promise((r) => {
+        const t = setTimeout(r, 30_000);
+        if (typeof t.unref === "function") t.unref();
+      });
+      return { ok: false, status: 504, json: async () => ({}) };
+    }
+    if (u.includes("dexscreener")) {
+      asked.push("ds");
+      return { ok: true, status: 200, json: async () => ({ pairs: [] }) }; // no pair on a curve
+    }
+    if (u.includes("pump.fun")) {
+      asked.push("pad");
+      return { ok: true, status: 200, json: async () => PUMP };
+    }
+    return { ok: false, status: 404, json: async () => ({}) };
+  };
+  try {
+    const { live } = await fulfil._readPostMarket("solana", GG, "test");
+    assert.ok(asked.includes("pad"), `the launchpad must be asked: ${asked.join(", ")}`);
+    assert.ok(live, "the post must get a market — this is the TBA that shipped");
+    assert.strictEqual(live.priceUsd, 0.0000612);
+    assert.strictEqual(live.mcap, 61234);
+  } finally {
+    global.fetch = orig;
+  }
+});
+
+test("…and a caller with NO budget still waits on GT exactly as it always did", async () => {
+  // The nine background pipelines pass no budget and must keep their behaviour.
+  // GT answers here at 5s — comfortably past the slice a post would impose, and
+  // fine for a timer job — so a slice applied unconditionally would throw this
+  // answer away and re-ask the pads on every poll of every listing.
+  const orig = global.fetch;
+  let gtAsked = false;
+  global.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes("geckoterminal")) {
+      gtAsked = true;
+      // Reffed on purpose: this one IS awaited to completion — the assertion
+      // below is that GT's answer survives, so the answer has to arrive.
+      await new Promise((r) => setTimeout(r, 5000));
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          data: {
+            attributes: { price_usd: "3", market_cap_usd: "300", total_reserve_in_usd: "30" },
+            relationships: {},
+          },
+          included: [],
+        }),
+      };
+    }
+    return { ok: false, status: 404, json: async () => ({}) };
+  };
+  try {
+    const m = await market.fetchMarket("solana", GG, { cheap: true, need: POST_NEED });
+    assert.ok(gtAsked);
+    assert.ok(m, "an unbounded caller must still get GT's answer");
+    assert.strictEqual(m.priceUsd, 3, "…and it is GT's, not a pad's");
+  } finally {
+    global.fetch = orig;
   }
 });

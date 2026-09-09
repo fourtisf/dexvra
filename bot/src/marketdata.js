@@ -6,9 +6,21 @@
 const { chainOf } = require("./config/chains");
 const launchpads = require("./launchpads");
 const ponsChain = require("./ponsChain");
+const { bounded } = require("./helpers/bounded");
 const log = require("./helpers/logger");
 
 const GT = "https://api.geckoterminal.com/api/v2";
+
+/**
+ * How much of a caller's budget the GeckoTerminal stage may spend.
+ *
+ * Only binds when the caller SAYS it is on a clock (`opts.budgetMs`); the nine
+ * background pipelines pass nothing and keep waiting as they always have. What
+ * the remainder buys is the launchpad and the curve contract — the two sources
+ * that answer for a token no pool indexes, i.e. exactly the token GT is slowest
+ * to give up on.
+ */
+const GT_STAGE_SHARE = 0.55;
 // This module has its own fetch calls against GeckoTerminal, and for a long
 // time they went out with no regard for the shared 429 cooldown or for any
 // budget — nine background pipelines (pump, rank-up, auto-trend, gainers,
@@ -585,7 +597,36 @@ async function fetchMarket(chain, address, opts = {}) {
   const hasField = (o, f) => (f === "priceUsd" || f === "mcap" ? !!o[f] : Number.isFinite(o[f]));
   if (dsFirst && need.every((f) => hasField(dsFirst, f))) return dsFirst;
 
-  const gt = await fetchGT(chain, address);
+  // ⚠️ NO SINGLE STAGE MAY CONSUME THE WHOLE BUDGET.
+  //
+  // `$GG` — a pump.fun Solana token — published `price · market cap · liquidity
+  // as TBA` on a box where pump.fun answers perfectly well and the pad entry is
+  // `verified: true`. DexScreener misses a bonding curve (no pair), this read
+  // then queues on `gtSlot(PRIO_BACKGROUND)` WHICH HAS NO DEADLINE OF ITS OWN,
+  // it spent the caller's entire 8s, and `fillFromLaunchpad` two lines below —
+  // the one source that HAS that token's price — was never reached.
+  //
+  // That is the defect the chain leg was fixed for last round, left in place on
+  // the leg one line above it: a lesson applied to one branch is a lesson
+  // half-learnt. The fix there was concurrency; here it is a SLICE, because a
+  // pad request fired for every indexed token on every poll of nine background
+  // pipelines is a cost the post does not need to pay — GT answers in
+  // milliseconds when it answers at all, so a bound costs a healthy read
+  // nothing and only ever takes time away from a queue.
+  //
+  // A stage that overruns its slice is INCONCLUSIVE, never a verdict — the rule
+  // `curveTrade`'s STAGE_MS states, and the fail-safe direction: falling
+  // through to the pad costs a request, while treating a queue as "this token
+  // has no market" is the TBA being fixed.
+  const gtMs = Number.isFinite(opts.budgetMs) && opts.budgetMs > 0
+    ? Math.max(1000, Math.floor(opts.budgetMs * GT_STAGE_SHARE))
+    : 0;
+  const gt = gtMs
+    ? await bounded(fetchGT(chain, address), gtMs, () => {
+        log.debug(`[market] ${chain}/${address}: GT passed its ${gtMs}ms slice — falling through to the pads`);
+        return null;
+      })
+    : await fetchGT(chain, address);
   // Only skip DexScreener when GT already has EVERYTHING. GT often returns a
   // price+mcap but no liquidity (reserve_in_usd null) for GT-primary chains
   // (Robinhood/Plasma) — without this, "Liquidity: —" stuck forever.

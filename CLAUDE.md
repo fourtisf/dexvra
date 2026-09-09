@@ -8823,6 +8823,68 @@ Mutation-tested: the client budget no longer exceeding the route's, the route's
 fetch unbounded by the remaining total again, and one sentence for both
 failures — each fails a test.
 
+##### …and the next run proved the logo was a TIMEOUT, then found the leg above it
+
+`post:check` on `build e4ac4ca`: `$GG`'s artwork **loads**, and the red mark
+moved to the market read.
+
+```
+✗ $GG — Green God  solana/BzAtM6svp…damascpump
+  would publish: price · market cap · liquidity as TBA
+  the read did not finish: the market read passed 8000ms — the shared GeckoTerminal queue
+```
+
+So the previous run's *"the row HAS a logo and it did not load"* was the budget
+mismatch above, not a missing CID — which is exactly why that section refused to
+call it either. **A red mark under an ambiguous diagnostic is not evidence of
+the thing it names**, and one round of arithmetic was cheaper than a round of
+hunting for artwork that was never gone.
+
+⚠️ **AND THE NEW FAILURE IS THE SAME DEFECT ONE LINE UP.** `$GG` is a pump.fun
+token; pump.fun is `verified: true` and answers from this box:
+
+| stage | |
+| --- | --- |
+| `fetchDS` | miss — a bonding curve has no pair |
+| `fetchGT` | **awaited, queued on `gtSlot(PRIO_BACKGROUND)` with no deadline of its own, and an 8s fetch timeout on top** → spends the caller's entire budget |
+| `fillFromLaunchpad` | pump.fun. **HAS this token's price. Never reached.** |
+| `fillFromChain` | concurrent since last round — and Robinhood-only anyway |
+
+The chain leg was made concurrent *because being last in a serial queue made it
+inert*. The pad leg directly above it was left serial. **A lesson applied to one
+branch is a lesson half-learnt**, written in this file by the commit that
+half-learnt it.
+
+- **The fix is a SLICE, not concurrency, and the difference is cost.** Starting
+  the pad up front would fire an HTTP request for every indexed token on every
+  poll of nine background pipelines; GT answers in milliseconds when it answers
+  at all, so bounding it costs a healthy read nothing and only ever takes time
+  away from a queue. `GT_STAGE_SHARE` (0.55) leaves the remainder for the pad
+  and the contract. It is the rule `curveTrade`'s `STAGE_MS` already states:
+  **no single stage may consume the whole budget**, and a stage that overruns is
+  INCONCLUSIVE, never a verdict.
+- ⚠️ **It binds ONLY a caller that SAYS it is on a clock** (`opts.budgetMs`,
+  passed by `POST_MARKET`). The background pipelines pass nothing and wait
+  exactly as they always have — a slice imposed on them would throw away a
+  slow-but-fine GT answer and re-ask the pads on every poll of every listing.
+- ⚠️ **ALL THREE MUTANTS SURVIVED THE FIRST CUT OF THE TESTS.** They called
+  `fetchMarket` directly and asserted only that the pad was EVENTUALLY asked —
+  true of the broken code too, because `fetchGT` has its own 8s timeout and the
+  pad is reached after it, just far too late for the post. What the post cares
+  about is whether a price arrives INSIDE the budget, so the test drives
+  `_readPostMarket` — the real caller, with the real bound.
+- ⚠️ **And the fixture used `"GGmint"`**, which the launchpad registry refuses
+  before making any request, so it reported the pad as never asked while the
+  code worked perfectly. A test measuring its own fake, for the third time in
+  this file; it uses the address off the operator's own screenshot now.
+
+```bash
+cd bot && node scripts/run-tests.js test/curvePost.test.js   # 10 tests, no network
+```
+
+Mutation-tested: GT unbounded again, the slice forced on callers that never
+asked for one, and the post no longer declaring its budget — each fails a test.
+
 ## "perbaiki tampilan chartnya di mobile" — two rows of timeframe buttons, one of them dead
 
 The same screenshot, one panel down: our chart header — `$HACHIKO`, `LIN LOG`,

@@ -59,7 +59,17 @@ const BANNER_FILL_KINDS = new Set(["listing", "trending"]);
  * different sequence. A third private idea of "is GeckoTerminal up" is what
  * this repo keeps paying for.
  */
-const POST_MARKET = { cheap: true, need: ["priceUsd", "mcap", "liq"] };
+const POST_MARKET = {
+  cheap: true,
+  need: ["priceUsd", "mcap", "liq"],
+  // ⚠️ SAYING WE ARE ON A CLOCK is what keeps the launchpad reachable. Without
+  // it the GeckoTerminal stage has no deadline of its own — it queues on
+  // gtSlot(PRIO_BACKGROUND) behind every timer job — and it spent this whole
+  // budget on `$GG`, so pump.fun (which HAS that token's price) was never
+  // asked and the post published TBA. `fetchMarket` reserves the remainder for
+  // the pad and the curve contract.
+  budgetMs: MARKET_BUDGET_MS,
+};
 
 /**
  * The post's market read, bounded — AND THE REASON IT COULD NOT ANSWER.
