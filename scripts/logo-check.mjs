@@ -108,7 +108,17 @@ async function loads(url) {
     const res = await fetch(`${BASE}${src}`, { headers: { accept: "image/*,*/*" }, signal: AbortSignal.timeout(15_000) });
     const ct = res.headers.get("content-type") ?? "";
     const bytes = res.ok ? (await res.arrayBuffer()).byteLength : 0;
-    if (!res.ok) return { ok: false, why: `HTTP ${res.status}`, status: res.status };
+    if (!res.ok) {
+      // ⚠️ `HTTP 404` FROM OUR OWN PROXY IS NOT A DIAGNOSIS. It is what the
+      // route answers once every IPFS gateway has refused, and the operator
+      // needs to know WHICH refusal: a CID nothing has pinned is artwork that
+      // is gone, while every gateway serving `text/html` is a dag-pb CID that
+      // resolves to a DIRECTORY — deterministic, unrelated to pinning, and
+      // fixable. The route carries that on `x-logo-why` precisely so this line
+      // can print it.
+      const detail = res.headers.get("x-logo-why");
+      return { ok: false, why: detail ? `HTTP ${res.status} — ${detail}` : `HTTP ${res.status}`, status: res.status };
+    }
     if (!/^image\//i.test(ct)) return { ok: false, why: `served ${ct || "no content-type"}, not an image` };
     return { ok: true, why: `${ct} · ${Math.round(bytes / 1024)}KB` };
   } catch (e) {

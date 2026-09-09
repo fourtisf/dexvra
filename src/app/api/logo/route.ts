@@ -104,6 +104,18 @@ const IPFS_GATEWAYS: string[] = (process.env.IPFS_GATEWAYS ?? "")
 const IPFS_MAX_TRIES = 3;
 const IPFS_TRY_MS = 5000;
 const ONE_TRY_MS = 8000;
+/**
+ * The whole request's ceiling, redirects and gateway failover included.
+ *
+ * ⚠️ IT IS A CONTRACT WITH THE CALLER, not a local politeness knob. The bot
+ * fetches its banner artwork through here on the path between a buyer's payment
+ * and their post, with a timeout of its own; if this can outlast that timeout,
+ * a working proxy is indistinguishable from a dead one and the caller falls
+ * back to exactly the single-gateway fetch this route replaces. Any change here
+ * has to move `LOGO_PROXY_MS` in bot/src/fulfillment.js with it — a test in the
+ * bot asserts its timeout is the larger of the two.
+ */
+const TOTAL_MS = 12_000;
 
 /** The `<cid>/<path…>` of an IPFS url, or null when this is not one.
  *
@@ -183,7 +195,27 @@ export async function GET(req: NextRequest) {
   // about the token everywhere else.
   const tries = candidates(first);
   const perTry = tries.length > 1 ? IPFS_TRY_MS : ONE_TRY_MS;
-  const deadline = Date.now() + 12_000;
+  const deadline = Date.now() + TOTAL_MS;
+  // ⚠️ EVERY FETCH IS CAPPED BY WHAT IS LEFT OF THE TOTAL, not by `perTry`
+  // alone. The deadline below only ever gated STARTING another gateway, so the
+  // real worst case was three gateways x IPFS_TRY_MS — and up to MAX_HOPS
+  // redirects inside each, every hop a fresh AbortSignal — which is 15s with no
+  // redirects and far more with them, against a documented 12s budget.
+  //
+  // That is not merely slow: the BOT calls this with a timeout of its own, so a
+  // proxy grinding through failover exactly as designed read to its caller as
+  // UNREACHABLE, which sent the banner back to a raw single-gateway fetch — the
+  // one thing routing through here exists to replace.
+  const left = () => Math.max(250, deadline - Date.now());
+
+  // ⚠️ NEVER DISCARD THE REASON — this route's 404 is the LAST place the per
+  // gateway outcome exists. `logos:check` pulls artwork through here, so a row
+  // that fails reported only `HTTP 404`, which cannot tell an operator whether
+  // the CID is unpinned everywhere (nothing to fix — the artwork is gone) or
+  // whether every gateway served something that is not an image (a dag-pb CID
+  // that resolves to a DIRECTORY listing answers `text/html`, deterministically,
+  // however well pinned it is). Those need different answers and got one shrug.
+  const why: string[] = [];
 
   for (let i = 0; i < tries.length; i++) {
     // Only START another attempt while there is time for it. Without this the
@@ -201,7 +233,7 @@ export async function GET(req: NextRequest) {
       for (let hop = 0; hop <= MAX_HOPS; hop++) {
         res = await fetch(url.toString(), {
           headers: { "user-agent": "Mozilla/5.0 (compatible; DexvraLogo/1.0)", accept: "image/*,*/*" },
-          signal: AbortSignal.timeout(perTry),
+          signal: AbortSignal.timeout(Math.min(perTry, left())),
           redirect: "manual",
           cache: "no-store",
         });
@@ -225,13 +257,16 @@ export async function GET(req: NextRequest) {
     }
 
     if (!res || !res.ok) {
+      why.push(`${url.hostname}: ${res ? `HTTP ${res.status}` : "no answer"}`);
       void res?.body?.cancel().catch(() => {});
       continue;
     }
     const ct = res.headers.get("content-type") || "image/png";
     if (!/^image\//i.test(ct)) {
       // A gateway that answers 200 with an HTML "not found" page is a miss, not
-      // an image — the same thing a CDN does when it will not admit one.
+      // an image — the same thing a CDN does when it will not admit one. It is
+      // ALSO what a directory CID looks like, which is why the type is recorded.
+      why.push(`${url.hostname}: served ${ct.split(";")[0]}`);
       void res.body?.cancel().catch(() => {});
       continue;
     }
@@ -267,5 +302,13 @@ export async function GET(req: NextRequest) {
   // Every candidate refused it. 404 rather than 502 because <Coin>'s onError
   // listens for a failed load, not for a status — the monogram is the designed
   // fallback and it must still fire.
-  return new NextResponse(null, { status: 404 });
+  //
+  // The reason rides on a HEADER, never in a body: a browser <img> reads only
+  // the status, so this costs the page nothing and gives `logos:check` the one
+  // fact that separates "unpinned" from "not an image". Bounded, because it is
+  // built from upstream hostnames and content types.
+  return new NextResponse(null, {
+    status: 404,
+    headers: why.length ? { "x-logo-why": why.join("; ").slice(0, 300) } : undefined,
+  });
 }

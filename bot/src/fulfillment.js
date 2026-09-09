@@ -178,13 +178,32 @@ function proxiedLogo(base, logoUrl) {
   return `${base}/api/logo?u=${encodeURIComponent(logoUrl)}`;
 }
 
+/**
+ * How long the bot waits on its own image proxy — LONGER THAN THE PROXY'S OWN
+ * BUDGET, and that ordering is the whole point.
+ *
+ * ⚠️ THIS WAS 12s AGAINST A ROUTE THAT COULD TAKE 15s OR MORE. `/api/logo`
+ * fails over across three IPFS gateways at 5s each and follows redirects inside
+ * each one, and its `deadline` only ever gated STARTING another gateway — so a
+ * proxy doing exactly what it was written to do outlasted this timeout, the
+ * fetch below recorded `reached: false`, and the "only an UNREACHABLE proxy
+ * falls through" branch then went and fetched the raw single-gateway url. The
+ * one thing routing through the proxy exists to replace, reinstated by a
+ * mismatch between two numbers nobody had compared.
+ *
+ * It is the same shape as the curve read being fourth in an 8s queue: a budget
+ * that is smaller than the work it is waiting on turns a fix into a no-op.
+ * `logoProxy.test.js` asserts this stays the larger of the two.
+ */
+const LOGO_PROXY_MS = 15_000;
+
 async function fetchLogoUrl(logoUrl) {
   if (!logoUrl) return null;
   // An upload is our own file on our own disk — nothing to fail over to, and
   // no third-party host to vouch for.
   if (!logoUrl.startsWith("http")) return (await readImage(`${SITE_URL}${logoUrl}`)).bytes;
 
-  const viaProxy = await readImage(proxiedLogo(DEXVRA_API_BASE, logoUrl));
+  const viaProxy = await readImage(proxiedLogo(DEXVRA_API_BASE, logoUrl), LOGO_PROXY_MS);
   if (viaProxy.bytes) return viaProxy.bytes;
   // ⚠️ A REFUSAL BY THE PROXY IS AN ANSWER AND IS NOT RETRIED DIRECTLY: it
   // means neither the site nor this banner may render that url, and drawing it
@@ -199,19 +218,25 @@ async function fetchLogoUrl(logoUrl) {
   // whichever call happened to look after somebody else's write.
   const direct = viaProxy.reached ? { bytes: null } : await readImage(logoUrl);
   if (!direct.bytes) {
-    // Never silent again. "The project gave us no logo" and "we could not fetch
-    // the one they gave us" are different facts, and the banner renders them
-    // identically — as the Dexvra mark.
-    log.warn(`[fulfil] logo unusable, banner falls back to the Dexvra mark: ${logoUrl}`);
+    // Never silent again — and never one sentence for two facts. A proxy that
+    // ANSWERED means no gateway had this CID as an image, which is about the
+    // artwork; a proxy that could not be reached is about the web app, and
+    // sending an operator to hunt a dead logo for a stopped site is the
+    // wrong-layer diagnosis this file keeps paying for.
+    log.warn(
+      viaProxy.reached
+        ? `[fulfil] logo unusable — no gateway served it as an image, banner falls back to the Dexvra mark: ${logoUrl}`
+        : `[fulfil] logo unreadable — /api/logo did not answer in ${LOGO_PROXY_MS}ms (is the web app up?), banner falls back to the Dexvra mark: ${logoUrl}`,
+    );
   }
   return direct.bytes;
 }
 
 /** `{bytes, reached}` — `reached` is whether the HOST answered at all, which is
  *  a different fact from whether it gave us an image. */
-async function readImage(url) {
+async function readImage(url, timeoutMs = 12000) {
   try {
-    const r = await fetch(url, { signal: AbortSignal.timeout(12000) });
+    const r = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
     if (!r.ok) return { bytes: null, reached: true };
     return { bytes: Buffer.from(await r.arrayBuffer()), reached: true };
   } catch {
@@ -819,6 +844,7 @@ module.exports = {
   // url. See bannerLogo.test.js.
   _fetchLogoUrl: fetchLogoUrl,
   _photoSource: photoSource,
+  _LOGO_PROXY_MS: LOGO_PROXY_MS,
   // The post's own market read, exported so `post:check` DRIVES it rather than
   // asking the indexers its own way. A check with a second copy of the question
   // is how `fonts:check` printed nine green ticks over a banner publishing

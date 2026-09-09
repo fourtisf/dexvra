@@ -8755,6 +8755,74 @@ check: an honest silence reported as a fault, the lost logo no longer
 outranking it, a lost logo alone ceasing to be a fault, the check growing its
 own market read, and a half-named token silently answered with other tokens.
 
+##### …and the first live run found the fix's own budget was too small
+
+`post:check` on the box, straight after the deploy (`build 5b518ce`), read
+4 of 5 clean — `$MUCHWOW`, `$ZZZ` (Robinhood, priced), `$USEFUL`, `$LMEOW` all
+with `price · mcap · artwork loads` — and one red:
+
+```
+✗ $GG — Green God  solana/BzAtM6svp…damascpump
+  the row HAS a logo and it did not load — the banner would draw the Dexvra mark
+  https://ipfs.io/ipfs/bafybeibk74wtpsgccfehq4zatxgorv5pwfmtpy7qo7hj6kbvko5nmvokba
+```
+
+That row is the check earning its keep: before this it would have shipped the
+Dexvra mark in silence. **But reading the two timeouts against each other turned
+up a defect in the fix itself, and it is mine.**
+
+| | budget |
+| --- | --- |
+| `/api/logo` | 3 IPFS gateways × `IPFS_TRY_MS` 5s, redirects followed INSIDE each — and its `deadline` only ever gated STARTING another gateway, never a fetch already running → **15s+ in the ordinary slow case** |
+| the bot's `fetchLogoUrl` | `AbortSignal.timeout(12000)` |
+
+⚠️ **So a proxy doing exactly what it was written to do outlasted its caller.**
+The fetch recorded `reached: false`, and the "only an UNREACHABLE proxy falls
+through" branch then went and fetched the RAW single-gateway url — the one thing
+routing through the proxy exists to replace, reinstated by a mismatch between
+two numbers nobody had compared. It also cost another 12s on the path between a
+buyer's payment and their post.
+
+**A budget smaller than the work it waits on turns a fix into a no-op** — the
+same shape as the curve read sitting fourth inside an 8s ceiling, one feature
+over, found the same way: by doing the arithmetic rather than reading the code.
+
+- **Every fetch is now capped by what is LEFT of the total**, redirect hops
+  included, so `TOTAL_MS` is a real ceiling instead of a gate on starting.
+- **`TOTAL_MS` is a CONTRACT WITH THE CALLER**, not a local politeness knob, and
+  it says so at its own definition: `logoProxy.test.js` reads it out of the
+  route's source and fails if `LOGO_PROXY_MS` is not the larger of the two.
+- ⚠️ **AND THE WARN WAS ONE SENTENCE FOR TWO FACTS**, which is this repo's most
+  repeated rule broken in the line written to end the silence. "No gateway
+  served it as an image" is about the artwork; "/api/logo did not answer" is
+  about the web app, and sending an operator to hunt a dead logo for a stopped
+  site is the wrong-layer diagnosis. Two sentences now, chosen by whether the
+  host answered.
+
+⚠️ **What this does NOT settle is whether `$GG`'s CID is actually gone.** Whether
+a gateway serves a given CID is a property of the box's egress and of what is
+pinned today — it cannot be measured from here, which is why `logos:check` is
+what the check points at. What changed is that the next run can no longer report
+a TIMEOUT as "no gateway has it": under the old budget those two were the same
+line, so the red mark above is not yet proof of either.
+
+```bash
+cd bot && node scripts/run-tests.js test/logoProxy.test.js   # 4 tests, no network
+```
+
+- ⚠️ **AND `logos:check` WOULD HAVE SAID `HTTP 404` AND NOTHING ELSE.** That is
+  our own proxy's answer once every gateway has refused, and it cannot tell an
+  operator which refusal it was: a CID nothing has pinned is artwork that is
+  GONE, while every gateway serving `text/html` is a dag-pb CID resolving to a
+  DIRECTORY — deterministic, unrelated to pinning, and fixable. Two different
+  answers, one shrug. The route carries the per-gateway outcome on an
+  `x-logo-why` HEADER (a browser `<img>` reads only the status, so it costs the
+  page nothing) and the check prints it.
+
+Mutation-tested: the client budget no longer exceeding the route's, the route's
+fetch unbounded by the remaining total again, and one sentence for both
+failures — each fails a test.
+
 ## "perbaiki tampilan chartnya di mobile" — two rows of timeframe buttons, one of them dead
 
 The same screenshot, one panel down: our chart header — `$HACHIKO`, `LIN LOG`,
