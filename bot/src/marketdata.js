@@ -542,12 +542,44 @@ function mergeCurve(out, lp) {
     name: base.name || lp.name || null,
     symbol: base.symbol || lp.symbol || null,
     logoUrl: base.logoUrl || lp.logoUrl || null,
+    // The curve source's own reason, ONLY while nothing priced the record: a
+    // priced record has no hole to explain, and a stale sentence beside a real
+    // number is the two-cells-disagreeing defect this repo keeps paying for.
+    marketWhy: (num(base.priceUsd) ?? num(lp.priceUsd)) == null ? lp.marketWhy || null : null,
     // Curve state, for the callers that know to look. Ignored by the ones that
     // do not, which is every existing one.
     onCurve: lp.onCurve,
     progressPct: lp.progressPct,
     launchpad: lp.launchpad,
   };
+}
+
+/**
+ * A PRICED record with NO ARTWORK still takes the contract's logo.
+ *
+ * DexScreener indexes some pads' bonding curves as ordinary pairs (Pons on
+ * Robinhood among them) and has no picture for a token minutes old — so a
+ * curve token DS happened to index was priced by DS and drawn by nobody, while
+ * the chain read that carries its logo was "one localhost request whose answer
+ * is thrown away". The row was born blank on exactly the path that looked
+ * healthiest. Every exit of `fetchMarket` goes through here, because a priced
+ * answer leaves by three doors and a rule on one of them is a rule the other
+ * two do not have.
+ *
+ * ⚠️ ONLY FOR A CALLER ON A CLOCK (`opts.budgetMs` — the paid post). The nine
+ * background pipelines poll every listing on timers and must not wait on a
+ * chain read for a field they do not render; for them this is a no-op and the
+ * read they started stays fire-and-forget exactly as before. The read is
+ * already in flight either way, so the post pays at most the remainder of that
+ * ONE request, never a second one — and an indexer's own logo is an ANSWER,
+ * never replaced.
+ */
+async function logoFromChain(out, chainP, opts) {
+  if (!out || out.logoUrl || !chainP) return out;
+  if (!(Number.isFinite(opts && opts.budgetMs) && opts.budgetMs > 0)) return out;
+  const r = await chainP;
+  if (r && r.info && r.info.logoUrl) return { ...out, logoUrl: r.info.logoUrl };
+  return out;
 }
 
 /**
@@ -595,7 +627,7 @@ async function fetchMarket(chain, address, opts = {}) {
   const NEED_DEFAULT = ["priceUsd", "mcap"];
   const need = Array.isArray(opts.need) && opts.need.length ? opts.need : NEED_DEFAULT;
   const hasField = (o, f) => (f === "priceUsd" || f === "mcap" ? !!o[f] : Number.isFinite(o[f]));
-  if (dsFirst && need.every((f) => hasField(dsFirst, f))) return dsFirst;
+  if (dsFirst && need.every((f) => hasField(dsFirst, f))) return logoFromChain(dsFirst, chainP, opts);
 
   // ⚠️ NO SINGLE STAGE MAY CONSUME THE WHOLE BUDGET.
   //
@@ -636,7 +668,7 @@ async function fetchMarket(chain, address, opts = {}) {
   // 10,593 subscribers. It costs nothing where it cannot help — DexScreener
   // does not index the GT-primary chains at all, so `fetchDS` returns before
   // any request is made.
-  if (gt && gt.priceUsd && gt.mcap && gt.liq && gt.change24h != null) return gt;
+  if (gt && gt.priceUsd && gt.mcap && gt.liq && gt.change24h != null) return logoFromChain(gt, chainP, opts);
   // GT missing entirely, or missing price/mcap/liq → let DexScreener fill gaps.
   // In cheap mode it has ALREADY been asked, and its answer is reused — a miss
   // included. `dsFirst || await fetchDS(...)` would re-ask on every miss, which
@@ -700,7 +732,7 @@ async function fetchMarket(chain, address, opts = {}) {
       out.changeWhy = out.changeWhy ? `${out.changeWhy}; ${c.why}` : c.why;
     }
   }
-  return out;
+  return logoFromChain(out, chainP, opts);
 }
 
 /**

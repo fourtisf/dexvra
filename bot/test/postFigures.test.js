@@ -197,9 +197,17 @@ test("BOTH fulfilment paths report the artwork, from the buffer the banner gets"
   // ⚠️ AND THE TRENDING FETCH MUST SIT ABOVE ITS WATCH. It used to be below,
   // and a watch cannot report artwork it has not seen yet.
   // The X form now — the fetch that also carries reached/status/why.
-  const fetchAt = src.indexOf("const logoFetch = await fetchLogoUrlX(row.logoUrl);");
+  // ⚠️ Pinned to the PROPERTY, not a spelling: this used to match the literal
+  // `fetchLogoUrlX(row.logoUrl)` and went red the day the trending path
+  // started adopting a curve token's contract logo (`fetchLogoUrlX(logoUrl)`)
+  // — over code that keeps the rule perfectly. The rule is that the trending
+  // section's LAST fetch sits above its watch, whatever url it is handed.
   const watchAt = src.indexOf('kind: "trending", chain: p.chain');
-  assert.ok(fetchAt > 0 && watchAt > 0);
+  assert.ok(watchAt > 0, "the trending watch exists");
+  const fetchAt = src.lastIndexOf("await fetchLogoUrlX(", watchAt);
+  const listingWatchAt = src.indexOf('kind: "listing", chain:');
+  assert.ok(fetchAt > 0, "a trending logo fetch exists");
+  assert.ok(fetchAt > listingWatchAt, "…and it is the TRENDING section's fetch, not the listing's");
   assert.ok(fetchAt < watchAt, "the trending logo is fetched BEFORE the watch reads it");
 });
 

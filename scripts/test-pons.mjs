@@ -249,9 +249,32 @@ function handle({ method, params }) {
   throw new Error(`unstubbed method ${method}`);
 }
 
+// Which rung of the ETH/USD ladder (providers/pons/quoteUsd.ts) answers.
+// "coinbase" is the shipped happy path; "gt" refuses the two free rungs so
+// GeckoTerminal has to answer; "none" refuses all three, which is the state
+// that used to publish TBA over a curve price the chain had just answered.
+let quoteMode = "coinbase";
+// When set, every RPC batch carrying an eth_getLogs never answers.
+let hangLogs = false;
+const refused = () => new Response("busy", { status: 503, headers: { "content-type": "text/plain" } });
+
 globalThis.fetch = async (url, init) => {
   const href = String(url);
+  if (href.includes("api.coinbase.com")) {
+    if (quoteMode !== "coinbase") return refused();
+    return new Response(JSON.stringify({ data: { base: "ETH", currency: "USD", amount: String(ETH_USD) } }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }
+  if (href.includes("api.dexscreener.com")) {
+    // Never answers in this harness: the rung is the same reader the board
+    // uses (fetchDsMarket), and its parser has its own tests. What is under
+    // test here is that a refusal FALLS THROUGH and is NAMED.
+    return refused();
+  }
   if (href.includes("api.geckoterminal.com")) {
+    if (quoteMode === "none") return refused();
     return new Response(
       JSON.stringify({
         data: { attributes: { token_prices: { [PONS.nativeUsdRef.address]: String(ETH_USD) } } },
@@ -262,6 +285,12 @@ globalThis.fetch = async (url, init) => {
   if (href === PONS.rpcUrl) {
     rpcRequests++;
     const body = JSON.parse(init.body);
+    // A node that takes its TIME over a log walk — the histories are the only
+    // Pons read that uses eth_getLogs, so this stalls exactly the side read
+    // `fetchPonsLaunch` bounds, and nothing else.
+    if (hangLogs && (Array.isArray(body) ? body : [body]).some((e) => e && e.method === "eth_getLogs")) {
+      return new Promise(() => {});
+    }
     const respond = (entry) => {
       try {
         return { jsonrpc: "2.0", id: entry.id, result: handle(entry) };
@@ -585,6 +614,80 @@ delete process.env.TELEGRAM_CHAT_ID;
     `${portOf("PONS_FACTORY")} vs ${PONS.factoryV2}`,
   );
   check("the check script names the chain id the app uses", src.includes(`CHAIN_ID = ${PONS.chainId}`));
+}
+
+// ── The ETH/USD reference is a LADDER, and a curve price survives losing it ─
+// "bagaimana kalo token listing di pons v2 dan bot kita tidak bisa baca price
+// dan marketcap masih tba" — the USD figure used to hang on GeckoTerminal
+// alone, the one metered source on the box, and `describe()` nulled the
+// curve's own spot price along with it. Driven through the real
+// fetchPonsLaunch, which is what /api/pons and therefore the bot reads.
+{
+  const viaCoinbase = await (async () => {
+    quoteMode = "coinbase";
+    pons.__resetNativeUsd();
+    __resetHistories();
+    return pons.fetchPonsLaunch(TOKEN);
+  })();
+  check("the shipped ladder prices ETH off Coinbase first", viaCoinbase?.quoteUsdSource === "coinbase", String(viaCoinbase?.quoteUsdSource));
+  check("…and a priced record carries no marketWhy", viaCoinbase != null && viaCoinbase.marketWhy === null, String(viaCoinbase?.marketWhy));
+  check("…with a USD price", viaCoinbase != null && viaCoinbase.priceUsd > 0, String(viaCoinbase?.priceUsd));
+
+  quoteMode = "gt";
+  pons.__resetNativeUsd();
+  __resetHistories();
+  const viaGt = await pons.fetchPonsLaunch(TOKEN);
+  check("two free rungs refusing falls through to GeckoTerminal", viaGt?.quoteUsdSource === "geckoterminal", String(viaGt?.quoteUsdSource));
+  check(
+    "…at the same USD price",
+    viaGt != null && viaCoinbase != null && near(viaGt.priceUsd, viaCoinbase.priceUsd, 1e-9),
+    `${viaGt?.priceUsd} vs ${viaCoinbase?.priceUsd}`,
+  );
+
+  quoteMode = "none";
+  pons.__resetNativeUsd();
+  __resetHistories();
+  const noRef = await pons.fetchPonsLaunch(TOKEN);
+  check("no USD reference → USD price is null, never a fabricated number", noRef != null && noRef.priceUsd === null && noRef.mcapUsd === null, `${noRef?.priceUsd} / ${noRef?.mcapUsd}`);
+  // ⚠️ The chain's own answer is a FACT and must not be nulled with the USD
+  // figure — that is exactly what `describe()` used to do.
+  check(
+    "…but the curve's spot price in ETH survives",
+    noRef != null && viaCoinbase != null && noRef.priceQuote > 0 && near(noRef.priceQuote, viaCoinbase.priceQuote, 1e-12),
+    `${noRef?.priceQuote} vs ${viaCoinbase?.priceQuote}`,
+  );
+  check(
+    "…and marketWhy names every rung that refused",
+    ["coinbase", "dexscreener", "geckoterminal"].every((r) => String(noRef?.marketWhy || "").includes(r)),
+    String(noRef?.marketWhy),
+  );
+  check("…with no source claimed", noRef != null && noRef.quoteUsdSource === null, String(noRef?.quoteUsdSource));
+
+  quoteMode = "coinbase";
+  pons.__resetNativeUsd();
+}
+
+// ── The side reads are BOUNDED, so a slow log walk cannot hold the price ───
+// The bot reads /api/pons on a 5s clock for a paid post's figures. The curve
+// histories feed only the period stats; a public RPC taking its time over six
+// log chunks used to hold the WHOLE record past that deadline — a TBA by a
+// longer road, over a price the snapshot had already answered. Measured with
+// a node that never answers a log walk: the record still comes out, priced,
+// inside SIDE_MS plus a margin.
+{
+  const { SIDE_MS } = await import("../src/lib/providers/pons/market.ts");
+  check("SIDE_MS is exported, so this measures the real bound", Number.isFinite(SIDE_MS) && SIDE_MS > 0, String(SIDE_MS));
+  __resetHistories();
+  pons.__resetNativeUsd();
+  hangLogs = true;
+  const t0 = performance.now();
+  const slow = await pons.fetchPonsLaunch(TOKEN);
+  const elapsed = performance.now() - t0;
+  hangLogs = false;
+  check("a launch is still described while its log walk hangs", slow != null && slow.priceUsd > 0, String(slow?.priceUsd));
+  check("…inside the side-read bound", elapsed < SIDE_MS + 1500, `${Math.round(elapsed)}ms against ${SIDE_MS}ms`);
+  check("…and the walk was genuinely stalled, not skipped", elapsed >= SIDE_MS - 50, `${Math.round(elapsed)}ms`);
+  __resetHistories();
 }
 
 // ── Report ────────────────────────────────────────────────────────────────

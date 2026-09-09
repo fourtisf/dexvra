@@ -9203,6 +9203,132 @@ upload was never on a gateway. Whether a given gateway serves a given CID
 today is still measured on the box, which is why `IPFS_GATEWAYS` stays
 env-overridable.
 
+### "bagaimana kalo token listing di pons v2 dan … price dan marketcap masih tba dan tidak ada logo" — the USD figure hung on the scarcest source, and the artwork on one gateway
+
+Asked as a hypothetical (2026-09-09), and the answer was that it was not one:
+walk a Pons v2 curve token through the code the paid post runs, and BOTH holes
+were still reachable on a busy minute, after every round above. Three causes,
+none of them the chain.
+
+**1. THE CURVE'S PRICE WAS MULTIPLIED BY AN ETH/USD REFERENCE FROM GECKOTERMINAL
+AND NOWHERE ELSE.** `readLaunchSnapshots` reads the curve's spot price off the
+contract perfectly well, in ETH. To print it in dollars the app asked GT for
+WETH's price — the one metered source on the box, sharing a ~30 req/min per-IP
+ceiling with the bot suite, budgeted at 5/min for the site and armed with a
+process-wide 120s cooldown on any 429. `describe()` then nulled `priceUsd`,
+`mcapUsd` AND `priceQuote` whenever that read failed, and `fetchPonsMarket`
+parked the whole board fallback for five minutes on the same throw. So on a
+busy minute every curve token on the site — and every paid post the bot builds
+through `/api/pons` — read TBA over a price the chain had just answered. This
+file's own oldest rule, one number over: *a PRICE has two free sources; a
+CANDLE has one* — and the ETH/USD reference had been treated as a candle.
+
+- **`providers/pons/quoteUsd.ts` is a LADDER**: Coinbase spot (keyless; the
+  trade bot has priced every card through it since it was written) →
+  DexScreener's own WETH pair on Ethereum (the site's existing reader) →
+  GeckoTerminal LAST, because it is the only rung that costs a chart. Every
+  rung is bounded (`STEP_MS`, 3s) because this sits inside `/api/pons`, which
+  the bot reads on a 5s clock of its own; a rung that FAILS says why, and
+  `marketWhy` carries all three refusals to the record, the bot's read, the
+  post's alert and `post:check` — "no USD reference for ETH — coinbase: 503;
+  dexscreener: 403; geckoterminal: rate limited" is a diagnosis, a bare null
+  is another round of guessing.
+- ⚠️ **THE CHAIN'S OWN ANSWER IS A FACT AND IS NEVER NULLED WITH THE USD
+  FIGURE.** `priceQuote` (in ETH) survives a ladder with no rung standing; only
+  the dollar figures go, and the record says why. Losing the reference used to
+  cost the reading it was meant to convert.
+- **`nativeUsdX()` never throws and caches only an ANSWER** — `cached()`
+  rethrows a cold miss, so a null is never served stale for the life of the
+  process, and once a number is in, the stale-while-revalidate copy carries
+  every later outage.
+- **The SIDE READS are bounded too** (`SIDE_MS`, 3s): the curve histories
+  feed the period stats and the profile feeds the socials, neither is the
+  PRICE, and a public RPC taking its time over six log chunks used to hold
+  the whole record past the bot's deadline — a TBA by a longer road. Past the
+  bound the read is left RUNNING (its result lands in its own cache) and the
+  record goes out without that half. Measured in `test:pons` with a node that
+  never answers a log walk: the record still comes out, priced, in 3006ms.
+
+**2. THE ROW WAS BORN BLANK, AND NOTHING AFTER BIRTH COULD FILL IT.** The bot's
+market read already carried the contract's logo (`mergeCurve`) — and
+`fulfillListing` read the market AFTER its logo step and never looked at
+`live.logoUrl`; the site's resolver sweep had no Pons source at all. So a curve
+token's artwork was in hand on the post's own read and reached nobody.
+
+- **The market read STARTS beside the Telegram download and is AWAITED
+  BEFORE `api.createListing`**, and `adoptChainLogo` fills a BLANK only,
+  https only — a logo the buyer uploaded or typed is their decision, and an
+  `ipfs://` would fail the site's `LOGO_RE` and cost the whole listing over its
+  picture. The trending sibling adopts it the same way, above its own watch.
+- ⚠️ **AND A RECORD DEXSCREENER PRICED IN FULL STILL TAKES THE CONTRACT'S
+  LOGO.** DS indexes some pads' curves as ordinary pairs (Pons on Robinhood
+  among them) and has no picture for a token minutes old, so the merge — which
+  only runs when a figure is MISSING — was never reached on exactly the path
+  that looked healthiest, and the chain read that carried the logo was "one
+  localhost request whose answer is thrown away". `logoFromChain` sits on
+  EVERY exit of `fetchMarket` (a priced answer leaves by three doors, and a
+  rule on one of them is a rule the other two do not have — the first cut sat
+  after the last door only), and it binds ONLY a caller on a clock
+  (`opts.budgetMs`, the paid post): the nine background pipelines must not wait
+  on a chain read for a field they do not render, and the read they started
+  stays fire-and-forget exactly as before. An indexer's own logo is an ANSWER
+  and is never replaced.
+- **The site's resolver gained a Pons rung**, FIRST and only on a
+  `launchpad === "pons-v2"` chain, injected as a dep from `providers/index.ts`
+  (this module is alias-free so `npm test` can drive it; the contract reader
+  is not). Every candidate is still FETCHED before it is believed — and
+  verified across the gateway LADDER, because a CID is the hash of the bytes,
+  so one gateway's 404 is a fact about the gateway: all four missing is
+  `unreachable` (retried in 30 min), never a twelve-hour "no artwork" miss.
+- **`lib/ipfsGateways.ts` is the ONE owner of the ladder**, moved out of
+  `/api/logo` the moment a second consumer needed it — the $GG round was two
+  copies of this list disagreeing about whether pump.fun's own pin was on it.
+  The route imports it; a guard fails if the route grows a list of its own.
+
+**3. ⚠️ `pons:check` §7 PROBED GECKOTERMINAL ALONE**, and would have printed
+*"every USD figure on the feed is null while this is refused"* over a 429 —
+true while GT was the only source, and a check lying in the ALARMING direction
+from the day the ladder shipped: an operator sent to buy a GT key for a feed
+Coinbase was pricing perfectly well. The verdict is the app's own record now
+(`/api/pons` names the rung that priced ETH, or every rung that refused); the
+three direct probes are notes about THIS box's egress and may never turn the
+exit code — pinned by a comment-stripped scan of the probe loop.
+
+```bash
+npm run test:pons                                                     # 79 checks: the ladder, priceQuote surviving it, the bounded side reads
+npm test                                                              # quoteUsd (5) · ipfsGateways (4) · logoGateways (6) · tokenLogo (38) · ponsCheck (8) · logoPipeline (23)
+cd bot && node scripts/run-tests.js test/curvePost.test.js test/postFigures.test.js   # 20 + the repinned watch guard
+cd /opt/dexvra && npm run pons:check                                  # §7: which rung prices ETH FROM THE BOX
+cd /opt/dexvra/bot && npm run post:check                              # the newest listings, assembled as a post assembles them
+```
+
+Twenty guarantees are MUTATION-TESTED rather than argued — the ladder order,
+`priceQuote` nulled with the USD figure, `marketWhy` dropped, a side read
+unbounded, the Pons rung removed, an all-gateways miss recorded as "no
+artwork", the sweep not wired, the listing's adoption removed (⚠️ the first
+guard for that was a source scan and went green on `if (false && adopt…)` —
+the create is intercepted and DRIVEN now), the trending adoption removed, the
+bot's `toInfo` dropping the reason, the merge carrying the refusal beside a
+real price (⚠️ behaviour-neutral on every priced-chain fixture; the fixture
+that kills it prices from the OTHER source), the adoption overwriting a
+buyer's logo, `logoFromChain` a no-op, one door bypassing it, background
+callers waiting too, the route growing its own ladder, the pin dropped, and
+in the check: a direct probe turning the verdict, `marketWhy` ignored, and a
+green mark over a null price. Each fails between one and five tests.
+
+⚠️ **This touches `bot/` AND `src/`**, so the deploy is the full one
+(`bash /opt/dexvra/scripts/deploy.sh --with-bots`): the bot's read depends on
+a web app serving `quoteUsdSource`/`marketWhy` on `/api/pons`, and a
+`pm2 restart dexvra-bot` alone leaves the ladder undeployed while the bot's
+own sha looks correct.
+
+**Config a fix depends on:** nothing — every rung is keyless and ships on.
+⚠️ Whether Coinbase and DexScreener serve THIS box is a property of its
+egress today (the sandbox this was written in answers 403 for all three), which
+is exactly what `pons:check` §7 measures. `GECKOTERMINAL_API_KEY` in the
+repo-root `.env` raises the LAST rung's ceiling and nothing else here;
+`IPFS_GATEWAYS` still moves the ladder without a deploy.
+
 ## "perbaiki tampilan chartnya di mobile" — two rows of timeframe buttons, one of them dead
 
 The same screenshot, one panel down: our chart header — `$HACHIKO`, `LIN LOG`,

@@ -206,12 +206,21 @@ test("⚠️ NEVER ONE HARDCODED IPFS GATEWAY", () => {
   // the url, the CID, or the allowlist — one gateway could not find the
   // content. "Never one hardcoded host" is this repo's own rule (JUP_BASES).
   assert.ok(!/const IPFS_GATEWAY\s*=\s*"/.test(code(PROXY)), "the single gateway constant is gone");
-  assert.match(PROXY, /const IPFS_GATEWAYS: string\[\]/);
-  assert.match(PROXY, /process\.env\.IPFS_GATEWAYS/, "…and it is env-overridable, so a dead gateway costs a line not a deploy");
+  // ⚠️ THE LADDER IS ONE MODULE, and the route READS it. This used to pin the
+  // list's spelling inside the route and went red the day the site's logo
+  // resolver needed the same ladder and it moved to lib/ipfsGateways — over
+  // code that keeps the rule perfectly. A second copy inside the route is
+  // exactly what the move exists to prevent (the $GG round: the pump.fun pin
+  // allowlisted in one place and missing from the other).
+  const LADDER = read("src/lib/ipfsGateways.ts");
+  assert.match(LADDER, /export const IPFS_GATEWAYS: string\[\]/);
+  assert.match(LADDER, /process\.env\.IPFS_GATEWAYS/, "…and it is env-overridable, so a dead gateway costs a line not a deploy");
+  assert.match(code(PROXY), /import \{[^}]*\bIPFS_GATEWAYS\b[^}]*\} from "@\/lib\/ipfsGateways"/, "the proxy imports the one ladder");
+  assert.ok(!/const IPFS_GATEWAYS\b/.test(code(PROXY)), "…and carries no list of its own");
   // Every gateway in the shipped list must itself pass the allowlist, or the
   // failover would build urls the guard then refuses — a fallback that cannot
   // fire, which reads exactly like one that never helps.
-  const list = PROXY.slice(PROXY.indexOf("const IPFS_GATEWAYS"), PROXY.indexOf("const IPFS_MAX_TRIES"));
+  const list = code(LADDER).slice(code(LADDER).indexOf("const IPFS_GATEWAYS"), code(LADDER).indexOf("export function", code(LADDER).indexOf("const IPFS_GATEWAYS")));
   const hosts = [...list.matchAll(/"https:\/\/([^/]+)\//g)].map((m) => m[1]);
   assert.ok(hosts.length >= 3, `a LIST, not a host — found ${hosts.length}`);
   for (const h of hosts)

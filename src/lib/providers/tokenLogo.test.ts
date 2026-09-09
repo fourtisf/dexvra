@@ -499,3 +499,84 @@ test("…but a DexScreener 404 does not — that is an answer about the token", 
     _resetCgCooldown();
   }
 });
+
+// ── a Pons-chain token: the contract's own logo() is the first and only source ──
+//
+// A bonding-curve token has no pool, so DS/GT/CG cannot know it; the sweep used
+// to ask all four and write "no artwork anywhere" over a picture on the token's
+// own pad page. The contract's `ipfs://<cid>` is verified across the gateway
+// LADDER, and a CID no gateway serves right now is UNREACHABLE (retry in 30
+// min), never a decided miss (12h) — a gateway 404 is a fact about the gateway.
+const CID = "bafybeibk74wtpsgccfehq4zatxgorv5pwfmtpy7qo7hj6kbvko5nmvokba";
+const PONS_ADDR = "0xfCd4CdEabe055315b1036A189eA54ca627Df390a";
+
+test("on a Pons chain the contract's logo is asked FIRST and wins without a metered request", async () => {
+  let gt = 0;
+  const asked: string[] = [];
+  const r = await resolveLogo("robinhood", PONS_ADDR, {
+    ...none,
+    pons: async () => `ipfs://${CID}`,
+    gt: async () => { gt++; return null; },
+    verify: async (u) => { asked.push(u); return true; },
+  });
+  assert.equal(r.ok, true);
+  assert.equal(r.source, "pons");
+  assert.match(String(r.url), new RegExp(`^https://[^/]+/ipfs/${CID}$`));
+  assert.equal(asked.length, 1, "the first gateway served it — nothing else was fetched");
+  assert.equal(gt, 0, "GeckoTerminal was never asked");
+});
+
+test("⚠️ a gateway 404 falls to the NEXT gateway, and the url stored is the one that served", async () => {
+  const seen: string[] = [];
+  const r = await resolveLogo("robinhood", PONS_ADDR, {
+    ...none,
+    pons: async () => `ipfs://${CID}`,
+    verify: async (u) => { seen.push(u); return seen.length >= 2 ? "image" : "not-image"; },
+  });
+  assert.equal(r.source, "pons");
+  assert.equal(r.url, seen[1]);
+  assert.notEqual(new URL(seen[0]).hostname, new URL(seen[1]).hostname, "the second try must be a different gateway");
+});
+
+test("⚠️ no gateway serving the CID is UNREACHABLE, not a 12-hour 'no artwork'", async () => {
+  const r = await resolveLogo("robinhood", PONS_ADDR, {
+    ...none,
+    pons: async () => `ipfs://${CID}`,
+    verify: async () => "not-image",
+  });
+  assert.equal(r.url, null);
+  assert.equal(r.ok, false, "a cold CID must be retried, not remembered as missing");
+  assert.ok(r.unreachable.some((u) => u.startsWith("pons: no gateway served")), r.unreachable.join(" | "));
+});
+
+test("a contract with an https logo is verified as-is, and a chain that is not Pons never asks", async () => {
+  let ponsAsked = 0;
+  const https = await resolveLogo("robinhood", PONS_ADDR, { ...none, pons: async () => IMG });
+  assert.equal(https.source, "pons");
+  assert.equal(https.url, IMG);
+  const eth = await resolveLogo("ethereum", ADDR, { ...none, pons: async () => { ponsAsked++; return IMG; }, ds: async () => IMG });
+  assert.equal(eth.source, "dexscreener");
+  assert.equal(ponsAsked, 0, "the contract source is a launchpad-chain question only");
+});
+
+test("a contract that publishes nothing costs the chain nothing further and falls through", async () => {
+  const r = await resolveLogo("robinhood", PONS_ADDR, { ...none, pons: async () => null, cg: async () => IMG });
+  assert.equal(r.source, "coingecko");
+  assert.ok(!r.tried.includes("pons"), `no 'pons' try is recorded for a blank logo(): ${r.tried.join(",")}`);
+});
+
+// ── The wiring, because a resolver rung nobody passes in is a rung that never runs ──
+//
+// The Pons source is a DEP (this module is alias-free so `npm test` can drive
+// it; the contract reader is not), so the only place it becomes real is the
+// sweep in providers/index.ts. A source scan, comments stripped — the header
+// there quotes the very call this guards.
+test("the board's logo sweep hands the Pons contract reader to resolveLogo", async () => {
+  const { readFileSync } = await import("node:fs");
+  const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const src = strip(readFileSync(new URL("./index.ts", import.meta.url), "utf8"));
+  const wired = /resolveLogo\([^)]*\{\s*pons:\s*\w+/.exec(src);
+  assert.ok(wired, "backfillLogos must resolve through resolveLogo(chain, address, { pons: <reader> })");
+  // …and the reader is the LAUNCH's logo, off the contract, never a guess.
+  assert.match(src, /fetchPonsLaunch\(/, "the Pons reader is the provider's own fetchPonsLaunch");
+});

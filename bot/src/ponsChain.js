@@ -136,6 +136,12 @@ function toInfo(launch) {
     launchpad: 'Pons',
     launchUrl: safeUrl(launch.ponsUrl),
     source: 'pons-chain',
+    // Why the USD figures are missing when they are — the site's ETH/USD
+    // ladder names every rung that refused — and which rung priced it when
+    // they are not. "We could not price it" and "nobody prices it" are
+    // different facts, and the post watch prints this one.
+    marketWhy: launch.marketWhy ? str(launch.marketWhy, 240) : null,
+    quoteUsdSource: launch.quoteUsdSource ? str(launch.quoteUsdSource, 24) : null,
   };
 }
 

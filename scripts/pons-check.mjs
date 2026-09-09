@@ -328,29 +328,82 @@ if (!tokens.length) {
   }
 }
 
-// ── 7. The USD reference price ────────────────────────────────────────────
+// ── 7. The USD reference price — AS THE APP READS IT ──────────────────────
 // Layer 3, and it fails on its own: every USD figure on the feed is the curve
-// price multiplied by this, so one refused request nulls all of them while
-// the chain reads are perfect.
-head("7 · GeckoTerminal ETH reference price");
-try {
-  const r = await fetch(`https://api.geckoterminal.com/api/v2/simple/networks/eth/token_price/${WETH}`, {
-    headers: { accept: "application/json;version=20230302" },
-    signal: AbortSignal.timeout(12000),
-  });
-  if (!r.ok) {
-    bad(`HTTP ${r.status}${r.status === 429 ? " — rate limited" : ""}`);
-    note("every USD figure on the feed is null while this is refused; the chain reads are unaffected");
-    note("GECKOTERMINAL_API_KEY in the repo-root .env is the only thing that raises the ceiling rather than dividing it");
-    broken++;
+// price multiplied by this, so a refused reference nulls all of them while the
+// chain reads are perfect.
+//
+// ⚠️ This used to probe GeckoTerminal ALONE and print "every USD figure is
+// null while this is refused" over its 429 — true while GT was the app's only
+// source, and a check lying in the ALARMING direction the day the app grew a
+// ladder (providers/pons/quoteUsd.ts: Coinbase spot → DexScreener's WETH pair →
+// GeckoTerminal last). A guard is only honest while it measures the stack the
+// caller uses, so the VERDICT comes from the app's own record — `/api/pons`
+// says which rung priced ETH, or names every rung that refused — and the
+// direct probes below are diagnostics about THIS box's egress, never the
+// verdict.
+head("7 · The ETH/USD reference, as the app serves it");
+{
+  let launch = null;
+  if (!tokens.length) {
+    note("no tokens to read a USD figure for");
   } else {
-    const j = await r.json();
-    const prices = j?.data?.attributes?.token_prices || {};
-    const px = Number(prices[WETH] ?? prices[WETH.toLowerCase()]);
-    if (px > 0) ok(`ETH = $${px.toLocaleString("en-US", { maximumFractionDigits: 2 })}`);
-    else { bad("answered, but with no usable price"); broken++; }
+    try {
+      const r = await fetch(`${SITE}/api/pons?address=${tokens[0]}`, { signal: AbortSignal.timeout(20000) });
+      if (r.ok) launch = (await r.json())?.launch || null;
+      else warn(`/api/pons answered HTTP ${r.status} — section 6 has the details`);
+    } catch (e) {
+      warn(`could not read ${SITE}/api/pons — ${why(e)}`);
+      note("this section says nothing about the app while the server cannot be reached");
+    }
   }
-} catch (e) { bad(`unreachable — ${why(e)}`); broken++; }
+  if (launch) {
+    const px = Number(launch.priceUsd);
+    if (px > 0) {
+      ok(`${tokens[0].slice(0, 10)}… priced at $${px.toPrecision(4)} — ETH reference from ${launch.quoteUsdSource || "(source not reported — an older build?)"}`);
+      note("the ladder is Coinbase spot → DexScreener (WETH) → GeckoTerminal; the first rung that answers wins");
+    } else if (launch.marketWhy) {
+      bad(`no USD price — ${launch.marketWhy}`);
+      note("every USD figure on the feed is null while EVERY rung refuses; the chain reads (and priceQuote, in ETH) are unaffected");
+      note("Coinbase and DexScreener are keyless — a box they refuse is an egress fact; GECKOTERMINAL_API_KEY raises only the last rung's ceiling");
+      broken++;
+    } else {
+      warn("the app reports no USD price and no reason — an ERC-20-quoted launch, or a build older than the ladder");
+    }
+  }
+
+  // Which rung answers FROM THIS BOX. Whether a keyless host serves a
+  // datacenter IP is a property of the server's egress today — measured, not
+  // assumed, and never the verdict: the app's own read above is.
+  const probes = [
+    ["coinbase", async () => {
+      const r = await fetch("https://api.coinbase.com/v2/prices/ETH-USD/spot", { headers: { accept: "application/json" }, signal: AbortSignal.timeout(8000) });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return Number((await r.json())?.data?.amount);
+    }],
+    ["dexscreener", async () => {
+      const r = await fetch(`https://api.dexscreener.com/tokens/v1/ethereum/${WETH}`, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(8000) });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const pairs = await r.json();
+      return Number((Array.isArray(pairs) ? pairs : []).find((q) => String(q?.baseToken?.address || "").toLowerCase() === WETH.toLowerCase())?.priceUsd);
+    }],
+    ["geckoterminal", async () => {
+      const r = await fetch(`https://api.geckoterminal.com/api/v2/simple/networks/eth/token_price/${WETH}`, { headers: { accept: "application/json;version=20230302" }, signal: AbortSignal.timeout(8000) });
+      if (!r.ok) throw new Error(`HTTP ${r.status}${r.status === 429 ? " — rate limited" : ""}`);
+      const prices = (await r.json())?.data?.attributes?.token_prices || {};
+      return Number(prices[WETH] ?? prices[WETH.toLowerCase()]);
+    }],
+  ];
+  for (const [name, fn] of probes) {
+    try {
+      const px = await fn();
+      if (px > 0) note(`${name} → ETH = $${px.toLocaleString("en-US", { maximumFractionDigits: 2 })}`);
+      else note(`${name} → answered, but with no usable price`);
+    } catch (e) {
+      note(`${name} → ${why(e)}`);
+    }
+  }
+}
 
 // ── Verdict ───────────────────────────────────────────────────────────────
 head("Verdict");

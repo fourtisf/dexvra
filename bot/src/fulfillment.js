@@ -84,6 +84,25 @@ const POST_MARKET = {
  * report that a figure was missing and never which of the three silences it
  * was. That distinction is the whole diagnosis.
  */
+/**
+ * Fill a BLANK `input.logoUrl` from the market record's own logo — which, for a
+ * token still on its launchpad curve, is the contract's `logo()` rewritten to a
+ * gateway url by ponsChain.httpsLogo. Returns whether it did. PURE, so the rule
+ * is tested by being called:
+ *   · never over a logo the buyer uploaded (p.logoFileId → an /api/media url)
+ *     or typed — that is their decision, and this repo demotes rather than
+ *     overrides on every surface that carries somebody's money;
+ *   · https only — the site's LOGO_RE refuses anything else, and refusing the
+ *     WHOLE listing over its picture is the failure this file already names.
+ */
+function adoptChainLogo(input, live) {
+  if (!input || input.logoUrl) return false;
+  const url = live && typeof live.logoUrl === "string" ? live.logoUrl.trim() : "";
+  if (!/^https:\/\/[^\s"'<>]+$/i.test(url)) return false;
+  input.logoUrl = url;
+  return true;
+}
+
 async function readPostMarket(chain, address, label) {
   let why = null;
   const live = await bounded(
@@ -98,6 +117,12 @@ async function readPostMarket(chain, address, label) {
       return null;
     },
   );
+  // A record that ANSWERED without a price says why — for a curve token the
+  // chain read carries the ETH/USD ladder's refusals (marketdata.mergeCurve →
+  // ponsChain.toInfo → /api/pons `marketWhy`). Without this the post watch
+  // reported "an indexer answered and publishes no price" over a price the
+  // chain had answered in ETH and nobody could turn into dollars.
+  if (!why && live && live.priceUsd == null && live.marketWhy) why = String(live.marketWhy);
   return { live, why };
 }
 
@@ -484,6 +509,19 @@ async function fulfillListing(ctx, order) {
     if (fixed) input.sym = fixed;
   }
 
+  // THE MARKET READ STARTS HERE, beside the Telegram download, and is awaited
+  // BEFORE the row is created — not after the post's logo step, where it sat.
+  //
+  // "bagaimana kalo token listing di pons v2 dan … tidak ada logo": on a Pons
+  // bonding curve the chain record is the only source of BOTH the price and the
+  // artwork (no pool, so no index has either), and a row created without the
+  // contract's logo stayed logoless for ever — nothing after creation ever
+  // asked the chain for one, and the site's resolver sweep had no source that
+  // could. The market record carries `logoUrl` from the same chain read that
+  // carries the price (marketdata.mergeCurve), so the row is born with it and
+  // the post's own logo step then fetches and PINS it like any other.
+  const marketP = readPostMarket(input.chain, input.address, "listing");
+
   // 1. Logo (best-effort): upload the Telegram photo to dexvra media.
   let logoBuffer = null;
   if (p.logoFileId) {
@@ -505,6 +543,14 @@ async function fulfillListing(ctx, order) {
     input.trendingRank = 1;
     input.trendStart = now;
     input.trendExp = now + hours * 3_600_000;
+  }
+
+  // The read is bounded (MARKET_BUDGET_MS); a slow queue costs the figures and
+  // never the order. A chain logo is adopted ONLY into a blank — a logo the
+  // buyer uploaded or typed is their decision (`adoptChainLogo`).
+  const { live, why: marketWhy } = await marketP;
+  if (adoptChainLogo(input, live)) {
+    log.info(`[fulfil] logo adopted from the chain record for ${input.chain}/${input.address}: ${input.logoUrl}`);
   }
 
   // 3. Create the approved listing (hard step).
@@ -551,7 +597,6 @@ async function fulfillListing(ctx, order) {
   // queues on gtSlot(PRIO_BACKGROUND) behind every timer job on the box, with no
   // deadline of its own. Past the budget the card renders from what the buyer
   // typed, which is the same value the .catch below has always produced.
-  const { live, why: marketWhy } = await readPostMarket(input.chain, input.address, "listing");
   // ⚠️ REPORTED HERE, NOT AT EACH SURFACE. This one read is what the channel
   // card, the banner and the tweet all render from, so one order that
   // published a hole is one alert — the "one fault, one alert" rule. It is
@@ -653,14 +698,22 @@ async function fulfillTrending(ctx, order) {
   // ⚠️ FETCHED BEFORE THE WATCH, not after it. This used to sit below, and the
   // watch cannot report artwork it has not seen yet — a rule applied to one of
   // two siblings is a rule half-made, which is what this whole watch is about.
-  const logoFetch = await fetchLogoUrlX(row.logoUrl);
+  // A row with no logo of its own renders from the chain record's (a Pons
+  // curve token's contract logo) — the listing path's `adoptChainLogo`, on the
+  // sibling. Not written to the row here: this path cannot create, and the
+  // pin CAS refuses to fill a blank; the site's own resolver sweep persists a
+  // Pons token's logo, and this post does not wait for it.
+  const chainLogo = { logoUrl: row.logoUrl };
+  adoptChainLogo(chainLogo, live);
+  const logoUrl = chainLogo.logoUrl || null;
+  const logoFetch = await fetchLogoUrlX(logoUrl);
   const logoBuffer = logoFetch.bytes;
   if (logoBuffer && row.logoUrl) row.logoUrl = await pinLogo(row, row.logoUrl, logoBuffer);
   postFigures.reportFigures({
     kind: "trending", chain: p.chain, address: p.address, sym: row.sym || row.symbol,
     name: row.name, tier: null, live, why: marketWhy,
     siteUrl: `${SITE_URL}/token/${p.chain}/${p.address}`,
-    art: { wanted: !!row.logoUrl, got: !!logoBuffer, url: row.logoUrl, reached: logoFetch.reached, status: logoFetch.status, why: logoFetch.why },
+    art: { wanted: !!logoUrl, got: !!logoBuffer, url: logoUrl, reached: logoFetch.reached, status: logoFetch.status, why: logoFetch.why },
   });
   const coin = coinFrom(row, live);
   const bannerCoin = bannerCoinOf(row, live);
@@ -669,7 +722,7 @@ async function fulfillTrending(ctx, order) {
     { chain: p.chain, address: p.address, symbol: row.sym || row.symbol },
     logoBuffer,
   );
-  const trendMedia = await postMedia("trending", bannerCoin, logoBuffer, null, row.logoUrl, `Trending ${p.hours}H`);
+  const trendMedia = await postMedia("trending", bannerCoin, logoBuffer, null, logoUrl, `Trending ${p.hours}H`);
 
   // Trending is NOT announced on the X listing account by default: @listingdexvra
   // is the listing feed, and Trending Token is its own product with its own
@@ -966,4 +1019,5 @@ module.exports = {
   // is how `fonts:check` printed nine green ticks over a banner publishing
   // boxes — it measured a font stack that renderer did not draw with.
   _readPostMarket: readPostMarket,
+  _adoptChainLogo: adoptChainLogo,
 };

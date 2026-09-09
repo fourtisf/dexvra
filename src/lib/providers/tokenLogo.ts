@@ -28,11 +28,12 @@
 // Relative imports with extensions: node:test resolves this file, and "@/" is
 // a Next-only alias.
 import { CHAINS } from "../../config/chains.ts";
+import { ipfsCandidates, ipfsPath } from "../ipfsGateways.ts";
 import { gtGet } from "./gt.ts";
 
 const TIMEOUT_MS = 8000;
 
-export type LogoSource = "dexscreener" | "trustwallet" | "geckoterminal" | "coingecko" | "dexscreener-cdn";
+export type LogoSource = "pons" | "dexscreener" | "trustwallet" | "geckoterminal" | "coingecko" | "dexscreener-cdn";
 
 export interface LogoResult {
   /**
@@ -346,6 +347,12 @@ export function _resetCgCooldown(): void {
 }
 
 export interface LogoDeps {
+  /** The token CONTRACT's own `logo()` on a Pons chain — `ipfs://<cid>` or an
+   *  https url, or null. Injected by the caller that can reach the chain
+   *  (providers/index.ts hands in fetchPonsLaunch); this module stays
+   *  alias-free so the sweep can be driven by a test. Asked only where
+   *  `CHAINS[chain].launchpad === "pons-v2"`. */
+  pons?: (chain: string, address: string) => Promise<string | null>;
   ds?: (chain: string, address: string) => Promise<string | null>;
   gt?: (chain: string, address: string) => Promise<string | null>;
   cg?: (chain: string, address: string) => Promise<string | null>;
@@ -377,6 +384,9 @@ export interface LogoDeps {
  * Every candidate is verified before it is believed, in this order, and the
  * first that really serves an image wins.
  */
+/** Gateways tried for a contract-published CID before it is called unreachable. */
+const PONS_GATEWAY_TRIES = 4;
+
 export async function resolveLogo(chain: string, address: string, deps: LogoDeps = {}): Promise<LogoResult> {
   const ds = deps.ds ?? dsLogo;
   const gt = deps.gt ?? gtLogo;
@@ -422,6 +432,31 @@ export async function resolveLogo(chain: string, address: string, deps: LogoDeps
     }
     return null;
   };
+
+  // THE TOKEN'S OWN CLAIM FIRST, on a launchpad chain. A Pons bonding-curve
+  // token has no pool, so no index below has ever heard of it — the contract's
+  // `logo()` is the ONLY source of its artwork, and until this rung existed the
+  // sweep asked four sources that could not know it and wrote "no artwork
+  // anywhere" over a picture on the token's own pad page. It is free (one
+  // localhost-cached chain read) and it is the creator's own assertion.
+  //
+  // ⚠️ A CID IS VERIFIED ACROSS THE GATEWAY LADDER, and "no gateway served it"
+  // is UNREACHABLE, never a decided miss. A CID is the hash of the bytes, so a
+  // gateway 404 is a fact about the gateway; writing it down as "this project
+  // has no artwork" (12h) over a cold CID that the next gateway serves is the
+  // $GG flip, one consumer over. lib/ipfsGateways is the same ladder /api/logo
+  // walks, so what the resolver verifies is what the page can draw.
+  if (CHAINS[chain]?.launchpad === "pons-v2" && deps.pons) {
+    const raw = await ask("pons", () => deps.pons!(chain, address));
+    if (raw) {
+      const urls = ipfsPath(raw) ? ipfsCandidates(raw, PONS_GATEWAY_TRIES) : [httpsUrl(raw)].filter((u): u is string => !!u);
+      for (const url of urls) {
+        tried.push("pons");
+        if ((await check(url)) === "image") return { ok: true, url, source: "pons", tried, unreachable };
+      }
+      if (urls.length) unreachable.push(`pons: no gateway served ${raw}`);
+    }
+  }
 
   // ⚠️ THE FREE SOURCES FIRST — and GeckoTerminal is NOT free here. Its quota
   // is the same ~30/min-per-IP the charts are starving on, so a logo lookup

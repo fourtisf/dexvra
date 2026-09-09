@@ -359,3 +359,259 @@ test("…and a caller with NO budget still waits on GT exactly as it always did"
     global.fetch = orig;
   }
 });
+
+// ── "tidak ada logo": the chain record's logo and its REASON reach the post ──
+//
+// A Pons curve token's artwork lives in its contract's logo() and nowhere an
+// index can see; the market read already carried it (mergeCurve) and the post
+// never looked. And when the site's ETH/USD ladder has no answer, the record
+// says so — "we could not price it" is not "nobody prices it".
+const WROTE_LOGO = "ipfs://bafybeibk74wtpsgccfehq4zatxgorv5pwfmtpy7qo7hj6kbvko5nmvokba";
+const LADDER_WHY = "no USD reference for ETH — coinbase: Coinbase 503; dexscreener: DexScreener 403; geckoterminal: rate limited";
+const curveLaunch = (over = {}) => ({
+  launch: {
+    address: WROTE, name: "Wallet Route", symbol: "WROTE", phase: "NotGraduated", graduated: false,
+    priceUsd: null, mcapUsd: null, priceQuote: 0.0000012, logo: WROTE_LOGO, marketWhy: LADDER_WHY, progressPct: 1.2,
+    ...over,
+  },
+});
+
+test("the chain's logo rides the market record, and the ladder's refusal is the read's WHY", async () => {
+  const { asked, restore } = stubFetch((who) => (who === "chain" ? curveLaunch() : who === "ds" ? { pairs: [] } : who === "gt" ? null : undefined));
+  try {
+    const { live, why } = await fulfil._readPostMarket("robinhood", WROTE, "test");
+    assert.ok(asked.includes("chain"), `the chain must be asked: ${asked.join(", ")}`);
+    assert.ok(live, "the chain answered — a record exists even without USD figures");
+    assert.strictEqual(live.priceUsd, null);
+    assert.match(String(live.logoUrl), /^https:\/\/[^/]+\/ipfs\/bafybeibk74/, "the contract's ipfs:// logo must reach the record as a gateway url");
+    assert.match(String(why), /no USD reference for ETH/, `the read must carry the ladder's refusals, got: ${why}`);
+    assert.match(String(why), /coinbase|dexscreener|geckoterminal/);
+  } finally {
+    restore();
+  }
+});
+
+test("a PRICED chain record carries no marketWhy — a stale sentence beside a real number is a contradiction", async () => {
+  const { restore } = stubFetch((who) => (who === "chain" ? curveLaunch({ priceUsd: 0.0000048, mcapUsd: 4494.71, marketWhy: null, quoteUsdSource: "coinbase" }) : who === "ds" ? { pairs: [] } : who === "gt" ? null : undefined));
+  try {
+    const { live, why } = await fulfil._readPostMarket("robinhood", WROTE, "test");
+    assert.strictEqual(live.priceUsd, 0.0000048);
+    assert.strictEqual(live.mcap, 4494.71);
+    assert.strictEqual(why, null);
+    assert.strictEqual(live.marketWhy, null);
+  } finally {
+    restore();
+  }
+});
+
+test("⚠️ …and the ladder's refusal is DROPPED when an INDEXER priced the token", async () => {
+  // The case the fixture above cannot see: the site's ETH/USD ladder failed
+  // (the chain record carries marketWhy and no USD figure) while DexScreener
+  // priced the same token — a graduated Pons token, or one DS indexes on its
+  // curve. mergeCurve fills HOLES from the chain record; the refusal must not
+  // ride along beside a price somebody else answered. A mutant carrying
+  // `lp.marketWhy` unconditionally was behaviour-neutral on every priced-chain
+  // fixture, which is why this one prices from the OTHER source.
+  // A price and NO cap, so the merge (mergeCurve) is the path taken — a fully
+  // priced DS answer never reaches it.
+  const ds = {
+    pairs: [
+      {
+        chainId: "robinhood", priceUsd: "0.0000051", liquidity: { usd: 2000 },
+        volume: { h24: 10 }, priceChange: { h24: 1 }, pairAddress: "0xpair",
+        baseToken: { address: WROTE, name: "Wallet Route", symbol: "WROTE" },
+      },
+    ],
+  };
+  const { restore } = stubFetch((who) => (who === "chain" ? curveLaunch() : who === "ds" ? ds : who === "gt" ? null : undefined));
+  try {
+    const { live, why } = await fulfil._readPostMarket("robinhood", WROTE, "test");
+    assert.strictEqual(live.priceUsd, 0.0000051, "the indexer's price wins");
+    assert.strictEqual(live.mcap, null, "nobody published a cap");
+    assert.strictEqual(why, null, `a priced read has no why: ${why}`);
+    assert.strictEqual(live.marketWhy, null, `the ladder's refusal must not travel beside a real price: ${live.marketWhy}`);
+    // …while the chain still fills the holes the indexer leaves.
+    assert.match(String(live.logoUrl), /^https:\/\/[^/]+\/ipfs\/bafybeibk74/, "the contract's logo still fills the blank");
+  } finally {
+    restore();
+  }
+});
+
+test("⚠️ a record DexScreener priced IN FULL still takes the contract's logo — for the post, and only the post", async () => {
+  // DS indexes some pads' curves as ordinary pairs (Pons on Robinhood among
+  // them) and has no picture for a token minutes old. The merge is never
+  // reached on a fully priced answer, so the chain read that carries the logo
+  // was thrown away — and the row was born blank on exactly the path that
+  // looked healthiest. The read is already in flight; the post waits for it.
+  const ds = {
+    pairs: [
+      {
+        chainId: "robinhood", priceUsd: "0.0000051", marketCap: 5100, liquidity: { usd: 2000 },
+        volume: { h24: 10 }, priceChange: { h24: 1 }, pairAddress: "0xpair",
+        baseToken: { address: WROTE, name: "Wallet Route", symbol: "WROTE" },
+      },
+    ],
+  };
+  const { asked, restore } = stubFetch((who) => (who === "chain" ? curveLaunch() : who === "ds" ? ds : who === "gt" ? null : undefined));
+  try {
+    const { live, why } = await fulfil._readPostMarket("robinhood", WROTE, "test");
+    assert.strictEqual(live.priceUsd, 0.0000051);
+    assert.strictEqual(live.mcap, 5100);
+    assert.strictEqual(why, null);
+    assert.match(String(live.logoUrl), /^https:\/\/[^/]+\/ipfs\/bafybeibk74/, `the post's read must carry the contract's logo, got ${live.logoUrl}`);
+    assert.strictEqual(asked.filter((w) => w === "chain").length, 1, "…from the ONE read already in flight, never a second request");
+
+    // A DS logo is an ANSWER and is never replaced by the chain's.
+    const withArt = { pairs: [{ ...ds.pairs[0], info: { imageUrl: "https://cdn.dexscreener.com/wrote.png" } }] };
+    restore();
+    const second = stubFetch((who) => (who === "chain" ? curveLaunch() : who === "ds" ? withArt : who === "gt" ? null : undefined));
+    try {
+      const r = await fulfil._readPostMarket("robinhood", WROTE, "test");
+      assert.strictEqual(r.live.logoUrl, "https://cdn.dexscreener.com/wrote.png");
+    } finally {
+      second.restore();
+    }
+  } finally {
+    restore();
+  }
+});
+
+test("⚠️ every exit of fetchMarket goes through logoFromChain — a priced answer leaves by three doors", () => {
+  // The first cut put the fill after the LAST door only; the DS-priced record
+  // (the one the reported token takes) left through the first and never saw
+  // it. Comment-stripped: the helper's own header quotes the rule.
+  const src = fss.readFileSync(path.join(__dirname, "..", "src", "marketdata.js"), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1");
+  const start = src.indexOf("async function fetchMarket(");
+  const end = src.indexOf("\n}\n", start);
+  const body = src.slice(start, end);
+  const after = body.slice(body.indexOf("const chainP = startChainRead("));
+  // The function's OWN exits: two-space indentation. A nested callback's
+  // `return null` (the GT slice's timeout) is not a door out of fetchMarket.
+  const returns = after.match(/^  (?:if \([^\n]*\) )?return\b[^;]*;/gm) || [];
+  assert.ok(returns.length >= 3, `three doors, found ${returns.length}`);
+  for (const r of returns) assert.match(r, /return logoFromChain\(/, `an exit bypasses the chain's logo: ${r}`);
+});
+
+test("…while a background caller with NO budget does not wait on the chain for a logo it does not render", async () => {
+  const ds = {
+    pairs: [
+      {
+        chainId: "robinhood", priceUsd: "0.0000051", marketCap: 5100, liquidity: { usd: 2000 },
+        volume: { h24: 10 }, priceChange: { h24: 1 }, pairAddress: "0xpair",
+        baseToken: { address: WROTE, name: "Wallet Route", symbol: "WROTE" },
+      },
+    ],
+  };
+  // The chain answers only after the record has already been returned: a
+  // caller that waited would see the logo, one that did not sees the blank.
+  let releaseChain;
+  const chainGate = new Promise((res) => (releaseChain = res));
+  const orig = global.fetch;
+  const asked = [];
+  global.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes("/api/pons")) {
+      asked.push("chain");
+      await chainGate;
+      return { ok: true, status: 200, json: async () => curveLaunch() };
+    }
+    if (u.includes("dexscreener")) return { ok: true, status: 200, json: async () => ds };
+    if (u.includes("geckoterminal")) return { ok: false, status: 404, json: async () => ({}) };
+    throw new Error("ENOTFOUND");
+  };
+  try {
+    const out = await market.fetchMarket("robinhood", WROTE, cheap);
+    assert.strictEqual(out.priceUsd, 0.0000051);
+    assert.strictEqual(out.logoUrl, null, "no budget → no wait → the blank the indexer left");
+    assert.strictEqual(asked.length, 1, "the read was started (concurrently) exactly as before");
+  } finally {
+    releaseChain();
+    global.fetch = orig;
+  }
+});
+
+test("adoptChainLogo fills a BLANK only, https only — the buyer's own logo is their decision", () => {
+  const adopt = fulfil._adoptChainLogo;
+  const gw = "https://ipfs.io/ipfs/bafybeibk74wtpsgccfehq4zatxgorv5pwfmtpy7qo7hj6kbvko5nmvokba";
+  const blank = { logoUrl: "" };
+  assert.strictEqual(adopt(blank, { logoUrl: gw }), true);
+  assert.strictEqual(blank.logoUrl, gw);
+  const uploaded = { logoUrl: "/api/media/0123456789abcdef01234567.png" };
+  assert.strictEqual(adopt(uploaded, { logoUrl: gw }), false, "an uploaded logo is the buyer's decision");
+  assert.strictEqual(uploaded.logoUrl, "/api/media/0123456789abcdef01234567.png");
+  const raw = { logoUrl: "" };
+  assert.strictEqual(adopt(raw, { logoUrl: WROTE_LOGO }), false, "ipfs:// would fail the site's LOGO_RE and cost the whole listing");
+  assert.strictEqual(raw.logoUrl, "");
+  assert.strictEqual(adopt({ logoUrl: "" }, null), false);
+  assert.strictEqual(adopt({ logoUrl: "" }, { logoUrl: null }), false);
+});
+
+test("⚠️ DRIVEN: the row handed to the site carries the chain's logo — a disabled adoption passes the source scan below", async () => {
+  // The scan beneath this pins ORDER and went green on `if (false && adopt…)`:
+  // the call was still on the page. So the create is intercepted and the
+  // input it was handed is the assertion. Everything before the create is
+  // real — the bounded market read, the merge, the adoption; the create itself
+  // throws so nothing downstream (posts, tweets, emoji) has to be stood up.
+  const api = require("../src/api/dexvra");
+  const origCreate = api.createListing;
+  let handed = null;
+  api.createListing = async (input) => {
+    handed = { ...input };
+    throw new Error("stop at create — the test has what it needs");
+  };
+  const { restore } = stubFetch((who) => (who === "chain" ? curveLaunch() : who === "ds" ? { pairs: [] } : who === "gt" ? null : undefined));
+  try {
+    const order = {
+      payload: {
+        listingInput: { chain: "robinhood", address: WROTE, sym: "WROTE", name: "Wallet Route", tier: "XPRESS", logoUrl: "" },
+        trendHours: 0,
+      },
+    };
+    await assert.rejects(fulfil.fulfillListing({ telegram: {} }, order), /stop at create/);
+    assert.ok(handed, "the create was reached");
+    assert.match(String(handed.logoUrl), /^https:\/\/[^/]+\/ipfs\/bafybeibk74/, `the row must be BORN with the contract's logo, got: ${JSON.stringify(handed.logoUrl)}`);
+  } finally {
+    api.createListing = origCreate;
+    restore();
+  }
+});
+
+test("…and a logo the BUYER supplied is never replaced by the chain's", async () => {
+  const api = require("../src/api/dexvra");
+  const origCreate = api.createListing;
+  let handed = null;
+  api.createListing = async (input) => {
+    handed = { ...input };
+    throw new Error("stop at create");
+  };
+  const { restore } = stubFetch((who) => (who === "chain" ? curveLaunch() : who === "ds" ? { pairs: [] } : who === "gt" ? null : undefined));
+  try {
+    const theirs = "https://cdn.example/their-logo.png";
+    const order = { payload: { listingInput: { chain: "robinhood", address: WROTE, sym: "WROTE", name: "Wallet Route", tier: "XPRESS", logoUrl: theirs }, trendHours: 0 } };
+    await assert.rejects(fulfil.fulfillListing({ telegram: {} }, order), /stop at create/);
+    assert.strictEqual(handed && handed.logoUrl, theirs);
+  } finally {
+    api.createListing = origCreate;
+    restore();
+  }
+});
+
+test("⚠️ the listing is CREATED after the market read, with the chain's logo adopted — and the trending sibling renders from it too", () => {
+  // A source guard, because driving fulfillListing needs a Telegram context, a
+  // site and a payment. ORDER is the rule: the read used to sit after the
+  // post's logo step, so the row was born blank and stayed blank.
+  const src = fss.readFileSync(path.join(__dirname, "..", "src", "fulfillment.js"), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1");
+  const listing = src.slice(src.indexOf("async function fulfillListing("), src.indexOf("async function fulfillTrending("));
+  const start = listing.indexOf("const marketP = readPostMarket(");
+  const awaited = listing.indexOf("await marketP");
+  const adopt = listing.indexOf("adoptChainLogo(input, live)");
+  const create = listing.indexOf("api.createListing(input)");
+  assert.ok(start > 0 && awaited > 0 && adopt > 0 && create > 0, "the four sites must exist");
+  assert.ok(start < awaited && awaited < create, "the market read must be awaited BEFORE the row is created");
+  assert.ok(adopt < create, "the chain's logo must be adopted BEFORE the row is created, or the row is born blank");
+  assert.strictEqual((listing.match(/readPostMarket\(/g) || []).length, 1, "one read per listing — the post must render from the same record the row was created with");
+  const trending = src.slice(src.indexOf("async function fulfillTrending("));
+  assert.ok(trending.indexOf("adoptChainLogo(chainLogo, live)") > 0 && trending.indexOf("adoptChainLogo(chainLogo, live)") < trending.indexOf("fetchLogoUrlX(logoUrl)"), "the trending sibling must adopt the chain's logo before fetching");
+});

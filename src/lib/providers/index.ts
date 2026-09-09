@@ -24,11 +24,11 @@ import { fmtCap } from "@/lib/format";
 import { SEED_FEAR_GREED, fetchFearGreed } from "./feargreed";
 import { type LiveMarket } from "./geckoterminal";
 import { POOLS_TRADE_CHAIN, fetchLaunchMarket } from "./poolstrade";
-import { fetchPonsFallbackMarket } from "./pons";
+import { fetchPonsFallbackMarket, fetchPonsLaunch } from "./pons";
 import { fetchIndexedMarket } from "./indexedMarket";
 import { partitionByFallback } from "./dexscreener";
 import { fillFromLastGood, shouldReport } from "./lastGood";
-import { pickLogo } from "./tokenLogo";
+import { pickLogo, resolveLogo } from "./tokenLogo";
 import { rememberPool } from "./poolCache";
 import { backfillLogos, knownLogo, rememberLogo, shouldLookUp } from "./logoFill";
 import { forgetLostUploads, setResolvedLogo } from "@/lib/store";
@@ -305,6 +305,10 @@ async function loadListedTokens(): Promise<BoardToken[]> {
   needLogo.sort((a, b) => Number(b.featured) - Number(a.featured) || b.vol - a.vol);
   backfillLogos(needLogo, {
     queued: needLogo.length,
+    // The token contract's own logo, for a Pons-chain row. The resolver asks
+    // it only on a launchpad chain; a curve token's artwork lives nowhere
+    // else, and this is how a row whose form autofill missed it heals.
+    resolve: (c, a) => resolveLogo(c, a, { pons: ponsContractLogo }),
     persist: setResolvedLogo,
     log: (msg) => console.log(msg),
   });
@@ -329,6 +333,15 @@ async function loadListedTokens(): Promise<BoardToken[]> {
       .catch(() => {});
 
   return tokens;
+}
+
+/** The `logo()` a Pons token's own contract publishes (`ipfs://…` or https),
+ *  read through the launch record the site already caches for 20s. Null for a
+ *  token Pons never launched, and on any failure — the resolver records the
+ *  source as unreachable rather than as "no artwork". */
+async function ponsContractLogo(_chain: string, address: string): Promise<string | null> {
+  const launch = await fetchPonsLaunch(address);
+  return launch?.logo ?? null;
 }
 
 function buildHeat(tokens: BoardToken[]): ChainHeat[] {

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { IPFS_GATEWAYS, ipfsPath } from "@/lib/ipfsGateways";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -82,33 +83,9 @@ const ALLOW = [
  * costs a line in `.env` rather than a deploy — the `pads.js` contract. Every
  * entry still has to pass the allowlist below; the env cannot widen it.
  */
-const IPFS_GATEWAYS: string[] = (process.env.IPFS_GATEWAYS ?? "")
-  .split(",")
-  .map((s) => s.trim())
-  .filter(Boolean)
-  .concat(
-    process.env.IPFS_GATEWAYS
-      ? []
-      : [
-          "https://ipfs.io/ipfs/",
-          // ⚠️ PUMP.FUN'S OWN PIN, and it was allowlisted (mypinata.cloud) but
-          // never LISTED here — so for a pump.fun CID the one gateway that is
-          // guaranteed to hold it was never asked, and a paid post's artwork
-          // depended on whether ipfs.io or dweb.link happened to have it cached
-          // that minute. $GG loaded on two deploys and failed on two with zero
-          // lines changed on this path; that flip is this omission.
-          "https://pump.mypinata.cloud/ipfs/",
-          // dweb.link is ipfs.io's SIBLING (the same backend), so with the
-          // caller's ipfs.io url in slot one it was spending a 5s slot re-asking
-          // what had just failed. Ordered so four serial tries are three
-          // distinct operators. A judgement the box has to measure — which is
-          // why IPFS_GATEWAYS stays env-overridable.
-          "https://gateway.pinata.cloud/ipfs/",
-          "https://w3s.link/ipfs/",
-          "https://dweb.link/ipfs/",
-          "https://nftstorage.link/ipfs/",
-        ],
-  );
+// The ladder itself lives in lib/ipfsGateways.ts — ONE owner, shared with the
+// site's logo resolver, which verifies a Pons token's contract-published CID
+// against the same gateways. Two lists would drift.
 
 /** How many gateways one request may try, and how long each gets. A logo is an
  *  `<img>` and does not block the page, but a request that can hang for half a
@@ -133,22 +110,6 @@ const ONE_TRY_MS = 8000;
  * bot asserts its timeout is the larger of the two.
  */
 const TOTAL_MS = 12_000;
-
-/** The `<cid>/<path…>` of an IPFS url, or null when this is not one.
- *
- *  Recognised in BOTH spellings, because a stored logo is usually already an
- *  https gateway url (`https://ipfs.io/ipfs/<cid>`) rather than the `ipfs://`
- *  URI a launchpad's metadata carries — and it is the https one that had no
- *  second chance. */
-function ipfsPath(raw: string): string | null {
-  const s = raw.trim();
-  if (/^ipfs:\/\//i.test(s)) {
-    const p = s.replace(/^ipfs:\/\//i, "").replace(/^ipfs\//i, "");
-    return p || null;
-  }
-  const m = /^https?:\/\/[^/]+\/ipfs\/(.+)$/i.exec(s);
-  return m ? m[1] : null;
-}
 
 /** How many redirects to follow. IPFS gateways bounce to a per-CID subdomain,
  *  and CDNs bounce to their edge, so refusing redirects outright would lose

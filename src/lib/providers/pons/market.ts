@@ -6,11 +6,11 @@
 // pool's sqrtPriceX96. Launches quoted in an ERC-20 rather than native ETH are
 // reported without USD figures — we have no reference price for an arbitrary
 // quote asset, and a wrong number is worse than none.
-import { cached } from "@/lib/cache";
+import { cached, within } from "@/lib/cache";
 import { fromUnits } from "@/lib/evm/abi";
 import { PONS, ponsExplorerUrl, ponsTokenUrl, type GraduationPhase } from "@/config/pons";
 import { PERIOD_KEYS, type PeriodKey, type Trade, type TxSplit } from "@/lib/types";
-import { fetchTokenPriceUsd } from "../geckoterminal";
+import { readNativeUsd, type QuoteUsdSource } from "./quoteUsd";
 import type { LiveMarket } from "../market";
 import {
   readCurveTokenDecimals,
@@ -23,14 +23,67 @@ import {
 import { readCurveHistories, type CurveHistory, type PonsTrade } from "./trades";
 
 const NATIVE_USD_TTL = 60_000;
+/** Ceiling on the launch record's SIDE reads (histories, profile) — see fetchPonsLaunch. */
+export const SIDE_MS = 3000;
 const PERIOD_MINUTES: Record<PeriodKey, number> = { "5m": 5, "1h": 60, "6h": 360, "24h": 1440 };
 const Q96 = 2 ** 96;
 
-/** USD price of the chain's native quote asset (ETH). */
-export const nativeUsd = (): Promise<number> =>
-  cached("pons:native-usd", NATIVE_USD_TTL, () =>
-    fetchTokenPriceUsd(PONS.nativeUsdRef.network, PONS.nativeUsdRef.address),
-  );
+/**
+ * USD price of the chain's native quote asset (ETH), with WHICH source answered
+ * and — when none did — every refusal, so a curve token's TBA can name its
+ * cause instead of reading as a token nobody prices.
+ *
+ * ⚠️ THIS WAS GECKOTERMINAL ALONE. The one metered source on the box, and the
+ * one the site's charts are starving on: a 429 anywhere arms a process-wide
+ * cooldown, this read then threw, and `describe()` nulled priceUsd, mcapUsd
+ * AND priceQuote — so every Pons v2 token on the site, and every paid post the
+ * bot builds through /api/pons, read TBA over a spot price the curve had just
+ * answered. The ladder (quoteUsd.ts) asks the free sources first.
+ *
+ * Only an ANSWER is cached (`cached()` rethrows a cold miss): a null written
+ * into the cache would be served stale for the life of the process.
+ */
+const NATIVE_USD_KEY = "pons:native-usd";
+let quoteUsdSource: QuoteUsdSource | null = null;
+// Test seam: `cached()` serves a stale copy while it refreshes, so a suite that
+// walks the ladder through three outcomes needs a fresh key per outcome.
+let nativeUsdGen = 0;
+export const __resetNativeUsd = (): void => {
+  nativeUsdGen++;
+  quoteUsdSource = null;
+};
+
+export interface NativeUsdRead {
+  usd: number | null;
+  source: QuoteUsdSource | null;
+  /** Null when `usd` is a number; otherwise every rung's refusal, joined. */
+  why: string | null;
+}
+
+export async function nativeUsdX(): Promise<NativeUsdRead> {
+  try {
+    const usd = await cached(`${NATIVE_USD_KEY}#${nativeUsdGen}`, NATIVE_USD_TTL, async () => {
+      const r = await readNativeUsd();
+      if (r.usd == null) throw new Error(r.why.join("; ") || "no source answered");
+      quoteUsdSource = r.source;
+      return r.usd;
+    });
+    return { usd, source: quoteUsdSource, why: null };
+  } catch (e) {
+    return {
+      usd: null,
+      source: null,
+      why: `no USD reference for ${PONS.nativeSymbol} — ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+}
+
+/** The long-standing shape: the number, or a throw naming every refusal. */
+export const nativeUsd = async (): Promise<number> => {
+  const r = await nativeUsdX();
+  if (r.usd == null) throw new Error(r.why ?? "no USD reference");
+  return r.usd;
+};
 
 const tokenDecimals = (snapshot: LaunchSnapshot): number => snapshot.meta?.decimals ?? 18;
 
@@ -131,6 +184,20 @@ function periodStats(
   return stats;
 }
 
+/** The marginal price in QUOTE units (ETH per token) — the pool's after
+ *  graduation, the curve's before it, the last fill as a last resort. A fact
+ *  about the CHAIN, so it must never depend on a USD reference: `describe()`
+ *  used to null it with the USD figures, which threw away the one number the
+ *  chain had answered. */
+function spotQuoteOf(snapshot: LaunchSnapshot, history: CurveHistory | undefined): number | null {
+  const decimals = tokenDecimals(snapshot);
+  const trades = history?.trades ?? [];
+  const pool = poolSpot(snapshot);
+  const last = trades.length ? tradePrice(trades[trades.length - 1], decimals) : 0;
+  const spot = pool?.price ?? curveSpot(snapshot) ?? (last > 0 ? last : null);
+  return spot != null && spot > 0 ? spot : null;
+}
+
 function buildMarket(
   snapshot: LaunchSnapshot,
   history: CurveHistory | undefined,
@@ -143,9 +210,8 @@ function buildMarket(
   const decimals = tokenDecimals(snapshot);
   const trades = history?.trades ?? [];
   const pool = poolSpot(snapshot);
-  const last = trades.length ? tradePrice(trades[trades.length - 1], decimals) : 0;
-  const spotQuote = pool?.price ?? curveSpot(snapshot) ?? (last > 0 ? last : null);
-  if (spotQuote == null || !(spotQuote > 0)) return null;
+  const spotQuote = spotQuoteOf(snapshot, history);
+  if (spotQuote == null) return null;
 
   const priceUsd = spotQuote * quoteUsd;
   const supply = snapshot.meta ? fromUnits(snapshot.meta.totalSupply, decimals) : 0;
@@ -250,10 +316,18 @@ export interface PonsLaunchInfo {
   progressPct: number | null;
   graduationThresholdQuote: number | null;
   raisedQuote: number | null;
+  /** ETH per token — a chain fact, present whenever the curve or pool answered,
+   *  with or without a USD reference. */
   priceQuote: number | null;
   priceUsd: number | null;
   mcapUsd: number | null;
   liquidityUsd: number | null;
+  /** Which rung of the ETH/USD ladder priced this, or null when none did. */
+  quoteUsdSource: QuoteUsdSource | null;
+  /** Why the USD figures are missing — every rung's refusal, or "quoted in an
+   *  ERC-20". Null when they are present. "We could not price it" and "nobody
+   *  prices it" are different facts, and the bot's post watch prints this one. */
+  marketWhy: string | null;
   liquidityLocked: boolean;
   /** What the creator set at launch — the listing form autofills from these. */
   socials: TokenSocials | null;
@@ -267,9 +341,19 @@ export interface PonsLaunchInfo {
 function describe(
   snapshot: LaunchSnapshot,
   market: LiveMarket | null,
-  quoteUsd: number | null,
+  quote: NativeUsdRead,
+  history: CurveHistory | undefined,
   profile: { socials: TokenSocials; description: string | null } | null,
 ): PonsLaunchInfo {
+  const quoteUsd = quote.usd;
+  const spotQuote = spotQuoteOf(snapshot, history);
+  const marketWhy = market
+    ? null
+    : !snapshot.launch.nativeQuote
+      ? "quoted in an ERC-20, not ETH — no USD reference for an arbitrary quote asset"
+      : spotQuote == null
+        ? "the curve and the pool answered no price"
+        : quote.why ?? "no USD reference";
   const { launch, curve, meta } = snapshot;
   const threshold = fromUnits(launch.graduationThreshold, PONS.nativeDecimals);
   const raised = curve && !curve.graduated
@@ -296,10 +380,12 @@ function describe(
     progressPct: threshold > 0 ? Math.min(100, (raised / threshold) * 100) : null,
     graduationThresholdQuote: threshold,
     raisedQuote: raised,
-    priceQuote: market && quoteUsd ? market.priceUsd / quoteUsd : null,
+    priceQuote: spotQuote,
     priceUsd: market?.priceUsd ?? null,
     mcapUsd: market?.mcap ?? null,
     liquidityUsd: market?.liq ?? null,
+    quoteUsdSource: market && quoteUsd ? quote.source : null,
+    marketWhy,
     // Graduation locks the V4 position permanently — the locker exposes no
     // withdrawal path at all (PonsV2LaunchLocker).
     liquidityLocked: launch.phase === "PoolCreated",
@@ -318,17 +404,25 @@ export async function fetchPonsLaunch(address: string): Promise<PonsLaunchInfo |
   const snapshot = snapshots.get(address.toLowerCase());
   if (!snapshot) return null;
 
-  const [quoteUsd, histories, profile] = await Promise.all([
-    nativeUsd().catch(() => null),
-    readCurveHistories([snapshot.launch.curve]).catch(() => new Map<string, CurveHistory>()),
+  // ⚠️ THE SIDE READS ARE BOUNDED, because the bot reads this route on a 5s
+  // clock (PONS_CHAIN_MS) for a paid post's figures. The histories feed only
+  // the period stats and the volume; the profile feeds the socials. Neither
+  // is the PRICE, and a slow public RPC walking six log chunks used to hold
+  // the whole record past the bot's deadline — a TBA by a longer road. Past
+  // SIDE_MS the read is left RUNNING (its result lands in its own cache for
+  // the next reader) and the record goes out without that half.
+  const [quote, hist, prof] = await Promise.all([
+    nativeUsdX(),
+    within(readCurveHistories([snapshot.launch.curve]), SIDE_MS),
     // Best-effort: a token whose creator set nothing, and a read that failed,
     // both leave the form asking — neither may cost the rest of the record.
-    readTokenProfile(snapshot.launch.token).catch(() => null),
+    within(readTokenProfile(snapshot.launch.token), SIDE_MS),
   ]);
-  const market = quoteUsd
-    ? buildMarket(snapshot, histories.get(snapshot.launch.curve.toLowerCase()), quoteUsd, Math.floor(Date.now() / 1000))
-    : null;
-  return describe(snapshot, market, quoteUsd, profile);
+  const histories = hist.ok ? hist.value : new Map<string, CurveHistory>();
+  const profile = prof.ok ? prof.value : null;
+  const history = histories.get(snapshot.launch.curve.toLowerCase());
+  const market = quote.usd ? buildMarket(snapshot, history, quote.usd, Math.floor(Date.now() / 1000)) : null;
+  return describe(snapshot, market, quote, history, profile);
 }
 
 /** Recent trades on a launch's curve, newest first, in the app's Trade shape. */

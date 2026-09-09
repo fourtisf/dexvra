@@ -8,17 +8,20 @@ import { readFileSync } from "node:fs";
 // IPFS_MAX_TRIES counted the caller's own url — so for a stored ipfs.io url
 // only two fallbacks ever ran, and whether the artwork loaded depended on what
 // a public gateway happened to have cached that minute.
-const src = readFileSync(new URL("../app/api/logo/route.ts", import.meta.url), "utf8")
-  .replace(/\/\*[\s\S]*?\*\//g, "")
-  .replace(/^\s*\/\/.*$/gm, "");
+const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+const src = strip(readFileSync(new URL("../app/api/logo/route.ts", import.meta.url), "utf8"));
+const ladder = strip(readFileSync(new URL("./ipfsGateways.ts", import.meta.url), "utf8"));
 
 test("⚠️ pump.fun's own pin is in the DEFAULT gateway ladder", () => {
-  assert.match(src, /"https:\/\/pump\.mypinata\.cloud\/ipfs\/"/);
+  // The ladder moved to lib/ipfsGateways.ts (ONE owner, shared with the logo
+  // resolver); the route must read it from there rather than keep a copy.
+  assert.match(ladder, /"https:\/\/pump\.mypinata\.cloud\/ipfs\/"/);
+  assert.match(src, /from "@\/lib\/ipfsGateways"/, "the route grew its own copy of the ladder");
+  assert.doesNotMatch(src, /const IPFS_GATEWAYS/, "a second ladder in the route is the drift this module exists to end");
   // …and early enough that a stored ipfs.io url still reaches it: the caller's
   // url is slot one, so the pin has to be within the first (MAX_TRIES - 1)
   // entries that differ from it.
-  const list = src.slice(src.indexOf("IPFS_GATEWAYS"), src.indexOf("const IPFS_MAX_TRIES"));
-  const order = [...list.matchAll(/"(https:\/\/[^"]+\/ipfs\/)"/g)].map((m) => m[1]);
+  const order = [...ladder.matchAll(/"(https:\/\/[^"]+\/ipfs\/)"/g)].map((m) => m[1]);
   const idx = order.indexOf("https://pump.mypinata.cloud/ipfs/");
   assert.ok(idx >= 0 && idx <= 1, `the pin must be first or second in the ladder, found at ${idx}: ${order.join(", ")}`);
 });
