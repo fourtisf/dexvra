@@ -32,13 +32,78 @@
 // PURE + an injected reader, so the rule above is driven by a test rather than
 // described in a comment.
 
-/** `/api/media/<24hex>.<ext>` → the file name, or null for anything else (an
- *  external https logo, a data: URI, a blank). Deliberately the same shape the
- *  media route serves and `adminValidate`'s LOGO_RE accepts. */
-export function mediaName(url: unknown): string | null {
+import { BRAND_DOMAIN } from "../config/brand.ts";
+import { SITE_ORIGIN } from "../config/site.ts";
+
+const NAME_RE = /^\/api\/media\/([a-f0-9]{24}\.(?:png|jpe?g|gif|webp))$/i;
+
+/**
+ * Hosts an upload url may name and still be OURS. Ports are ignored: the bot
+ * talks to `127.0.0.1:3005`, a browser to `dexvra.io`, and both are this box.
+ *
+ * ⚠️ A FOREIGN HOST WITH THE SAME PATH IS NOT AN UPLOAD. `https://evil.example/
+ * api/media/<24hex>.png` must keep going through the proxy and its allowlist —
+ * recognising the path alone would let anyone hand the site a "same-origin"
+ * url that is nothing of the kind.
+ */
+const OWN_HOSTS: ReadonlySet<string> = new Set(
+  ["127.0.0.1", "localhost", "::1", BRAND_DOMAIN, `www.${BRAND_DOMAIN}`, hostOf(SITE_ORIGIN)]
+    .filter((h): h is string => !!h)
+    .map((h) => h.toLowerCase()),
+);
+
+function hostOf(origin: string): string | null {
+  try {
+    return new URL(origin).hostname || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The site-relative `/api/media/<name>` behind a logo url, or null.
+ *
+ * ⚠️ TWO SPELLINGS OF ONE UPLOAD, AND EVERY CONSUMER KNEW ONLY ONE. The bot's
+ * `api.uploadImage` returned `${DEXVRA_API_BASE}${url}` — an ABSOLUTE
+ * `http://127.0.0.1:3005/api/media/<hex>.png` — and its call site's comment
+ * said "relative", so the row was stored in a shape nothing here recognised:
+ * `logoSrc` saw a scheme and proxied it, `/api/logo` refused a non-https
+ * localhost host with 400, and the browser drew a monogram over artwork sitting
+ * on this very disk. `mediaName` below did not match it either, so
+ * `isLostUpload` could never heal it and `pickLogo` went on ranking the dead
+ * url "stored". The bot then grew the same blind spot when its banner fetch
+ * moved behind the proxy, and reported *"no gateway served it as an image"*
+ * about a file on its own machine.
+ *
+ * The producer is fixed to store the relative form; this accepts BOTH, so every
+ * row stored the old way keeps working and can be healed on read. One owner —
+ * `mediaName` reads through it — because two normalisers for one key is the
+ * shape `lostUploads` already carries a scar for.
+ */
+export function mediaPath(url: unknown): string | null {
   const s = String(url ?? "").trim();
-  const m = /^\/api\/media\/([a-f0-9]{24}\.(?:png|jpe?g|gif|webp))$/i.exec(s);
-  return m ? m[1].toLowerCase() : null;
+  if (!s) return null;
+  const rel = NAME_RE.exec(s);
+  if (rel) return `/api/media/${rel[1].toLowerCase()}`;
+  if (!/^https?:\/\//i.test(s)) return null;
+  let u: URL;
+  try {
+    u = new URL(s);
+  } catch {
+    return null;
+  }
+  if (!OWN_HOSTS.has(u.hostname.toLowerCase())) return null;
+  const m = NAME_RE.exec(u.pathname);
+  return m ? `/api/media/${m[1].toLowerCase()}` : null;
+}
+
+/** `/api/media/<24hex>.<ext>` — in either spelling, see `mediaPath` — → the file
+ *  name, or null for anything else (an external https logo, a data: URI, a
+ *  blank). Deliberately the same shape the media route serves and
+ *  `adminValidate`'s LOGO_RE accepts. */
+export function mediaName(url: unknown): string | null {
+  const p = mediaPath(url);
+  return p ? p.slice("/api/media/".length) : null;
 }
 
 export interface UploadsReader {

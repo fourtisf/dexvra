@@ -155,3 +155,105 @@ test("concurrent logo fetches do not read each other's 'was the proxy up'", asyn
     restore();
   }
 });
+
+// ── TWO SPELLINGS OF ONE UPLOAD ──────────────────────────────────────────────
+//
+// api.uploadImage returned `${DEXVRA_API_BASE}${url}` — an ABSOLUTE
+// `http://127.0.0.1:3005/api/media/<hex>.png` — while its call site said
+// "relative", and the row was stored that way for a month. When this bot's
+// banner fetch moved behind /api/logo, that url was proxied, refused (non-https
+// localhost is not on the allowlist), NOT retried raw (a refusal is an answer),
+// and the warn blamed "no gateway served it as an image" — about a file on
+// this machine. Found by driving it, not by post:check: the five newest rows
+// all carried external logos.
+const HEX = "0123456789abcdef01234567";
+const REL = `/api/media/${HEX}.png`;
+const OLD_SHAPE = `http://127.0.0.1:3005${REL}`;
+
+test("⚠️ an upload stored in the OLD absolute spelling is fetched as OUR file, never proxied", async () => {
+  const { asked, restore } = stubFetch((u) => (isProxy(u) ? null : PNG)); // the proxy would 400 it
+  try {
+    const buf = await fetchLogoUrl(OLD_SHAPE);
+    assert.ok(buf && buf.length, "artwork on our own disk must reach the banner");
+    assert.strictEqual(asked.length, 1);
+    assert.ok(!isProxy(asked[0]), `must not go through /api/logo: ${asked[0]}`);
+    assert.ok(asked[0].startsWith(DEXVRA_API_BASE) && asked[0].endsWith(REL), `read over localhost: ${asked[0]}`);
+  } finally {
+    restore();
+  }
+});
+
+test("…and the relative spelling is read over DEXVRA_API_BASE too — no public round trip for a local file", async () => {
+  const { asked, restore } = stubFetch(() => PNG);
+  try {
+    await fetchLogoUrl(REL);
+    assert.strictEqual(asked[0], `${DEXVRA_API_BASE}${REL}`);
+  } finally {
+    restore();
+  }
+});
+
+test("⚠️ a FOREIGN host that copies our path is still proxied — and still refused", async () => {
+  // Recognising the path alone would let a stranger's url skip the allowlist.
+  const { asked, restore } = stubFetch((u) => (isProxy(u) ? null : PNG));
+  try {
+    const buf = await fetchLogoUrl(`https://evil.example${REL}`);
+    assert.strictEqual(buf, null);
+    assert.ok(isProxy(asked[0]), `must go through the proxy: ${asked[0]}`);
+    assert.strictEqual(asked.length, 1, "and a refusal is not retried raw");
+  } finally {
+    restore();
+  }
+});
+
+test("photoSource hands Telegram the PUBLIC relative url for an old-shape upload", () => {
+  assert.strictEqual(photoSource(null, OLD_SHAPE), `${SITE_URL}${REL}`);
+  assert.strictEqual(photoSource(null, REL), `${SITE_URL}${REL}`);
+});
+
+test("⚠️ the proxy's x-logo-why reaches the warn — never one sentence for every refusal", async () => {
+  // /api/logo names the per-gateway outcome on a header precisely so this side
+  // can say WHICH refusal it was. readImage threw it away, so an allowlist 400,
+  // a directory listing and a dead gateway all printed "no gateway served it".
+  const log = require("../src/helpers/logger");
+  const warns = [];
+  const origWarn = log.warn;
+  log.warn = (m) => warns.push(String(m));
+  const orig = global.fetch;
+  global.fetch = async (url) => {
+    if (isProxy(String(url))) {
+      return {
+        ok: false,
+        status: 404,
+        headers: { get: (k) => (k === "x-logo-why" ? "ipfs.io: HTTP 404; pump.mypinata.cloud: served text/html" : null) },
+        arrayBuffer: async () => new ArrayBuffer(0),
+      };
+    }
+    return { ok: true, status: 200, arrayBuffer: async () => PNG };
+  };
+  try {
+    await fetchLogoUrl(IPFS_LOGO);
+    assert.strictEqual(warns.length, 1);
+    assert.match(warns[0], /pump\.mypinata\.cloud: served text\/html/, `the reason must travel: ${warns[0]}`);
+    assert.ok(!/no gateway served it as an image/.test(warns[0]), "the generic sentence must not replace a specific one");
+  } finally {
+    global.fetch = orig;
+    log.warn = origWarn;
+  }
+});
+
+test("…and a refusal with NO header still names the status rather than a gateway", async () => {
+  const log = require("../src/helpers/logger");
+  const warns = [];
+  const origWarn = log.warn;
+  log.warn = (m) => warns.push(String(m));
+  const { restore } = stubFetch((u) => (isProxy(u) ? null : PNG)); // 404, no headers at all
+  try {
+    await fetchLogoUrl(IPFS_LOGO);
+    assert.strictEqual(warns.length, 1);
+    assert.match(warns[0], /proxy answered HTTP 404/, warns[0]);
+  } finally {
+    restore();
+    log.warn = origWarn;
+  }
+});

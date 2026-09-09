@@ -129,7 +129,15 @@ async function uploadImage(buffer, filename = "logo.png", mime = "image/png") {
   });
   const json = await res.json().catch(() => null);
   if (!res.ok) throw new Error(`upload → ${res.status}: ${(json && json.error) || "failed"}`);
-  return json && json.url ? `${DEXVRA_API_BASE}${json.url}` : null;
+  // ⚠️ RELATIVE, exactly as the route answers it. This used to prefix
+  // DEXVRA_API_BASE, producing `http://127.0.0.1:3005/api/media/<hex>.png` —
+  // while the call site's comment read "relative /api/media/... (renders on the
+  // site)". The site's validator accepted it (LOGO_RE takes http://), so a
+  // localhost url was stored on a public listing; `logoSrc` proxied it,
+  // /api/logo refused the host, and the browser drew a monogram over artwork on
+  // this very disk. The relative form is the one shape every consumer on both
+  // sides is built around (`mediaName`, `LOGO_RE`, `logoSrc`, `photoSource`).
+  return json && json.url ? String(json.url) : null;
 }
 
 // The site refuses a token under this length outright (src/lib/internalAuth.ts

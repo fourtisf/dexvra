@@ -1,3 +1,4 @@
+import { mediaPath } from "./mediaFile.ts";
 // Route external token-logo URLs through our own /api/logo proxy so the browser
 // always loads them from dexvra's domain. External CDNs (dexscreener /
 // GeckoTerminal / CoinGecko) hotlink-block, rate-limit, or CORS-block direct
@@ -8,6 +9,12 @@ export function logoSrc(url?: string | null): string | undefined {
   if (!url) return undefined;
   const u = String(url).trim();
   if (!u) return undefined;
+  // ⚠️ OUR OWN UPLOAD, IN EITHER SPELLING, IS SAME-ORIGIN — including the
+  // absolute `http://127.0.0.1:3005/api/media/…` the bot stored for a month.
+  // Sent to the proxy it 400s (non-https, host not allowlisted) and the row
+  // draws a monogram over a file on this disk. See `mediaPath`.
+  const own = mediaPath(u);
+  if (own) return own;
   // ⚠️ `//host/logo.png` is PROTOCOL-RELATIVE, not same-origin: it starts with a
   // slash and loads from a stranger's server. It belongs in the proxy with every
   // other external url.

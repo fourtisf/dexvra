@@ -28,3 +28,16 @@ test("⚠️ a protocol-relative //host/x.png is a stranger's server, not ours",
   // straight to the browser — the one shape that looks local and is not.
   assert.equal(logoSrc("//cdn.example/x.png"), "/api/logo?u=https%3A%2F%2Fcdn.example%2Fx.png");
 });
+
+test("⚠️ our OWN upload in its absolute spelling is same-origin, never proxied", () => {
+  // Sent to the proxy it 400s (non-https, host not allowlisted) and the row
+  // draws a monogram over a file on this disk. See mediaPath.
+  const rel = "/api/media/0123456789abcdef01234567.png";
+  assert.equal(logoSrc(`http://127.0.0.1:3005${rel}`), rel);
+  assert.equal(logoSrc(`https://dexvra.io${rel}`), rel);
+  // …while a stranger's server that merely copies our path shape still is.
+  assert.equal(
+    logoSrc(`https://evil.example${rel}`),
+    `/api/logo?u=${encodeURIComponent(`https://evil.example${rel}`)}`,
+  );
+});

@@ -67,9 +67,15 @@ test("a proxy that ANSWERED and one that could not be REACHED get different sent
     .readFileSync(require.resolve("../src/fulfillment.js"), "utf8")
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/^\s*\/\/.*$/gm, "");
-  assert.match(src, /no gateway served it as an image/);
-  assert.match(src, /did not answer in \$\{LOGO_PROXY_MS\}ms/);
+  // ⚠️ THE PROPERTY, NOT THE SPELLING. The first cut pinned the literal
+  // "no gateway served it as an image" — and the round after replaced that
+  // sentence with the proxy's own per-gateway reason (x-logo-why), because one
+  // sentence for every refusal was itself the wrong-layer diagnosis. A guard on
+  // wording goes red over code that keeps the rule perfectly.
   assert.match(src, /viaProxy\.reached\s*\?/, "the two are chosen by whether the host answered");
+  assert.match(src, /did not answer in \$\{LOGO_PROXY_MS\}ms/, "unreachable names the web app and the budget");
+  assert.match(src, /logo unusable\$\{detail\}/, "answered carries the proxy's own reason");
+  assert.match(src, /x-logo-why/, "…read off the header the route sets for exactly this");
 });
 
 test("a slow-but-answering proxy is still a REFUSAL, never a raw retry", () => {

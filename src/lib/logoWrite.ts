@@ -1,3 +1,4 @@
+import { mediaPath } from "./mediaFile.ts";
 // The one write the background logo sweep is allowed to make to the public
 // listing store — as a PURE decision, so the rule can be driven by a test.
 //
@@ -98,4 +99,30 @@ export function applyLostUpload<T extends LogoRow>(
  *  rule file the test runner loads on its own. */
 function isUpload(url: unknown): boolean {
   return /^\/api\/media\/[a-f0-9]{24}\.(?:png|jpe?g|gif|webp)$/i.test(String(url ?? "").trim());
+}
+
+/**
+ * Heal a logo url stored in the bot's old ABSOLUTE spelling
+ * (`http://127.0.0.1:3005/api/media/<hex>.png`) to the relative form every
+ * consumer understands. A `data/listings.json` written by the old bot keeps
+ * its rows for ever, and reading is the one place all of them pass through —
+ * so `store.ts` calls this beside `healSeedLogos`, at BOTH load sites. Only an
+ * url `mediaPath` vouches for is touched; an external logo is left exactly as
+ * stored.
+ *
+ * PURE and here rather than in store.ts for the reason `applyResolvedLogo` is:
+ * store.ts cannot be imported by the test runner (a bare `./listings`
+ * specifier), and a mutation rule a test cannot CALL is a comment about one.
+ * Returns how many rows it rewrote, so a load can say so.
+ */
+export function healUploadUrls(rows: Array<{ logoUrl?: string | null }>): number {
+  let n = 0;
+  for (const r of rows) {
+    const rel = mediaPath(r.logoUrl);
+    if (rel && rel !== r.logoUrl) {
+      r.logoUrl = rel;
+      n++;
+    }
+  }
+  return n;
 }

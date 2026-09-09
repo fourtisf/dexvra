@@ -14,7 +14,7 @@ function fillSeedSocials(r: { sym: string; website?: string; twitter?: string; t
   if (!r.telegram) r.telegram = s.telegram;
 }
 import { kvGet, kvSet, mongoConfigured } from "./mongo";
-import { applyLostUpload, applyResolvedLogo } from "./logoWrite";
+import { applyLostUpload, applyResolvedLogo, healUploadUrls } from "./logoWrite";
 import { keepStatus, mergeRelist } from "./relist";
 
 // Mongo mirror key for this store (doc _id in the `web` collection).
@@ -86,6 +86,7 @@ async function load(): Promise<StoredListing[]> {
     if (Array.isArray(parsed)) {
       cache = parsed as StoredListing[];
       healSeedLogos(cache);
+      healUploadUrls(cache);
       // Backfill listedAt for real (non-seed) rows persisted before this field
       // existed, so "listed X ago" is live instead of frozen at listedMin=0.
       // True creation time is unrecoverable, so start the clock now (persisted
@@ -104,6 +105,7 @@ async function load(): Promise<StoredListing[]> {
     if (mirrored && mirrored.length) {
       cache = mirrored;
       healSeedLogos(cache);
+      healUploadUrls(cache);
       const now = Date.now();
       for (const r of cache) if (r.source !== "seed" && r.listedAt == null) r.listedAt = now;
       return cache;

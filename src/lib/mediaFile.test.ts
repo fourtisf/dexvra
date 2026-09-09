@@ -86,3 +86,43 @@ test("⚠️ ONE normaliser, so a caller cannot miss a row by asking differently
   assert.equal(isLostUpload(lost, `  ${A}  `), true);
   assert.equal(isLostUpload(lost, A.toUpperCase().replace("/API/MEDIA/", "/api/media/")), true);
 });
+
+// ── TWO SPELLINGS OF ONE UPLOAD ──────────────────────────────────────────────
+//
+// The bot's api.uploadImage returned `${DEXVRA_API_BASE}${url}` — an ABSOLUTE
+// `http://127.0.0.1:3005/api/media/<hex>.png` — while its call site's comment
+// said "relative", and the row was stored that way for a month. Nothing here
+// recognised it: logoSrc proxied it, /api/logo refused the host, the browser
+// drew a monogram over artwork on this disk, and isLostUpload could never heal
+// it. `mediaPath` is the one owner that reads both.
+import { mediaPath } from "./mediaFile.ts";
+
+const HEX = "0123456789abcdef01234567";
+const REL = `/api/media/${HEX}.png`;
+
+test("⚠️ an own-origin ABSOLUTE upload url is ours, in every spelling this box produces", () => {
+  assert.equal(mediaPath(`http://127.0.0.1:3005${REL}`), REL, "what the old uploader stored");
+  assert.equal(mediaPath(`http://localhost:3005${REL}`), REL);
+  assert.equal(mediaPath(`https://dexvra.io${REL}`), REL, "the public origin");
+  assert.equal(mediaPath(`https://www.dexvra.io${REL}`), REL);
+  assert.equal(mediaPath(`http://127.0.0.1${REL}`), REL, "port is not part of the identity");
+  // …and mediaName reads through it, so isLostUpload heals those rows too.
+  assert.equal(mediaName(`http://127.0.0.1:3005${REL}`), `${HEX}.png`);
+});
+
+test("⚠️ a FOREIGN host with our path is NOT an upload — it must keep going to the proxy", () => {
+  // Recognising the path alone would let anyone hand the site a "same-origin"
+  // url that is nothing of the kind.
+  assert.equal(mediaPath(`https://evil.example${REL}`), null);
+  assert.equal(mediaPath(`https://dd.dexscreener.com${REL}`), null);
+  assert.equal(mediaPath(`//dexvra.io${REL}`), null, "protocol-relative is a stranger's server");
+  assert.equal(mediaName(`https://evil.example${REL}`), null);
+});
+
+test("the relative form is unchanged and case-folded to what the media route serves", () => {
+  assert.equal(mediaPath(REL), REL);
+  assert.equal(mediaPath(`/api/media/${HEX.toUpperCase()}.PNG`), REL);
+  assert.equal(mediaPath(`https://ipfs.io/ipfs/bafk`), null, "an external logo is never an upload");
+  assert.equal(mediaPath(""), null);
+  assert.equal(mediaPath(null), null);
+});

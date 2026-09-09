@@ -91,6 +91,13 @@ const IPFS_GATEWAYS: string[] = (process.env.IPFS_GATEWAYS ?? "")
       ? []
       : [
           "https://ipfs.io/ipfs/",
+          // ⚠️ PUMP.FUN'S OWN PIN, and it was allowlisted (mypinata.cloud) but
+          // never LISTED here — so for a pump.fun CID the one gateway that is
+          // guaranteed to hold it was never asked, and a paid post's artwork
+          // depended on whether ipfs.io or dweb.link happened to have it cached
+          // that minute. $GG loaded on two deploys and failed on two with zero
+          // lines changed on this path; that flip is this omission.
+          "https://pump.mypinata.cloud/ipfs/",
           "https://dweb.link/ipfs/",
           "https://gateway.pinata.cloud/ipfs/",
           "https://nftstorage.link/ipfs/",
@@ -101,7 +108,12 @@ const IPFS_GATEWAYS: string[] = (process.env.IPFS_GATEWAYS ?? "")
 /** How many gateways one request may try, and how long each gets. A logo is an
  *  `<img>` and does not block the page, but a request that can hang for half a
  *  minute is a socket held open per token on a board of two hundred. */
-const IPFS_MAX_TRIES = 3;
+// ⚠️ THE CALLER'S OWN URL COUNTS AS TRY ONE. A stored `https://ipfs.io/ipfs/<cid>`
+// therefore left room for only TWO fallbacks, and adding a gateway to the list
+// above would have pushed one out rather than widened the ladder. Four keeps
+// three real fallbacks behind the caller's url; TOTAL_MS still caps the wall
+// clock, and `left()` shrinks every later try to fit inside it.
+const IPFS_MAX_TRIES = 4;
 const IPFS_TRY_MS = 5000;
 const ONE_TRY_MS = 8000;
 /**

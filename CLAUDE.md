@@ -8924,6 +8924,93 @@ closed the question: *nothing to fix here.*
 Mutation-tested: the sentence claiming a pad was asked again, and "nothing to
 fix here" printed over a chain with no pad — each fails a test.
 
+##### "mengapa selalu seperti ini" — the same CID flipped ✓/✗ on identical code, and it uncovered a month-old regression
+
+Run 4 (`build ac3502a`): `$GG`'s artwork failed AGAIN — *"no gateway served it
+as an image"* — after loading on runs 2 and 3. `git diff c528bcc..ac3502a`
+touches CLAUDE.md, a check-script sentence and its test: **zero lines on the
+logo path**. The operator's question was the right one: why is it ALWAYS like
+this.
+
+Three independent diagnostic lenses were run against it (a code-defect
+skeptic, an upstream advocate told to refute itself, and one covering the
+store/caches/breakers), and they converged:
+
+- **The path is stateless and the answer flipped, so the INPUT flipped** — the
+  gateways' cache state for a lightly-pinned pump.fun CID.
+- ⚠️ **`pump.mypinata.cloud` — pump.fun's OWN pin — was on the allowlist (with a
+  comment naming it) and NOT in `IPFS_GATEWAYS`.** And `IPFS_MAX_TRIES=3`
+  counted the caller's own url as try one, so a stored `ipfs.io` url left room
+  for exactly two fallbacks (`dweb.link`, `gateway.pinata.cloud`) — the last
+  two entries of the list were dead code, and the one gateway guaranteed to
+  hold a pump.fun CID was never asked. Whether the artwork loaded depended on
+  what a public gateway happened to have cached that minute. It is second in
+  the ladder now and `IPFS_MAX_TRIES` is 4, so three real fallbacks sit behind
+  the caller's url; `logoGateways.test.ts` pins the pin's position and the
+  count.
+- ⚠️ **The bot's `readImage` threw away `x-logo-why`.** The route carries the
+  per-gateway outcome on that header precisely so the caller can say WHICH
+  refusal it was — and every non-200 printed the same sentence. It travels to
+  the warn now, and a refusal with no header names the status.
+
+**And driving the fetch by hand found a regression older than this session.**
+`api.uploadImage` returns `${DEXVRA_API_BASE}${json.url}` — an ABSOLUTE
+`http://127.0.0.1:3005/api/media/<hex>.png` — while its call site's comment
+reads *"relative /api/media/..."*. The site's `LOGO_RE` accepts `http://`, so
+that localhost url was stored on public listings since 2026-08-29:
+
+| consumer | what it did with `http://127.0.0.1:3005/api/media/…` |
+| --- | --- |
+| site `logoSrc` | saw a scheme → proxied it → `/api/logo` refused a non-https localhost host → **monogram** over a file on this disk |
+| site `mediaName` / `isLostUpload` | did not match → the dead url was never healed and `pickLogo` went on ranking it "stored" |
+| bot `fetchLogoUrl` (after `d0a2194`) | proxied it → 400 → **not retried raw** (a refusal is an answer) → the trending post lost its artwork and blamed "no gateway" |
+| bot `photoSource` | handed Telegram `https://dexvra.io/api/logo?u=http://127.0.0.1…` → 400 |
+
+It never showed in `post:check` because the five newest rows all carry
+EXTERNAL logos — the check measured what was in front of it.
+
+- **The producer is fixed** — `uploadImage` returns the relative url, and the
+  comment beside its caller is finally true.
+- **ONE OWNER PER SIDE for "is this url one of our own uploads"**: `mediaPath`
+  in `src/lib/mediaFile.ts` (which `mediaName` now reads through) and its
+  mirror `bot/src/helpers/mediaUrl.js`. Both accept the relative form AND an
+  absolute on our own hosts (`127.0.0.1`, `localhost`, the brand domain, the
+  configured origins), ports ignored.
+- ⚠️ **A FOREIGN HOST WITH OUR PATH IS NOT AN UPLOAD.** `https://evil.example/
+  api/media/<hex>.png` must keep going through the proxy and its allowlist —
+  recognising the path alone would let anyone hand the site a "same-origin"
+  url that is nothing of the kind. Pinned on both sides and mutation-tested.
+- **Rows already stored the old way are HEALED ON READ** (`healUploadUrls`,
+  pure, in `logoWrite.ts` beside `applyResolvedLogo`), called beside
+  `healSeedLogos` at BOTH load sites — a source scan fails if it is wired to
+  one of them.
+- ⚠️ **The heal could not live in `store.ts`**: that module imports `./listings`
+  with no extension and cannot be loaded by the test runner — which is exactly
+  why this repo keeps store rules PURE one module over. A mutation rule a test
+  cannot CALL is a comment about one.
+- **The bot reads its own uploads over `DEXVRA_API_BASE`** (localhost) rather
+  than `SITE_URL`: a public round trip for a file on this disk was the old
+  relative branch's cost, and it sat on the buyer's critical path.
+
+Ten guarantees are MUTATION-TESTED — on the site: a foreign host accepted as an
+upload, `logoSrc` proxying our own upload, the heal doing nothing, the pin
+dropped from the ladder, `IPFS_MAX_TRIES` back to 3; in the bot: `fetchLogoUrl`
+proxying our own upload, a foreign host accepted, `uploadImage` absolute again,
+the reason discarded again, `photoSource` proxying our own upload. Each fails
+between one and two tests.
+
+```bash
+npm test                                                                   # mediaFile · logo · uploadUrlHeal · logoGateways
+cd bot && node scripts/run-tests.js test/bannerLogo.test.js test/dexvraApi.test.js test/logoProxy.test.js
+```
+
+⚠️ **What this does NOT settle: whether `$GG`'s CID loads on the NEXT run.** The
+first load of a cold CID still depends on a gateway answering inside 12s; what
+changed is that the gateway guaranteed to hold it is now asked, and that the
+next failure will say which gateway said what. Making a logo that has loaded
+ONCE never depend on a gateway again is a separate change (pin the bytes to
+`/api/media` at fulfilment) and is recorded below if and when it lands.
+
 ## "perbaiki tampilan chartnya di mobile" — two rows of timeframe buttons, one of them dead
 
 The same screenshot, one panel down: our chart header — `$HACHIKO`, `LIN LOG`,

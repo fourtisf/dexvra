@@ -118,3 +118,18 @@ test("⚠️ canCreate mirrors the site's 24-char minimum — a 401 over a token
     require("../src/api/dexvra");
   }
 });
+
+test("⚠️ uploadImage returns the RELATIVE url the route answers — never prefixed with DEXVRA_API_BASE", async (t) => {
+  // It used to return `${DEXVRA_API_BASE}${json.url}` — an absolute localhost
+  // url — while its call site's comment said "relative". The site's validator
+  // accepted it, so `http://127.0.0.1:3005/api/media/<hex>.png` was stored on
+  // public listings: the site proxied it and drew a monogram, and the bot's own
+  // banner fetch later refused it as a foreign host.
+  process.env.INTERNAL_API_TOKEN = process.env.INTERNAL_API_TOKEN || "test-token";
+  const real = global.fetch;
+  global.fetch = async () => ({ ok: true, status: 200, json: async () => ({ url: "/api/media/0123456789abcdef01234567.png" }) });
+  t.after(() => (global.fetch = real));
+  const url = await api.uploadImage(Buffer.from("89504e47", "hex"), "logo.png", "image/png");
+  assert.strictEqual(url, "/api/media/0123456789abcdef01234567.png");
+  assert.ok(!/^https?:\/\//.test(url), "an absolute url here is the defect");
+});

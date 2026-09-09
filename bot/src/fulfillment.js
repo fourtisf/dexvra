@@ -25,6 +25,7 @@ const assets = require("./assets");
 const bannerRender = require("./bannerRender");
 const bannerTemplate = require("./bannerTemplate");
 const { bounded } = require("./helpers/bounded");
+const { mediaPath } = require("./helpers/mediaUrl");
 const tokenEmoji = require("./tokenEmoji");
 const tpl = require("./templates");
 const postFigures = require("./postFigures");
@@ -139,6 +140,10 @@ function photoSource(logoFileId, logoUrl) {
   // not DEXVRA_API_BASE, because localhost:3005 is not a place Telegram can
   // reach. Handing it a bare ipfs.io url is the defect above on the one path
   // where the fallback is no picture at all.
+  // Our own upload, in either spelling, on the PUBLIC origin — Telegram fetches
+  // this, and `127.0.0.1:3005` is not a place it can reach.
+  const own = mediaPath(logoUrl);
+  if (own) return `${SITE_URL}${own}`;
   if (logoUrl.startsWith("http")) return proxiedLogo(SITE_URL, logoUrl);
   return `${SITE_URL}${logoUrl}`; // /api/media/... → public dexvra.io URL
 }
@@ -209,8 +214,14 @@ const LOGO_PROXY_MS = 15_000;
 
 async function fetchLogoUrl(logoUrl) {
   if (!logoUrl) return null;
-  // An upload is our own file on our own disk — nothing to fail over to, and
-  // no third-party host to vouch for.
+  // An upload is our own file on our own disk — nothing to fail over to, no
+  // third-party host to vouch for, and no public round trip: it is read over
+  // DEXVRA_API_BASE (localhost), not SITE_URL. ⚠️ In EITHER spelling — the
+  // absolute `http://127.0.0.1:3005/api/media/…` the old uploader stored is
+  // ours too, and sending it to the proxy is how a banner lost artwork sitting
+  // on this machine while the warn blamed "no gateway". See helpers/mediaUrl.
+  const own = mediaPath(logoUrl);
+  if (own) return (await readImage(`${DEXVRA_API_BASE}${own}`)).bytes;
   if (!logoUrl.startsWith("http")) return (await readImage(`${SITE_URL}${logoUrl}`)).bytes;
 
   const viaProxy = await readImage(proxiedLogo(DEXVRA_API_BASE, logoUrl), LOGO_PROXY_MS);
@@ -233,9 +244,12 @@ async function fetchLogoUrl(logoUrl) {
     // artwork; a proxy that could not be reached is about the web app, and
     // sending an operator to hunt a dead logo for a stopped site is the
     // wrong-layer diagnosis this file keeps paying for.
+    // The proxy's own per-gateway verdict travels on the line, or a 400 from
+    // our allowlist and a CID nobody has pinned read as the same event.
+    const detail = viaProxy.why ? ` — ${viaProxy.why}` : viaProxy.status ? ` — proxy answered HTTP ${viaProxy.status}` : "";
     log.warn(
       viaProxy.reached
-        ? `[fulfil] logo unusable — no gateway served it as an image, banner falls back to the Dexvra mark: ${logoUrl}`
+        ? `[fulfil] logo unusable${detail}; banner falls back to the Dexvra mark: ${logoUrl}`
         : `[fulfil] logo unreadable — /api/logo did not answer in ${LOGO_PROXY_MS}ms (is the web app up?), banner falls back to the Dexvra mark: ${logoUrl}`,
     );
   }
@@ -247,10 +261,17 @@ async function fetchLogoUrl(logoUrl) {
 async function readImage(url, timeoutMs = 12000) {
   try {
     const r = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
-    if (!r.ok) return { bytes: null, reached: true };
-    return { bytes: Buffer.from(await r.arrayBuffer()), reached: true };
+    // ⚠️ NEVER DISCARD THE REASON. /api/logo goes to the trouble of naming the
+    // per-gateway outcome on `x-logo-why` (HTTP 404 · served text/html · no
+    // answer) precisely so this side can say WHICH refusal it was — and this
+    // function threw it away, so an allowlist 400, a directory listing, a dead
+    // gateway and a Next process on a replaced build all printed "no gateway
+    // served it as an image". Three lenses found it independently.
+    const why = typeof r.headers?.get === "function" ? r.headers.get("x-logo-why") : null;
+    if (!r.ok) return { bytes: null, reached: true, status: r.status, why: why || null };
+    return { bytes: Buffer.from(await r.arrayBuffer()), reached: true, status: r.status, why: null };
   } catch {
-    return { bytes: null, reached: false };
+    return { bytes: null, reached: false, status: 0, why: null };
   }
 }
 
@@ -401,7 +422,7 @@ async function fulfillListing(ctx, order) {
     if (logoBuffer) {
       try {
         const url = await api.uploadImage(logoBuffer, "logo.png", "image/png");
-        if (url) input.logoUrl = url; // relative /api/media/... (renders on the site)
+        if (url) input.logoUrl = url; // relative /api/media/... — and it IS relative now; it was an absolute localhost url for a month, see api.uploadImage
       } catch (e) {
         log.warn(`[fulfil] logo upload failed — listing without logo: ${e.message}`);
       }
