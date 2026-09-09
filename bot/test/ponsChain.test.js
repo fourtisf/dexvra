@@ -178,3 +178,28 @@ test("toInfo carries the node's reason when the app's read failed", () => {
   assert.match(String(info.marketWhy), /could not read the curve/);
   assert.strictEqual(pons.toInfo(LAUNCH).readWhy, null, "an answered read has nothing to explain");
 });
+
+// ⚠️ The site's 503 carries the NODE's reason (the RPC refused us, the socket
+// died) and the status alone cannot tell those apart — so an operator reading
+// "site answered 503" goes to look at a web app that is working perfectly.
+test("a 503 carries the reason the site gave, into the park sentence", async () => {
+  pons._reset();
+  const out = await withFetch(
+    () => answer({ error: "Pons RPC unavailable — rpc 429 (rate limited)", chain: "robinhood" }, 503),
+    () => pons.fetchTokenInfoX("robinhood", LAUNCH.address),
+  );
+  assert.strictEqual(out.ok, false);
+  assert.match(out.why, /site answered 503/);
+  assert.match(out.why, /rpc 429/, `the node's reason travels: ${out.why}`);
+  assert.match(String(pons.lastWhy("robinhood", LAUNCH.address)), /rpc 429/);
+});
+
+test("…and a 503 with no readable body still parks with the status", async () => {
+  pons._reset();
+  const out = await withFetch(
+    () => Promise.resolve({ ok: false, status: 503, json: async () => { throw new Error("not json"); } }),
+    () => pons.fetchTokenInfoX("robinhood", LAUNCH.address),
+  );
+  assert.strictEqual(out.ok, false);
+  assert.match(out.why, /site answered 503/);
+});

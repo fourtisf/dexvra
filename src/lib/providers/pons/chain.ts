@@ -40,7 +40,12 @@ export async function blockSeconds(head: ChainHead): Promise<number> {
     const delta = head.ts - Number(BigInt(older.timestamp));
     secondsPerBlock = delta > 0 ? delta / span : PONS.blockSeconds;
   } catch {
-    secondsPerBlock = PONS.blockSeconds;
+    // ⚠️ NOT MEMOISED. This is cached because a chain's block time does not
+    // move — true of a MEASUREMENT and false of the shipped default, which a
+    // single refused read used to pin for the life of the process, dating
+    // every trade in every history from a number nobody measured. The default
+    // answers this call and the next one asks again.
+    return PONS.blockSeconds;
   }
   return secondsPerBlock;
 }

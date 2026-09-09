@@ -253,3 +253,65 @@ test("a failure carries `unanswered` only when the node did not answer — a rev
     dropping.restore();
   }
 });
+
+// ⚠️ A HOST THAT IS DOWN IS THE COMMONEST WAY A HOST BREAKS, and the first cut
+// of the list carried only REFUSALS: a dead first entry was degraded to one
+// call at a time on ITSELF, failed every one, and the second host was never
+// asked — the host list defeated on the case it exists for. And a node that
+// drops three single calls must not be asked thirty-seven more times, each at
+// a full timeout.
+test("a host that is DOWN fails over — and is not asked forty times to prove it", async () => {
+  let aCalls = 0;
+  const node = withNode((url, body) => {
+    if (url === A) {
+      aCalls++;
+      throw new TypeError("fetch failed");
+    }
+    return answerAll(body);
+  });
+  try {
+    const out = await rpcBatch([A, B], calls(40), 1000);
+    assert.ok(out.every((o) => o.ok), `the second host answered every call: ${JSON.stringify(out[0])}`);
+    // One batch, plus the singles already in flight when the third failure
+    // lands (the pool is six wide). The property is that it is bounded by the
+    // pool and not by the number of calls: 41 requests would be one per call.
+    assert.ok(aCalls <= 10, `the dead host was asked ${aCalls} times`);
+    assert.equal(rpcCooling(A), null, "a dead socket is not a refusal and parks nothing");
+  } finally {
+    node.restore();
+  }
+});
+
+test("…and with no host left, the calls carry the transport reason, not 'no response'", async () => {
+  const node = withNode(() => {
+    throw new TypeError("fetch failed");
+  });
+  try {
+    const out = await rpcBatch(A, calls(8), 1000);
+    assert.ok(out.every((o) => !o.ok && /fetch failed/.test((o as { error: string }).error)), JSON.stringify(out));
+  } finally {
+    node.restore();
+  }
+});
+
+// ⚠️ THE REASON REPORTED IS THE LAST HOST'S, NEVER AN EARLIER ONE'S. Host A
+// rate-limits us and host B simply drops an item from its array: reporting
+// "rpc 429" for that call sends an operator to a quota that had nothing to do
+// with it, which is this whole file's subject pointing at our own diagnosis.
+test("a call the last host merely dropped is not reported with an earlier host's refusal", async () => {
+  const node = withNode((url, body) => {
+    if (url === A) return refuse(429);
+    // B answers the first call and omits the second entirely.
+    return json([{ jsonrpc: "2.0", id: 0, result: "0xaa" }]);
+  });
+  try {
+    const out = await rpcBatch([A, B], calls(2), 1000);
+    assert.equal(out[0].ok, true, "B's answer stands");
+    assert.equal(out[1].ok, false);
+    const why = (out[1] as { error: string }).error;
+    assert.doesNotMatch(why, /429/, `the 429 was host A's: ${why}`);
+    assert.match(why, /no response/);
+  } finally {
+    node.restore();
+  }
+});

@@ -4,6 +4,7 @@
 // curves are the source of truth, so everything here is read straight off the
 // chain over JSON-RPC (see config/pons.ts for the deployment constants).
 import { CHAINS } from "@/config/chains";
+import { rpcSelfLimited } from "@/lib/evm/rpc";
 import { PONS } from "@/config/pons";
 import type { ScanFlag } from "@/lib/types";
 import type { LiveMarket } from "../market";
@@ -55,7 +56,18 @@ export async function fetchPonsFallbackMarket(
     if (result === null) park(`did not answer inside ${DEADLINE_MS}ms`);
     return result;
   } catch (err) {
-    park(err instanceof Error ? `failed — ${err.message}` : "failed");
+    const why = err instanceof Error ? err.message : "";
+    // ⚠️ OUR OWN PACING MAY NOT BECOME A FIVE-MINUTE OUTAGE. The RPC client
+    // benches a refusing host for one to ten seconds and answers the calls
+    // behind it without a request; that throw reaching here used to park the
+    // whole on-chain reader for five minutes — a rate limit escalated into an
+    // outage by the code that noticed it, which is the ladder's own scar one
+    // transport down. The park exists for a chain this box cannot reach.
+    if (rpcSelfLimited(why)) {
+      console.warn(`[market] ${chain}: on-chain launchpad read is rate limited — ${why}; asking again next cycle`);
+      return null;
+    }
+    park(why ? `failed — ${why}` : "failed");
     return null;
   } finally {
     clearTimeout(timer);

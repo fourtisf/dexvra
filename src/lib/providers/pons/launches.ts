@@ -133,6 +133,10 @@ export async function readPonsLaunchEvents(): Promise<{ events: PonsLaunchEvent[
     );
 
     const outcomes: { range: ScanRequest; ok: boolean }[] = [];
+    // The first range the node did not answer, for the throw below: "Pons RPC
+    // unavailable" alone cannot tell a rate limit from a dead socket, and this
+    // feed is read by the site and the snipe alike.
+    const scanWhy = (results.find((r) => r && !r.ok) as { ok: false; error: string } | undefined)?.error ?? null;
     const incoming: PonsLaunchEvent[] = [];
     plan.forEach((range, i) => {
       const outcome = results[i];
@@ -148,7 +152,7 @@ export async function readPonsLaunchEvents(): Promise<{ events: PonsLaunchEvent[
     // Every range failing means the endpoint is down, not that Pons has never
     // launched anything — say so rather than publishing an empty feed.
     if (outcomes.length > 0 && outcomes.every((o) => !o.ok) && state.events.length === 0) {
-      throw new Error("Pons RPC unavailable");
+      throw new Error(`Pons RPC unavailable${scanWhy ? ` — ${scanWhy}` : ""}`);
     }
 
     commitScan(state, outcomes);

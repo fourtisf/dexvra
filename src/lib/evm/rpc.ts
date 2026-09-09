@@ -20,6 +20,15 @@
 // A transport error, a 5xx or an un-honoured batch still degrade to one call
 // at a time on the same host, exactly as before: those say nothing about a
 // quota. A sequential run that meets a refusal stops there.
+//
+// ⚠️ AND A HOST THAT IS SIMPLY DOWN MUST FAIL OVER TOO. The first cut carried
+// only REFUSALS to the next host, so a first entry with a dead socket was
+// degraded to one call at a time on itself, failed all of them, and the second
+// host was never asked — "never one hardcoded host" defeated by the list that
+// implements it, on the commonest way a host breaks. Every outcome the node
+// did not ANSWER is carried; and `sequential` gives up after DEAD_AFTER
+// transport failures rather than proving the same silence forty times, which
+// is the dead-node rule the trade bot's log walk already carries.
 
 export interface RpcCall {
   method: string;
@@ -59,6 +68,13 @@ const REFUSAL_STATUS = new Set([401, 403, 429]);
 const RATE_LIMIT_TEXT = /\b429\b|rate.?limit|too many requests|-32005\b/i;
 
 export const isRefusalText = (s: string): boolean => /^rpc (401|403|429)\b/.test(s) || RATE_LIMIT_TEXT.test(s);
+
+/** True when this failure is OUR OWN pacing — a refusal we are honouring, or a
+ *  host this client has benched — rather than a chain we cannot reach. A
+ *  caller that parks a whole reader on failure (the board's Pons fallback
+ *  parks for five minutes) must not escalate a one-to-ten-second bench into
+ *  one: that is the ladder's own scar, one transport down. */
+export const rpcSelfLimited = (s: string): boolean => isRefusalText(s) || /cooling down for/.test(s);
 
 class RpcHttpError extends Error {
   status: number;
@@ -131,11 +147,18 @@ function unwrap(entry: JsonRpcResponse | undefined): RpcOutcome<unknown> {
 }
 
 /** One host's answer to one set of calls — outcomes aligned to `calls`, and
- *  `refused` set when the host turned us away part-way or entirely. */
+ *  `why` set when the host STOPPED answering part-way or entirely (a refusal,
+ *  or a run of transport failures). It is the sentence the calls that never
+ *  got an answer are reported with once no host is left. */
 interface HostAttempt {
   outcomes: RpcOutcome<unknown>[];
-  refused: string | null;
+  why: string | null;
 }
+
+/** Transport failures on one host before the rest of its calls are answered
+ *  without a request. A node that drops three single calls is not going to
+ *  serve the other thirty-seven, and each one costs a full timeout. */
+const DEAD_AFTER = 3;
 
 async function sendOne(url: string, call: RpcCall, timeoutMs: number): Promise<RpcOutcome<unknown>> {
   const json = (await post(url, { jsonrpc: "2.0", id: 1, ...call }, timeoutMs)) as JsonRpcResponse;
@@ -147,11 +170,14 @@ async function sendOne(url: string, call: RpcCall, timeoutMs: number): Promise<R
 async function sequential(url: string, calls: RpcCall[], timeoutMs: number): Promise<HostAttempt> {
   const out = new Array<RpcOutcome<unknown>>(calls.length);
   let refused: string | null = null;
+  let dead: string | null = null;
+  let transportFails = 0;
   let cursor = 0;
   const worker = async () => {
     for (let i = cursor++; i < calls.length; i = cursor++) {
-      if (refused) {
-        out[i] = { ok: false, error: refused };
+      const stopped = refused ?? dead;
+      if (stopped) {
+        out[i] = { ok: false, error: stopped, unanswered: true };
         continue;
       }
       try {
@@ -165,17 +191,19 @@ async function sequential(url: string, calls: RpcCall[], timeoutMs: number): Pro
         if (err instanceof RpcHttpError && REFUSAL_STATUS.has(err.status)) {
           refused = err.message;
           park(url, err.message, err.retryAfterMs);
+        } else if (!(err instanceof RpcHttpError) && ++transportFails >= DEAD_AFTER) {
+          // Not a status — the request never reached anyone. Stop asking this
+          // host; `batchSlice` takes what is left to the next one.
+          dead = errorText(err);
         }
         // A thrown request is one the node never answered — a dead socket, a
-        // timeout, an HTTP status. A refusal among them is ALSO carried on
-        // to the next host by `batchSlice`, which flags it again there; a
-        // transport failure is not carried, so this is its only flag.
+        // timeout, an HTTP status.
         out[i] = { ok: false, error: errorText(err), unanswered: true };
       }
     }
   };
   await Promise.all(Array.from({ length: Math.min(MAX_PARALLEL, calls.length) }, worker));
-  return { outcomes: out, refused };
+  return { outcomes: out, why: refused ?? dead };
 }
 
 async function attemptHost(url: string, calls: RpcCall[], timeoutMs: number): Promise<HostAttempt> {
@@ -195,7 +223,10 @@ async function attemptHost(url: string, calls: RpcCall[], timeoutMs: number): Pr
       // The host turned the whole payload away. NOT one call at a time — that
       // is the hammering this file's header is about.
       park(url, err.message, err.retryAfterMs);
-      return { outcomes: calls.map(() => ({ ok: false, error: err.message })), refused: err.message };
+      return {
+        outcomes: calls.map(() => ({ ok: false, error: err.message, unanswered: true as const })),
+        why: err.message,
+      };
     }
     // Batch unsupported, a transport failure or a 5xx — none of which says
     // anything about a quota. One call at a time on this host, as before.
@@ -222,7 +253,13 @@ async function attemptHost(url: string, calls: RpcCall[], timeoutMs: number): Pr
   if (limited !== undefined) {
     const why = (answered[limited] as { error: string }).error;
     park(url, why, null);
-    return { outcomes: answered, refused: why };
+    // Every item that carries the refusal is a read that never happened; an
+    // item the node ANSWERED in the same array keeps its answer.
+    lost.forEach((i) => {
+      const o = answered[i] as { ok: false; error: string };
+      if (RATE_LIMIT_TEXT.test(o.error)) answered[i] = { ok: false, error: o.error, unanswered: true };
+    });
+    return { outcomes: answered, why };
   }
   if (lost.length > 0) {
     const again = await sequential(url, lost.map((i) => calls[i]), timeoutMs);
@@ -231,15 +268,16 @@ async function attemptHost(url: string, calls: RpcCall[], timeoutMs: number): Pr
     lost.forEach((i, k) => {
       if (again.outcomes[k]?.ok) answered[i] = again.outcomes[k];
     });
-    if (again.refused) return { outcomes: answered, refused: again.refused };
+    if (again.why) return { outcomes: answered, why: again.why };
   }
-  return { outcomes: answered, refused: null };
+  return { outcomes: answered, why: null };
 }
 
-/** One slice across the host list: what one host refused goes to the next;
- *  what a host ANSWERED (a value, a revert) is final. */
+/** One slice across the host list: what one host did not ANSWER goes to the
+ *  next; what a host answered (a value, a revert) is final. */
 async function batchSlice(hosts: string[], slice: RpcCall[], timeoutMs: number): Promise<RpcOutcome<unknown>[]> {
   const out = new Array<RpcOutcome<unknown>>(slice.length);
+  const carried = new Map<number, string>();
   let pending = slice.map((_, i) => i);
   let lastWhy: string | null = null;
   for (const url of hosts) {
@@ -252,21 +290,34 @@ async function batchSlice(hosts: string[], slice: RpcCall[], timeoutMs: number):
     const attempt = await attemptHost(url, pending.map((i) => slice[i]), timeoutMs);
     const carry: number[] = [];
     pending.forEach((i, k) => {
-      const o = attempt.outcomes[k] ?? { ok: false, error: "no response" };
-      if (!o.ok && attempt.refused && isRefusalText(o.error)) carry.push(i);
-      else out[i] = o;
+      const o = attempt.outcomes[k] ?? { ok: false, error: "no response", unanswered: true };
+      // The node ANSWERED — a value, a revert, an empty result — so that is
+      // this call's answer and no other host will improve on it.
+      if (o.ok || !unanswered(o)) {
+        out[i] = o;
+        return;
+      }
+      carry.push(i);
+      carried.set(i, o.error);
     });
-    if (attempt.refused) lastWhy = attempt.refused;
+    // The most recent host's own stop reason, or none: a 429 from host A must
+    // not be reported for a call host B merely dropped from its array.
+    lastWhy = attempt.why;
     pending = carry;
   }
-  // ⚠️ THE ONE PLACE A REFUSAL IS FLAGGED `unanswered`. Every refused outcome
-  // — a whole payload turned away, an item saying "rate limit", a single
-  // call refused mid-run — is carried here by the `isRefusalText` test above
-  // and re-filled with the last host's reason, so a flag set on the attempt's
-  // own fill would be dead code (a mutation run said so: removing it changed
-  // nothing). "No response" and a thrown request are flagged where they
-  // arise, because those are never carried.
-  for (const i of pending) out[i] = { ok: false, error: lastWhy ?? "rpc unavailable", unanswered: true };
+  // ⚠️ `unanswered` IS THE CARRY SIGNAL, so it is set wherever a failure
+  // arises — a whole payload turned away, an item saying "rate limit", a call
+  // that threw, an item missing from the array — and NOT only here. An earlier
+  // cut flagged it only on this fill, on the reasoning that everything reaches
+  // it anyway; that was true while the carry matched on the refusal's TEXT and
+  // false the moment the flag became the gate: a refused batch stopped being
+  // carried at all and the second host was never asked. Mutation-tested at
+  // each site. The host-level reason wins over the per-call one here — "rpc
+  // 429 (rate limited)" explains a slice that "no response" does not — and the
+  // per-call reason is kept for a host that stopped for no reason of its own.
+  for (const i of pending) {
+    out[i] = { ok: false, error: lastWhy ?? carried.get(i) ?? "rpc unavailable", unanswered: true };
+  }
   return out;
 }
 

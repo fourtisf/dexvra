@@ -217,7 +217,18 @@ async function fetchTokenInfoX(chain, address) {
     return { ok: true, why: 'not a Pons launch', info: null };
   }
   if (!res.ok) {
-    const why = `site answered ${res.status}`;
+    // ⚠️ THE SITE'S 503 CARRIES THE NODE'S OWN REASON, and reading only the
+    // status throws it away: "site answered 503" sends an operator to look at
+    // the web app for a Robinhood RPC that is rate-limiting the box. The body
+    // is best-effort — a proxy's own error page has no `error` field — and it
+    // is bounded, because it lands in a park sentence, the post alert and a
+    // log line.
+    let why = `site answered ${res.status}`;
+    try {
+      const body = await res.json();
+      const detail = body && typeof body.error === 'string' ? body.error.trim() : '';
+      if (detail) why = `${why} — ${str(detail, 160)}`;
+    } catch {}
     park(chain, address, why);
     return { ok: false, why, info: null };
   }

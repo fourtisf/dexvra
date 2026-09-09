@@ -36,7 +36,18 @@ export async function GET(req: NextRequest) {
       { chain: PONS.chain, chainId: PONS.chainId, launchpad: "pons-v2", launch },
       { headers: { "Cache-Control": "public, max-age=10, stale-while-revalidate=30" } },
     );
-  } catch {
-    return NextResponse.json({ error: "upstream unavailable" }, { status: 503 });
+  } catch (err) {
+    // ⚠️ THE REASON TRAVELS, AND THE URL NEVER DOES. "site answered 503" is
+    // what the bot parks on and what the operator reads, and it says nothing
+    // about whether the node refused us, the socket died, or Pons is fine —
+    // which is the whole distinction this provider carries. A paid RPC keeps
+    // its key in the path, so anything URL-shaped is stripped before it can
+    // reach a public response or the bot's log.
+    const raw = err instanceof Error ? err.message : "";
+    const why = raw.replace(/https?:\/\/\S+/g, "the RPC endpoint").slice(0, 200);
+    return NextResponse.json(
+      { error: why || "upstream unavailable", chain: PONS.chain },
+      { status: 503 },
+    );
   }
 }

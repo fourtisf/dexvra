@@ -94,18 +94,16 @@ const ok = <T,>(outcome: RpcOutcome<unknown> | undefined, decode: (hex: string) 
   }
 };
 
+const errText = (err: unknown): string => (err instanceof Error ? err.message : "the pool read failed");
+
 const one = <T,>(types: AbiType[], hex: string): T => decodeReturn(types, hex)[0] as T;
 
 // ── Launch records ────────────────────────────────────────────────────────
-export async function readLaunchRecords(addresses: string[]): Promise<Map<string, LaunchRecord>> {
-  return (await readLaunchRecordsX(addresses)).records;
-}
-
 /**
  * The records AND the addresses whose read FAILED, with the node's reason.
  *
  * ⚠️ AN ADDRESS WHOSE RECORD COULD NOT BE READ IS NOT "NOT A PONS LAUNCH".
- * `readLaunchRecords` OMITS a failed address, and an omitted address reads
+ * A failed address is OMITTED from `records`, and an omitted address reads
  * downstream exactly like one Pons never launched. The all-fail throw below
  * has always covered the single-address read (`fetchPonsLaunch`) — but it
  * carried NO REASON ("Pons RPC unavailable"), so a 429 and a dead socket
@@ -295,11 +293,15 @@ const poolStateSlot = (id: string): bigint =>
 export const sortCurrencies = (a: string, b: string): [string, string] =>
   BigInt(a) < BigInt(b) ? [a, b] : [b, a];
 
+/** The node's own reason the last wiring read failed — a wiring we could not
+ *  ASK for is not a chain with no pools. */
+let lastWiringWhy: string | null = null;
 let cachedFactoryWiring: Promise<{ poolManager: string; memeHook: string } | null> | null = null;
 
 /** poolManager + memeHook, read from the factory rather than hardcoded. */
 export function readFactoryWiring(): Promise<{ poolManager: string; memeHook: string } | null> {
   cachedFactoryWiring ??= (async () => {
+    lastWiringWhy = null;
     const results = await rpcBatch(
       PONS.rpcUrls,
       [
@@ -310,6 +312,8 @@ export function readFactoryWiring(): Promise<{ poolManager: string; memeHook: st
     );
     const poolManager = ok(results[0], (hex) => one<string>(["address"], hex));
     const memeHook = ok(results[1], (hex) => one<string>(["address"], hex));
+    const refused = results.find((r) => unanswered(r)) as { ok: false; error: string } | undefined;
+    if (refused) lastWiringWhy = refused.error;
     if (!poolManager || !memeHook || poolManager === ZERO_ADDRESS) return null;
     return { poolManager, memeHook };
   })().catch(() => null);
@@ -320,11 +324,25 @@ export function readFactoryWiring(): Promise<{ poolManager: string; memeHook: st
   return cachedFactoryWiring;
 }
 
-async function readPoolStates(records: LaunchRecord[]): Promise<Map<string, PoolState>> {
+/** Pool states, and per token the node's own reason when one could not be
+ *  READ. ⚠️ A GRADUATED launch prices off its POOL, so a refused pool read is
+ *  exactly the same fact as a refused curve read one function up — and it was
+ *  the one path still rendering as "the curve and the pool answered no price",
+ *  with `readWhy` null and the record cached for the full TTL. */
+async function readPoolStates(
+  records: LaunchRecord[],
+): Promise<{ pools: Map<string, PoolState>; why: Map<string, string> }> {
   const out = new Map<string, PoolState>();
-  if (records.length === 0) return out;
+  const why = new Map<string, string>();
+  if (records.length === 0) return { pools: out, why };
   const wiring = await readFactoryWiring();
-  if (!wiring) return out;
+  if (!wiring) {
+    // No wiring, no slot to read: the pools are unknown for OUR reason, and a
+    // silent empty map is what let that read as a token with no pool.
+    const reason = lastWiringWhy ?? "the factory's poolManager/memeHook could not be read";
+    for (const r of records) why.set(r.token.toLowerCase(), reason);
+    return { pools: out, why };
+  }
 
   const slots = records.map((record) => {
     const [currency0, currency1] = sortCurrencies(record.pairToken, record.token);
@@ -349,6 +367,16 @@ async function readPoolStates(records: LaunchRecord[]): Promise<Map<string, Pool
   );
 
   records.forEach((record, index) => {
+    const refused = [results[index * 2], results[index * 2 + 1]].find((r) => unanswered(r)) as
+      | { ok: false; error: string }
+      | undefined;
+    // EITHER read: a refused slot0 costs the price, and a refused liquidity
+    // read renders as a depth of ZERO — a fabricated figure on a public card,
+    // and the shape "0 reads as a rug" already names one field over. The price
+    // still publishes (a real number beats none); the record carries the
+    // reason, which is what stops it being served for the full TTL and what
+    // lets `pons:check` name the node rather than the token.
+    if (refused) why.set(record.token.toLowerCase(), refused.error);
     const packed = ok(results[index * 2], (hex) => BigInt(hex));
     const liquidity = ok(results[index * 2 + 1], (hex) => BigInt(hex));
     if (packed === null) return;
@@ -358,7 +386,7 @@ async function readPoolStates(records: LaunchRecord[]): Promise<Map<string, Pool
     if (sqrtPriceX96 === 0n) return;
     out.set(record.token.toLowerCase(), { sqrtPriceX96, liquidity: liquidity ?? 0n });
   });
-  return out;
+  return { pools: out, why };
 }
 
 /** One batched snapshot per address: launch record, curve state, metadata and
@@ -377,9 +405,15 @@ export async function readLaunchSnapshotsX(
   if (list.length === 0) return { snapshots: new Map(), failed };
 
   const graduated = list.filter((r) => r.phase === "PoolCreated");
-  const [details, pools] = await Promise.all([
+  const [details, poolRead] = await Promise.all([
     readCurvesAndMeta(list),
-    readPoolStates(graduated).catch(() => new Map<string, PoolState>()),
+    // A throw out of the pool read is still OUR failure, not a chain with no
+    // pools: the reason travels rather than the whole graduated set reading as
+    // unpriced for a cause nobody recorded.
+    readPoolStates(graduated).catch((err) => ({
+      pools: new Map<string, PoolState>(),
+      why: new Map<string, string>(graduated.map((r) => [r.token.toLowerCase(), errText(err)])),
+    })),
   ]);
 
   const out = new Map<string, LaunchSnapshot>();
@@ -390,8 +424,10 @@ export async function readLaunchSnapshotsX(
       launch: record,
       curve: detail?.curve ?? null,
       meta: detail?.meta ?? null,
-      pool: pools.get(key) ?? null,
-      readWhy: detail?.why ?? null,
+      pool: poolRead.pools.get(key) ?? null,
+      // The curve/metadata batch's reason first — it is the one that empties a
+      // record — then the POOL's, which is what a graduated launch prices off.
+      readWhy: detail?.why ?? poolRead.why.get(key) ?? null,
     });
   }
   return { snapshots: out, failed };
@@ -444,6 +480,12 @@ export async function readTokenProfile(token: string): Promise<TokenProfile | nu
 
 const decimalsCache = new Map<string, number>();
 
+/** Test seam: forget the decimals cache. It only CLEARS — the rule under test
+ *  is what may be written into it. */
+export const __resetDecimalsCache = (): void => {
+  decimalsCache.clear();
+};
+
 /** Decimals of the token a curve dispenses. Cached — it never changes. */
 export async function readCurveTokenDecimals(curve: string): Promise<number> {
   const key = curve.toLowerCase();
@@ -457,6 +499,11 @@ export async function readCurveTokenDecimals(curve: string): Promise<number> {
   const [decimalsResult] = await rpcBatch(PONS.rpcUrls, [call(token, encodeCall("decimals()"))], PONS.rpcTimeoutMs);
   const decimals = ok(decimalsResult, (hex) => Number(one<bigint>(["uint8"], hex)));
   const value = decimals != null && decimals >= 0 && decimals <= 36 ? decimals : 18;
-  decimalsCache.set(key, value);
+  // ⚠️ ONLY AN ANSWER IS REMEMBERED. This is cached "because it never
+  // changes" — true of the token's decimals and false of a read the node
+  // refused, and 18 stored for a 6-decimal token is every price off by a
+  // million for the life of the process. A read that did not answer falls
+  // back for THIS call and is asked again on the next one.
+  if (!unanswered(decimalsResult)) decimalsCache.set(key, value);
   return value;
 }

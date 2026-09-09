@@ -198,7 +198,7 @@ function ethCallResult(to, data) {
   }
 
   if (target === TOKEN || target === GRAD_TOKEN) {
-    if (sel === SEL("decimals()")) return hexResult([word(18)]);
+    if (sel === SEL("decimals()")) { decimalsAsks++; return hexResult([word(18)]); }
     if (sel === SEL("totalSupply()")) return hexResult([word(TOTAL_SUPPLY)]);
     if (sel === SEL("symbol()")) return stringReturn("PONSY");
     if (sel === SEL("name()")) return stringReturn("Pons Yield");
@@ -221,6 +221,9 @@ function ethCallResult(to, data) {
 }
 
 let extsloadCalls = 0;
+// How many times the chain was asked for a token's decimals — the only way to
+// see whether a REFUSED read was written into the "it never changes" cache.
+let decimalsAsks = 0;
 let rpcRequests = 0;
 
 function handle({ method, params }) {
@@ -268,6 +271,7 @@ let refusedRpc = 0;
 // hammering — and must stay 0.
 let singleRetries = 0;
 const META_SELS = () => [SEL("symbol()"), SEL("name()"), SEL("logo()")];
+
 const refused = () => new Response("busy", { status: 503, headers: { "content-type": "text/plain" } });
 
 globalThis.fetch = async (url, init) => {
@@ -305,6 +309,25 @@ globalThis.fetch = async (url, init) => {
     }
     const entries = Array.isArray(body) ? body : [body];
     const aimedAt = (e) => String(e?.params?.[0]?.to || "").toLowerCase();
+    // "refuse-pool": the poolManager's extsload reads answer 429 while the
+    // launch record and the curve answer perfectly — a GRADUATED launch prices
+    // off its POOL, so this is the same fact as a refused curve read one
+    // function up.
+    // "refuse-decimals": token() answers and decimals() is refused, which is
+    // the one shape that reaches the cache write.
+    const isDecimalsRead = (e) =>
+      e && e.method === "eth_call" && String(e?.params?.[0]?.data || "").startsWith(SEL("decimals()"));
+    const isPoolRead = (e) =>
+      e && e.method === "eth_call" && aimedAt(e) === POOL_MANAGER &&
+      String(e?.params?.[0]?.data || "").startsWith(SEL("extsload(bytes32)"));
+    if (rpcMode === "refuse-decimals" && entries.some(isDecimalsRead)) {
+      refusedRpc++;
+      return new Response("rate limited", { status: 429, headers: { "retry-after": "1" } });
+    }
+    if (rpcMode === "refuse-pool" && entries.some(isPoolRead)) {
+      refusedRpc++;
+      return new Response("rate limited", { status: 429, headers: { "retry-after": "1" } });
+    }
     if (rpcMode === "refuse-all" || (rpcMode === "refuse-curve" && entries.some((e) => e && e.method === "eth_call" && [CURVE, TOKEN].includes(aimedAt(e))))) {
       refusedRpc++;
       return new Response("rate limited", { status: 429, headers: { "retry-after": "1" } });
@@ -808,6 +831,60 @@ delete process.env.TELEGRAM_CHAT_ID;
   check("…the record is re-keyed under the short TTL", pons.unpricedByUs(partial) === true);
   check("…and the refused items were NOT re-asked one at a time", singleRetries === 0, `${singleRetries} single retries`);
   __resetRpc();
+
+  // ⚠️ A GRADUATED LAUNCH PRICES OFF ITS POOL, and a refused pool read was the
+  // one path still rendering as "the curve and the pool answered no price" —
+  // readWhy null, the record cached for the full TTL, and the check sent to
+  // the ETH/USD ladder over a node that was rate-limiting the box.
+  rpcMode = "refuse-pool";
+  __resetHistories();
+  pons.__resetNativeUsd();
+  const gradRefused = await pons.fetchPonsLaunch(GRAD_TOKEN);
+  check("a refused POOL read carries the node's reason", /429|rate limit/.test(String(gradRefused?.readWhy)), String(gradRefused?.readWhy));
+  check("…marketWhy names the READ, not the curve", /could not read the curve/.test(String(gradRefused?.marketWhy)), String(gradRefused?.marketWhy));
+  check("…and it is re-keyed under the short TTL", pons.unpricedByUs(gradRefused) === true);
+  __resetRpc();
+
+  // ⚠️ OUR OWN BENCH MAY NOT BECOME A FIVE-MINUTE OUTAGE. The RPC client parks
+  // a refusing host for 1–10s; that throw reaching the board's fallback used
+  // to park the whole on-chain reader for five minutes, so one rate-limited
+  // minute cost five of them.
+  rpcMode = "refuse-all";
+  __resetHistories();
+  pons.__resetNativeUsd();
+  const parked = await pons.fetchPonsFallbackMarket(PONS.chain, [TOKEN]);
+  check("a refused cycle answers nothing rather than throwing", parked === null);
+  __resetRpc();
+  rpcMode = "ok";
+  __resetHistories();
+  pons.__resetNativeUsd();
+  const after = await pons.fetchPonsFallbackMarket(PONS.chain, [TOKEN]);
+  check("…and the very next cycle reads the chain — the reader is NOT parked", after != null && after.size === 1, String(after && after.size));
+
+  // ⚠️ "IT NEVER CHANGES" IS TRUE OF THE TOKEN'S DECIMALS AND FALSE OF A READ
+  // THE NODE REFUSED. 18 remembered for a 6-decimal token is every price off
+  // by a million for the life of the process, so only an ANSWER is cached —
+  // measured by whether the chain is asked a second time.
+  {
+    const { readCurveTokenDecimals, __resetDecimalsCache } = await import("../src/lib/providers/pons/contracts.ts");
+    // The histories read this earlier in the run; a cached value would answer
+    // for the code under test.
+    __resetDecimalsCache();
+    rpcMode = "refuse-decimals";
+    decimalsAsks = 0;
+    const fallback = await readCurveTokenDecimals(CURVE);
+    check("a refused decimals() read falls back to 18", fallback === 18, String(fallback));
+    __resetRpc();
+    rpcMode = "ok";
+    // A refused read never reaches the fixture, so the counter measures the
+    // ANSWERED ones: one here means the next call went back to the chain, and
+    // zero would mean the refusal had been written into the cache.
+    const real = await readCurveTokenDecimals(CURVE);
+    check("…and is ASKED AGAIN rather than remembered", real === 18 && decimalsAsks === 1, `${decimalsAsks} answered read(s)`);
+    const again = await readCurveTokenDecimals(CURVE);
+    check("…while the ANSWER is cached", again === 18 && decimalsAsks === 1, `${decimalsAsks} answered read(s)`);
+  }
+
   rpcMode = "ok";
   __resetHistories();
 }

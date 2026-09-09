@@ -14,7 +14,6 @@ import { readNativeUsd, type QuoteUsdSource } from "./quoteUsd";
 import type { LiveMarket } from "../market";
 import {
   readCurveTokenDecimals,
-  readLaunchSnapshots,
   readLaunchSnapshotsX,
   readTokenProfile,
   sortCurrencies,
@@ -253,7 +252,16 @@ export async function fetchPonsMarket(addresses: string[]): Promise<Map<string, 
   const out = new Map<string, LiveMarket>();
   if (addresses.length === 0) return out;
 
-  const snapshots = await readLaunchSnapshots(addresses.slice(0, 30));
+  const { snapshots, failed } = await readLaunchSnapshotsX(addresses.slice(0, 30));
+  // ⚠️ A ROW WE COULD NOT READ IS NOT A ROW WITH NO MARKET. The board drops a
+  // missing address onto its last-known reading and prints nothing, so a node
+  // refusing half a cycle looked exactly like half the chain being quiet.
+  if (failed.size > 0) {
+    console.warn(
+      `[market] ${PONS.chain}: ${failed.size} launch record(s) could not be READ this cycle — ` +
+        `${[...failed.values()][0]} (this is the node, not the tokens)`,
+    );
+  }
   if (snapshots.size === 0) return out;
 
   const [quote, histories] = await Promise.all([

@@ -9574,6 +9574,105 @@ public host first and a paid or private Robinhood Chain RPC after it — a host
 that refuses is parked and the next takes the same calls, so it is a line, not
 a deploy. This touches `bot/` AND `src/`, so the deploy is the full one.
 
+##### The audit round — the host list could not fail over on the commonest failure
+
+Run against the fix above by five lenses (two of them died on a session limit,
+so their claims were judged here rather than by refuters). Thirteen survived
+reading, and the first is the fix defeating itself.
+
+- ⚠️ **A HOST THAT IS DOWN NEVER FAILED OVER.** The carry to the next host was
+  gated on `isRefusalText`, so a first entry with a dead socket was degraded to
+  one call at a time on ITSELF, failed all forty, and the second host was never
+  asked — **"never one hardcoded host" defeated by the list that implements
+  it**, on the way a host usually breaks. Every outcome the node did not
+  ANSWER is carried now, and `sequential` stops after three transport failures
+  rather than proving the same silence forty times at a full timeout each
+  (measured: 41 requests to a dead host, now ≤10, bounded by the worker pool
+  rather than by the call count).
+- ⚠️ **…AND THE FLAG THAT GATES IT WAS THE ONE A MUTATION RUN HAD JUST
+  REMOVED.** `unanswered` was set only on the final fill, on the reasoning that
+  everything reaches it anyway — true while the carry matched on the refusal's
+  TEXT, and false the moment the flag became the gate: three tests went red
+  immediately, saying a refused batch was no longer carried at all. It is set
+  at every site again and mutation-tested at each. **A mutant that proves a
+  line dead proves it dead against TODAY's code**, and the comment recording
+  that now says which change would revive it.
+- **The reported reason is the LAST host's, never an earlier one's.** Host A
+  rate-limits us and host B merely drops an item from its array: reporting "rpc
+  429" for that call sends an operator to a quota that had nothing to do with
+  it. Survived its first mutation run — no test distinguished the two — and has
+  one now.
+- ⚠️ **A GRADUATED LAUNCH PRICES OFF ITS POOL, and the pool read had no
+  reason.** `readCurvesAndMeta` learnt to carry `readWhy` and `readPoolStates`
+  did not, so a refused `extsload` on the PoolManager was still the sentence
+  this whole round exists to end — *"the curve and the pool answered no
+  price"*, `readWhy` null, cached for the full TTL. The pool read carries its
+  reason per token, and a wiring read that failed carries one too: no wiring is
+  a pool state we could not ASK for, not a chain with no pools.
+- ⚠️ **OUR OWN BENCH BECAME A FIVE-MINUTE OUTAGE.** The client parks a refusing
+  host for one to ten seconds; that throw reaching the board's Pons fallback
+  parked the whole on-chain reader for **five minutes** — a rate limit
+  escalated into an outage by the code that noticed it, which is the ETH/USD
+  ladder's own scar one transport down. `rpcSelfLimited()` is the one owner of
+  "this failure is our pacing" (a refusal, or a host this client benched); the
+  park still fires for a chain the box genuinely cannot reach, and a live
+  connection-refused still parks.
+- ⚠️ **THE 503 THREW THE REASON AWAY AT THE LAST HOP.** `/api/pons` answered a
+  bare `upstream unavailable`, so the bot parked on *"site answered 503"* and
+  an operator went to look at a web app that was working perfectly. The
+  reason travels — and **anything URL-shaped is stripped first**, because a
+  paid RPC keeps its key in the path and this is a public response and a pm2
+  line. The bot reads the body, bounded, and falls back to the status alone.
+- ⚠️ **`decimalsCache` REMEMBERED A REFUSAL FOREVER.** It is cached "because it
+  never changes" — true of a token's decimals, false of a read the node
+  refused, and 18 stored for a 6-decimal token is every price off by a million
+  for the life of the process. Only an ANSWER is written; measured by whether
+  the chain is asked a second time, because the fixture's real answer is also
+  18 and a value assertion could not tell the two apart.
+- **`blockSeconds` had the same shape** — one refused header read pinned the
+  shipped default for the process, dating every trade in every history from a
+  number nobody measured. The fallback answers that call and the next one asks
+  again.
+- **The launch feed's all-fail throw and the board's multi-address read were
+  the last two silences.** The feed threw `Pons RPC unavailable` with no
+  reason; `fetchPonsMarket` dropped every address it could not read without a
+  word, so a node refusing half a cycle looked exactly like half the chain
+  being quiet. Both name the node now.
+- **A refused LIQUIDITY slot keeps the price and marks the record.** Half a
+  pool read answering renders a depth of ZERO — a fabricated figure on a
+  public card, the shape `launchpads.js` names one field over — so the reason
+  is recorded even though the price is fine, which is what keeps it off the
+  full TTL and points `pons:check` at the node. Publishing the price anyway is
+  deliberate: a real number with a hole beside it beats no row.
+- **`readLaunchRecords` was deleted.** Nothing called the non-X wrapper once
+  the reasons started travelling, and a function that binds nothing is the row
+  the engine ignores.
+- **Recorded, deliberately NOT changed:** a refused `readTokenProfile` still
+  reads as a creator who filled no socials in. Folding it into `readWhy` would
+  re-key a fully priced record under the 3s TTL over a couple of links, i.e.
+  a stampede on `/api/pons` for the one field nothing prices — and the
+  "creator filled nothing in" sentence cannot be produced by it, because
+  symbol, name and logo come from the batch that DOES carry a reason.
+
+⚠️ **And the suite that ran alongside the mutation run reported a failure that
+was the MUTATION RUN's**, not the code's: `mutate.py` rewrites the source in
+place, so a background `npm test` sharing the checkout reads whichever mutant
+is applied at that instant. Re-run clean, both suites are green. A test result
+measured while something else is editing the tree is not a measurement.
+
+Twelve more guarantees are MUTATION-TESTED: a dead host not carried, a dead
+host asked once per call, a refused batch unflagged, an item-level limit
+unflagged, an earlier host's reason reported for a later host's drop, the pool
+reason dropped, the pool refusal not recorded, the decimals cache written on a
+refusal, the bench parking the reader, and the bot dropping the 503's reason.
+Each fails between one and three tests.
+
+```bash
+node --test --experimental-strip-types src/lib/evm/rpc.test.ts                  # 13: the bench, the failover, the dead host, the reason
+npm run test:pons                                                              # 110: a refused POOL read, the park that must not fire, the decimals cache
+cd bot && node scripts/run-tests.js test/ponsChain.test.js                      # the 503's reason reaches the park sentence
+```
+
 ## "perbaiki tampilan chartnya di mobile" — two rows of timeframe buttons, one of them dead
 
 The same screenshot, one panel down: our chart header — `$HACHIKO`, `LIN LOG`,
