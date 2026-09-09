@@ -10,7 +10,7 @@ import type { LiveMarket } from "../market";
 import { readLaunchSnapshots } from "./contracts";
 import { fetchPonsMarket } from "./market";
 
-export { fetchPonsMarket, fetchPonsLaunch, fetchPonsTrades, nativeUsd, nativeUsdX, __resetNativeUsd } from "./market";
+export { fetchPonsMarket, fetchPonsLaunch, fetchPonsTrades, nativeUsd, nativeUsdX, unpricedByUs, __resetNativeUsd } from "./market";
 export type { PonsLaunchInfo } from "./market";
 export { fetchPonsLaunchFeed, readPonsLaunchEvents } from "./launches";
 export type { PonsLaunchEvent, PonsLaunchFeed, PonsLaunchFeedItem } from "./launches";

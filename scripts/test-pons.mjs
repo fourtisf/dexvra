@@ -663,6 +663,34 @@ delete process.env.TELEGRAM_CHAT_ID;
   );
   check("…with no source claimed", noRef != null && noRef.quoteUsdSource === null, String(noRef?.quoteUsdSource));
 
+  // The route shortens its cache on exactly this record, and decides it from
+  // the record's own fields — never from the sentence.
+  check("unpricedByUs: a native-quoted launch with an ETH price and no USD price is OURS", pons.unpricedByUs(noRef) === true);
+  check("…a priced record is not", pons.unpricedByUs(viaCoinbase) === false);
+  check("…an ERC-20-quoted launch is the token's fact, not ours", pons.unpricedByUs({ priceUsd: null, priceQuote: 2e-9, quoteSymbol: null }) === false);
+  check("…and a launch whose curve answered no price is not ours either", pons.unpricedByUs({ priceUsd: null, priceQuote: null, quoteSymbol: "ETH" }) === false);
+
+  // ⚠️ THE BOARD'S FALLBACK MUST NOT PARK OVER A USD REFERENCE. It used to
+  // `await nativeUsd()` uncaught, so a ladder with no rung standing threw,
+  // and pons/index.ts read the throw as a dead chain and parked the reader
+  // for five minutes over snapshots it had just read. An empty map, the
+  // reason logged, and the next cycle asks again.
+  pons.__resetPonsCooldown();
+  __resetHistories();
+  const rpcBefore = rpcRequests;
+  let fallback = null;
+  let fallbackThrew = false;
+  try {
+    fallback = await pons.fetchPonsFallbackMarket("robinhood", [TOKEN]);
+  } catch {
+    fallbackThrew = true;
+  }
+  check("the board fallback does not throw when the ETH/USD ladder has no rung standing", !fallbackThrew);
+  check("…it answers an EMPTY map — no dollar figure is no row, never a fabricated one", fallback instanceof Map && fallback.size === 0, String(fallback));
+  const rpcMid = rpcRequests;
+  await pons.fetchPonsFallbackMarket("robinhood", [TOKEN]);
+  check("…and the reader is NOT parked — the next cycle still reads the chain", rpcRequests > rpcMid, `${rpcMid} → ${rpcRequests} (first read cost ${rpcMid - rpcBefore})`);
+
   quoteMode = "coinbase";
   pons.__resetNativeUsd();
 }

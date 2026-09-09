@@ -255,19 +255,48 @@ export async function fetchPonsMarket(addresses: string[]): Promise<Map<string, 
   const snapshots = await readLaunchSnapshots(addresses.slice(0, 30));
   if (snapshots.size === 0) return out;
 
-  const [quoteUsd, histories] = await Promise.all([
-    nativeUsd(),
+  const [quote, histories] = await Promise.all([
+    nativeUsdX(),
     readCurveHistories([...snapshots.values()].map((s) => s.launch.curve)).catch(
       () => new Map<string, CurveHistory>(),
     ),
   ]);
+  // ⚠️ A USD reference that failed is NOT a chain that failed. This used to
+  // `await nativeUsd()` uncaught, so a ladder with no rung standing THREW —
+  // and the board's fallback (pons/index.ts) reads a throw as "this box cannot
+  // reach the chain" and parks the whole on-chain reader for five minutes,
+  // over snapshots it had just read perfectly well. The park exists for a dead
+  // RPC. With no dollar figure there is no LiveMarket row to publish, so the
+  // honest answer is an empty map and the reason, and the next cycle asks
+  // again — the ladder's own cache makes that one bounded read, not a walk.
+  if (quote.usd == null) {
+    console.warn(`[market] ${PONS.chain}: ${quote.why} — ${snapshots.size} curve token(s) go unpriced this cycle`);
+    return out;
+  }
 
   const now = Math.floor(Date.now() / 1000);
   for (const [address, snapshot] of snapshots) {
-    const market = buildMarket(snapshot, histories.get(snapshot.launch.curve.toLowerCase()), quoteUsd, now);
+    const market = buildMarket(snapshot, histories.get(snapshot.launch.curve.toLowerCase()), quote.usd, now);
     if (market) out.set(address, market);
   }
   return out;
+}
+
+/**
+ * "We read this launch's price in ETH and could not turn it into dollars" — a
+ * hole that is OURS (the ETH/USD ladder), never the token's. Decided from the
+ * record's own fields, not from a sentence: a native-quoted launch whose
+ * `priceQuote` was read but whose `priceUsd` is null. An ERC-20-quoted launch
+ * (no `quoteSymbol`) publishes no USD figure by design and is not this.
+ *
+ * `/api/pons` uses it to shorten the cache on such a record: a launch cached
+ * for the full TTL with `priceUsd: null` is the ladder's worst minute served to
+ * every reader — the bot on its 5s clock included — for twenty seconds after
+ * the ladder has recovered.
+ */
+export function unpricedByUs(launch: Pick<PonsLaunchInfo, "priceUsd" | "priceQuote" | "quoteSymbol"> | null): boolean {
+  if (!launch) return false;
+  return launch.priceUsd == null && launch.priceQuote != null && launch.quoteSymbol != null;
 }
 
 export interface LaunchSummary {

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { cached } from "@/lib/cache";
+import { cache, cached } from "@/lib/cache";
 import { PONS } from "@/config/pons";
-import { fetchPonsLaunch } from "@/lib/providers/pons";
+import { fetchPonsLaunch, unpricedByUs } from "@/lib/providers/pons";
 
 export const dynamic = "force-dynamic";
 
@@ -9,6 +9,15 @@ export const dynamic = "force-dynamic";
 // bonding-curve progress, price and the locked-liquidity fact. Read straight
 // off the launch factory and the curve — Pons publishes no HTTP API of its own.
 const LAUNCH_TTL = 20_000;
+// ⚠️ A record whose USD figures are missing for OUR reason — the ETH/USD ladder
+// had no rung standing while the curve answered its price in ETH — is served
+// for this long, not LAUNCH_TTL. Cached for the full twenty seconds it was the
+// ladder's worst minute handed to every reader after the ladder had recovered,
+// the bot on its 5s clock among them, and a paid post read TBA off a cache
+// rather than off a source. Short, not zero: every reader re-running a
+// three-rung ladder that is genuinely down is the stampede the cache exists to
+// stop, and the ladder's own success cache makes the retry one bounded read.
+const UNPRICED_TTL = 3_000;
 
 export async function GET(req: NextRequest) {
   const address = (req.nextUrl.searchParams.get("address") ?? "").trim();
@@ -17,9 +26,9 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const launch = await cached(`pons:launch:${address.toLowerCase()}`, LAUNCH_TTL, () =>
-      fetchPonsLaunch(address),
-    );
+    const key = `pons:launch:${address.toLowerCase()}`;
+    const launch = await cached(key, LAUNCH_TTL, () => fetchPonsLaunch(address));
+    if (unpricedByUs(launch)) cache.set(key, launch, UNPRICED_TTL);
     if (!launch) {
       return NextResponse.json({ error: "not a Pons launch", chain: PONS.chain }, { status: 404 });
     }

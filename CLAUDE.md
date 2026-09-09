@@ -9393,6 +9393,51 @@ memo. Each fails between one and two tests.
 cd bot && node scripts/run-tests.js test/curvePost.test.js test/ponsChain.test.js test/postCheck.test.js test/postFigures.test.js   # 22 + 10 + 19 + 19
 ```
 
+#### …and the diagnose pass's one CONFIRMED finding had two halves still open
+
+Seventeen agents, eighteen raw claims, seven attacked by two refuters each,
+ONE survived — the defect above (the USD reference on the scarcest source,
+`priceQuote` nulled with it), which the ladder had already closed. Its refuters
+were precise about what the ladder had NOT closed, and both halves are the
+same shape: a failure of ours, served or parked as a fact about the chain.
+
+- ⚠️ **`/api/pons` CACHED A RECORD THE LADDER COULD NOT PRICE FOR THE FULL
+  TTL.** `cached()` stores whatever the loader returns, so a launch read during
+  the ladder's worst minute — `priceUsd: null` over a `priceQuote` the curve
+  had just answered — was served to every reader for twenty seconds and then
+  stale-while-revalidate after that, the bot on its 5s clock included: a paid
+  post read TBA off a CACHE after the ladder had recovered. `unpricedByUs()` is
+  the predicate — decided from the record's own fields, never from a sentence:
+  a native-quoted launch with an ETH price and no USD price is OURS, an
+  ERC-20-quoted launch publishing no USD figure is the token's — and the route
+  re-keys such a record under `UNPRICED_TTL` (3s). Short, not zero: every
+  reader re-running a three-rung ladder that is genuinely down is the stampede
+  the cache exists to stop.
+- ⚠️ **THE BOARD'S FALLBACK PARKED THE CHAIN READER FOR FIVE MINUTES OVER A
+  USD REFERENCE.** `fetchPonsMarket` awaited `nativeUsd()` UNCAUGHT, so a
+  ladder with no rung standing THREW, and `pons/index.ts` reads a throw as
+  "this box cannot reach the chain" — parking the whole on-chain reader over
+  snapshots it had just read perfectly well. The park exists for a dead RPC.
+  With no dollar figure there is no row to publish, so it answers an EMPTY
+  map with the reason logged, and the next cycle asks again.
+- **The refuters' two cautions were followed, not the proposal's spelling.**
+  `buildMarket(…, quoteUsd ?? 1, …)` would have put ETH-denominated numbers
+  into `LiveMarket.priceUsd` under a USD label — a wrong number, worse than a
+  missing one — and multiplying `priceQuote` by the bot's own CoinGecko reader
+  would make a SECOND owner of the ETH/USD reference, so dexvra.io and the
+  channel would print different prices for one token. The site's ladder stays
+  the one owner; the bot reads `priceUsd` from it.
+
+Four guarantees are MUTATION-TESTED: the fallback throwing again, an
+ERC-20-quoted launch counted as ours, the route keeping the full TTL, and the
+unpriced TTL no shorter than the launch TTL. Each fails between one and two
+checks.
+
+```bash
+npm run test:pons                                                    # 86 checks: the ladder, the fallback that does not park, the predicate
+node --test --experimental-strip-types src/lib/providers/pons/ponsRoute.test.ts
+```
+
 ## "perbaiki tampilan chartnya di mobile" — two rows of timeframe buttons, one of them dead
 
 The same screenshot, one panel down: our chart header — `$HACHIKO`, `LIN LOG`,
