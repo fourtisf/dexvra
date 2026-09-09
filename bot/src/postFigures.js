@@ -32,6 +32,7 @@
  * one order and one fault to act on.
  */
 const log = require("./helpers/logger");
+const ponsChain = require("./ponsChain");
 
 /** Renders as a figure, rather than as TBA / — (`priceStr`, `mcStr`, `liqStr`). */
 const rendered = (v) => Number(v) > 0;
@@ -178,7 +179,12 @@ function figureAlert({ kind, chain, address, sym, name, tier, live, why, siteUrl
     // ON THE BOX, which is the only place they can be told apart — whether an
     // indexer or a CDN answers this server is a property of its egress today,
     // not of this code.
-    keyMissing.length ? `Run <code>npm run market:check -- ${esc(chain)}</code> on the box.` : "",
+    // …and on a chain whose tokens can be priced OFF THE CHAIN, the check that
+    // can see it: market:check probes the two indexers and reports a Pons
+    // curve token as "honest", which is the wrong layer for a curve.
+    keyMissing.length
+      ? `Run <code>npm run market:check -- ${esc(chain)}</code>${ponsChain.covers(chain) ? ` and <code>npm run pons:check</code> (the curve and the ETH/USD ladder)` : ""} on the box.`
+      : "",
     lostArt ? `Run <code>${esc(artRemedy(artFailure(art).cls, chain, address))}</code> on the box.` : "",
   ]
     .filter(Boolean)

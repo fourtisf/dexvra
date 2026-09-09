@@ -150,12 +150,49 @@ function toInfo(launch) {
  * not ask" are different facts and the caller must not cache the second as the
  * first. The `pumpfunNewX` shape, for the fifth time in this repo.
  */
+// THE LAST FAILURE HAS A SURFACE. Every `ok:false` here used to end at
+// log.debug in marketdata.fillFromChain — production prints neither — so a
+// paid post that published TBA over a parked reader had no sentence anywhere:
+// the alert blamed the GT queue or "neither indexer returned anything" about
+// a chain read that had answered 503 a minute earlier. `lastWhy()` is what the
+// post's read and `post:check` ask. Per address, bounded, and the park reason
+// process-wide, because the park is.
+const LAST_WHY_MAX = 200;
+const LAST_WHY_TTL_MS = 10 * 60_000;
+const lastFail = new Map();
+let parkedWhy = null;
+function park(chain, address, why) {
+  coolingUntil = Date.now() + COOLDOWN_MS;
+  parkedWhy = why;
+  // A transition, not a poll: this fires once per COOLDOWN_MS at most, and a
+  // site the bot cannot read is worth a line production actually prints.
+  log.warn(`[pons] ${chain}/${address}: ${why} — parking the chain reader for ${Math.round(COOLDOWN_MS / 1000)}s`);
+  noteFail(chain, address, why);
+}
+function noteFail(chain, address, why) {
+  const k = memoKey(chain, address);
+  lastFail.delete(k);
+  lastFail.set(k, { why, at: Date.now() });
+  if (lastFail.size > LAST_WHY_MAX) lastFail.delete(lastFail.keys().next().value);
+}
+/** Why the chain could not be asked about this token, or null. */
+function lastWhy(chain, address) {
+  if (!covers(chain)) return null;
+  const now = Date.now();
+  if (now < coolingUntil && parkedWhy) return `parked after a recent failure — ${parkedWhy}`;
+  const f = lastFail.get(memoKey(chain, address));
+  if (!f || now - f.at > LAST_WHY_TTL_MS) return null;
+  return `${f.why} (${Math.round((now - f.at) / 1000)}s ago)`;
+}
+
 async function fetchTokenInfoX(chain, address) {
   if (!covers(chain)) return { ok: true, why: null, info: null };
   // An answer we already have. `ok` is true because this IS the answer — Pons
   // never launched it — and the caller must not read it as a source that failed.
   if (notPons.has(memoKey(chain, address))) return { ok: true, why: 'not a Pons launch', info: null };
-  if (Date.now() < coolingUntil) return { ok: false, why: 'parked after a recent failure', info: null };
+  if (Date.now() < coolingUntil) {
+    return { ok: false, why: `parked after a recent failure${parkedWhy ? ` — ${parkedWhy}` : ''}`, info: null };
+  }
 
   const url = `${DEXVRA_API_BASE}/api/pons?address=${encodeURIComponent(address)}`;
   let res;
@@ -164,9 +201,8 @@ async function fetchTokenInfoX(chain, address) {
   } catch (e) {
     // A transport failure is about the SITE, not about the token, so it parks
     // the reader rather than being recorded against this address.
-    coolingUntil = Date.now() + COOLDOWN_MS;
     const why = `could not reach the site (${e && e.message ? e.message : e})`;
-    log.debug(`[pons] ${chain}/${address}: ${why}`);
+    park(chain, address, why);
     return { ok: false, why, info: null };
   }
 
@@ -174,12 +210,12 @@ async function fetchTokenInfoX(chain, address) {
   // non-2xx is about us, and parks.
   if (res.status === 404) {
     rememberNotPons(chain, address);
+    lastFail.delete(memoKey(chain, address));
     return { ok: true, why: 'not a Pons launch', info: null };
   }
   if (!res.ok) {
-    coolingUntil = Date.now() + COOLDOWN_MS;
     const why = `site answered ${res.status}`;
-    log.debug(`[pons] ${chain}/${address}: ${why}`);
+    park(chain, address, why);
     return { ok: false, why, info: null };
   }
 
@@ -187,9 +223,12 @@ async function fetchTokenInfoX(chain, address) {
   try {
     body = await res.json();
   } catch (e) {
+    noteFail(chain, address, 'unreadable answer');
     return { ok: false, why: 'unreadable answer', info: null };
   }
   const launch = body && body.launch;
+  // An answer — either kind — leaves nothing to explain about this address.
+  lastFail.delete(memoKey(chain, address));
   if (!launch || !launch.address) {
     rememberNotPons(chain, address);
     return { ok: true, why: 'not a Pons launch', info: null };
@@ -202,9 +241,18 @@ async function fetchTokenInfo(chain, address) {
   return (await fetchTokenInfoX(chain, address)).info;
 }
 
+/** Test seam: lift the park ONLY — the memo stays, which is what lets a test
+ *  prove that a non-404 was not written into it. */
+const _unpark = () => {
+  coolingUntil = 0;
+  parkedWhy = null;
+};
+
 /** Test seam. */
 const _reset = () => {
   coolingUntil = 0;
+  parkedWhy = null;
+  lastFail.clear();
   // ⚠️ The memo is persistent by design and the suite shares one process, so a
   // test that left it behind would answer the next test's request without a
   // fetch — the leaked-state scar this repo carries for the probe rotation and
@@ -212,4 +260,4 @@ const _reset = () => {
   notPons.clear();
 };
 
-module.exports = { covers, fetchTokenInfo, fetchTokenInfoX, httpsLogo, toInfo, _reset };
+module.exports = { covers, fetchTokenInfo, fetchTokenInfoX, lastWhy, httpsLogo, toInfo, _reset, _unpark };

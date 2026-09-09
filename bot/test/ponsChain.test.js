@@ -124,3 +124,47 @@ test("only the chains the Pons pad declares are read", async () => {
   assert.strictEqual(out.ok, true);
   assert.ok(pons.covers("robinhood"), "robinhood is where the Pons pad lives");
 });
+
+// ⚠️ "ONLY A 404 IS MEMOED" was proved for a THROW and never for an HTTP
+// status, and `_reset()` clears the memo it exists to prove. A 503 is the
+// site (one RPC blip behind /api/pons), not the token: it parks the reader,
+// and once the park lifts the same address is asked AGAIN — a memoed one
+// would be answered "not a Pons launch" with no fetch, for the life of the
+// process, about a live curve.
+test("a 503 from /api/pons parks the reader and is NOT written into the memo", async () => {
+  pons._reset();
+  let calls = 0;
+  const first = await withFetch(() => { calls++; return answer({}, 503); }, () =>
+    pons.fetchTokenInfoX("robinhood", LAUNCH.address));
+  assert.strictEqual(first.ok, false);
+  assert.match(first.why, /site answered 503/);
+  const parked = await withFetch(() => { calls++; return answer({ launch: LAUNCH }); }, () =>
+    pons.fetchTokenInfoX("robinhood", LAUNCH.address));
+  assert.strictEqual(calls, 1, "parked — the second lookup must not reach the network");
+  assert.strictEqual(parked.ok, false);
+  assert.match(parked.why, /parked after a recent failure — site answered 503/, "the park names what set it");
+  // The surface the post's read asks.
+  assert.match(String(pons.lastWhy("robinhood", LAUNCH.address)), /parked after a recent failure — site answered 503/);
+  // Lift the PARK only — the memo, if the 503 had been written into it, stays.
+  pons._unpark();
+  const after = await withFetch(() => { calls++; return answer({ launch: LAUNCH }); }, () =>
+    pons.fetchTokenInfoX("robinhood", LAUNCH.address));
+  assert.strictEqual(calls, 2, "once the park lifts the address is asked again");
+  assert.ok(after.ok && after.info && after.info.symbol, "…and answered: a 503 was never a verdict about the token");
+  assert.strictEqual(pons.lastWhy("robinhood", LAUNCH.address), null, "a read that answered clears nothing to explain");
+  pons._reset();
+});
+
+test("…while a 404 IS the memo, and lastWhy has nothing to say about it", async () => {
+  pons._reset();
+  let calls = 0;
+  await withFetch(() => { calls++; return answer({}, 404); }, () => pons.fetchTokenInfoX("robinhood", LAUNCH.address));
+  pons._unpark();
+  const again = await withFetch(() => { calls++; return answer({ launch: LAUNCH }); }, () =>
+    pons.fetchTokenInfoX("robinhood", LAUNCH.address));
+  assert.strictEqual(calls, 1, "memoed — no second request");
+  assert.strictEqual(again.ok, true);
+  assert.strictEqual(again.why, "not a Pons launch");
+  assert.strictEqual(pons.lastWhy("robinhood", LAUNCH.address), null, "'not a Pons launch' is an answer, not a failure");
+  pons._reset();
+});

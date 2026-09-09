@@ -79,6 +79,13 @@ test("the alert names the script that separates the causes ON THE BOX", () => {
   // egress today.
   const html = pf.figureAlert(args({ live: null }));
   assert.match(html, /market:check -- bsc/);
+  // market:check probes the two INDEXERS and reports a Pons curve token as
+  // "honest" — the wrong layer for a token priced off the chain. On a chain
+  // the Pons reader covers, the remedy names the check that can see it too.
+  assert.ok(!/pons:check/.test(html), "an indexer chain names the indexer check only");
+  const pons = pf.figureAlert(args({ live: null, chain: "robinhood" }));
+  assert.match(pons, /market:check -- robinhood/);
+  assert.match(pons, /pons:check/, "a Pons chain also names the curve + ladder check");
 });
 
 test("a trending slot is a purchase too", () => {

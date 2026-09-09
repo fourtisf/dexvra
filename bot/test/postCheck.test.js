@@ -217,3 +217,21 @@ test("a green external logo prints the real-valued --pin line; an upload does no
   assert.match(src, /postFigures\.artRemedy\(/);
   assert.ok(!/served text\/html/.test(src), "the classification lives in postFigures, not here");
 });
+
+// ── The check measures the logo the POST renders, not the row's ─────────────
+//
+// A blank row takes the token contract's logo at creation (fulfillment's
+// adoptChainLogo); a check reading `row.logoUrl` printed "no logo on file"
+// over a post that draws the artwork — a guard measuring a stack the renderer
+// does not use. Comment-stripped, ORDER pinned: adopt, then fetch.
+test("⚠️ assemble() adopts the chain's logo through the post's own rule before it fetches", () => {
+  const src = fss.readFileSync(path.join(__dirname, "..", "scripts", "post-check.js"), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1");
+  const fn = src.slice(src.indexOf("async function assemble("), src.indexOf("\n}\n", src.indexOf("async function assemble(")));
+  const adopt = fn.indexOf("fulfil._adoptChainLogo(");
+  const fetch = fn.indexOf("fulfil._fetchLogoUrlX(");
+  assert.ok(adopt > 0, "the check adopts through fulfillment's own rule — never a copy of it");
+  assert.ok(fetch > adopt, "…and fetches what the adoption produced");
+  assert.ok(!/_fetchLogoUrlX\(row\.logoUrl\)/.test(fn), "the fetch reads the adopted url, not the row's");
+  assert.ok(!/wanted: !!row\.logoUrl/.test(fn), "…and so does the lost-artwork verdict");
+});

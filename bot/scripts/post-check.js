@@ -62,17 +62,28 @@ const DEFAULT_N = Math.max(1, Number(process.env.POST_CHECK_N) || 5);
  */
 async function assemble(row) {
   const { live, why } = await fulfil._readPostMarket(row.chain, row.address, 'post:check');
+  // THE LOGO THE POST WOULD RENDER, not the row's: a blank row takes the
+  // token contract's logo off the market record at creation
+  // (fulfillment.adoptChainLogo), and a check that read `row.logoUrl` reported
+  // "no logo on file" over a post that draws the artwork — the guard measuring
+  // a stack the renderer does not use, one field over from the `$MORTY` round.
+  // Driven through the post's OWN rule, so the two cannot disagree.
+  const wanted = { logoUrl: row.logoUrl || '' };
+  const adopted = fulfil._adoptChainLogo(wanted, live);
+  const logoUrl = wanted.logoUrl || null;
   // The X form: the bytes AND the facts behind them — which gateway served it
   // and how fast, or the proxy's per-gateway reason when none did. The check
   // drives the post's own fetch, never its own idea of one.
-  const art = row.logoUrl ? await fulfil._fetchLogoUrlX(row.logoUrl) : null;
+  const art = logoUrl ? await fulfil._fetchLogoUrlX(logoUrl) : null;
   const logoBytes = art ? art.bytes : null;
   return {
     live,
     why,
     holes: postFigures.missingFigures(live),
-    lostArt: postFigures.artworkLost({ wanted: !!row.logoUrl, got: !!logoBytes }),
+    lostArt: postFigures.artworkLost({ wanted: !!logoUrl, got: !!logoBytes }),
     logoBytes,
+    logoUrl,
+    adopted,
     art,
   };
 }
@@ -108,11 +119,11 @@ function report(row, a) {
 
   if (level === 'ok') {
     ok(head);
-    const artLine = !row.logoUrl
+    const artLine = !a.logoUrl
       ? 'no logo on file (the Dexvra mark is the design)'
       : a.art && a.art.source === 'upload'
         ? 'artwork loads (our own upload)'
-        : `artwork loads${a.art && a.art.via ? ` via ${a.art.via}` : ''}`;
+        : `artwork loads${a.art && a.art.via ? ` via ${a.art.via}` : ''}${a.adopted ? " (the token contract's logo — the row is blank, the post adopts it)" : ''}`;
     note(`price ${a.live.priceUsd} · mcap ${a.live.mcap} · ${artLine}`);
     // A GREEN row whose artwork came from a public gateway is green TODAY. That
     // is the flip: the same url loaded on two deploys and failed on two with no
@@ -156,8 +167,10 @@ function report(row, a) {
     if (unknown && !padded) note(`honest about the token — but adding a ${row.chain} launchpad to shared/launchpads/pads.js is what would price a pre-migration one`);
   }
   if (a.lostArt) {
-    note(`the row HAS a logo and it did not load — the banner would draw the Dexvra mark`);
-    note(row.logoUrl);
+    note(a.adopted
+      ? `the token contract publishes a logo, the post would adopt it, and it did not load — the banner would draw the Dexvra mark`
+      : `the row HAS a logo and it did not load — the banner would draw the Dexvra mark`);
+    note(a.logoUrl);
     if (a.art && (a.art.status || a.art.why)) note(`/api/logo answered ${a.art.status || '?'}${a.art.why ? `: ${a.art.why}` : ''}`);
     // ONE owner of the class — postFigures.artFailure — shared with the alert.
     const f = postFigures.artFailure(a.art || {});

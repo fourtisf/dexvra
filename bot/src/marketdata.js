@@ -21,6 +21,8 @@ const GT = "https://api.geckoterminal.com/api/v2";
  * to give up on.
  */
 const GT_STAGE_SHARE = 0.55;
+// Kept back from the launchpad's slice for the chain merge that follows it.
+const CHAIN_RESERVE_MS = 400;
 // This module has its own fetch calls against GeckoTerminal, and for a long
 // time they went out with no regard for the shared 429 cooldown or for any
 // budget — nine background pipelines (pump, rank-up, auto-trend, gainers,
@@ -446,12 +448,26 @@ async function fetchTokenDescription(chain, address) {
  * the rest of this file is built on: a live pool reading always beats a
  * launchpad's copy of the same number.
  */
-async function fillFromLaunchpad(chain, address, out) {
+async function fillFromLaunchpad(chain, address, out, padMs = 0) {
   if (!launchpads.covers(chain)) return out;
-  const lp = await launchpads.fetchTokenInfo(chain, address).catch((e) => {
+  const read = launchpads.fetchTokenInfo(chain, address).catch((e) => {
     log.debug(`[market] launchpad ${chain}/${address}: ${e.message}`);
     return null;
   });
+  // ⚠️ A SLICE for a caller on a clock, never the whole of what is left. A
+  // pad host that hangs costs LAUNCHPAD_TIMEOUT_MS (6s) per read until its
+  // breaker benches it; behind the GT slice (4.4s of an 8s budget) that is a
+  // pad leg ending at t≈10.4s — past the post's bound, with the chain read
+  // that had answered at t≈1s still un-consulted one line below. The pad's
+  // answer keeps precedence when it arrives in time; a pad that overruns its
+  // slice is INCONCLUSIVE, and the chain fills what it left. Unbudgeted
+  // callers wait exactly as they always did.
+  const lp = padMs > 0
+    ? await bounded(read, padMs, () => {
+        log.debug(`[market] launchpad ${chain}/${address}: passed its ${padMs}ms slice — falling through to the chain`);
+        return null;
+      })
+    : await read;
   return mergeCurve(out, lp);
 }
 
@@ -606,6 +622,7 @@ async function fetchMarket(chain, address, opts = {}) {
   // Started HERE so it runs alongside the indexers rather than behind them —
   // see fillFromChain's header for the arithmetic that makes this load-bearing.
   const chainP = startChainRead(chain, address);
+  const startedAt = Date.now();
   const dsFirst = opts.cheap ? await fetchDS(chain, address) : null;
   // ⚠️ THE CHEAP ANSWER HAS TO CARRY WHAT THIS CALLER ACTUALLY READS.
   //
@@ -701,7 +718,14 @@ async function fetchMarket(chain, address, opts = {}) {
   // Only when something the callers actually render is still missing — an
   // indexed token must not pay a launchpad round trip on every poll, and nine
   // background pipelines call this on timers.
-  if (!out || !out.priceUsd || !out.mcap) out = await fillFromLaunchpad(chain, address, out);
+  if (!out || !out.priceUsd || !out.mcap) {
+    // What is LEFT of a budgeted caller's clock, less a reserve for the chain
+    // merge below (the chain read started at t=0 and has its own bound, so by
+    // now it is usually settled). 0 = no slice = the old unbounded wait.
+    const budgeted = Number.isFinite(opts.budgetMs) && opts.budgetMs > 0;
+    const padMs = budgeted ? Math.max(500, opts.budgetMs - (Date.now() - startedAt) - CHAIN_RESERVE_MS) : 0;
+    out = await fillFromLaunchpad(chain, address, out, padMs);
+  }
   // Re-tested, not chained onto the line above: the pad may have answered some
   // of it, and a token whose price arrived but whose cap did not is still a
   // post that prints TBA on one of the two figures it exists to carry.

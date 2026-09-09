@@ -9329,6 +9329,70 @@ is exactly what `pons:check` §7 measures. `GECKOTERMINAL_API_KEY` in the
 repo-root `.env` raises the LAST rung's ceiling and nothing else here;
 `IPFS_GATEWAYS` still moves the ladder without a deploy.
 
+#### The audit round — the pad leg could spend the budget the chain's answer needed
+
+A diagnose pass over the finished change (every claim attacked by two
+independent refuters) found four things worth acting on, and the first is the
+recurring shape of this whole saga: a source that had ANSWERED, un-consulted
+behind a source that hangs.
+
+- ⚠️ **THE PAD LEG SAT BETWEEN THE GT SLICE AND THE CHAIN, UNBOUNDED.** With
+  the post's 8s budget, DexScreener misses (a curve has no pair), the GT slice
+  spends 4.4s, and `fillFromLaunchpad` then asks a host `launchpads:check`
+  reports unreachable — `LAUNCHPAD_TIMEOUT_MS` (6s) per read until its breaker
+  benches it. That is a pad leg ending at t≈10.4s, past the post's bound, with
+  the chain read that had answered at t≈0 sitting one line below, never
+  reached. Reproduced through the real caller, not argued. The pad leg is a
+  SLICE now — what is left of a budgeted caller's clock, less a reserve for
+  the chain merge — the `STAGE_MS` rule for the third source in this function.
+  Precedence is unchanged: a pad that answers in time still wins; one that
+  overruns is inconclusive. Unbudgeted callers wait exactly as before.
+  ⚠️ **And the test for it needed the pad's breaker RESET**: three transport
+  failures earlier in the file had benched it, a benched pad is skipped, and
+  the test passed on the unsliced code while claiming to cover the wait — the
+  leaked-state scar, on the launchpad registry this time.
+- ⚠️ **THE CHAIN READ'S OWN FAILURE HAD NO SURFACE.** Every `ok:false` out of
+  `ponsChain` — the site answered 503, the socket refused, the reader parked —
+  ended at `log.debug` in `fillFromChain`, so a post publishing TBA over a
+  parked reader was reported as *"neither indexer returned anything"*: a
+  failure of ours rendered as a fact about the token, on the one line the
+  alert exists for. `ponsChain.lastWhy()` is the surface (per address,
+  bounded; the park reason process-wide, because the park is), the post's read
+  consults it, and the park is logged at WARN — once per cooldown, which is a
+  transition, not a poll. An ANSWER of either kind clears it.
+- ⚠️ **`post:check` READ THE ROW'S LOGO; THE POST ADOPTS THE CONTRACT'S.** A
+  blank row takes the chain's artwork at creation, and the check printed *"no
+  logo on file"* over a post that draws it — a guard measuring a stack the
+  renderer does not use, the `$MORTY` shape one field over. It drives
+  `_adoptChainLogo` — the post's own rule, never a copy — and says when the
+  artwork it measured is the contract's.
+- **The alert's remedy names the check that can SEE the chain.**
+  `market:check` probes the two indexers and reports a Pons curve token as
+  "honest"; on a chain the Pons reader covers the remedy names `pons:check`
+  beside it.
+- **"ONLY A 404 IS MEMOED" was proved for a THROW and never for a status**, and
+  the test seam cleared the memo it existed to prove. `_unpark()` lifts the
+  park alone, so a 503 is now shown to be re-asked once the park lifts —
+  where a memoed one would answer "not a Pons launch" with no fetch, for the
+  life of the process, about a live curve.
+
+Refuted and NOT acted on, for the record: `PONS_CHAIN_MS` (5s) against
+`/api/pons`'s cold path — with the side reads bounded at 3s the cold record is
+~3.6–4.6s on a public RPC and exceeds 5s only on a stalled batch, which is an
+egress fact for the box (`PONS_CHAIN_MS` in `bot/.env` if it ever measures
+that way); parking on ONE localhost timeout rather than the registry
+breaker's three is the module's stated design, kept; the stored gateway url
+being one host is moot once the post PINS the bytes.
+
+Six more guarantees are MUTATION-TESTED: the pad slice removed, `lastWhy`
+not consulted, the check reading the row's logo, the remedy dropping
+`pons:check`, an answer keeping a stale failure, and a 503 written into the
+memo. Each fails between one and two tests.
+
+```bash
+cd bot && node scripts/run-tests.js test/curvePost.test.js test/ponsChain.test.js test/postCheck.test.js test/postFigures.test.js   # 22 + 10 + 19 + 19
+```
+
 ## "perbaiki tampilan chartnya di mobile" — two rows of timeframe buttons, one of them dead
 
 The same screenshot, one panel down: our chart header — `$HACHIKO`, `LIN LOG`,

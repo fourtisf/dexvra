@@ -70,6 +70,8 @@ function stubFetch(router) {
     const body = router(who, u);
     if (body === undefined) throw new Error("ENOTFOUND (the pad host is a guess)");
     if (body === null) return { ok: false, status: 404, json: async () => ({}) };
+    // `{ __status: 503 }` — a non-2xx that is not an answer about the token.
+    if (body && body.__status) return { ok: false, status: body.__status, json: async () => ({}) };
     return { ok: true, status: 200, json: async () => body };
   };
   return { asked, restore: () => (global.fetch = orig) };
@@ -614,4 +616,66 @@ test("⚠️ the listing is CREATED after the market read, with the chain's logo
   assert.strictEqual((listing.match(/readPostMarket\(/g) || []).length, 1, "one read per listing — the post must render from the same record the row was created with");
   const trending = src.slice(src.indexOf("async function fulfillTrending("));
   assert.ok(trending.indexOf("adoptChainLogo(chainLogo, live)") > 0 && trending.indexOf("adoptChainLogo(chainLogo, live)") < trending.indexOf("fetchLogoUrlX(logoUrl)"), "the trending sibling must adopt the chain's logo before fetching");
+});
+
+// ── The pad leg is a SLICE of what is left, or the chain is never reached ───
+//
+// Found by the diagnose pass and reproduced through the real caller: with the
+// post's 8s budget, DexScreener misses (a curve has no pair), the GT slice
+// spends 4.4s, and the pad leg — a host `launchpads:check` reports unreachable,
+// costing LAUNCHPAD_TIMEOUT_MS (6s) per read until its breaker benches it —
+// ends at t≈10.4s. The chain read answered at t≈0 and sat one line below,
+// un-consulted, while the post's bound fired and printed TBA. The pad keeps
+// precedence when it answers in time; a pad that overruns its slice is
+// inconclusive, and the chain fills what it left.
+test("⚠️ a hanging pad behind a hung GT cannot spend the budget the chain's answer needed", async () => {
+  const { MARKET_BUDGET_MS } = require("../src/config/constants");
+  // ⚠️ The pad's breaker LEAKS BETWEEN TESTS: three transport failures above
+  // benched it, and a benched pad is skipped — which would let this test pass
+  // on the unsliced code (no pad wait at all) while claiming to cover the wait.
+  // Stated, never inherited.
+  require("../src/launchpads").reload();
+  const hang = () => new Promise(() => {});
+  const orig = global.fetch;
+  const asked = [];
+  global.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes("/api/pons")) { asked.push("chain"); return { ok: true, status: 200, json: async () => curveLaunch({ priceUsd: 0.0000048, mcapUsd: 4494.71, marketWhy: null, quoteUsdSource: "coinbase" }) }; }
+    if (u.includes("dexscreener")) { asked.push("ds"); return { ok: true, status: 200, json: async () => ({ pairs: [] }) }; }
+    if (u.includes("geckoterminal")) { asked.push("gt"); return hang(); }
+    asked.push("pad");
+    return hang();
+  };
+  const t0 = Date.now();
+  try {
+    const { live, why } = await fulfil._readPostMarket("robinhood", WROTE, "test");
+    const elapsed = Date.now() - t0;
+    assert.ok(elapsed < MARKET_BUDGET_MS, `the read must finish inside the post's budget, took ${elapsed}ms`);
+    assert.ok(live && live.priceUsd === 0.0000048, `the chain's answer must reach the post, got ${JSON.stringify(live)}`);
+    assert.strictEqual(why, null, `a priced read has no why: ${why}`);
+    assert.ok(asked.includes("pad"), "the pad was still asked — precedence is unchanged, only the WAIT is bounded");
+  } finally {
+    global.fetch = orig;
+  }
+});
+
+// ── A chain read that could not be MADE names itself in the post's why ──────
+//
+// Its `ok:false` reasons stopped at log.debug, so a post publishing TBA over
+// a parked reader was reported as "neither indexer returned anything" — a
+// failure of ours rendered as a fact about the token.
+test("⚠️ the post's why carries a chain read that failed — 'site answered 503' is not 'nothing anywhere knows this token'", async () => {
+  const { restore } = stubFetch((who) => (who === "chain" ? { __status: 503 } : who === "ds" ? { pairs: [] } : who === "gt" ? null : undefined));
+  try {
+    const { live, why } = await fulfil._readPostMarket("robinhood", WROTE, "test");
+    assert.strictEqual(live, null, "nothing priced it");
+    // The read that failed set the park itself, so the sentence may already
+    // carry the park — what matters is that the 503 is NAMED.
+    assert.match(String(why), /the chain read failed — .*site answered 503/, `got: ${why}`);
+    // …and the park it set is named on the NEXT read, with the reason that set it.
+    const again = await fulfil._readPostMarket("robinhood", WROTE, "test");
+    assert.match(String(again.why), /parked after a recent failure — site answered 503/, `got: ${again.why}`);
+  } finally {
+    restore();
+  }
 });

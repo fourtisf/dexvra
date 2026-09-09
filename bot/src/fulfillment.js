@@ -29,6 +29,7 @@ const { mediaPath } = require("./helpers/mediaUrl");
 const tokenEmoji = require("./tokenEmoji");
 const tpl = require("./templates");
 const postFigures = require("./postFigures");
+const ponsChain = require("./ponsChain");
 const log = require("./helpers/logger");
 
 // Kinds whose animated clip is an EMPTY token template — the bot composites the token's
@@ -123,6 +124,15 @@ async function readPostMarket(chain, address, label) {
   // reported "an indexer answered and publishes no price" over a price the
   // chain had answered in ETH and nobody could turn into dollars.
   if (!why && live && live.priceUsd == null && live.marketWhy) why = String(live.marketWhy);
+  // …and a chain read that could not be MADE says so too. Its `ok:false`
+  // reasons — the site answered 503, the reader is parked, the socket refused
+  // — stopped at log.debug in marketdata.fillFromChain, so a post publishing
+  // TBA over a parked reader was reported as "neither indexer returned
+  // anything": a failure of ours rendered as a fact about the token.
+  if (!why && (!live || live.priceUsd == null)) {
+    const chainWhy = ponsChain.lastWhy(chain, address);
+    if (chainWhy) why = `the chain read failed — ${chainWhy}`;
+  }
   return { live, why };
 }
 
