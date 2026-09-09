@@ -311,3 +311,85 @@ test("📈 the percentage toggle flips showPct from the panel, and the settings 
   assert.strictEqual(cfg.get().showPct, true);
   assert.match(h.sent().join("\n"), /Percentage gain[^\n]*\byes\b/);
 });
+
+test("📈 the preview card carries the switch, and a tap re-renders the SAME sample without the figure", async () => {
+  // "masih blm ada setingnanya" — the toggle shipped under ⚙️ Settings, and the
+  // operator was looking at the PREVIEW, where the figures are and where the
+  // decision is made. Driven through real updates with topGainers stubbed:
+  // the tap must flip the store, redraw from the session's sample (one sample
+  // per sitting — a re-sample would make "with %" and "without %" two
+  // different rankings), and the redrawn caption must carry no percentage.
+  const gainers = require("../src/gainers");
+  const cfg = require("../src/services/gainersConfig");
+  await cfg.set({ showPct: true });
+  const sample = Array.from({ length: 10 }, (_, i) => ({
+    chain: "solana", address: `So${i + 1}`, symbol: `TOK${i + 1}`, name: `Token ${i + 1}`,
+    pct: 200 - i * 7, price: 0.0042, mcap: 1_200_000, liq: 90_000,
+    url: `https://dexvra.io/token/solana/So${i + 1}`,
+  }));
+  const realTop = gainers.topGainers;
+  const realLogos = gainers.loadLogos;
+  let samples = 0;
+  gainers.topGainers = async () => { samples++; return { coins: sample.map((c) => ({ ...c })), source: "board", pool: 386, notes: [], handles: null }; };
+  gainers.loadLogos = async () => {};
+  try {
+    const h = harness();
+    const photos = () => h.calls.filter((c) => c.method === "sendPhoto").map((c) => String(c.payload.caption || ""));
+    const cards = () => h.calls.filter((c) => c.method === "sendMessage" && c.payload.reply_markup).map((c) => JSON.stringify(c.payload.reply_markup));
+
+    await h.tap("gn_t:list5");
+    assert.strictEqual(samples, 1, "the first preview takes the sample");
+    assert.strictEqual(photos().length, 1, "no preview was rendered — the harness is not measuring anything");
+    assert.match(photos()[0], /\+200%/, "the positive control: the ON preview carries the figure");
+    assert.match(cards().at(-1), /% gain: ON → hide/, "the card does not carry the switch");
+
+    await h.tap("gn_pvpct");
+    assert.strictEqual(cfg.get().showPct, false, "the tap did not reach the store");
+    assert.strictEqual(samples, 1, "the toggle RE-SAMPLED — with % and without % are now two rankings");
+    assert.strictEqual(photos().length, 2, "the toggle did not re-render the preview");
+    assert.doesNotMatch(photos()[1], /%/, "the redrawn caption still prints the percentage");
+    assert.match(photos()[1], /#TOK1/, "the ranking itself must stay");
+    assert.match(h.sent().join("\n"), /Percentage gain: hidden/, "the card does not say the figure is hidden");
+    assert.match(cards().at(-1), /% gain: OFF → show/, "the button did not flip its label");
+
+    await h.tap("gn_pvpct");
+    assert.strictEqual(cfg.get().showPct, true);
+    assert.strictEqual(samples, 1);
+    assert.match(photos()[2], /\+200%/, "switching back on did not restore the figure");
+  } finally {
+    gainers.topGainers = realTop;
+    gainers.loadLogos = realLogos;
+    await cfg.set({ showPct: true });
+  }
+});
+
+test("📈 a tap on a card whose sample is gone still flips the switch and takes a fresh sample", async () => {
+  // A cancelled or expired sitting leaves no session. The tap asked for two
+  // things — flip, and show me — and `fresh: false` over an empty session
+  // would answer the second with "Nothing to post", which reads as the switch
+  // having broken the feature.
+  const gainers = require("../src/gainers");
+  const cfg = require("../src/services/gainersConfig");
+  await cfg.set({ showPct: true });
+  const realTop = gainers.topGainers;
+  const realLogos = gainers.loadLogos;
+  let samples = 0;
+  gainers.topGainers = async () => {
+    samples++;
+    return { coins: [{ chain: "solana", address: "So1", symbol: "ONLY", name: "Only", pct: 42, price: 1, mcap: 2_000_000, liq: 50_000, url: "https://dexvra.io/token/solana/So1" }], source: "board", pool: 1, notes: [], handles: null };
+  };
+  gainers.loadLogos = async () => {};
+  try {
+    const h = harness();                       // a NEW bot: no session, no sample
+    await h.tap("gn_pvpct");
+    assert.strictEqual(cfg.get().showPct, false, "the tap did not reach the store");
+    assert.strictEqual(samples, 1, "nothing was sampled — the tap rendered from a sample that does not exist");
+    const photos = h.calls.filter((c) => c.method === "sendPhoto");
+    assert.strictEqual(photos.length, 1, "no preview was rendered");
+    assert.doesNotMatch(String(photos[0].payload.caption || ""), /%/);
+  } finally {
+    gainers.topGainers = realTop;
+    gainers.loadLogos = realLogos;
+    await cfg.set({ showPct: true });
+  }
+});

@@ -150,12 +150,21 @@ const bgKb = () =>
 
 // ── preview ─────────────────────────────────────────────────────────────────
 function previewKb(template) {
+  const c = cfgStore.get();
   return Markup.inlineKeyboard([
     [Markup.button.callback("📤 Post to channel", "gn_post")],
     // Refresh has its OWN action. It used to reuse gn_t:, which is now the
     // template picker and deliberately REUSES the sample — so this button would
     // have quietly stopped refreshing anything while still saying it did.
     [Markup.button.callback("✏️ Swap a token", "gn_swap"), Markup.button.callback("🔄 Refresh data", `gn_r:${template}`)],
+    // THE PERCENTAGE SWITCH, ON THE CARD. "masih blm ada setingnanya" — it
+    // shipped under ⚙️ Settings, two screens away from the preview where an
+    // admin is actually looking at the figures and deciding. A setting that
+    // is not where the decision is made is a setting the operator reports as
+    // missing. The label states the CURRENT state and the tap's effect, and
+    // the tap re-renders THIS sample (never re-samples — one sample per
+    // sitting is the rule the whole preview is built on).
+    [Markup.button.callback(c.showPct ? "📈 % gain: ON → hide" : "📈 % gain: OFF → show", "gn_pvpct")],
     [Markup.button.callback("🖼 Another layout", "gn"), Markup.button.callback("❌ Cancel", "gn_cancel")],
   ]);
 }
@@ -301,6 +310,7 @@ async function sendPreview(ctx, template, { fresh = true, note = "" } = {}) {
   await ctx.reply(
     `👀 <b>Preview — ${escapeHtml(gb.labelOf(id))}</b>\n` +
       `📡 Data: <b>${escapeHtml(source)}</b> · ${escapeHtml(coins.map((c) => `$${c.symbol}`).join(", "))}` +
+      (cfg.showPct ? "" : "\n📈 <b>Percentage gain: hidden</b> — the ranking is published without the figures. Tap 📈 below to show them.") +
       poolLine +
       xLine +
       short +
@@ -384,6 +394,24 @@ function register(bot, deps) {
     const arg = ctx.match[1];
     await ctx.reply(`⏳ Fetching live gainers…`, HTML).catch(() => {});
     await sendPreview(ctx, arg === "random" ? "random" : arg, { fresh: "force" });
+  }));
+
+  // 📈 on the preview card: flip the switch and redraw THIS sample. `fresh:
+  // false` is the whole point — a re-sample here would make "with %" and
+  // "without %" two different rankings, which is the Top-3-not-a-prefix-of-
+  // Top-5 defect this preview was rebuilt to end. A card whose sample has
+  // expired (or was cancelled) takes a fresh one, because there is nothing to
+  // reuse — and the switch has still flipped, which is what the tap asked for.
+  bot.action("gn_pvpct", cb(async (ctx) => {
+    const next = await cfgStore.set({ showPct: !cfgStore.get().showPct });
+    log.info(`[adminbot] gainers percentage ${next.showPct ? "shown" : "hidden"} by @${ctx.from.username || ctx.from.id}`);
+    const sess = ctx.session.gn;
+    const template = (sess && sess.template) || next.template;
+    await ctx.reply(`⏳ Re-rendering ${next.showPct ? "with" : "without"} the percentage…`, HTML).catch(() => {});
+    await sendPreview(ctx, template, {
+      fresh: sess && sess.coins && sess.coins.length ? false : true,
+      note: `<i>Percentage gain switched <b>${next.showPct ? "ON" : "OFF"}</b> — for the banner, the caption and the tweet. Same setting as ⚙️ Settings → 📈.</i>`,
+    });
   }));
 
   bot.action("gn_cancel", cb(async (ctx) => {

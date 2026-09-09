@@ -2962,6 +2962,40 @@ the module.
   header strip legitimately says `LIVE · 24H` on every template. A guard that
   cannot see what the renderer does is `fonts:check`'s nine green ticks again.
 
+#### "masih blm ada setingnanya" — the setting was two screens from the decision
+
+Reported with a screenshot of the PREVIEW card — `👀 Preview — 🔟 Top 10 Grid`,
+the caption above it carrying `+279% · +192% · +139%`, and the buttons `Post ·
+Swap · Refresh · Another layout · Cancel`. The switch had shipped under
+⚙️ Settings, which is Back → Settings from there: two screens away from the
+one place an admin is looking at the figures and deciding whether to publish
+them. **A setting that is not where the decision is made is a setting the
+operator reports as missing**, and they did — the same distance that put the
+snipe panel's refusal off screen, on a different panel.
+
+- **The card carries the switch** — `📈 % gain: ON → hide` / `OFF → show` —
+  and the label states the CURRENT state and the tap's effect, because a
+  bare toggle on a card reads as a question about what it is currently doing.
+  One store behind both buttons (`gn_pvpct` and ⚙️'s `gn_pct` both write
+  `showPct`), or the card and the settings screen would come to disagree.
+- ⚠️ **The tap re-renders the SAME SAMPLE.** A re-sample here would make
+  "with %" and "without %" two different rankings — the Top-3-not-a-prefix-
+  of-Top-5 defect this preview was rebuilt to end, reintroduced by a
+  presentation toggle. `fresh: false`, the swap's rule. ⚠️ And the first
+  mutant written for it SURVIVED: `fresh: true` on a live session also reuses
+  the sample — only `"force"` re-samples — so that mutant was behaviour-
+  neutral. The two real mutants are `"force"` (re-sample every tap) and
+  `false` always (a tap with no sample renders *"Nothing to post"*, which
+  reads as the switch having broken the feature); each has its own driven
+  test and each is killed.
+- **The card says when the figure is hidden**, above the buttons, because the
+  caption over it carries no percentages and the artwork none — an admin who
+  inherited the setting would read that as the numbers having gone missing.
+
+```bash
+cd bot && node scripts/run-tests.js test/gainersMenuWiring.test.js   # 16 tests — the card's switch is driven, not scanned
+```
+
 Ten guarantees are MUTATION-TESTED rather than argued: the label ignoring the
 switch, the bar drawn regardless, a heading left ungated, the spec shared
 instead of copied, the poster's caption and the panel's preview each forgetting
