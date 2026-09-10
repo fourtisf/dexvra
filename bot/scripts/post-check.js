@@ -81,6 +81,12 @@ async function assemble(row) {
     why,
     holes: postFigures.missingFigures(live),
     lostArt: postFigures.artworkLost({ wanted: !!logoUrl, got: !!logoBytes }),
+    // The third state: the row is blank because the CURVE READ could not
+    // answer, not because the project published nothing. Same predicate the
+    // ops alert uses — two copies of this classification would drift into two
+    // plausible-looking sentences, which is what `fonts:check` cost.
+    unreadArt: postFigures.artworkUnread({ wanted: !!logoUrl, absentWhy: live && live.logoWhy }),
+    absentWhy: (live && live.logoWhy) || null,
     logoBytes,
     logoUrl,
     adopted,
@@ -100,11 +106,14 @@ async function assemble(row) {
  */
 function verdict(a) {
   const keyHole = a.holes.some((h) => postFigures.KEY_FIGURES.has(h));
-  if (!keyHole && !a.lostArt) return 'ok';
+  if (!keyHole && !a.lostArt && !a.unreadArt) return 'ok';
   // ⚠️ A LOST LOGO IS ALWAYS OURS. The row asserts a picture and we could not
   // turn it into bytes — that is a fact about this box, never about the token,
   // so it outranks the honest-silence reading above it.
-  if (a.lostArt) return 'fault';
+  //
+  // …and so is a BLANK we could not fill: `absentWhy` is set only where the
+  // chain read itself was refused, which is this box, never the creator.
+  if (a.lostArt || a.unreadArt) return 'fault';
   // "We could not ask" (a `why`) and "an indexer answered with nothing" (a
   // record) are both ours to look at; only "nothing anywhere knows this token"
   // is the post being honest.
@@ -120,7 +129,7 @@ function report(row, a) {
   if (level === 'ok') {
     ok(head);
     const artLine = !a.logoUrl
-      ? 'no logo on file (the Dexvra mark is the design)'
+      ? 'no logo on file — every source answered, and this project published none (the Dexvra mark is the design)'
       : a.art && a.art.source === 'upload'
         ? 'artwork loads (our own upload)'
         : `artwork loads${a.art && a.art.via ? ` via ${a.art.via}` : ''}${a.adopted ? " (the token contract's logo — the row is blank, the post adopts it)" : ''}`;
@@ -176,6 +185,11 @@ function report(row, a) {
     const f = postFigures.artFailure(a.art || {});
     note(f.sentence);
     note('→ ' + postFigures.artRemedy(f.cls, row.chain, row.address));
+  }
+  if (a.unreadArt) {
+    note(`the row is blank because the CURVE READ could not answer — ${a.absentWhy}`);
+    note('this is NOT the project publishing no logo; the banner would draw the Dexvra mark');
+    note('→ ' + postFigures.artRemedy('unread', row.chain, row.address));
   }
   return level !== 'fault';
 }

@@ -9673,6 +9673,143 @@ npm run test:pons                                                              #
 cd bot && node scripts/run-tests.js test/ponsChain.test.js                      # the 503's reason reaches the park sentence
 ```
 
+### "project ini ada logonya tapi pas listing di dexvra tidak ada, add api pons"
+
+`$ORCHFLOWS` (orchflows, Pons v2, Robinhood, 3% along its curve) went out as an
+Xpress Listing to **12,514 subscribers** drawing the **Dexvra mark**, beside a
+screenshot of ponsfamily.com rendering the project's own artwork in the same
+minute. The banner's figures were RIGHT — `MC $4.7K · $0.00000474` against the
+pad's `$4,741.81` — which is the tell: the market read worked and the artwork
+did not, so this is not the TBA saga one section up. Three causes, and every one
+of them is this file's own recurring shape.
+
+⚠️ **AND THE WATCH BUILT FOR EXACTLY THIS SAID NOTHING.** `postFigures` learnt
+the artwork half one round earlier and pages only when `wanted && !got` — the
+row HAS a logo and it would not load. A row born BLANK is `wanted:false`, which
+is deliberate and correct for a creator who uploaded nothing… and identical, on
+the banner and in this watch, to a source that refused us. So the operator was
+the detector for a third time on the same promise.
+
+#### 1. The artwork had ONE source on the door that looked healthiest
+
+DexScreener indexes Pons curves on Robinhood as ordinary pairs, so it priced
+this token in full and `fetchMarket` left by its FIRST door. `logoFromChain` was
+added to those doors precisely because `fillFromLaunchpad` sits below them and
+is unreachable once an indexer answers everything — and it asked the **chain and
+nothing else**. The pad leg never got the same fix: *a lesson applied to one
+branch is a lesson half-learnt*, one source over, in the code written to end it.
+
+- **`logoFromCurve` asks the chain, then the PAD.** Chain first because it is
+  already in flight (free) and it is the authority; the pad only when the
+  contract had no artwork, at most ONE request per paid post, never on the door
+  where `fillFromLaunchpad` already asked, and never for a background caller —
+  nine pipelines poll every listing on timers and must not grow a launchpad
+  round trip each for a field they do not render.
+
+#### 2. ⚠️ EVERY LAUNCHPAD LOGO PINNED ON IPFS WAS NULLED AT THE REGISTRY
+
+`shared/launchpads` built its record with `rec.logoUrl = safeUrl(...)`, and
+`safeUrl` allows http/https and nothing else. **A launchpad pins its artwork on
+IPFS.** So the pad has never been able to publish a logo for any token minted
+that way, in either process, since the registry existed — and pump.fun happens
+to serve an https pinata url, which is why nothing ever looked wrong.
+
+It is the IDENTICAL defect this file already records one layer up
+(*"`readCurvesAndMeta` kept a logo only if it matched `/^https?:\/\//`, so every
+logo Pons has ever published was nulled at the source"*), fixed in the site's
+Pons reader and never here. **So "add api pons" would have shipped inert for the
+artwork even with the right path.**
+
+- **`normalize.logoUri` is the allowlist**, beside `safeUrl` rather than
+  widening it: an `ipfs://` website or Telegram link is meaningless, and only
+  the LOGO has consumers that rewrite it. `ar://` stays out for the reason the
+  site's `tokenLogo` states — no consumer has that rewrite, so publishing it
+  turns "no logo" into a broken image.
+- **`bot/src/helpers/httpsLogo.js` is the ONE owner of the gateway rewrite.** It
+  lived inside `ponsChain` while the chain was the only producer of an `ipfs://`
+  URI; the registry is a second producer now, and two copies of a rewrite is two
+  gateways — the shape two pump.fun hosts in two processes already cost.
+  `ponsChain.httpsLogo` re-exports it. The bot's shim rewrites ONCE for every
+  consumer, so nothing downstream sees a scheme `adminValidate`'s `LOGO_RE`
+  refuses — which would fail the WHOLE listing over its picture.
+
+#### 3. ⚠️ A BASE LIST IS NOT INSURANCE AGAINST A WRONG PATH
+
+The pad's host was settled by an operator's screenshot (`ponsfamily.com`); its
+API SHAPE is still a guess, and this session cannot settle it — the host refuses
+this sandbox's egress outright (`connect_rejected`, policy denial), which is the
+same wall `launchpads:check` is the answer to. What the base list gave that
+guess was nothing: **failover between bases is TRANSPORT-only**, on the stated
+reason that a status means the host answered and the same request gets the same
+status everywhere else. True of a HOST, false of a PATH — a 404 says *"that
+spelling is not here"*, which is exactly when another spelling on the same host
+is worth trying. The `dsChart.ts` distinction, one upstream over.
+
+- **`tokenPaths` is a LIST tried on a 404 ONLY.** Every other status stops where
+  it always did: a 429 or a 500 says nothing about which spelling is right, and
+  three more requests would prove the same refusal three more times — the
+  CoinGecko-sweep defect, one transport down. Bounded, cached once every
+  spelling has 404'd, and a pad whose first path is right pays nothing.
+- ⚠️ **`LAUNCHPAD_PONS_TOKEN_PATH` REPLACES the list, never leads it.** A pin
+  followed by four guesses means a WRONG pin answers from a spelling the
+  operator did not choose — so a wrong pin would read as a working one, which is
+  the one thing a pin exists to make visible. ⚠️ The first test for that
+  asserted only the pin ANSWERING, where the mutant is invisible; the case that
+  sees it is a pin that 404s.
+
+#### …and a blank the sources could not be ASKED for is now a fault
+
+- **`logoWhy` rides the market record**, set ONLY where the CHAIN could not
+  answer — it is refused, parked, threw, or answered with its own `readWhy` (the
+  node refused some of the nine reads). A benched PAD sets nothing, or the alert
+  would be permanently red on every Robinhood listing whose owner published no
+  artwork, which is the state `chart:preview` sat in for weeks. ⚠️ And an
+  `ok:true` with no record ("not a Pons launch") is a real ANSWER: the artwork
+  question is then not ours to answer at all.
+- **The alert names the LAYER**, and its remedy is `pons:check` rather than
+  `logos:check`: the latter pulls the ROW's own logo through `/api/logo`, and
+  the row has none — it would report *"nobody has given this token artwork"*,
+  which is the very claim in question.
+- **Both siblings**, listing and trending. A trending slot is a purchase too.
+- **`post:check` carries the same third state**, through `postFigures`'s own
+  predicate rather than a copy — a check with its own idea of the question is
+  how `fonts:check` printed nine green ticks over a banner publishing boxes —
+  and its `ok` line no longer says *"no logo on file"* without saying that every
+  source ANSWERED. ⚠️ A blank we could not fill outranks the honest-silence
+  reading, exactly as a lost logo does; written without that assertion the
+  mutant reached `fault` by fallthrough and SURVIVED.
+
+⚠️ **The door guard broke, and it was the guard that was wrong.** *"Every exit of
+fetchMarket goes through logoFromChain"* matched `if (…) return …;` on ONE LINE,
+so wrapping a long call went red over code that keeps the rule perfectly — this
+repo's own recurring defect (the four-way pool TTL, the `{ ok: true,` build
+stamp). It joins the continuation before counting the doors.
+
+```bash
+cd bot      && node scripts/run-tests.js test/curvePost.test.js test/postFigures.test.js test/postCheck.test.js
+cd tradebot && node --test launchpads.test.js          # the path list, the pin, the ipfs logo
+cd bot      && npm run launchpads:check                # WHICH pons spelling answers, FROM THE BOX
+cd bot      && npm run post:check                      # the newest listings, assembled as a post assembles them
+```
+
+Nineteen guarantees are MUTATION-TESTED rather than argued: the pad leg removed,
+the pad asked ahead of the contract, the pad asked by background callers, the
+pad's `ipfs://` left unrewritten, the registry nulling it again, `logoWhy`
+dropped, a creator's own choice reported as a fault, the path list not walked,
+any status advancing it, the pin merely leading the list, `artworkUnread` never
+firing, the page gate ignoring it, a blank with no reason paging anyway, the
+remedy naming the wrong layer, each sibling dropping the reason, and
+`post:check` ignoring it in either branch. Each fails between one and three
+tests; three survived their first run and are what rewrote the tests.
+
+**Config a fix depends on:** nothing — every path ships on and the built-in
+spellings are tried in order. ⚠️ But **whether any of them is the real one is a
+property of the box's egress and of the pad's API today**, and it cannot be
+learned from here: `npm run launchpads:check` in `bot/` is the measurement, and
+whichever spelling answers is pinned with `LAUNCHPAD_PONS_TOKEN_PATH` in
+`bot/.env` — a line, not a deploy. The artwork does not wait on it: the CONTRACT
+is still the first source and the one that cannot be unreachable.
+
 ## "perbaiki tampilan chartnya di mobile" — two rows of timeframe buttons, one of them dead
 
 The same screenshot, one panel down: our chart header — `$HACHIKO`, `LIN LOG`,

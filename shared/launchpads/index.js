@@ -185,11 +185,27 @@ async function padToken(pad, chain, address, now) {
     return out;
   }
 
-  const r = await http.getJson(c, P.fill(pad.tokenPath, { id: address }), { timeoutMs: TIMEOUT_MS() });
+  // ⚠️ A 404 IS ABOUT THIS SPELLING, NOT ABOUT THE HOST — so it tries the next
+  // path rather than ending the lookup. That is the one place the standing
+  // transport-only failover rule does not apply, and for its own stated reason:
+  // "the same request gets the same status everywhere else" is true of moving
+  // to another HOST and false of asking the same host for a different
+  // RESOURCE. Every other status stops here, exactly as before: a 429 or a 500
+  // says nothing about which spelling is right, and retrying three more would
+  // spend three more requests proving the same refusal.
+  //
+  // A pad with one path behaves identically to before; `pads.js pathList` is
+  // where a list comes from, and an operator's pin replaces it.
+  const paths = Array.isArray(pad.tokenPaths) && pad.tokenPaths.length ? pad.tokenPaths : [pad.tokenPath];
+  let r = null;
+  for (const tpl of paths) {
+    r = await http.getJson(c, P.fill(tpl, { id: address }), { timeoutMs: TIMEOUT_MS() });
+    if (r.ok || r.status !== 404) break;
+  }
   out.status = r.status;
   if (!r.ok) {
-    // A 404 is the launchpad ANSWERING that it has never heard of this token —
-    // a fact about the token, not about the host. Everything else is the host.
+    // Every spelling answered 404: the launchpad has never heard of this token
+    // — a fact about the token, not about the host.
     if (r.status === 404) {
       noteOk(pad.key);
       out.ok = true;

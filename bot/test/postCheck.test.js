@@ -82,6 +82,36 @@ test("⚠️ …and it outranks the honest-silence reading", () => {
   assert.equal(verdict(a), "fault");
 });
 
+test("⚠️ a BLANK row the curve read could not fill is a fault too", () => {
+  // `$ORCHFLOWS` went out drawing the Dexvra mark with its logo on its own pad
+  // page, and every surface read it as a project that published none. The
+  // derivation is the same one the ops alert makes — one owner, or two
+  // plausible-looking sentences.
+  const unreadArt = pf.artworkUnread({ wanted: false, absentWhy: "rpc 429 (rate limited)" });
+  assert.equal(unreadArt, true);
+  assert.equal(verdict(A({ unreadArt })), "fault");
+  // ⚠️ AND IT OUTRANKS THE HONEST-SILENCE READING, which is the assertion that
+  // is not free: with the figures also missing, a verdict that merely fell
+  // through would answer "honest" — the post being truthful — over a blank
+  // this box could have filled. Written without this the mutant that drops
+  // `unreadArt` from the fault branch SURVIVED, reaching 'fault' by accident.
+  assert.equal(
+    verdict(A({ live: null, why: null, holes: ["price", "market cap", "liquidity"], unreadArt })),
+    "fault",
+  );
+  // …and a row that is blank because the creator published nothing is not.
+  assert.equal(verdict(A({ unreadArt: pf.artworkUnread({ wanted: false, absentWhy: null }) })), "ok");
+});
+
+test("⚠️ assemble() derives the blank's reason from the RECORD, never re-asks", () => {
+  // A check with its own copy of the question is how fonts:check printed nine
+  // green ticks over a banner publishing boxes.
+  const src = fss.readFileSync(require.resolve("../scripts/post-check.js"), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1");
+  assert.match(src, /unreadArt: postFigures\.artworkUnread\(/, "the check grew its own idea of an unfilled blank");
+  assert.match(src, /absentWhy: live && live\.logoWhy/, "…and its own idea of where the reason comes from");
+});
+
 test("⚠️ the check DRIVES the post's own functions rather than asking its own way", () => {
   // `fonts:check` printed nine green ticks over a banner publishing boxes
   // because it measured a font stack that renderer did not draw with, and

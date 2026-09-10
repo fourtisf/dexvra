@@ -162,6 +162,54 @@ test("⚠️ …but a listing that never had a logo pages NOBODY", () => {
   assert.equal(pf.artworkLost({ wanted: true, got: false }), true);
 });
 
+// ── the third artwork state ─────────────────────────────────────────────────
+//
+// `$ORCHFLOWS` (Pons, Robinhood) reached 12,514 subscribers drawing the Dexvra
+// mark, and this watch said nothing: `wanted` is false for a blank row, and a
+// blank row is what a creator who uploaded nothing leaves. Correct for a
+// creator's choice, and a LIE when the source was refused — the banner renders
+// both identically, so the operator was the detector for a third time.
+test("⚠️ a blank the CURVE READ could not fill is a fault, not a creator's choice", () => {
+  const html = pf.figureAlert(artArgs({ wanted: false, got: false, url: null, absentWhy: "rpc 429 (rate limited)" }));
+  assert.ok(html, "a refused curve read published the fallback mark and paged nobody");
+  assert.match(html, /its own artwork/);
+  assert.match(html, /CURVE READ/);
+  assert.match(html, /rpc 429/, "the read's own reason is the diagnosis");
+  assert.match(html, /not the project publishing no logo/);
+});
+
+test("…and it names the layer that failed, never the row's own url", () => {
+  // `logos:check` pulls the ROW's logo through /api/logo, and the row has none
+  // — it would report "nobody has given this token artwork", which is the very
+  // claim in question. The layer that failed is the curve read.
+  const html = pf.figureAlert(artArgs({ wanted: false, got: false, url: null, absentWhy: "the chain read failed" }));
+  assert.match(html, /pons:check/);
+  assert.ok(!/logos:check/.test(html), `the wrong layer:\n${html}`);
+  assert.equal(pf.artRemedy("unread", "robinhood", "0xabc"), "npm run pons:check");
+});
+
+test("⚠️ …and a genuinely blank row still pages NOBODY", () => {
+  // Without this the alert is permanently red on every listing whose owner
+  // published no artwork, which is most of them — the `chart:preview` state.
+  assert.equal(pf.figureAlert(artArgs({ wanted: false, got: false, url: null, absentWhy: null })), null);
+  assert.equal(pf.artworkUnread(undefined), false);
+  assert.equal(pf.artworkUnread({ wanted: false }), false);
+  assert.equal(pf.artworkUnread({ wanted: false, absentWhy: "x" }), true);
+  // A row that HAS a logo is the other state and keeps the other sentence.
+  assert.equal(pf.artworkUnread({ wanted: true, got: true, absentWhy: "x" }), false);
+});
+
+test("BOTH fulfilment paths carry the blank's reason — a rule on one sibling is half-made", () => {
+  const src = fss.readFileSync(require.resolve("../src/fulfillment.js"), "utf8");
+  const reports = src.match(/reportFigures\(\{[\s\S]*?\n  \}\);/g) || [];
+  assert.equal(reports.length, 2, "a listing and a trending slot");
+  for (const r of reports) {
+    const art = /art: \{([\s\S]*?)\n    \}/.exec(r) || /art: \{([\s\S]*?)\}/.exec(r);
+    assert.ok(art, "an art block");
+    assert.match(art[1], /absentWhy: live && live\.logoWhy/, `the sibling cannot report a blank it could not fill:\n${r}`);
+  }
+});
+
 test("one post is ONE alert, naming both halves and both scripts", () => {
   const html = pf.figureAlert(args({
     live: null,

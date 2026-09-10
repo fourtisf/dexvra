@@ -110,6 +110,78 @@ test('an HTTP status never fails over to the next base', async () => {
   assert.ok(/frontend-api-v3/.test(pumpHosts[0]));
 });
 
+// ── the path a base list never covered ───────────────────────────────────────
+//
+// `$ORCHFLOWS` (Pons, Robinhood) went out to 12,514 subscribers drawing the
+// Dexvra mark over a token whose logo renders on ponsfamily.com. The pad's HTTP
+// shape is a GUESS — the host refuses this repo's egress, so nothing here can
+// read the real one — and the base list is not insurance against that: failover
+// between bases is transport-only, so the FIRST spelling that resolves and 404s
+// used to end the lookup for ever.
+const PONS_TOKEN = '0x36B44a8034Fe0eEddb8819dA82128bD6959161A6';
+const PONS_BODY = { address: PONS_TOKEN, name: 'orchflows', symbol: 'ORCHFLOWS', image: 'ipfs://bafkorch', usdPrice: 0.000005, marketCap: 4741.81 };
+
+test('⚠️ a 404 tries the NEXT token path — a wrong spelling is not a dead pad', async () => {
+  reset({ LAUNCHPAD_FLAP: '0' });
+  const seen = [];
+  // The third spelling answers; the two in front of it 404, which is the host
+  // saying "not that resource" and NOT "not this token".
+  serve({ '/tokens/': PONS_BODY, '/launchpad/': 404, '/token/': 404 }, (u) => seen.push(String(u)));
+  const r = await lp.tokenRecord('robinhood', PONS_TOKEN);
+  assert.ok(r.record, `every spelling was abandoned at the first 404: ${seen.join(', ')}`);
+  assert.equal(r.record.symbol, 'ORCHFLOWS');
+  assert.equal(r.record.logoUrl, 'ipfs://bafkorch', 'the artwork the whole round is about');
+  assert.ok(seen.some((u) => /\/launchpad\/0x36B4/i.test(u)), 'the shipped first guess was not tried first');
+  assert.ok(seen.some((u) => /\/tokens\/0x36B4/i.test(u)), 'the answering spelling was never asked');
+});
+
+test('…and every OTHER status still stops at the first path', async () => {
+  reset({ LAUNCHPAD_FLAP: '0' });
+  const seen = [];
+  // A 429 or a 500 says the host is there and unhappy. It says nothing about
+  // which spelling is right, so three more requests would only prove the same
+  // refusal three more times — the CoinGecko-sweep defect, one transport over.
+  serve({ '/launchpad/': 500, '/token': PONS_BODY }, (u) => seen.push(String(u)));
+  const r = await lp.tokenRecord('robinhood', PONS_TOKEN);
+  assert.equal(r.record, null, 'a 500 was treated as "try the next spelling"');
+  assert.equal(seen.filter((u) => /ponsfamily/.test(u)).length, 1, `a 500 was retried on ${seen.length} paths`);
+});
+
+test("…and an operator's own pin REPLACES the list, never leads it", async () => {
+  reset({ LAUNCHPAD_FLAP: '0', LAUNCHPAD_PONS_TOKEN_PATH: '/v2/coin/{id}' });
+  const seen = [];
+  serve({ '/v2/coin/': PONS_BODY }, (u) => seen.push(String(u)));
+  const r = await lp.tokenRecord('robinhood', PONS_TOKEN);
+  assert.ok(r.record, 'the pinned path was not used');
+  const pons = seen.filter((u) => /ponsfamily/.test(u));
+  assert.equal(pons.length, 1, `four guesses were asked in front of the operator's own path: ${pons.join(', ')}`);
+  assert.match(pons[0], /\/v2\/coin\/0x36B4/i);
+
+  // ⚠️ AND A PIN THAT 404s STAYS THE ONLY PATH ASKED. Falling through to the
+  // built-in guesses behind it would answer from a spelling the operator did
+  // not choose — so a wrong pin would read as a working one, which is the one
+  // thing a pin exists to make visible. (The list-leading mutant is invisible
+  // while the pin ANSWERS: this is the case that sees it.)
+  reset({ LAUNCHPAD_FLAP: '0', LAUNCHPAD_PONS_TOKEN_PATH: '/v2/coin/{id}' });
+  const after = [];
+  serve({ '/v2/coin/': 404, '/launchpad/': PONS_BODY, '/tokens/': PONS_BODY }, (u) => after.push(String(u)));
+  const missed = await lp.tokenRecord('robinhood', PONS_TOKEN);
+  assert.equal(missed.record, null, 'a built-in guess answered behind the operator\'s own pinned path');
+  assert.equal(after.filter((u) => /ponsfamily/.test(u)).length, 1, `the pin was followed by ${after.length - 1} guesses`);
+});
+
+test('every 404 IS the pad answering it does not know the token — and that is cached', async () => {
+  reset({ LAUNCHPAD_FLAP: '0' });
+  let calls = 0;
+  serve({ 'ponsfamily': 404 }, () => { calls++; });
+  const first = await lp.tokenRecord('robinhood', PONS_TOKEN);
+  assert.equal(first.ok, true, 'an answered "no" was reported as an outage');
+  assert.equal(first.record, null);
+  const spent = calls;
+  await lp.tokenRecord('robinhood', PONS_TOKEN);
+  assert.equal(calls, spent, 'the all-404 answer was not cached — every card would pay four requests');
+});
+
 test('a transport failure DOES fail over, and remembers which base answered', async () => {
   reset();
   const seen = [];

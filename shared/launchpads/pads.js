@@ -40,7 +40,7 @@
  * fallbacks.
  */
 const N = require('./normalize');
-const { pick, str, num, pnum, bool, toMs, pct, safeUrl, socialUrl, description } = N;
+const { pick, str, num, pnum, bool, toMs, pct, safeUrl, logoUri, socialUrl, description } = N;
 
 const env = (k) => String(process.env[k] == null ? '' : process.env[k]).trim();
 
@@ -97,6 +97,32 @@ function basesFor(key, defaults, aliases) {
 const path = (key, which, fallback) => {
   const name = `LAUNCHPAD_${key.toUpperCase()}_${which}_PATH`;
   return realValue(name, env(name)) || fallback;
+};
+
+/**
+ * The per-token path LIST — several plausible spellings of ONE endpoint, tried
+ * in order and ONLY on a 404 (`index.js` padToken).
+ *
+ * ⚠️ A BASE LIST IS NOT INSURANCE AGAINST A WRONG PATH, and this is the half it
+ * never covered. Failover between BASES is transport-only, on the standing rule
+ * that a status means the host answered and the same request gets the same
+ * status everywhere else — true of a host, and false of a PATH: a 404 says
+ * "that spelling is not here", which is exactly when another spelling on the
+ * same host is worth trying. Same distinction `dsChart.ts` already draws, one
+ * upstream over.
+ *
+ * So a pad whose API shape we cannot verify from here gets more than one shot,
+ * and the cost is bounded: only a 404 advances, the answer is cached, and a pad
+ * whose first spelling is right pays nothing at all.
+ *
+ * `LAUNCHPAD_<KEY>_TOKEN_PATH` still REPLACES the whole list — an operator who
+ * has read the real path out of their browser's network tab wants that one
+ * asked, not four guesses in front of it. The pin-and-skip contract
+ * `<PAD>_API` already has.
+ */
+const pathList = (key, which, fallback) => {
+  const pinned = path(key, which, '');
+  return pinned ? [pinned] : fallback.filter(Boolean);
 };
 const fill = (tpl, vars) => String(tpl).replace(/\{(\w+)\}/g, (m, k) => (vars[k] === undefined ? m : encodeURIComponent(String(vars[k]))));
 
@@ -158,7 +184,7 @@ function common(rec, raw, now) {
   rec.name = str(pick(raw, P_NAME), 60) || rec.name;
   rec.symbol = str(pick(raw, P_SYMBOL), 20) || rec.symbol;
   rec.description = description(pick(raw, P_DESC)) || rec.description;
-  rec.logoUrl = safeUrl(pick(raw, P_LOGO)) || rec.logoUrl;
+  rec.logoUrl = logoUri(pick(raw, P_LOGO)) || rec.logoUrl;
   rec.website = safeUrl(pick(raw, P_WEBSITE)) || rec.website;
   rec.twitter = socialUrl(pick(raw, P_TWITTER), 'https://x.com') || rec.twitter;
   rec.telegram = socialUrl(pick(raw, P_TELEGRAM), 'https://t.me') || rec.telegram;
@@ -477,7 +503,15 @@ function build() {
       // ones stay behind it costing nothing — a base LIST is exactly so a
       // wrong first guess is a reorder, not a deploy.
       bases: ['https://www.ponsfamily.com/api', 'https://ponsfamily.com/api', 'https://api.ponsfamily.com', 'https://pons.fun/api'],
-      tokenPath: '/launchpad/{id}',
+      // ⚠️ THE PATH IS STILL A GUESS, and the base list never covered that —
+      // see `pathList` above. `ponsfamily.com/launchpad/<token>` is the PAGE an
+      // operator screenshotted; what the page fetches behind it is not
+      // published anywhere this session can reach (the host refuses this
+      // sandbox's egress outright), so the spellings below are the plausible
+      // ones for that page, tried in order and only on a 404. Whichever answers
+      // is the one to pin with LAUNCHPAD_PONS_TOKEN_PATH — `launchpads:check`
+      // on the box is the measurement, and it is a line in .env, not a deploy.
+      tokenPaths: ['/launchpad/{id}', '/token/{id}', '/tokens/{id}', '/launchpad/token/{id}'],
       feedPath: '/launchpad/tokens?sort=created&order=desc&limit={n}',
       idKeys: ['address', 'tokenAddress', 'contractAddress', 'token.address', 'id'],
       parse: (pad, chain, raw, now) => {
@@ -556,7 +590,11 @@ function build() {
     ...d,
     enabled: padOn(d.key),
     bases: basesFor(d.key, d.bases, d.aliases),
-    tokenPath: path(d.key, 'TOKEN', d.tokenPath),
+    // `tokenPaths` is what padToken walks; `tokenPath` stays the FIRST of them
+    // so every existing reader (launchpads:check, the guard tests) keeps
+    // reading the spelling that is actually tried first.
+    tokenPaths: pathList(d.key, 'TOKEN', d.tokenPaths || [d.tokenPath]),
+    tokenPath: pathList(d.key, 'TOKEN', d.tokenPaths || [d.tokenPath])[0],
     feedPath: d.feedPath ? path(d.key, 'FEED', d.feedPath) : null,
   }));
 }

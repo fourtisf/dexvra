@@ -622,6 +622,10 @@ async function fulfillListing(ctx, order) {
     art: {
       wanted: !!(p.logoFileId || input.logoUrl), got: !!logoBuffer, url: input.logoUrl,
       reached: logoFetch ? logoFetch.reached : true, status: logoFetch ? logoFetch.status : 0, why: logoFetch ? logoFetch.why : null,
+      // Why the row is BLANK, when it is blank for OUR reason — the curve
+      // sources could not be asked. Absent means they answered and this
+      // project published no artwork, which is not a fault and never pages.
+      absentWhy: live && live.logoWhy ? String(live.logoWhy) : null,
     },
   });
   const coin = coinFrom(input, live);
@@ -723,7 +727,13 @@ async function fulfillTrending(ctx, order) {
     kind: "trending", chain: p.chain, address: p.address, sym: row.sym || row.symbol,
     name: row.name, tier: null, live, why: marketWhy,
     siteUrl: `${SITE_URL}/token/${p.chain}/${p.address}`,
-    art: { wanted: !!logoUrl, got: !!logoBuffer, url: logoUrl, reached: logoFetch.reached, status: logoFetch.status, why: logoFetch.why },
+    // The same third state on the sibling — a rule applied to one of two is a
+    // rule half-made, which is what this whole watch is about.
+    art: {
+      wanted: !!logoUrl, got: !!logoBuffer, url: logoUrl, reached: logoFetch.reached,
+      status: logoFetch.status, why: logoFetch.why,
+      absentWhy: live && live.logoWhy ? String(live.logoWhy) : null,
+    },
   });
   const coin = coinFrom(row, live);
   const bannerCoin = bannerCoinOf(row, live);

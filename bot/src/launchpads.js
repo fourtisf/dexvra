@@ -13,6 +13,7 @@
 // without knowing where the data came from.
 const lp = require("../../shared/launchpads");
 const log = require("./helpers/logger");
+const { httpsLogo } = require("./helpers/httpsLogo");
 
 /** Does any enabled pad cover this chain? Callers skip the leg otherwise. */
 const covers = (chain) => lp.padsFor(chain).length > 0;
@@ -48,7 +49,12 @@ async function fetchTokenInfo(chain, address) {
     symbol: rec.symbol,
     priceUsd: rec.priceUsd,
     mcap: rec.mcapUsd,
-    logoUrl: rec.logoUrl,
+    // ⚠️ REWRITTEN HERE, ONCE, FOR EVERY BOT CONSUMER. The registry publishes
+    // what a pad actually said, and a launchpad pins its artwork on IPFS — the
+    // one scheme `adminValidate`'s LOGO_RE refuses and no `<img>` can load. A
+    // caller that got the raw URI would either fail the whole listing over its
+    // picture or draw the fallback mark; both have happened, one layer up.
+    logoUrl: httpsLogo(rec.logoUrl),
     website: rec.website,
     twitter: rec.twitter,
     telegram: rec.telegram,

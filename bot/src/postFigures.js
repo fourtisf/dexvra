@@ -108,6 +108,11 @@ function artFailure({ reached, status, why } = {}) {
 
 /** The one-command remedy for a flaky class, with REAL values from the order. */
 function artRemedy(cls, chain, address) {
+  // The row has NO url, so `logos:check` (which pulls the row's own logo
+  // through /api/logo) has nothing to pull and would report "nobody has given
+  // this token artwork" — the very claim that is in question. The layer that
+  // failed is the curve read.
+  if (cls === "unread") return `npm run pons:check`;
   if (cls === "no-gateway-had-it" || cls === "gateway-refusing") {
     return `npm run post:check -- ${chain} ${address} --pin`;
   }
@@ -116,6 +121,26 @@ function artRemedy(cls, chain, address) {
 
 function artworkLost(art) {
   return !!(art && art.wanted && !art.got);
+}
+
+/**
+ * THE THIRD ARTWORK STATE: the row is BLANK because we could not ask.
+ *
+ * ⚠️ `$ORCHFLOWS` (Pons, Robinhood) went out to 12,514 subscribers drawing the
+ * Dexvra mark while its own logo rendered on ponsfamily.com in the same minute
+ * — and this watch was silent, because `wanted` is false for a blank row and a
+ * blank row is what a creator who uploaded nothing leaves. That silence is
+ * correct for a creator's choice and is a LIE when the source was refused: the
+ * banner renders both identically, so the operator was the detector again.
+ *
+ * `absentWhy` is set only where the CHAIN — the source that cannot be
+ * unreachable — could not answer (marketdata `logoFromCurve`). A benched pad
+ * never sets it, or this would page on every Robinhood listing whose owner
+ * published no artwork, which is the permanently-red state `chart:preview` sat
+ * in for weeks.
+ */
+function artworkUnread(art) {
+  return !!(art && !art.wanted && art.absentWhy);
 }
 
 /** Which of the post's three market figures will publish as a hole. */
@@ -136,10 +161,11 @@ const esc = (s) =>
 function figureAlert({ kind, chain, address, sym, name, tier, live, why, siteUrl, art } = {}) {
   const missing = missingFigures(live);
   const lostArt = artworkLost(art);
+  const unreadArt = artworkUnread(art);
   // Either half of the promise is enough to page. A missing LIQUIDITY still is
   // not — see KEY_FIGURES — but it is named below whenever something else fires.
-  if (!missing.some((f) => KEY_FIGURES.has(f)) && !lostArt) return null;
-  const holes = lostArt ? [...missing, "its own artwork"] : missing;
+  if (!missing.some((f) => KEY_FIGURES.has(f)) && !lostArt && !unreadArt) return null;
+  const holes = lostArt || unreadArt ? [...missing, "its own artwork"] : missing;
 
   // ⚠️ "WE COULD NOT ASK" AND "NOTHING IS THERE" ARE DIFFERENT FACTS, and only
   // the first is ours to fix. They are also the only two states the operator
@@ -173,6 +199,12 @@ function figureAlert({ kind, chain, address, sym, name, tier, live, why, siteUrl
       ? `/api/logo answered ${esc(art.status || "?")}${art.why ? `: ${esc(art.why)}` : ""}`
       : "",
     lostArt ? esc(artFailure(art).sentence) : "",
+    // The blank that is OURS. It names the read's own reason, because "the RPC
+    // refused us" and "this project published no logo" send an operator to
+    // completely different places and the banner draws them identically.
+    unreadArt
+      ? `Artwork: the row is blank because the CURVE READ could not answer — ${esc(art.absentWhy)}. This is not the project publishing no logo; the banner drew the Dexvra mark.`
+      : "",
     `<code>${esc(address)}</code>`,
     siteUrl ? esc(siteUrl) : "",
     // A count is not a diagnosis. These are the scripts that separate the causes
@@ -186,6 +218,7 @@ function figureAlert({ kind, chain, address, sym, name, tier, live, why, siteUrl
       ? `Run <code>npm run market:check -- ${esc(chain)}</code>${ponsChain.covers(chain) ? ` and <code>npm run pons:check</code> (the curve and the ETH/USD ladder)` : ""} on the box.`
       : "",
     lostArt ? `Run <code>${esc(artRemedy(artFailure(art).cls, chain, address))}</code> on the box.` : "",
+    !lostArt && unreadArt ? `Run <code>${esc(artRemedy("unread", chain, address))}</code> on the box.` : "",
   ]
     .filter(Boolean)
     .join("\n");
@@ -210,4 +243,4 @@ function reportFigures(args) {
   }
 }
 
-module.exports = { missingFigures, artworkLost, artFailure, artRemedy, figureAlert, reportFigures, KEY_FIGURES };
+module.exports = { missingFigures, artworkLost, artworkUnread, artFailure, artRemedy, figureAlert, reportFigures, KEY_FIGURES };

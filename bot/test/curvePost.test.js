@@ -80,7 +80,16 @@ function stubFetch(router) {
 const POST_NEED = ["priceUsd", "mcap", "liq"];
 const cheap = { cheap: true, need: POST_NEED };
 
-test.beforeEach(() => ponsChain._reset());
+// The launchpad registry caches a pad's answer per token and benches a pad
+// after three transport failures — both persist across tests in one process,
+// and a benched pad is SKIPPED, which reads exactly like a pad leg that was
+// never wired. Stated, never inherited: the scar the auto-trend panel helper
+// already carries.
+const lpRegistry = require("../../shared/launchpads");
+test.beforeEach(() => {
+  ponsChain._reset();
+  lpRegistry.reload();
+});
 
 test("a bonding-curve token is PRICED FROM THE CHAIN when no indexer and no pad can", async () => {
   const { asked, restore } = stubFetch((who) => (who === "chain" ? LAUNCH : who === "pad" ? undefined : null));
@@ -478,7 +487,115 @@ test("⚠️ a record DexScreener priced IN FULL still takes the contract's logo
   }
 });
 
-test("⚠️ every exit of fetchMarket goes through logoFromChain — a priced answer leaves by three doors", () => {
+// ── the artwork had ONE source on the door that looked healthiest ────────────
+//
+// `$ORCHFLOWS` (Pons, Robinhood) reached 12,514 subscribers drawing the Dexvra
+// mark, with its own logo on ponsfamily.com and the banner's market cap
+// CORRECT — DexScreener priced it in full, so the read left by the first door,
+// and the single chain read behind that door had nothing to give. The chain leg
+// was added to these doors precisely because the pad leg below them is
+// unreachable once an indexer answers everything; asking only the chain is that
+// lesson half-learnt, one source over.
+//
+// ⚠️ POSITIVE TESTS. A second source wired to nothing refuses beautifully.
+const ORCH = "0x36B44a8034Fe0eEddb8819dA82128bD6959161A6";
+const DS_FULL = {
+  pairs: [{
+    chainId: "robinhood", baseToken: { address: ORCH, name: "orchflows", symbol: "ORCHFLOWS" },
+    priceUsd: "0.00000474", marketCap: 4741.81, liquidity: { usd: 3100 },
+    volume: { h24: 900 }, priceChange: { h24: -21.15 }, pairAddress: "0xpair",
+  }],
+};
+/** What the pad's own API answers — artwork pinned on IPFS, as pads do. */
+const PAD_BODY = { address: ORCH, name: "orchflows", symbol: "ORCHFLOWS", image: "ipfs://bafkorch" };
+
+test("⚠️ a DS-PRICED curve token whose chain read has no logo takes the PAD'S", async () => {
+  const { asked, restore } = stubFetch((who, u) => {
+    if (who === "ds") return DS_FULL;
+    if (who === "chain") return { launch: { address: ORCH, name: "orchflows", symbol: "ORCHFLOWS", logo: null, priceUsd: null, socials: {} } };
+    return /ponsfamily/.test(u) ? PAD_BODY : undefined;
+  });
+  try {
+    const m = await market.fetchMarket("robinhood", ORCH, { ...cheap, budgetMs: 8000 });
+    assert.ok(m.logoUrl, `the banner drew the Dexvra mark: asked ${asked.join(", ")}`);
+    // ⚠️ AND IT IS RENDERABLE. A pad pins on IPFS, and `adoptChainLogo` takes
+    // https only because the site's LOGO_RE refuses everything else — a raw
+    // `ipfs://` here would be a source wired to a rule that throws it away.
+    assert.match(m.logoUrl, /^https:\/\//, "the pad's ipfs:// URI reached the row verbatim");
+    assert.match(m.logoUrl, /bafkorch/);
+    assert.ok(asked.includes("pad"), "the pad was never asked on the door the reported token takes");
+  } finally {
+    restore();
+  }
+});
+
+test("…and the CHAIN still wins: the pad is asked only when the contract had none", async () => {
+  const { asked, restore } = stubFetch((who, u) => {
+    if (who === "ds") return DS_FULL;
+    if (who === "chain") return { launch: { address: ORCH, name: "orchflows", symbol: "ORCHFLOWS", logo: "ipfs://bafkchain", socials: {} } };
+    return /ponsfamily/.test(u) ? PAD_BODY : undefined;
+  });
+  try {
+    const m = await market.fetchMarket("robinhood", ORCH, { ...cheap, budgetMs: 8000 });
+    assert.match(m.logoUrl, /bafkchain/, "the pad outranked the contract");
+    assert.ok(!asked.includes("pad"), "a pad request was spent on a question the contract had answered");
+  } finally {
+    restore();
+  }
+});
+
+test("…while a BACKGROUND caller pays no pad request for a field it does not render", async () => {
+  const { asked, restore } = stubFetch((who, u) => {
+    if (who === "ds") return DS_FULL;
+    if (who === "chain") return { launch: { address: ORCH, symbol: "ORCHFLOWS", logo: null, socials: {} } };
+    return /ponsfamily/.test(u) ? PAD_BODY : undefined;
+  });
+  try {
+    const m = await market.fetchMarket("robinhood", ORCH, cheap);   // no budgetMs
+    assert.ok(!m.logoUrl);
+    assert.ok(!asked.includes("pad"), "nine background pipelines just grew a launchpad round trip each");
+  } finally {
+    restore();
+  }
+});
+
+test("⚠️ a BLANK the sources could not be ASKED for carries its reason", async () => {
+  // The banner renders "the creator published nothing" and "the node refused
+  // us" identically, and the post watch is silent on the first by design. That
+  // silence is only honest while the sources answered.
+  const { restore } = stubFetch((who, u) => {
+    if (who === "ds") return DS_FULL;
+    if (who === "chain") return { __status: 503 };
+    return /ponsfamily/.test(u) ? null : undefined;   // the pad answers: no such token
+  });
+  try {
+    const m = await market.fetchMarket("robinhood", ORCH, { ...cheap, budgetMs: 8000 });
+    assert.ok(!m.logoUrl);
+    assert.ok(m.logoWhy, "a refused chain read was reported as a project with no artwork");
+    assert.match(String(m.logoWhy), /503|failed|park/i);
+  } finally {
+    restore();
+  }
+});
+
+test("…and a chain that ANSWERED with no logo makes NO such claim", async () => {
+  const { restore } = stubFetch((who, u) => {
+    if (who === "ds") return DS_FULL;
+    if (who === "chain") return { launch: { address: ORCH, symbol: "ORCHFLOWS", logo: null, socials: {} } };
+    return /ponsfamily/.test(u) ? null : undefined;
+  });
+  try {
+    const m = await market.fetchMarket("robinhood", ORCH, { ...cheap, budgetMs: 8000 });
+    assert.ok(!m.logoUrl);
+    // Every source answered. This project published no artwork, the Dexvra mark
+    // is the design for that, and paging on it would be permanently red.
+    assert.ok(!m.logoWhy, `a creator's own choice was reported as a fault: ${m.logoWhy}`);
+  } finally {
+    restore();
+  }
+});
+
+test("⚠️ every exit of fetchMarket goes through logoFromCurve — a priced answer leaves by three doors", () => {
   // The first cut put the fill after the LAST door only; the DS-priced record
   // (the one the reported token takes) left through the first and never saw
   // it. Comment-stripped: the helper's own header quotes the rule.
@@ -486,13 +603,18 @@ test("⚠️ every exit of fetchMarket goes through logoFromChain — a priced a
     .replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1");
   const start = src.indexOf("async function fetchMarket(");
   const end = src.indexOf("\n}\n", start);
-  const body = src.slice(start, end);
+  // ⚠️ A GUARD THAT PINS A LINE BREAK IS A GUARD ABOUT FORMATTING. The first
+  // cut required `if (…) return …;` on ONE line, so wrapping a long call went
+  // red over code that keeps the rule perfectly — this repo's own recurring
+  // defect (the four-way pool TTL, the `{ ok: true,` build stamp). The
+  // continuation is joined before the doors are counted.
+  const body = src.slice(start, end).replace(/\)\s*\n\s*return\b/g, ") return");
   const after = body.slice(body.indexOf("const chainP = startChainRead("));
   // The function's OWN exits: two-space indentation. A nested callback's
   // `return null` (the GT slice's timeout) is not a door out of fetchMarket.
   const returns = after.match(/^  (?:if \([^\n]*\) )?return\b[^;]*;/gm) || [];
   assert.ok(returns.length >= 3, `three doors, found ${returns.length}`);
-  for (const r of returns) assert.match(r, /return logoFromChain\(/, `an exit bypasses the chain's logo: ${r}`);
+  for (const r of returns) assert.match(r, /return logoFromCurve\(/, `an exit bypasses the curve's logo: ${r}`);
 });
 
 test("…while a background caller with NO budget does not wait on the chain for a logo it does not render", async () => {

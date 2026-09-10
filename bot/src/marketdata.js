@@ -571,7 +571,8 @@ function mergeCurve(out, lp) {
 }
 
 /**
- * A PRICED record with NO ARTWORK still takes the contract's logo.
+ * A PRICED record with NO ARTWORK still takes the CURVE'S logo — from the
+ * contract, then from the pad — and says so when it could not ask.
  *
  * DexScreener indexes some pads' bonding curves as ordinary pairs (Pons on
  * Robinhood among them) and has no picture for a token minutes old — so a
@@ -584,18 +585,63 @@ function mergeCurve(out, lp) {
  *
  * ⚠️ ONLY FOR A CALLER ON A CLOCK (`opts.budgetMs` — the paid post). The nine
  * background pipelines poll every listing on timers and must not wait on a
- * chain read for a field they do not render; for them this is a no-op and the
- * read they started stays fire-and-forget exactly as before. The read is
- * already in flight either way, so the post pays at most the remainder of that
- * ONE request, never a second one — and an indexer's own logo is an ANSWER,
- * never replaced.
+ * chain read, or pay a pad round trip, for a field they do not render; for them
+ * this is a no-op and the read they started stays fire-and-forget exactly as
+ * before. An indexer's own logo is an ANSWER and is never replaced.
  */
-async function logoFromChain(out, chainP, opts) {
-  if (!out || out.logoUrl || !chainP) return out;
+async function logoFromCurve(out, { chainP, opts, chain, address, startedAt, padAsked }) {
+  if (!out || out.logoUrl) return out;
   if (!(Number.isFinite(opts && opts.budgetMs) && opts.budgetMs > 0)) return out;
-  const r = await chainP;
+
+  // 1. THE CHAIN, which is already in flight and therefore free.
+  const r = chainP ? await chainP : null;
   if (r && r.info && r.info.logoUrl) return { ...out, logoUrl: r.info.logoUrl };
-  return out;
+
+  // 2. THE PAD — a genuinely second source, over a different transport.
+  //
+  // ⚠️ THIS DOOR ASKED ONE SOURCE FOR THE ARTWORK, AND THAT WAS THE WHOLE
+  // DEFECT ONE ROUND OVER. `$ORCHFLOWS` (Pons, Robinhood) went out to 12,514
+  // subscribers drawing the Dexvra mark, with its own logo rendering on
+  // ponsfamily.com in the same minute and its market cap on the banner correct
+  // — DexScreener priced it in full, so this returned here, and the single
+  // chain read behind it had nothing to give. The chain leg was ADDED to these
+  // doors precisely because the pad leg below them is unreachable when an
+  // indexer answers everything; asking only the chain is that same lesson
+  // half-learnt, one source over.
+  //
+  // Chain FIRST because it costs nothing extra and it is the authority; the pad
+  // only when the chain gave no artwork, at most ONE request per paid post, and
+  // never on the doors where `fillFromLaunchpad` already asked it.
+  if (!padAsked && launchpads.covers(chain)) {
+    const padMs = Math.max(500, opts.budgetMs - (Date.now() - startedAt));
+    const lp = await bounded(
+      launchpads.fetchTokenInfo(chain, address).catch(() => null),
+      padMs,
+      () => null,
+    );
+    if (lp && lp.logoUrl) return { ...out, logoUrl: lp.logoUrl };
+  }
+
+  // 3. NOTHING HAS ARTWORK — and "the creator published none" is a CLAIM.
+  //
+  // A blank row renders as the Dexvra mark, which is the design for a logoless
+  // token and looks entirely deliberate, so the post watch deliberately stays
+  // silent on it. That silence is only honest while the sources ANSWERED: a
+  // node that refused us produces the identical blank, and reporting it as the
+  // creator's choice is this file's oldest defect on the one field whose loss
+  // is invisible. Only the CHAIN can make the claim — it is the source that
+  // cannot be unreachable — so a benched pad says nothing here, or the alert
+  // would be permanently red on every Robinhood listing whose owner uploaded
+  // nothing.
+  let why = null;
+  if (ponsChain.covers(chain)) {
+    if (!r) why = "the chain read threw";
+    else if (!r.ok) why = r.why || "the chain read failed";
+    // `ok` with no `info` is a real answer ("not a Pons launch"), and the
+    // artwork question is then not ours to answer at all.
+    else if (r.info && r.info.readWhy) why = r.info.readWhy;
+  }
+  return why ? { ...out, logoWhy: why } : out;
 }
 
 /**
@@ -644,7 +690,8 @@ async function fetchMarket(chain, address, opts = {}) {
   const NEED_DEFAULT = ["priceUsd", "mcap"];
   const need = Array.isArray(opts.need) && opts.need.length ? opts.need : NEED_DEFAULT;
   const hasField = (o, f) => (f === "priceUsd" || f === "mcap" ? !!o[f] : Number.isFinite(o[f]));
-  if (dsFirst && need.every((f) => hasField(dsFirst, f))) return logoFromChain(dsFirst, chainP, opts);
+  if (dsFirst && need.every((f) => hasField(dsFirst, f)))
+    return logoFromCurve(dsFirst, { chainP, opts, chain, address, startedAt, padAsked: false });
 
   // ⚠️ NO SINGLE STAGE MAY CONSUME THE WHOLE BUDGET.
   //
@@ -685,7 +732,8 @@ async function fetchMarket(chain, address, opts = {}) {
   // 10,593 subscribers. It costs nothing where it cannot help — DexScreener
   // does not index the GT-primary chains at all, so `fetchDS` returns before
   // any request is made.
-  if (gt && gt.priceUsd && gt.mcap && gt.liq && gt.change24h != null) return logoFromChain(gt, chainP, opts);
+  if (gt && gt.priceUsd && gt.mcap && gt.liq && gt.change24h != null)
+    return logoFromCurve(gt, { chainP, opts, chain, address, startedAt, padAsked: false });
   // GT missing entirely, or missing price/mcap/liq → let DexScreener fill gaps.
   // In cheap mode it has ALREADY been asked, and its answer is reused — a miss
   // included. `dsFirst || await fetchDS(...)` would re-ask on every miss, which
@@ -718,6 +766,7 @@ async function fetchMarket(chain, address, opts = {}) {
   // Only when something the callers actually render is still missing — an
   // indexed token must not pay a launchpad round trip on every poll, and nine
   // background pipelines call this on timers.
+  let padAsked = false;
   if (!out || !out.priceUsd || !out.mcap) {
     // What is LEFT of a budgeted caller's clock, less a reserve for the chain
     // merge below (the chain read started at t=0 and has its own bound, so by
@@ -725,6 +774,7 @@ async function fetchMarket(chain, address, opts = {}) {
     const budgeted = Number.isFinite(opts.budgetMs) && opts.budgetMs > 0;
     const padMs = budgeted ? Math.max(500, opts.budgetMs - (Date.now() - startedAt) - CHAIN_RESERVE_MS) : 0;
     out = await fillFromLaunchpad(chain, address, out, padMs);
+    padAsked = true;
   }
   // Re-tested, not chained onto the line above: the pad may have answered some
   // of it, and a token whose price arrived but whose cap did not is still a
@@ -756,7 +806,7 @@ async function fetchMarket(chain, address, opts = {}) {
       out.changeWhy = out.changeWhy ? `${out.changeWhy}; ${c.why}` : c.why;
     }
   }
-  return logoFromChain(out, chainP, opts);
+  return logoFromCurve(out, { chainP, opts, chain, address, startedAt, padAsked });
 }
 
 /**

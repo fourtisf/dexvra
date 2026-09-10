@@ -141,6 +141,32 @@ function safeUrl(v) {
   } catch (_) { return null; }
 }
 
+/**
+ * A LOGO may also be an `ipfs://` URI, and `safeUrl` refuses it.
+ *
+ * ⚠️ EVERY LAUNCHPAD LOGO PINNED ON IPFS WAS NULLED HERE, silently, for as long
+ * as this registry has existed — `rec.logoUrl = safeUrl(...)`, and a launchpad
+ * pins its artwork on IPFS, which is the one scheme that filter refuses. It is
+ * the identical defect the site's Pons reader already carries a scar for
+ * (`readCurvesAndMeta` kept a logo only if it matched `/^https?:\/\//`), one
+ * layer down and never fixed here: pump.fun happens to publish an https pinata
+ * url, so nothing looked wrong, and a pad that publishes the URI lost its
+ * picture with nothing anywhere saying so.
+ *
+ * It stays an ALLOWLIST — `logo` is free text written by whoever deployed the
+ * token — and it allows exactly what the consumers can RENDER: the site's
+ * `/api/logo` rewrites `ipfs://` to a gateway with failover, and the bot's
+ * `httpsLogo` does the same. `ar://` is deliberately absent for the reason the
+ * site's `tokenLogo` states: no consumer has that rewrite, so publishing it
+ * would turn "no logo" into a broken image.
+ */
+function logoUri(v) {
+  const s = v == null ? '' : String(v).trim();
+  if (!s || s.length > 300) return null;
+  if (/^ipfs:\/\/\S+$/i.test(s)) return s;
+  return safeUrl(s);
+}
+
 /** A social that may arrive as a full URL or as a bare handle. */
 function socialUrl(v, base) {
   const s = v == null ? '' : String(v).trim();
@@ -183,5 +209,5 @@ const addrKey = (chain, a) => (chain === 'solana' ? String(a || '').trim() : Str
 
 module.exports = {
   at, pick, str, num, pnum, bool, toMs, pct, safeUrl, socialUrl, description,
-  isAddress, sameAddress, addrKey, SOL_ADDRESS, EVM_ADDRESS, FUTURE_SLACK_MS,
+  isAddress, sameAddress, addrKey, SOL_ADDRESS, EVM_ADDRESS, FUTURE_SLACK_MS, logoUri,
 };

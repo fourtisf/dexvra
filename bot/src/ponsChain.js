@@ -41,7 +41,7 @@ const envNum = (name, fallback) => {
 
 const TIMEOUT_MS = envNum('PONS_CHAIN_MS', 5000);
 const COOLDOWN_MS = envNum('PONS_CHAIN_COOLDOWN_MS', 60_000);
-const GATEWAY = (process.env.PONS_IPFS_GATEWAY || 'https://ipfs.io/ipfs/').replace(/\/*$/, '/');
+const { httpsLogo } = require('./helpers/httpsLogo');
 
 let coolingUntil = 0;
 
@@ -91,19 +91,10 @@ const covers = (chain) => {
   }
 };
 
-/**
- * An `ipfs://` logo is real artwork and an unusable URL: the site's own
- * validator takes https or an upload and nothing else, so passing it through
- * verbatim would fail the WHOLE listing over its picture — the rule the
- * launchpad socials already carry ("losing a link beats losing the listing and
- * the link with it"). Rewritten to a gateway the site's image proxy allows.
- */
-function httpsLogo(v) {
-  const s = v == null ? '' : String(v).trim();
-  if (!s) return null;
-  const m = /^ipfs:\/\/(?:ipfs\/)?(.+)$/i.exec(s);
-  return m ? safeUrl(GATEWAY + m[1]) : safeUrl(s);
-}
+// An `ipfs://` logo is real artwork and an unusable URL. The rewrite moved to
+// helpers/httpsLogo the day the launchpad registry became a second producer of
+// one — two copies of a gateway rewrite is two gateways. Re-exported, because
+// this module's own name for it is what every caller already reads.
 
 /** The launch, in the shape discovery.mergeInfo merges. */
 function toInfo(launch) {
