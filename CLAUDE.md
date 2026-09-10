@@ -9901,6 +9901,87 @@ file itself, and each operator surface printing two dollar signs.
 
 **Config a fix depends on:** nothing. `LOGO_PIN_MS` bounds the pin's own fetch.
 
+##### "liat ini mengapa seperti ini" — a wall of `N undecided` that named no upstream
+
+A screenshot of `pm2 logs`, the same line over and over down the whole terminal:
+
+```
+[logos] looked up 1: 0 found, 0 with no artwork anywhere, 1 undecided (an upstream could not be asked), 0 written to the listing store
+[logos] looked up 8: 0 found, 0 with no artwork anywhere, 8 undecided (an upstream could not be asked), 0 written to the listing store
+[logos] looked up 4: 0 found, 0 with no artwork anywhere, 4 undecided (an upstream could not be asked), 0 written to the listing store · 1 still queued (~1 more rebuild(s))
+```
+
+**Nothing was broken and every word of it was true.** `undecided` is the state
+this module exists to keep apart from a miss — *an upstream could not be
+asked*, retried in 30 min rather than written down as "no artwork" for twelve
+hours — and a box whose logo sources are refusing it is supposed to produce
+exactly this. Two things made it unreadable, and both are this file's own
+rules broken in the one line that reports them.
+
+- ⚠️ **THE REASON WAS THROWN AWAY AT THE COUNTER.** `resolveLogo` returns
+  `unreachable: string[]` — `dexscreener: DexScreener 403 — refusing this
+  server, benched for 900s`, `coingecko: CoinGecko 429 — benched for …`,
+  `<source>: could not verify <url>` — and `sweepLogos` did `report.undecided++`
+  and dropped every one of them. *"Never discard the reason"* is the first rule
+  in this file about upstreams, and it had been broken since the counter was
+  written: **"DexScreener is refusing this server" sends an operator to their
+  egress and "CoinGecko 429" sends them to a pace**, and the line rendered both
+  as the same number. `whyUnreachable` is keyed by SOURCE and keeps the FIRST
+  message — the rest carry a per-row url and a per-second countdown, so a tally
+  of the raw strings is another wall rather than an answer — bounded at 90
+  characters, and the clause names at most three (`+N more` past that).
+- ⚠️ **AND AN ALL-UNDECIDED PASS IS THE SAME OBSERVATION AS THE ONE BEFORE
+  IT.** The board rebuilds on a 60s cache and every rebuild fires a sweep, so
+  on a box whose sources are refusing it that line is identical, for ever —
+  which is the wall in the screenshot and is what buries the one line that
+  says a stablecoin was filtered or a logo was pinned. Reported on the
+  TRANSITION only: `upstreams.js`'s rule, borrowed for the sixth time in this
+  repo, on the one state that repeats with nothing new in it.
+- **Anything the sweep actually DID always prints, and re-arms the memo.** A
+  logo found, a miss DECIDED, a row written, a row pinned — a sweep working
+  through a queue at 8 rows a rebuild is progress, not silence, and collapsing
+  it would hide the recovery. So a quiet stretch can only ever mean *the
+  sources are still refusing us*, which is the one thing an operator can act
+  on.
+- **The KEY is the set of upstreams, so losing a second source says so.**
+  DexScreener alone going quiet and DexScreener plus CoinGecko are different
+  facts; the empty key is a real state too (undecided with no reason given),
+  not an absent one.
+- ⚠️ **AND THE SILENCE IS ANNOUNCED** — `(repeats are silent until this
+  changes)`. A wall that stops reads as the sweep having stopped, which is
+  precisely the state this line exists to report, and this file has already
+  paid twice for a stuck symptom rendering as no symptom.
+- ⚠️ **`_resetLogoMemory()` clears the memo**, because it is module state and
+  the suite shares one process: a test that leaves it behind silences the next
+  test's line, which looks exactly like the logging being broken. Stated,
+  never inherited — the scar the auto-trend panel helper and the rotation
+  stamps already carry.
+- ⚠️ **`report.undecided > 0` was DELIBERATELY LEFT OUT of the key.** Every
+  `looked++` lands in exactly one of found/missing/undecided, so a pass that
+  did nothing with `looked > 0` is undecided by arithmetic — a mutation run
+  confirmed the term changed no outcome, and a line that claims cover it does
+  not provide is the `unanswered`-flag scar one module over. The comment says
+  which change would make it load-bearing again.
+
+⚠️ **What this does NOT do is make the artwork resolve.** Whether DexScreener,
+CoinGecko or GeckoTerminal answers THIS box is a property of its egress and of
+those services' limits today — the rule `raid:check`, `launchpads:check` and
+`fonts:check` all state. What changed is that the log now says which of them is
+refusing us and why, instead of printing a count five hundred times.
+
+```bash
+pm2 logs dexvra --lines 300 --nostream | grep -F '[logos]'   # …— could not ask: dexscreener (403 …)
+npm test                                                      # logoFill — 27 tests, no network
+```
+
+Nine guarantees are MUTATION-TESTED rather than argued: the reason never
+recorded, the line dropping the upstream, the reason unbounded, every repeat
+printed, a productive pass collapsible, the key ignoring which upstream, the
+memo leaking between tests, a decided miss counting as doing nothing, and the
+silence going unannounced. Each fails between one and three tests.
+
+**Config a fix depends on:** nothing.
+
 ## "perbaiki tampilan chartnya di mobile" — two rows of timeframe buttons, one of them dead
 
 The same screenshot, one panel down: our chart header — `$HACHIKO`, `LIN LOG`,

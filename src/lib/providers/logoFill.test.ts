@@ -35,7 +35,7 @@ test("a resolved logo is remembered and written to the listing store", async () 
     },
     now: () => T,
   });
-  assert.deepEqual(r, { looked: 1, found: 1, missing: 0, undecided: 0, persisted: 1, pinned: 0, bySource: { dexscreener: 1 } });
+  assert.deepEqual(r, { looked: 1, found: 1, missing: 0, undecided: 0, persisted: 1, pinned: 0, bySource: { dexscreener: 1 }, whyUnreachable: {} });
   assert.equal(knownLogo("ethereum", tok(1).address), "https://img.example/a.png");
   assert.deepEqual(wrote, [`ethereum:${tok(1).address}`]);
   assert.equal(shouldLookUp("ethereum", tok(1).address, T + _MISS_TTL_MS * 10), false, "a found logo is never re-resolved");
@@ -95,6 +95,92 @@ test("the log line says how many stopped depending on a gateway", async () => {
   // A value nobody can read is the same as no value: "written" and "written and
   // pinned" are different states, and only the second is off the gateways.
   assert.match(lines[0], /1 pinned to our own disk/);
+});
+
+// ── "mengapa seperti ini": five hundred lines of `N undecided` and no WHY ────
+//
+// A box whose sources were all refusing it printed `0 found, 0 with no artwork
+// anywhere, 5 undecided (an upstream could not be asked), 0 written` on every
+// board rebuild, for hours. Every word true, and none of it names the upstream
+// — so it reads as the resolver being broken. `resolveLogo` had the answer in
+// `unreachable` the whole time.
+test("⚠️ the line NAMES the upstream that could not be asked, and its reason", async () => {
+  const lines: string[] = [];
+  const r = await sweepLogos([tok(1)], {
+    resolve: async () => ({
+      ok: false, url: null, source: null, tried: [],
+      unreachable: ["dexscreener: DexScreener 403 — refusing this server, benched for 900s"],
+    }),
+    log: (m) => lines.push(m),
+    now: () => T,
+  });
+  assert.equal(r.undecided, 1);
+  assert.deepEqual(Object.keys(r.whyUnreachable), ["dexscreener"]);
+  assert.match(lines[0], /could not ask: dexscreener \(DexScreener 403/);
+});
+
+test("…and the reason is BOUNDED — these carry urls and per-second countdowns", async () => {
+  const lines: string[] = [];
+  await sweepLogos([tok(2)], {
+    resolve: async () => ({
+      ok: false, url: null, source: null, tried: [],
+      unreachable: [`geckoterminal: could not verify https://img.example/${"x".repeat(400)}.png`],
+    }),
+    log: (m) => lines.push(m),
+    now: () => T,
+  });
+  assert.ok(lines[0].length < 400, `one row must not be able to flood the line:\n${lines[0]}`);
+  assert.match(lines[0], /could not ask: geckoterminal/);
+});
+
+test("⚠️ a pass that produced NOTHING BUT undecideds is news exactly once", async () => {
+  // Every rebuild re-printing the same silence is the wall this was reported
+  // over — the transition rule `upstreams.js` states, on the one state that
+  // repeats for ever with nothing new in it.
+  const lines: string[] = [];
+  const deps = (): FillDeps => ({ resolve: async () => undecided(), log: (m) => lines.push(m), now: () => T });
+  await sweepLogos([tok(10)], deps());
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /repeats are silent until this changes/);
+  await sweepLogos([tok(11)], deps());   // fresh rows, identical outcome
+  await sweepLogos([tok(12)], deps());
+  assert.equal(lines.length, 1, `the same silence printed ${lines.length} times`);
+});
+
+test("…but anything the sweep actually DID always prints, and re-arms the line", async () => {
+  const lines: string[] = [];
+  await sweepLogos([tok(20)], { resolve: async () => undecided(), log: (m) => lines.push(m), now: () => T });
+  assert.equal(lines.length, 1);
+  // A found logo is real news even though the pass before it was quiet.
+  await sweepLogos([tok(21)], {
+    resolve: async () => found("https://img.example/a.png"),
+    log: (m) => lines.push(m),
+    now: () => T,
+  });
+  assert.equal(lines.length, 2, "a productive pass was swallowed by the quiet memo");
+  assert.match(lines[1], /1 found/);
+  // …and the NEXT silence is news again, or a recovery would be the last thing
+  // an operator ever saw.
+  await sweepLogos([tok(22)], { resolve: async () => undecided(), log: (m) => lines.push(m), now: () => T });
+  assert.equal(lines.length, 3, "the memo was not re-armed by the productive pass");
+});
+
+test("…and a CHANGED set of upstreams prints again", async () => {
+  const lines: string[] = [];
+  const why = (u: string[]) => async () => ({ ok: false, url: null, source: null, tried: [], unreachable: u });
+  await sweepLogos([tok(30)], { resolve: why(["dexscreener: 403"]), log: (m) => lines.push(m), now: () => T });
+  await sweepLogos([tok(31)], { resolve: why(["dexscreener: 403"]), log: (m) => lines.push(m), now: () => T });
+  assert.equal(lines.length, 1);
+  await sweepLogos([tok(32)], { resolve: why(["coingecko: 429"]), log: (m) => lines.push(m), now: () => T });
+  assert.equal(lines.length, 2, "a different upstream refusing us is a different fact");
+  assert.match(lines[1], /coingecko/);
+});
+
+test("a DECIDED miss is not a quiet pass — it is the sweep working", async () => {
+  const lines: string[] = [];
+  await sweepLogos([tok(40)], { resolve: async () => nothing(), log: (m) => lines.push(m), now: () => T });
+  await sweepLogos([tok(41)], { resolve: async () => nothing(), log: (m) => lines.push(m), now: () => T });
+  assert.equal(lines.length, 2, "an answered 'no artwork' is a decision, and every one of them counts");
 });
 
 test("a failed store write costs permanence, never the logo", async () => {

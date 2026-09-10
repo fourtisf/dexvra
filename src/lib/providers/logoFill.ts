@@ -116,7 +116,48 @@ export interface SweepReport {
   /** Which source each logo came from — "6 of 7 from CoinGecko" is the
    *  difference between a working chain of sources and one carrying all of it. */
   bySource: Record<string, number>;
+  /**
+   * WHICH upstream could not be asked, and the first reason it gave.
+   *
+   * ⚠️ `undecided` was a COUNT with nothing behind it, and a box whose sources
+   * are all refusing it printed `0 found, 0 with no artwork anywhere, 5
+   * undecided (an upstream could not be asked), 0 written` for hours. Every
+   * word of that is true and none of it says WHICH upstream, so it reads as the
+   * resolver being broken — and `resolveLogo` had the answer in `unreachable`
+   * the whole time and threw it away here. "DexScreener is refusing this
+   * server" sends an operator to their egress; "CoinGecko 429" sends them to a
+   * pace. One line, two different places to go.
+   */
+  whyUnreachable: Record<string, string>;
 }
+
+/** The longest a reason may be. These carry urls and per-second countdowns, and
+ *  this line already prints once per board rebuild. */
+const WHY_MAX = 90;
+
+/** Record `"<source>: <message>"` under its source, keeping the first message. */
+function noteWhy(report: SweepReport, line: string): void {
+  const s = String(line ?? "").trim();
+  if (!s) return;
+  const i = s.indexOf(": ");
+  const src = (i > 0 ? s.slice(0, i) : s).slice(0, 32);
+  const why = (i > 0 ? s.slice(i + 2) : "").trim().slice(0, WHY_MAX);
+  if (src && report.whyUnreachable[src] === undefined) report.whyUnreachable[src] = why;
+}
+
+/**
+ * The last all-undecided line printed, so the same silence is not re-printed
+ * every rebuild.
+ *
+ * ⚠️ A PASS THAT PRODUCED NOTHING BUT UNDECIDEDS IS THE SAME OBSERVATION AS THE
+ * ONE BEFORE IT, and on a box whose sources are refusing it that is every pass,
+ * for ever — the wall this whole change was reported over. It is the transition
+ * rule `upstreams.js` states and `lastGood` already borrowed, applied to the one
+ * state that repeats with nothing new in it. Anything the sweep actually DID —
+ * a logo found, a miss decided, a row written or pinned — always prints, so the
+ * recovery is never the silent one.
+ */
+let lastQuiet: string | null = null;
 
 /**
  * Resolve logos for tokens that have none. Awaited by the tests; called
@@ -132,7 +173,7 @@ export async function sweepLogos(
 ): Promise<SweepReport> {
   const resolve = deps.resolve ?? ((c: string, a: string) => resolveLogo(c, a));
   const now = deps.now ?? Date.now;
-  const report: SweepReport = { looked: 0, found: 0, missing: 0, undecided: 0, persisted: 0, pinned: 0, bySource: {} };
+  const report: SweepReport = { looked: 0, found: 0, missing: 0, undecided: 0, persisted: 0, pinned: 0, bySource: {}, whyUnreachable: {} };
 
   for (const t of candidates) {
     if (report.looked >= MAX_PER_SWEEP) break;
@@ -183,11 +224,36 @@ export async function sweepLogos(
     // answered and this project has no artwork" from "an upstream refused".
     mem.set(key(t.chain, t.address), { url: null, at: now(), kind: r.ok ? "miss" : "undecided" });
     if (r.ok) report.missing++;
-    else report.undecided++;
+    else {
+      report.undecided++;
+      // The reasons are `"<source>: <message>"`. Keyed by SOURCE and keeping the
+      // FIRST message: the rest carry a per-row url and a per-second countdown,
+      // so the raw strings never repeat and a tally of them is a wall rather
+      // than an answer.
+      for (const line of r.unreachable) noteWhy(report, line);
+    }
   }
 
   if (deps.log && report.looked > 0) {
     const src = Object.entries(report.bySource).map(([k, n]) => `${n} ${k}`).join(", ");
+    // WHICH upstream, capped: three names is a diagnosis, ten is the wall again.
+    const whys = Object.entries(report.whyUnreachable);
+    const why = whys.length
+      ? ` — could not ask: ${whys.slice(0, 3).map(([k, m]) => (m ? `${k} (${m})` : k)).join(", ")}` +
+        (whys.length > 3 ? ` +${whys.length - 3} more` : "")
+      : "";
+    // A pass that found, decided, wrote or pinned NOTHING is news exactly once.
+    // The key is the SET OF UPSTREAMS that could not be asked, so a box losing
+    // a second source says so — and the empty key is a real state (undecided
+    // with no reason given), not an absent one. `undecided > 0` is deliberately
+    // NOT part of it: every `looked++` lands in exactly one of found/missing/
+    // undecided, so a pass that did nothing with `looked > 0` is undecided by
+    // arithmetic, and a mutation run confirmed the term changed no outcome. It
+    // becomes load-bearing again only if a fourth counter is added below.
+    const didNothing = report.found === 0 && report.missing === 0 && report.persisted === 0 && report.pinned === 0;
+    const quietKey = didNothing ? Object.keys(report.whyUnreachable).sort().join(",") : null;
+    if (quietKey !== null && quietKey === lastQuiet) return report;
+    lastQuiet = quietKey;
     // ⚠️ THE BACKLOG, because without it the line cannot answer the question it
     // is read for. "Some tokens have no logo" has two completely different
     // causes that this line rendered identically: the resolver is failing, or
@@ -206,7 +272,11 @@ export async function sweepLogos(
         // gateways for good, the first is a working url that re-rolls its dice
         // on every render.
         (report.pinned ? `, ${report.pinned} pinned to our own disk` : "") +
+        why +
         eta +
+        // …and say that the repeats are deliberate, or a wall going quiet reads
+        // as the sweep having stopped — which is the state it exists to report.
+        (quietKey !== null ? " (repeats are silent until this changes)" : "") +
         // A store that refuses every write is a sweep whose work dies with the
         // process — the logos come back on the next restart and nothing said
         // why. The count alone reads as a detail; this reads as a fault.
@@ -240,6 +310,10 @@ export function backfillLogos(candidates: { chain: string; address: string }[], 
 export function _resetLogoMemory(): void {
   mem.clear();
   running.on = false;
+  // The quiet memo is module state and the suite shares one process: a test
+  // that leaves it behind silences the next test's line, which reads exactly
+  // like the logging being broken. Stated, never inherited.
+  lastQuiet = null;
 }
 
 export const _MAX_PER_SWEEP = MAX_PER_SWEEP;
