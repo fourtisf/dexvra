@@ -31,7 +31,8 @@ import { fillFromLastGood, shouldReport } from "./lastGood";
 import { pickLogo, resolveLogo } from "./tokenLogo";
 import { rememberPool } from "./poolCache";
 import { backfillLogos, knownLogo, rememberLogo, shouldLookUp } from "./logoFill";
-import { forgetLostUploads, setResolvedLogo } from "@/lib/store";
+import { forgetLostUploads, pinLogo, setResolvedLogo } from "@/lib/store";
+import { pinResolvedLogo } from "./logoPin";
 import { isLostUpload, lostUploads } from "@/lib/mediaFile";
 import { listUploads } from "@/lib/uploadsDir";
 
@@ -310,6 +311,10 @@ async function loadListedTokens(): Promise<BoardToken[]> {
     // else, and this is how a row whose form autofill missed it heals.
     resolve: (c, a) => resolveLogo(c, a, { pons: ponsContractLogo }),
     persist: setResolvedLogo,
+    // …and then off the public gateways for good. Best-effort: the CAS in
+    // `pinLogo` is what decides, and a row that moved on keeps what it moved to.
+    pin: (chain, address, url) =>
+      pinResolvedLogo(chain, address, url, { commit: pinLogo }),
     log: (msg) => console.log(msg),
   });
 

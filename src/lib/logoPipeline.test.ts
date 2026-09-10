@@ -109,13 +109,54 @@ test("one owner for the uploads directory", () => {
   // matters more now that the board asks whether an upload is still on disk: a
   // reader pointed at the wrong directory reports every paid listing's logo as
   // lost, and the site clears them.
-  const owners = ["src/app/api/admin/upload/route.ts", "src/app/api/internal/upload/route.ts", "src/app/api/media/[name]/route.ts"];
+  // ⚠️ THE PROPERTY, NOT THE SPELLING. This required every file to mention
+  // `UPLOADS_DIR` by name — so the day the two upload routes stopped touching
+  // the directory at all (they hand their bytes to `mediaStore.saveMedia`,
+  // which is the one owner of the WRITE) it went red over code that keeps the
+  // rule perfectly. What must never come back is a second declaration of the
+  // path, and that is what is asserted.
+  const owners = [
+    "src/app/api/admin/upload/route.ts",
+    "src/app/api/internal/upload/route.ts",
+    "src/app/api/media/[name]/route.ts",
+    "src/lib/mediaStore.ts",
+  ];
   for (const f of owners) {
-    const src = code(read(f));
-    assert.match(src, /UPLOADS_DIR/, `${f} reads the shared path`);
-    assert.ok(!/"data", "uploads"/.test(src), `${f} must not declare its own copy`);
+    assert.ok(!/"data", "uploads"/.test(code(read(f))), `${f} must not declare its own copy`);
   }
   assert.match(read("src/lib/uploadsDir.ts"), /export const UPLOADS_DIR/);
+});
+
+test("⚠️ the board pipeline PINS what the resolver found, not just persists it", () => {
+  // Persisting a gateway url makes the ANSWER permanent and leaves the DELIVERY
+  // a dice roll — `$GG`'s CID flipped ✓/✗ across four deploys with no code
+  // change. A wiring that does nothing refuses beautifully, so this asserts the
+  // wire and logoPin.test.ts asserts the rule.
+  const src = code(read("src/lib/providers/index.ts"));
+  assert.match(src, /persist: setResolvedLogo/);
+  assert.match(src, /pin: \(chain, address, url\)/, "the sweep was given no way to pin");
+  assert.match(src, /pinResolvedLogo\(chain, address, url, \{ commit: pinLogo \}\)/,
+    "the pin must commit through the store's compare-and-set, never a bare write");
+});
+
+test("one owner for WRITING an upload — the sniff, the bound and the name", () => {
+  // Byte-identical `sniff()`, `MAX` and `writeFile` in both upload routes, each
+  // with a comment saying it matched the other. A third copy was what the logo
+  // pin needed; three copies of "what this server will store and serve back as
+  // an image" is how one of them ends up accepting an SVG.
+  for (const f of ["src/app/api/admin/upload/route.ts", "src/app/api/internal/upload/route.ts"]) {
+    const src = code(read(f));
+    assert.match(src, /saveMedia\(/, `${f} does not write through the one owner`);
+    assert.ok(!/function sniff\(/.test(src), `${f} has grown its own magic-byte sniff again`);
+    assert.ok(!/writeFile\(/.test(src), `${f} writes the file itself again`);
+  }
+  const store = code(read("src/lib/mediaStore.ts"));
+  assert.match(store, /export function sniffImage/);
+  assert.match(store, /export async function saveMedia/);
+  // The url must stay RELATIVE: `mediaFile.mediaPath` recognises our own
+  // uploads by their path, and an absolute localhost one was stored on public
+  // listings for a month.
+  assert.match(store, /url: `\/api\/media\/\$\{name\}`/);
 });
 
 test("⚠️ logos:check asks for the url the BROWSER asks for", () => {

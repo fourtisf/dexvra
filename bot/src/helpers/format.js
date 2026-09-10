@@ -131,5 +131,21 @@ function trimAmount(n) {
   return Number.isInteger(v) ? String(v) : String(Number(v.toFixed(8)));
 }
 
+/**
+ * A ticker with EXACTLY ONE `$`.
+ *
+ * ⚠️ `post:check` printed `$$ORCHFLOWS` on the one line whose job is naming the
+ * token, and the paid-post alert did the same — both wrote `` `$${sym}` `` over
+ * a stored `sym` that already carries the `$` (the listing store's convention:
+ * `sym: "$BONK"`). It is not always there, which is why six other places in
+ * this repo already write `$` + `replace(/^\$/, "")` by hand; those are all
+ * correct and deliberately left alone. What may not happen again is a NEW
+ * operator-facing surface spelling it a seventh time and getting it wrong.
+ */
+const ticker = (sym) => {
+  const s = String(sym == null ? "" : sym).trim().replace(/^\$+/, "");
+  return s ? `$${s}` : "$?";
+};
+
 module.exports = {
-  parseCap, fmtPrice, fmtCap, fmtNum, fmtPct, formatNumber, fmtAge, shortAddr, escapeHtml, trimAmount };
+  parseCap, fmtPrice, fmtCap, fmtNum, fmtPct, formatNumber, fmtAge, shortAddr, escapeHtml, trimAmount, ticker };

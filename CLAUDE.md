@@ -9810,6 +9810,97 @@ whichever spelling answers is pinned with `LAUNCHPAD_PONS_TOKEN_PATH` in
 `bot/.env` — a line, not a deploy. The artwork does not wait on it: the CONTRACT
 is still the first source and the one that cannot be unreachable.
 
+#### "bagaimana agar masalah ini tidak terjadi lgi" — asked over a GREEN check
+
+The deploy landed and `post:check` on the box answered for the reported token:
+
+```
+✓ $$ORCHFLOWS — orchflows   robinhood/0x36B44a8034Fe0eEddb8819dA82128bD6959161A6
+  price 0.000004751170008685582 · mcap 4751.170008685582 · artwork loads via gateway.pinata.cloud 3972ms
+  — from a public gateway; pin it so no post ever asks one again: npm run post:check -- robinhood 0x36B4… --pin
+Every post assembled here would publish its figures and its artwork.
+```
+
+Green, and it names its own two remaining defects in the same six lines.
+
+⚠️ **`$$ORCHFLOWS`.** The listing store spells `sym` as `$BONK`, and both
+operator surfaces wrote `` `$${sym}` `` over it — the check's head AND the paid-post
+alert. That is `From $1,000,0…` and the truncated `logos:check` url, on the one
+line whose whole job is naming the token. `format.ticker()` is the owner. Six
+other places in this repo already write `$` + `replace(/^\$/, "")` by hand;
+those are correct and deliberately untouched — what may not happen again is a
+SEVENTH surface spelling it out and getting it wrong.
+
+⚠️ **"pin it so no post ever asks one again" IS A REQUEST, NOT A FIX**, and this
+file has a name for that: *apt-get install is not a fix*, which cost six days of
+banners publishing boxes. The paid post learnt to pin the bytes it drew from
+(`a2425aa`). The **RESOLVER** — which is what actually fills most rows, in the
+background, on a board rebuild, where nobody is watching — did not, so a healed
+row kept a gateway url for ever and the only remedy was an operator remembering
+a flag. That is the last dice roll in this chain: `$GG`'s CID flipped ✓/✗ across
+**four deploys with zero lines changed on that path**, because whether a public
+gateway holds a CID this minute is a fact about that gateway's cache.
+
+- **`logoPin.pinResolvedLogo` copies the artwork onto our own disk** and moves
+  the row onto `/api/media/…`. AFTER the persist, never instead of it: the CAS
+  requires the row to still hold the url it is moving off.
+- **BEST-EFFORT AND SILENT.** The row already holds a url that loaded a moment
+  ago, so every failure here leaves exactly the behaviour that shipped before
+  the pin existed. A throw would let one refusing gateway take a whole sweep
+  down.
+- ⚠️ **THE CAS DECIDES, and that is what makes a write nobody is watching safe.**
+  `applyPinnedLogo` requires the destination to be one of OUR uploads and the
+  source to still be the exact external url the row holds; an admin who set a
+  different logo in between wins silently, and the file we wrote is orphaned —
+  which costs bytes and never a wrong picture.
+- **The in-process copy moves too**, or this render keeps handing out a gateway
+  url the store no longer holds.
+- **One extra request per newly-resolved row, once ever.** A pinned row is
+  neither `convention` nor `none`, so `pickLogo` never queues it again.
+- ⚠️ **`data/uploads/` IS STILL NOT IN THE MONGO MIRROR** — the durability hole
+  this file already records. A lost disk loses the files, `lostUploads` clears
+  those rows and the resolver re-resolves them. It degrades correctly, and it is
+  worth knowing before reading a monogram as a regression.
+
+⚠️ **AND IT NEEDED A THIRD COPY OF THE MEDIA WRITE, WHICH IS WHAT MADE IT ONE.**
+The magic-byte sniff, the 3 MB bound, the random name and the `writeFile` were
+BYTE-IDENTICAL in `/api/admin/upload` and `/api/internal/upload`, each with a
+comment saying it matched the other. `lib/mediaStore.ts` is the owner now.
+Three copies of *"what this server will store and hand back as an image"* is how
+one of them ends up accepting an SVG — a document that can carry script when
+opened directly, which `/api/logo` serves inert instead because there the trade
+is the other way round.
+
+⚠️ **The `UPLOADS_DIR` guard broke, and it was the guard that was wrong.** It
+required every listed file to mention `UPLOADS_DIR` by name, so the day the two
+routes stopped touching the directory at all it went red over code that keeps
+the rule perfectly — the same shape as the door guard one section up. It asserts
+that no file declares its own copy of the path.
+
+So the layers on this promise, each closing a hole the others cannot:
+
+| layer | stops |
+| --- | --- |
+| `tokenLogo` / `normalize.logoUri` allowlists | a real `ipfs://` logo nulled at the source |
+| `adoptChainLogo` + `logoFromCurve` (chain, then pad) | the row born blank when a source had artwork |
+| `IPFS_GATEWAYS` + the post's pin + **the resolver's pin** | a CID that flips with one gateway's cache |
+| `logoWhy` → `postFigures` | a blank we could not fill reading as a creator's choice |
+| `post:check` / `logos:check` + the build stamp | "is the next post safe?", on the box |
+
+```bash
+npm test                                   # mediaStore · logoPin · logoFill · logoPipeline
+cd bot && node scripts/run-tests.js test/postFigures.test.js test/postCheck.test.js
+pm2 logs dexvra --lines 300 --nostream | grep -F '[logos]'   # …N pinned to our own disk
+```
+
+Eleven more guarantees are MUTATION-TESTED: the sweep never pinning, a failed
+pin costing the write, the in-process copy left on the gateway, our own upload
+re-pinned every sweep, a refused CAS reported as a pin, non-image bytes written
+onto the row, an SVG stored, the pipeline unwired, an upload route writing the
+file itself, and each operator surface printing two dollar signs.
+
+**Config a fix depends on:** nothing. `LOGO_PIN_MS` bounds the pin's own fetch.
+
 ## "perbaiki tampilan chartnya di mobile" — two rows of timeframe buttons, one of them dead
 
 The same screenshot, one panel down: our chart header — `$HACHIKO`, `LIN LOG`,

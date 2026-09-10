@@ -33,6 +33,7 @@
  */
 const log = require("./helpers/logger");
 const ponsChain = require("./ponsChain");
+const { ticker } = require("./helpers/format");
 
 /** Renders as a figure, rather than as TBA / — (`priceStr`, `mcStr`, `liqStr`). */
 const rendered = (v) => Number(v) > 0;
@@ -183,7 +184,7 @@ function figureAlert({ kind, chain, address, sym, name, tier, live, why, siteUrl
   const head = `⚠️ <b>${label} published without ${holes.map(esc).join(" · ")}</b>`;
   return [
     head,
-    `<b>$${esc(sym || "?")}</b>${name ? ` — ${esc(name)}` : ""} · ${esc(String(chain).toUpperCase())}${tier ? ` · ${esc(tier)}` : ""}`,
+    `<b>${esc(ticker(sym))}</b>${name ? ` — ${esc(name)}` : ""} · ${esc(String(chain).toUpperCase())}${tier ? ` · ${esc(tier)}` : ""}`,
     // Only when a figure is actually missing: this sentence is about the market
     // read, and printing it over a post whose only hole was the picture would
     // send the operator to the wrong layer.

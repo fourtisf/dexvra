@@ -210,6 +210,19 @@ test("BOTH fulfilment paths carry the blank's reason — a rule on one sibling i
   }
 });
 
+test("⚠️ the ticker carries exactly ONE $ — the store's sym already has it", () => {
+  // `post:check` printed `$$ORCHFLOWS` on the line whose whole job is naming
+  // the token, and this alert did the same: both wrote `$` + a `sym` the
+  // listing store already spells `$ORCHFLOWS`. The `From $1,000,0…` defect, on
+  // the two surfaces an operator reads while deciding what is wrong.
+  const withDollar = pf.figureAlert(args({ sym: "$ORCHFLOWS", live: null }));
+  assert.ok(!/\$\$/.test(withDollar), `two dollar signs:\n${withDollar}`);
+  assert.match(withDollar, /<b>\$ORCHFLOWS<\/b>/);
+  // …and a sym stored WITHOUT one still gets it. Both spellings are in the
+  // wild, which is why six other places in this repo strip before prepending.
+  assert.match(pf.figureAlert(args({ sym: "ORCHFLOWS", live: null })), /<b>\$ORCHFLOWS<\/b>/);
+});
+
 test("one post is ONE alert, naming both halves and both scripts", () => {
   const html = pf.figureAlert(args({
     live: null,

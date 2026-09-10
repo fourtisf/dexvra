@@ -133,6 +133,19 @@ test("⚠️ the check DRIVES the post's own functions rather than asking its ow
   assert.ok(!/api\/logo\?u=/.test(src), "never its own proxy url");
 });
 
+test("⚠️ the head prints ONE $, whichever spelling the store holds", () => {
+  const src = fss.readFileSync(require.resolve("../scripts/post-check.js"), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1");
+  // The row's `sym` is `$ORCHFLOWS` in the listing store, so `$${sym}` printed
+  // `$$ORCHFLOWS` — on the one line that names the token.
+  assert.ok(!/`\$\$\{(?:sym|row\.sym)/.test(src), "the check prepends a $ to a value that has one");
+  assert.match(src, /ticker\(row\.sym/, "…and it does not spell the rule a seventh time");
+  const { ticker } = require("../src/helpers/format");
+  assert.equal(ticker("$ORCHFLOWS"), "$ORCHFLOWS");
+  assert.equal(ticker("ORCHFLOWS"), "$ORCHFLOWS");
+  assert.equal(ticker(null), "$?");
+});
+
 test("the build stamp is printed — every round began with a check read off a stale checkout", () => {
   const src = fss.readFileSync(require.resolve("../scripts/post-check.js"), "utf8");
   assert.match(src, /build\.stamp\(\)/);

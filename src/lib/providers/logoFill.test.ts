@@ -35,10 +35,66 @@ test("a resolved logo is remembered and written to the listing store", async () 
     },
     now: () => T,
   });
-  assert.deepEqual(r, { looked: 1, found: 1, missing: 0, undecided: 0, persisted: 1, bySource: { dexscreener: 1 } });
+  assert.deepEqual(r, { looked: 1, found: 1, missing: 0, undecided: 0, persisted: 1, pinned: 0, bySource: { dexscreener: 1 } });
   assert.equal(knownLogo("ethereum", tok(1).address), "https://img.example/a.png");
   assert.deepEqual(wrote, [`ethereum:${tok(1).address}`]);
   assert.equal(shouldLookUp("ethereum", tok(1).address, T + _MISS_TTL_MS * 10), false, "a found logo is never re-resolved");
+});
+
+// ── the last dice roll: a resolved logo still lived on somebody else's host ──
+//
+// `$GG`'s CID flipped ✓/✗ across four deploys with zero lines changed on that
+// path. The paid post learnt to pin the bytes it drew from; the RESOLVER — what
+// actually fills most rows, in the background, where nobody is watching — did
+// not, so a healed row kept a gateway url for ever and the only remedy was an
+// operator remembering `post:check --pin`.
+test("⚠️ a resolved logo is PINNED onto our own disk, after it is persisted", async () => {
+  const order: string[] = [];
+  const r = await sweepLogos([tok(1)], {
+    resolve: async () => found("https://gateway.pinata.cloud/ipfs/bafk"),
+    persist: async () => { order.push("persist"); return true; },
+    pin: async (c, a, url) => {
+      order.push("pin");
+      assert.equal(url, "https://gateway.pinata.cloud/ipfs/bafk", "the pin was handed a url nobody resolved");
+      return "/api/media/aabbccddeeff001122334455.png";
+    },
+    now: () => T,
+  });
+  assert.equal(r.pinned, 1);
+  // ⚠️ AFTER, never instead of: the pin's compare-and-set requires the row to
+  // still hold the url it is moving off, so a pin ahead of the persist writes
+  // nothing at all.
+  assert.deepEqual(order, ["persist", "pin"]);
+  // …and the in-process copy moves too, or this render keeps handing out a
+  // gateway url the store no longer holds.
+  assert.equal(knownLogo("ethereum", tok(1).address), "/api/media/aabbccddeeff001122334455.png");
+});
+
+test("…and a pin that could not be made leaves exactly what shipped before it", async () => {
+  const r = await sweepLogos([tok(1)], {
+    resolve: async () => found("https://img.example/a.png"),
+    persist: async () => true,
+    pin: async () => { throw new Error("upstream refused the bytes"); },
+    now: () => T,
+  });
+  assert.equal(r.found, 1);
+  assert.equal(r.persisted, 1, "a failed pin must never cost the write");
+  assert.equal(r.pinned, 0);
+  assert.equal(knownLogo("ethereum", tok(1).address), "https://img.example/a.png", "the working url was thrown away");
+});
+
+test("the log line says how many stopped depending on a gateway", async () => {
+  const lines: string[] = [];
+  await sweepLogos([tok(1)], {
+    resolve: async () => found("https://img.example/a.png"),
+    persist: async () => true,
+    pin: async () => "/api/media/aabbccddeeff001122334455.png",
+    log: (m) => lines.push(m),
+    now: () => T,
+  });
+  // A value nobody can read is the same as no value: "written" and "written and
+  // pinned" are different states, and only the second is off the gateways.
+  assert.match(lines[0], /1 pinned to our own disk/);
 });
 
 test("a failed store write costs permanence, never the logo", async () => {

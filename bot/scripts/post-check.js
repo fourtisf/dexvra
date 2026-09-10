@@ -43,6 +43,7 @@ const launchpads = require('../src/launchpads');
 const build = require('../src/helpers/build');
 const { chainOf } = require('../src/config/chains');
 const { DEXVRA_API_BASE } = require('../src/config/constants');
+const { ticker } = require('../src/helpers/format');
 
 const G = '\x1b[32m', R = '\x1b[31m', Y = '\x1b[33m', D = '\x1b[2m', X = '\x1b[0m';
 const ok = (m) => console.log(`  ${G}✓${X} ${m}`);
@@ -121,8 +122,10 @@ function verdict(a) {
 }
 
 function report(row, a) {
-  const sym = row.sym || row.symbol || '?';
-  const head = `$${sym}${row.name ? ` — ${row.name}` : ''}  ${D}${row.chain}/${row.address}${X}`;
+  // ⚠️ ONE `$`. The listing store's convention is `sym: "$BONK"`, so prepending
+  // another printed `$$ORCHFLOWS` on the line whose whole job is naming the
+  // token — the `From $1,000,0…` defect, on the check that reports it.
+  const head = `${ticker(row.sym || row.symbol)}${row.name ? ` — ${row.name}` : ''}  ${D}${row.chain}/${row.address}${X}`;
   const keyHole = a.holes.some((h) => postFigures.KEY_FIGURES.has(h));
   const level = verdict(a);
 
@@ -291,7 +294,7 @@ async function main() {
     try {
       a = await assemble(row);
     } catch (e) {
-      bad(`$${row.sym || '?'} ${row.chain}/${row.address}: ${e.message}`);
+      bad(`${ticker(row.sym)} ${row.chain}/${row.address}: ${e.message}`);
       bad_++;
       continue;
     }

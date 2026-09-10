@@ -97,6 +97,10 @@ export interface FillDeps {
   /** Writes the resolved logo into the listing store. Best-effort: a failed
    *  write costs permanence, never the logo — the process memory still has it. */
   persist?: (chain: string, address: string, url: string) => Promise<unknown>;
+  /** Copy the resolved artwork onto our own disk and move the row onto it.
+   *  Best-effort and AFTER `persist`: a pin that cannot be made leaves exactly
+   *  the behaviour that shipped before it, which is a working gateway url. */
+  pin?: (chain: string, address: string, url: string) => Promise<string | null>;
   now?: () => number;
   log?: (msg: string) => void;
 }
@@ -107,6 +111,8 @@ export interface SweepReport {
   missing: number;
   undecided: number;
   persisted: number;
+  /** How many stopped depending on a public gateway this pass. */
+  pinned: number;
   /** Which source each logo came from — "6 of 7 from CoinGecko" is the
    *  difference between a working chain of sources and one carrying all of it. */
   bySource: Record<string, number>;
@@ -126,7 +132,7 @@ export async function sweepLogos(
 ): Promise<SweepReport> {
   const resolve = deps.resolve ?? ((c: string, a: string) => resolveLogo(c, a));
   const now = deps.now ?? Date.now;
-  const report: SweepReport = { looked: 0, found: 0, missing: 0, undecided: 0, persisted: 0, bySource: {} };
+  const report: SweepReport = { looked: 0, found: 0, missing: 0, undecided: 0, persisted: 0, pinned: 0, bySource: {} };
 
   for (const t of candidates) {
     if (report.looked >= MAX_PER_SWEEP) break;
@@ -150,6 +156,25 @@ export async function sweepLogos(
           if (await deps.persist(t.chain, t.address, r.url)) report.persisted++;
         } catch {
           /* permanence is best-effort; the logo is already in memory */
+        }
+      }
+      // ⚠️ AND THEN OFF THE GATEWAY ALTOGETHER. Persisting a gateway url makes
+      // the ANSWER permanent and leaves the DELIVERY a dice roll — the same CID
+      // flipped ✓/✗ across four deploys with no code change. Pinning is what
+      // makes it a file on our own disk. AFTER the persist, never instead of
+      // it: the pin's compare-and-set requires the row to already hold the url
+      // it is moving off.
+      if (deps.pin) {
+        try {
+          const pinned = await deps.pin(t.chain, t.address, r.url);
+          if (pinned) {
+            report.pinned++;
+            // The in-process copy moves too, or this board render keeps handing
+            // out the gateway url the store no longer holds.
+            mem.set(key(t.chain, t.address), { url: pinned, at: now(), kind: "found" });
+          }
+        } catch {
+          /* a pin that cannot be made leaves a url that already loaded */
         }
       }
       continue;
@@ -176,6 +201,11 @@ export async function sweepLogos(
       `[logos] looked up ${report.looked}: ${report.found} found${src ? ` (${src})` : ""}` +
         `, ${report.missing} with no artwork anywhere, ${report.undecided} undecided (an upstream could not be asked)` +
         `, ${report.persisted} written to the listing store` +
+        // A value nobody can read is the same as no value. "6 written" and "6
+        // written, 6 pinned" are different states: the second is off the public
+        // gateways for good, the first is a working url that re-rolls its dice
+        // on every render.
+        (report.pinned ? `, ${report.pinned} pinned to our own disk` : "") +
         eta +
         // A store that refuses every write is a sweep whose work dies with the
         // process — the logos come back on the next restart and nothing said
