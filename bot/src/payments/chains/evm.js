@@ -5,6 +5,22 @@ const { rpcRead, rpcUrls } = require("../../config/rpc");
 const log = require("../../helpers/logger");
 
 const PLAIN_TRANSFER_GAS = 21000n; // intrinsic cost of an EOA → EOA send
+// ⚠️ WHAT TO SIGN WHEN THE ESTIMATE COULD NOT BE MADE — and 21,000 is not it.
+//
+// On a Nitro/Orbit chain the L1 poster cost is charged in GAS UNITS, not as a
+// separate term, so a plain transfer there costs well above the intrinsic
+// 21,000 — which is exactly why the trade bot's own nativeTransferGas falls back
+// to 120,000 with the note "covers Orbit L1 gas". Robinhood Chain is one of
+// those, and its node is already documented in this repo as answering
+// eth_estimateGas with a non-standard envelope. Signing 21,000 there does not
+// fail cheaply: the transfer runs OUT OF GAS on-chain, the gas is consumed, and
+// the sweep never lands — then sweepRetry comes back and burns it again.
+//
+// The two errors are not symmetric. Reserving too LITTLE is unrecoverable (gas
+// spent, funds still stranded); reserving too MUCH only leaves unused gas in the
+// temp wallet, because a node charges for gas USED and refunds the rest. So the
+// unmeasured case is generous.
+const UNMEASURED_GAS = 120000n;
 const ATTEMPTS = 3; // public RPCs rate-limit; a quote can also go stale
 const CONFIRM_TIMEOUT_MS = 120000; // never block a sweep pass on a stuck mempool
 
@@ -101,8 +117,61 @@ async function gasFor(p, from, to) {
     const e = BigInt(est);
     return e > PLAIN_TRANSFER_GAS ? (e * 12n) / 10n : PLAIN_TRANSFER_GAS;
   } catch (e) {
-    log.debug(`[evm] estimateGas fell back to ${PLAIN_TRANSFER_GAS}: ${e.message}`);
-    return PLAIN_TRANSFER_GAS;
+    log.debug(`[evm] estimateGas fell back to ${UNMEASURED_GAS}: ${e.message}`);
+    return UNMEASURED_GAS;
+  }
+}
+
+/**
+ * The L1 data fee an OP-stack chain charges ON TOP of `gasLimit × gasPrice`.
+ *
+ * ⚠️ op-geth's balance pre-check is `value + gas × gasFeeCap + l1Cost`, and this
+ * adapter only ever reserved the first two terms. `value = bal − gasLimit ×
+ * priceCap` therefore leaves EXACTLY ZERO slack in that check, so the node
+ * rejects the sweep for any l1Cost above zero — deterministically, not on a bad
+ * afternoon. Base is a payable chain (and now one of three ETH rails a Base
+ * token is offered), so every Base sweep bounces with "insufficient funds for
+ * gas * price + value": a message naming the two terms that WERE covered and not
+ * the one that was not. The trade bot's withdraw path paid for this lesson
+ * already; this is the same fix on the payment sweep.
+ *
+ * It DISCOVERS whether a chain has the predeploy rather than carrying a list —
+ * the rule v4.js follows for the PoolManager — so Ethereum, BSC and Robinhood
+ * (Nitro folds L1 into the gas units) answer 0 and behave exactly as they did.
+ *
+ * ⚠️ A READ THAT FAILED IS NOT A CHAIN WITHOUT AN ORACLE. Caching the second as
+ * the first would disable L1 accounting on Base for the life of the process
+ * after one transient 403, silently, on the exact path where being short by the
+ * L1 fee means the sweep does not send. Only an answer is remembered.
+ */
+const OP_GAS_ORACLE = "0x420000000000000000000000000000000000000F";
+const hasL1Oracle = new Map(); // chain → boolean, ONLY ever set from a read that answered
+
+async function l1DataFee(chain, p, req) {
+  let has = hasL1Oracle.get(chain);
+  if (has === undefined) {
+    let code;
+    try {
+      code = await p.getCode(OP_GAS_ORACLE);
+    } catch (e) {
+      log.debug(`[evm] ${chain} L1 oracle probe failed: ${e.message}`);
+      return { fee: 0n, ok: false };
+    }
+    has = !!(code && code !== "0x");
+    hasL1Oracle.set(chain, has);
+  }
+  if (!has) return { fee: 0n, ok: true }; // not an OP-stack chain: 0 is the true answer
+  try {
+    // The unsigned serialization under-counts by the signature bytes the oracle
+    // would see; the caller's headroom covers that, and an over-estimate only
+    // ever means a slightly smaller sweep.
+    const raw = ethers.Transaction.from(req).unsignedSerialized;
+    const oracle = new ethers.Contract(OP_GAS_ORACLE, ["function getL1Fee(bytes) view returns (uint256)"], p);
+    const f = await oracle.getL1Fee(raw);
+    return { fee: BigInt(f) > 0n ? BigInt(f) : 0n, ok: true };
+  } catch (e) {
+    log.debug(`[evm] ${chain} getL1Fee failed: ${e.message}`);
+    return { fee: 0n, ok: false };
   }
 }
 
@@ -159,7 +228,26 @@ async function sweep(chain, wallet, treasury) {
       // Reserve gasLimit × cap — no arbitrary multiplier. The old 2× buffer
       // stranded a full extra transaction's worth of native token in every
       // temp wallet, permanently, on every order.
-      const reserve = gasLimit * priceCap;
+      const l2Reserve = gasLimit * priceCap;
+      // …plus the THIRD term an OP-stack node puts in its balance check. Priced
+      // against a provisional value, because the L1 fee is a function of the
+      // serialized bytes and `value` is a few of them; +25% covers that and the
+      // signature bytes the unsigned form omits. A read that could not be made
+      // stands in with the L2 cost rather than a zero — the same choice the
+      // trade bot makes, and for the same reason: too little is unrecoverable.
+      const l1 =
+        bal > l2Reserve
+          ? await l1DataFee(chain, p, {
+              to: treasury,
+              value: bal - l2Reserve,
+              gasLimit,
+              ...(eip1559
+                ? { type: 2, maxFeePerGas: priceCap, maxPriorityFeePerGas: fee.maxPriorityFeePerGas }
+                : { type: 0, gasPrice: fee.gasPrice }),
+            })
+          : { fee: 0n, ok: true };
+      const l1Cost = l1.ok ? l1.fee : l2Reserve;
+      const reserve = l2Reserve + l1Cost + l1Cost / 4n;
       const value = bal - reserve;
       if (value <= 0n) {
         // Not a failure to retry forever: the balance cannot pay for its own
@@ -203,4 +291,17 @@ async function sweep(chain, wallet, treasury) {
   }
 }
 
-module.exports = { family: "evm", generate, getBalance, sweep, gasFor };
+module.exports = {
+  family: "evm",
+  generate,
+  getBalance,
+  sweep,
+  gasFor,
+  l1DataFee,
+  UNMEASURED_GAS,
+  // The oracle verdict is remembered per chain for the life of the process,
+  // which is right in production and is inherited state in a suite: one test
+  // that probes an OP-stack chain answers for every later one. Stated rather
+  // than inherited — the scar the auto-trend panel helper already carries.
+  _test_forgetL1Oracle: () => hasL1Oracle.clear(),
+};

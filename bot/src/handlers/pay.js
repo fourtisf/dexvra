@@ -4,7 +4,7 @@
 const { Markup } = require("telegraf");
 const { armPayment } = require("../payments/payment");
 const { sendCard, answer, toast } = require("../helpers/message");
-const { payOptionsFor, optionFor } = require("../config/payOptions");
+const { payOptionsFor, optionFor, networkLabel } = require("../config/payOptions");
 const menu = require("./menu");
 const premium = require("../premium");
 const tpl = require("../templates");
@@ -24,20 +24,28 @@ const tpl = require("../templates");
  * Appended at the END, which is what makes it safe: Telegram entity offsets are
  * UTF-16 code units counted from the start, so nothing already in the payload
  * moves. The `html` shape is handled separately because entities do not apply.
+ *
+ * ⚠️ THE "ALREADY THERE" TEST IS THE RENDERED PHRASE, NEVER A BARE MENTION.
+ * `text.includes("Ethereum")` is satisfied by an operator card that happens to
+ * say "we accept Ethereum, Solana and BNB" — a sentence that names no network
+ * for THIS order and suppressed the enforced line completely. `Network: <name>`
+ * is what the template emits, so it is the only thing that proves the line is
+ * on the card.
  */
 function ensureNetwork(payload, network) {
   if (!payload || typeof payload !== "object" || !network) return payload;
-  const line = `\n\n🔗 Network: ${network} — send on this network only.`;
+  const said = `Network: ${network}`;
+  const line = `\n\n🔗 ${said} — send on this network only.`;
   if (payload.html != null) {
     const html = String(payload.html);
-    if (html.includes(network)) return payload;
-    return { ...payload, html: `${html}\n\n🔗 <b>Network: ${network}</b> — send on this network only.` };
+    if (html.includes(said)) return payload;
+    return { ...payload, html: `${html}\n\n🔗 <b>${said}</b> — send on this network only.` };
   }
   const text = String(payload.text || "");
-  if (text.includes(network)) return payload;
+  if (text.includes(said)) return payload;
   // Bold the "Network: <name>" run so it reads as the instruction it is.
   const boldFrom = text.length + "\n\n🔗 ".length;
-  const boldLen = `Network: ${network}`.length;
+  const boldLen = said.length;
   return {
     ...payload,
     text: text + line,
@@ -83,7 +91,13 @@ async function startPayment(ctx, order) {
   const priced = picked
     ? { ...order, chain: picked.chain, native: picked.native, humanAmount: picked.amount }
     : order;
-  const network = picked ? picked.label : "";
+  // ⚠️ NAMED FROM THE CHAIN BEING ARMED, never only from a picked option. With
+  // no `prices` table there is nothing to pick, and `""` rendered the card's one
+  // load-bearing line as "🔗 Network:  — send on this network only." — a blank
+  // where the network goes, on the message that takes the money. Every caller
+  // passes a table today (a test scans for it); the sixth flow added later is
+  // the one this is for.
+  const network = picked ? picked.label : networkLabel(priced.chain);
 
   const r = await armPayment(ctx, priced);
   // label embeds the user's symbol — sanitize so it can't inject markup

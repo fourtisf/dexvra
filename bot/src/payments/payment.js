@@ -13,6 +13,7 @@ const { isAdminUser, FULFIL_SLOW_MS, PAYMENT_CONFIRM_MS, PAYMENT_TIMEOUT_MS } = 
 const { answer, toast } = require("../helpers/message");
 const { escapeHtml } = require("../helpers/format");
 const { toSmallest, humanWithSymbol } = require("./units");
+const { networkLabel } = require("../config/payOptions");
 const wallets = require("./wallets");
 const verify = require("./verify");
 const orders = require("./orders");
@@ -101,7 +102,16 @@ async function confirmPayHandler(ctx) {
     ctx,
     adminFree
       ? "⏳ Running your order — hang tight…"
-      : tpl.render("checking_payment", { chain: order.chain.toUpperCase(), amount: order.humanAmount, native: order.native }),
+      : tpl.render("checking_payment", {
+          // networkLabel, not chain.toUpperCase(): the pay card the buyer is
+          // looking at says "Robinhood Chain" and this said "ROBINHOOD" — two
+          // spellings of the settlement network on two consecutive messages, and
+          // the bare one is the broker-vs-chain ambiguity that label exists to
+          // prevent. One owner, so they cannot drift.
+          chain: networkLabel(order.chain),
+          amount: order.humanAmount,
+          native: order.native,
+        }),
   );
 
   try {

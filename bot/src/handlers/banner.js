@@ -8,6 +8,7 @@
 // with no token and no channels — the post drops whatever is missing.
 const { answer, toast, sendCard, getMediaFileId } = require("../helpers/message");
 const { nativeOf } = require("../config/chains");
+const { networkLabel } = require("../config/payOptions");
 const { BANNERS, bannerByKey } = require("../config/packages");
 const { escapeHtml } = require("../helpers/format");
 const { usdToNative } = require("../nativeprice");
@@ -22,6 +23,16 @@ const URL_RE = /^https?:\/\/\S+$/i;
 // the whole of its half of "pay in ETH on either network". Ethereum and
 // Robinhood both quote from the ETH price, so the two rows show the same amount
 // on purpose: a choice of rail, not of price.
+//
+// ⚠️ WHICH IS EXACTLY WHY EVERY ROW MUST NAME ITS RAIL. Adding Robinhood put a
+// SECOND `0.0500 ETH` button directly under the first, byte-identical, on the
+// one screen where this flow decides which network settles the order — and it
+// decides it for good, because `payChain` below pins whatever was tapped. Two
+// indistinguishable buttons, one arming Ethereum mainnet and one arming
+// Robinhood Chain, and the mistake they invite is mainnet ETH sent to a
+// Robinhood address: an uncreditable transfer. `networkLabel` is the SAME owner
+// pay.js's own picker reads, so the two screens can never come to spell a
+// network differently.
 const PAY_CHAINS = ["solana", "bsc", "ethereum", "robinhood", "tron", "ton"];
 
 function freshSession(ctx, patch) {
@@ -141,7 +152,7 @@ async function showPayMethods(ctx) {
     const q = await usdToNative(chain, bf.usd).catch(() => null);
     if (!q) continue;
     bf.pay[chain] = q;
-    rows.push([Markup.button.callback(`${q.human} ${q.native}`, `bpay_${chain}`)]);
+    rows.push([Markup.button.callback(`${q.human} ${q.native} · ${networkLabel(chain)}`, `bpay_${chain}`)]);
   }
   if (!rows.length) {
     return sendCard(ctx, require("../templates").render("price_feed_down"), menu.withHome([]));

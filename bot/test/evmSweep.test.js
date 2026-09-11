@@ -24,6 +24,14 @@ const state = {
   blockThrows: false,
   estimateThrows: false,
   balanceFailures: 0,
+  // OP-stack only. "0x" is "this chain has no GasPriceOracle predeploy", which is
+  // the true answer for Ethereum, BSC and Robinhood (Nitro folds the L1 cost into
+  // the gas units) — so every pre-existing test below runs the same arithmetic it
+  // always did, and that is the point: the L1 term must be a no-op where it must.
+  oracleCode: "0x",
+  oracleThrows: false,
+  l1Fee: 0n,
+  l1Calls: 0,
   sendThrows: null,
   waitThrows: null,
   sent: [],
@@ -53,7 +61,23 @@ class JsonRpcProvider {
     if (state.estimateThrows) throw new Error("execution reverted");
     return state.gasEstimate;
   }
+  async getCode() {
+    if (state.oracleThrows) throw new Error("SERVER_ERROR 403");
+    return state.oracleCode;
+  }
 }
+class Contract {
+  constructor(address) {
+    this.target = address;
+  }
+  async getL1Fee() {
+    state.l1Calls += 1;
+    return state.l1Fee;
+  }
+}
+const Transaction = {
+  from: (req) => ({ unsignedSerialized: "0x" + "ab".repeat(90), req }),
+};
 class Wallet {
   constructor(pk, provider) {
     this.privateKey = pk;
@@ -81,7 +105,7 @@ require.cache[ethersPath] = {
   id: ethersPath,
   filename: ethersPath,
   loaded: true,
-  exports: { ethers: { JsonRpcProvider, Wallet } },
+  exports: { ethers: { JsonRpcProvider, Wallet, Contract, Transaction } },
 };
 
 const evm = require("../src/payments/chains/evm");
@@ -95,9 +119,14 @@ function reset(balance) {
   state.blockThrows = false;
   state.estimateThrows = false;
   state.balanceFailures = 0;
+  state.oracleCode = "0x";
+  state.oracleThrows = false;
+  state.l1Fee = 0n;
+  state.l1Calls = 0;
   state.sendThrows = null;
   state.waitThrows = null;
   state.sent = [];
+  evm._test_forgetL1Oracle();
 }
 
 test("the fee cap is 1.5× base fee + tip, not the RPC's generous 2×", async () => {
@@ -162,12 +191,92 @@ test("a contract treasury gets the gas it needs, not a hardcoded 21000", async (
   assert.strictEqual(state.lastEstimateArgs.to, TREASURY, "estimated against the real recipient");
 });
 
-test("an un-estimatable send still goes out at the plain-transfer cost", async () => {
+// ⚠️ THE PREMISE HERE CHANGED, AND 21,000 WAS THE DEFECT.
+//
+// "Still goes out" is right; "at the plain-transfer cost" was a guess, and on a
+// Nitro/Orbit chain it is the wrong one — Robinhood Chain charges the L1 poster
+// cost in GAS UNITS, so 21,000 is below the floor there and the transfer runs
+// OUT OF GAS, burning the gas without delivering, on every sweepRetry pass
+// forever. Robinhood's node is already documented in this repo as answering
+// eth_estimateGas with a non-standard envelope, which is exactly the input that
+// reaches this branch. The errors are not symmetric: unused gas is refunded, so
+// an over-reserve is dust, and an under-reserve is unrecoverable.
+test("an un-estimatable send goes out on a limit that lands, not the bare 21,000", async () => {
   reset(1000000000000000000n);
   state.estimateThrows = true;
+  const r = await evm.sweep("robinhood", WALLET, TREASURY);
+  assert.ok(r.ok, r.error);
+  assert.strictEqual(state.sent[0].gasLimit, evm.UNMEASURED_GAS);
+  assert.ok(evm.UNMEASURED_GAS > 21000n, "…and that limit clears a Nitro chain's own floor");
+  // Still a sweep, not a refusal: the value is everything the limit leaves.
+  assert.strictEqual(state.sent[0].value, state.balance - evm.UNMEASURED_GAS * state.sent[0].maxFeePerGas);
+});
+
+// ── the third term in an OP-stack node's balance check ──────────────────────
+//
+// op-geth checks `value + gas × gasFeeCap + l1Cost`. Reserving only the first
+// two and setting `value = bal − gas × cap` leaves EXACTLY ZERO slack, so any
+// non-zero l1Cost rejects the sweep — deterministically, on every Base order.
+const OP_ORACLE_CODE = "0x60806040";
+
+test("an OP-stack sweep reserves the L1 data fee as well", async () => {
+  reset(1000000000000000000n);
+  state.oracleCode = OP_ORACLE_CODE;
+  state.l1Fee = 700000000000000n; // 0.0007 ETH
+  const r = await evm.sweep("base", WALLET, TREASURY);
+  assert.ok(r.ok, r.error);
+  const cap = state.sent[0].maxFeePerGas;
+  const l2 = 21000n * cap;
+  assert.strictEqual(state.sent[0].value, state.balance - l2 - state.l1Fee - state.l1Fee / 4n);
+  // The node's own check, with all THREE terms — which is what used to fail.
+  assert.ok(state.sent[0].value + l2 + state.l1Fee <= state.balance, "clears value + gas×cap + l1Cost");
+});
+
+test("a chain with no oracle predeploy is left exactly as it was", async () => {
+  reset(1000000000000000000n);
+  state.l1Fee = 700000000000000n; // would be charged if it were ever asked for
   const r = await evm.sweep("ethereum", WALLET, TREASURY);
   assert.ok(r.ok, r.error);
-  assert.strictEqual(state.sent[0].gasLimit, 21000n);
+  assert.strictEqual(state.l1Calls, 0, "the oracle is never called where there is none");
+  assert.strictEqual(state.sent[0].value, state.balance - 21000n * state.sent[0].maxFeePerGas);
+});
+
+// ⚠️ "The node did not answer" and "this chain has no oracle" are different
+// facts, and caching the second for the first would disable L1 accounting on
+// Base for the life of the process after one transient 403 — silently, on the
+// path where being short by the L1 fee means the sweep does not send.
+test("a failed oracle probe is not remembered as a chain without one", async () => {
+  reset(1000000000000000000n);
+  state.oracleThrows = true;
+  const first = await evm.l1DataFee("base", new JsonRpcProvider("u"), {});
+  assert.strictEqual(first.ok, false, "reported as unread, never as zero");
+  state.oracleThrows = false;
+  state.oracleCode = OP_ORACLE_CODE;
+  state.l1Fee = 5n;
+  const second = await evm.l1DataFee("base", new JsonRpcProvider("u"), {});
+  assert.strictEqual(second.ok, true);
+  assert.strictEqual(second.fee, 5n, "the next read is made, and it answers");
+});
+
+test("an L1 fee we could not read stands in at the L2 cost, never at zero", async () => {
+  reset(1000000000000000000n);
+  state.oracleCode = OP_ORACLE_CODE;
+  state.oracleThrows = false;
+  // Probe succeeds, the CALL fails: this chain has an oracle and we got no number.
+  const p = new JsonRpcProvider("u");
+  await evm.l1DataFee("base", p, {}); // caches has=true
+  const orig = Contract.prototype.getL1Fee;
+  Contract.prototype.getL1Fee = async () => {
+    throw new Error("call reverted");
+  };
+  try {
+    const r = await evm.sweep("base", WALLET, TREASURY);
+    assert.ok(r.ok, r.error);
+    const l2 = 21000n * state.sent[0].maxFeePerGas;
+    assert.strictEqual(state.sent[0].value, state.balance - l2 - l2 - l2 / 4n, "the L2 cost stands in");
+  } finally {
+    Contract.prototype.getL1Fee = orig;
+  }
 });
 
 test("a balance below its own gas cost is dust, not a failure to retry forever", async () => {

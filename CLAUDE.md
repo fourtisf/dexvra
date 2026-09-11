@@ -6212,6 +6212,98 @@ says `400 / COULD_NOT_FIND_ANY_ROUTE`, **no configuration will help**: a token
 still on a pump.fun curve becomes buyable when Jupiter can route it, and the
 honest answer is the one the card now gives.
 
+### "coba audit apakah ada bug saat pembayaran pakai chain eth eth robinhood"
+
+Asked over the finished network picker. Five defects, and the two that matter
+most are the two ETH rails being indistinguishable from each other — once on the
+button that picks them, once in the wei the sweep holds back.
+
+⚠️ **THE BANNER PICKER RENDERED TWO BYTE-IDENTICAL `0.0500 ETH` BUTTONS.** Banner
+ads are USD-priced and quoted per chain, so THAT list is this flow's network
+picker — and `payChain` pins whatever is tapped, so those buttons decide the
+settlement network outright. Adding Robinhood put a second row under the first
+with no way to tell them apart, on the one screen whose whole job is choosing
+where to send money; the mistake it invites is mainnet ETH sent to a Robinhood
+address, which nothing can credit. The file's own comment said the two rows
+"show the same amount on purpose: a choice of rail, not of price" and then did
+not name the rail. Every row carries `networkLabel(chain)` now — the SAME owner
+pay.js's picker reads, so two screens cannot come to spell one network
+differently. Measured by driving the picker, not by reading it.
+
+⚠️ **AND THE SWEEP DID NOT RESERVE WHAT AN OP-STACK NODE CHARGES.** op-geth's
+balance pre-check is `value + gas × gasFeeCap + l1Cost`, and this adapter only
+ever reserved the first two: `value = bal − gasLimit × priceCap` leaves EXACTLY
+ZERO slack, so any non-zero L1 fee rejects the sweep — deterministically, not on
+a bad afternoon. Base is a payable chain and is now one of three ETH rails a Base
+token is offered, so every Base sweep bounces with *"insufficient funds for gas *
+price + value"*: a message naming the two terms that WERE covered and not the one
+that was not. **The trade bot's withdraw path already paid for this exact lesson**
+(`_l1DataFee`); the payment sweep never learnt it. Same shape here — the
+predeploy is DISCOVERED rather than listed, a read that FAILED is never cached as
+"this chain has no oracle", and an L1 fee we could not read stands in at the L2
+cost rather than at zero, because too little is unrecoverable and too much is
+dust that comes back as unused gas.
+
+⚠️ **The estimate-failure fallback of 21,000 is wrong on Robinhood.** Nitro/Orbit
+chains charge the L1 poster cost in GAS UNITS, which is why this repo's own
+`nativeTransferGas` falls back to 120,000 with the note *"covers Orbit L1 gas"* —
+and Robinhood's node is already documented here as answering `eth_estimateGas`
+with a non-standard envelope, which is precisely the input that reaches this
+branch. Signing 21,000 there does not fail cheaply: the transfer runs OUT OF GAS,
+the gas is consumed, and the sweep never lands — then sweepRetry comes back and
+burns it again. `UNMEASURED_GAS` is the generous answer, and the asymmetry is the
+whole argument.
+
+- ⚠️ **`ensureNetwork`'s "already there" test was a bare MENTION of the name.**
+  An operator card saying *"we accept Ethereum, Solana and BNB"* names no network
+  for THIS order and suppressed the enforced line completely. It tests the
+  rendered phrase `Network: <name>` now — what the template emits, and the only
+  thing that proves the line is on the card. The old test pinned the loose
+  behaviour, so its RULE changed: a duplicate line costs a reader two seconds, a
+  missing one costs an uncreditable transfer.
+- ⚠️ **A caller with no `prices` table rendered `🔗 Network:  — send on this
+  network only.`** — a blank where the network goes, on the message that takes
+  the money. The label comes from the chain being ARMED now, never only from a
+  picked option. Every flow passes a table today (a scan says so); the sixth one
+  added later is what this is for.
+- **`checking_payment` said `ROBINHOOD` where the pay card said `Robinhood
+  Chain`** — two spellings of the settlement network on two consecutive
+  messages, and the bare one is the broker-vs-chain ambiguity `NETWORK_LABEL`
+  exists to prevent. One owner.
+
+**Checked and found sound, so the next round does not re-check them:** every call
+site's default option equals its `humanAmount` exactly, across every tier, every
+trending duration, both renewal tables and Mass DM (driven, not reasoned about);
+`netPick`'s `payPick = null` really does stop a double-tap, because the read, the
+`optionFor` check and the clear are all synchronous after the one `await`;
+`fulfillOrder` reads the TOKEN's chain off the payload and never `order.chain`,
+so overwriting the order's chain with the pay chain cannot mis-list a token; and
+the banner flow pins `payChain`, so its buyer is never asked twice.
+
+```bash
+cd bot && node scripts/run-tests.js test/payNetwork.test.js test/evmSweep.test.js test/confirmDetached.test.js
+```
+
+Nine guarantees are MUTATION-TESTED rather than argued: the banner rows losing
+their labels, `ensureNetwork` back to a bare mention, the blank network line, the
+toast back to the bare chain id, the gas fallback back to 21,000, the L1 term
+dropped from the reserve, an unread L1 fee standing in at zero, a failed probe
+cached as "no oracle", and the oracle called where there is none. Each fails
+between one and two tests.
+
+⚠️ **What could NOT be verified from here.** This sandbox has no RPC egress —
+`rpc.mainnet.chain.robinhood.com` and every public node answer 403 through the
+proxy — so the L1-fee arithmetic is proved against a stub node and against
+op-geth's documented balance check, never against a live chain. The first real
+Base or Robinhood sweep after this deploys is the measurement, and
+`[sweepretry] … still stuck` in the ops channel is what says it is still wrong.
+
+**Config a fix depends on:** nothing. ⚠️ Robinhood has ONE published RPC and no
+second opinion, and it is now an option on every order rather than only on
+Robinhood-token ones — so `RPC_ROBINHOOD_URLS` in `bot/.env` is the line that
+buys a fallback, and `npm run rpc:check` on the box is what says whether it is
+needed.
+
 ## Two bot processes, one config
 
 `bot/` runs **two** PM2 processes: `dexvra-bot` (`main.js`) and

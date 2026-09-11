@@ -20,7 +20,19 @@ process.env.BOT_DATA_DIR = fss.mkdtempSync(path.join(os.tmpdir(), "dexvra-paynet
 const test = require("node:test");
 const assert = require("node:assert");
 
-const { payOptionsFor, optionFor } = require("../src/config/payOptions");
+// ⚠️ ORDER MATTERS, and it is the loadEnv scar one package over: banner.js
+// DESTRUCTURES `usdToNative` at require time, so a stub installed after it is
+// loaded is never seen. Stubbed here so the picker can be driven with no egress.
+const nativeprice = require("../src/nativeprice");
+nativeprice.usdToNative = async (chain) => {
+  const px = { SOL: 200, ETH: 4000, BNB: 900, TRX: 0.3, TON: 5 }[require("../src/config/chains").nativeOf(chain)];
+  if (!px) return null;
+  const a = 200 / px;
+  return { amount: a, human: a >= 100 ? String(Math.ceil(a)) : a.toFixed(4), native: require("../src/config/chains").nativeOf(chain) };
+};
+
+const { payOptionsFor, optionFor, networkLabel } = require("../src/config/payOptions");
+const banner = require("../src/handlers/banner");
 const { TIER_MAP, trendingPrices } = require("../src/config/packages");
 const { startPayment, netPick, ensureNetwork } = require("../src/handlers/pay");
 const tpl = require("../src/templates");
@@ -307,7 +319,95 @@ test("⚠️ …even when an operator's saved template has no network line", () 
   );
 });
 
-test("a template that already names the network is left alone", () => {
-  const payload = { text: "Send ETH on Robinhood Chain", entities: [] };
+// ⚠️ THE OLD RULE HERE WAS "don't repeat yourself" AND IT WAS THE WRONG TRADE.
+// It matched a bare mention of the network's NAME, which a card can carry for
+// reasons that name no network for THIS order — "we accept Ethereum, Solana and
+// BNB" suppressed the enforced line completely, on the one line whose absence
+// costs a buyer their money. A duplicate line costs a reader two seconds; a
+// missing one costs an uncreditable transfer. So the test is the rendered
+// PHRASE, which is exactly what the template emits and the only thing that
+// proves the line is on the card.
+test("a card that renders the network line is not given a second one", () => {
+  const payload = { text: "👜 Send ETH\n\n🔗 Network: Robinhood Chain — send on this network only.", entities: [] };
   assert.strictEqual(ensureNetwork(payload, "Robinhood Chain"), payload);
+  const html = { html: "🔗 <b>Network: Ethereum</b> — send on this network only." };
+  assert.strictEqual(ensureNetwork(html, "Ethereum"), html);
+});
+
+test("a card that merely MENTIONS the name still gets the line", () => {
+  // The shape an operator card saved before this shipped can easily have.
+  const generic = { text: "Send ETH. We accept Ethereum, Solana and BNB.", entities: [] };
+  const out = ensureNetwork(generic, "Ethereum");
+  assert.notStrictEqual(out, generic, "a generic mention is not a network line");
+  assert.match(out.text, /Network: Ethereum — send on this network only\./);
+  const bold = (out.entities || []).find((e) => e.type === "bold");
+  assert.strictEqual(
+    out.text.slice(bold.offset, bold.offset + bold.length),
+    "Network: Ethereum",
+    "the entity offset must land on the words, not near them",
+  );
+});
+
+// A caller with no price table has nothing to PICK, and `""` rendered the pay
+// card's one load-bearing line as "🔗 Network:  — send on this network only." —
+// a blank where the network goes. Every flow passes a table today; the sixth one
+// added later is what this pins.
+test("a card armed with no price table still names its network", async () => {
+  const ctx = mkCtx();
+  await startPayment(ctx, {
+    kind: "banner",
+    chain: "robinhood",
+    native: "ETH",
+    humanAmount: "0.05",
+    label: "Hero banner",
+    payload: {},
+  });
+  const card = ctx.sent[ctx.sent.length - 1].text;
+  assert.match(card, /Network: Robinhood Chain/, "named from the chain being armed");
+  assert.doesNotMatch(card, /Network: {2}/, "never a blank where the network goes");
+});
+
+
+// ── the banner flow's own picker ────────────────────────────────────────────
+//
+// ⚠️ Banner ads are USD-priced and quoted per chain, so THAT list is this
+// flow's network picker and `payChain` pins whatever is tapped. Adding
+// Robinhood put a second `0.0500 ETH` row directly under the first,
+// byte-identical: two buttons, one arming Ethereum mainnet and one arming
+// Robinhood Chain, on the one screen that decides which network settles the
+// order. The mistake they invite is mainnet ETH sent to a Robinhood address,
+// which nothing can credit.
+async function bannerRows() {
+  const ctx = mkCtx();
+  ctx.session = {
+    type: "banner",
+    awaitingField: "banner_socials",
+    bannerForm: { slot: "Hero", size: "1500x500", duration: "24h", usd: 200 },
+  };
+  ctx.message = { text: "/skip" };
+  await banner.handleText(ctx);
+  return buttons(ctx).filter((b) => String(b.data).startsWith("bpay_"));
+}
+
+test("every banner pay row names its network", async () => {
+  const rows = await bannerRows();
+  assert.ok(rows.length >= 2, "the picker rendered rows");
+  const texts = rows.map((r) => r.text);
+  assert.strictEqual(new Set(texts).size, texts.length, `two rows are indistinguishable: ${texts.join(" | ")}`);
+  for (const r of rows) {
+    const chain = String(r.data).slice("bpay_".length);
+    assert.ok(
+      r.text.includes(networkLabel(chain)),
+      `${r.data} reads "${r.text}" and never names ${networkLabel(chain)}`,
+    );
+  }
+});
+
+test("the two ETH banner rows differ ONLY by network, never by price", async () => {
+  const rows = await bannerRows();
+  const eth = rows.filter((r) => r.data === "bpay_ethereum" || r.data === "bpay_robinhood");
+  assert.strictEqual(eth.length, 2, "both ETH rails are offered");
+  const amounts = eth.map((r) => r.text.split(" \u00b7 ")[0]);
+  assert.strictEqual(amounts[0], amounts[1], "a choice of rail, never of price");
+  assert.notStrictEqual(eth[0].text, eth[1].text, "and the rails are told apart");
 });

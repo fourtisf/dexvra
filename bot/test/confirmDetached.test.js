@@ -257,3 +257,23 @@ test("PAYMENT_CONFIRM_MS is far below the poll it replaced on the tap", () => {
     `the tap budget (${PAYMENT_CONFIRM_MS}ms) must stay well under the watch budget (${PAYMENT_TIMEOUT_MS}ms)`,
   );
 });
+
+
+// ⚠️ ONE SPELLING OF THE SETTLEMENT NETWORK, ACROSS BOTH MESSAGES.
+//
+// The pay card the buyer is still looking at says "Robinhood Chain"; this toast
+// said "ROBINHOOD" — and the bare word is the broker-vs-chain ambiguity the
+// NETWORK_LABEL constant exists to prevent, on the two consecutive messages that
+// tell somebody where to send money. networkLabel is the one owner of the name,
+// so the card and the toast cannot come to disagree.
+test("the verifying toast names the network the way the pay card does", async (t) => {
+  const order = mkOrder({ chain: "robinhood" });
+  harness(t, order, { balance: () => 0n });
+  await orders.saveOrder(order);
+  const ctx = mkCtx(order);
+  await confirmPayHandler(ctx);
+  const toastText = ctx.replies.find((r) => /Verifying your payment/.test(r));
+  assert.ok(toastText, "the buyer is told the check is running");
+  assert.match(toastText, /Robinhood Chain/);
+  assert.doesNotMatch(toastText, /ROBINHOOD/, "never the bare uppercased chain id");
+});
