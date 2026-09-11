@@ -42,10 +42,26 @@ test("⚠️ two package prices add EXACTLY, not in float", () => {
 });
 
 test("the total is what a buyer would add up by hand", () => {
-  assert.strictEqual(addon.totalWithAddon(XPRESS.SOL, "solana"), 2); // 1 + 1
-  assert.strictEqual(addon.totalWithAddon(XPRESS.BNB, "bsc"), 0.4); // 0.25 + 0.15
-  assert.strictEqual(addon.totalWithAddon(XPRESS.ETH, "ethereum"), 0.11); // 0.06 + 0.05
-  assert.strictEqual(addon.totalWithAddon(TIER_MAP.PLATINUM.price.BNB, "bsc"), 1.3);
+  assert.strictEqual(addon.totalWithAddon(XPRESS.SOL, "solana"), 3); // 1 + 2
+  assert.strictEqual(addon.totalWithAddon(XPRESS.BNB, "bsc"), 0.55); // 0.25 + 0.3
+  assert.strictEqual(addon.totalWithAddon(XPRESS.ETH, "ethereum"), 0.16); // 0.06 + 0.1
+  assert.strictEqual(addon.totalWithAddon(TIER_MAP.PLATINUM.price.BNB, "bsc"), 1.45); // 1.15 + 0.3
+});
+
+// ⚠️ The SHIPPED DEFAULT, read out of the source rather than off the resolved
+// constant. Two reasons, and both are scars in this repo:
+//   • an operator's bot/.env wins over the code default, so asserting the
+//     RESOLVED value would go red on their box for a reason that has nothing to
+//     do with the code — the rule run-tests.js already enforces for templates;
+//   • and a price is a business fact, so moving it should be a deliberate line
+//     in a diff rather than something that happens on the way past.
+test("the shipped fee is the FULL Mass DM price — the launch discount is gone", () => {
+  const src = fss.readFileSync(require.resolve("../src/config/constants.js"), "utf8");
+  const block = src.slice(src.indexOf("const MASS_DM_PRICE"), src.indexOf("MASS_DM_REVIEW_CHAT_ID"));
+  assert.ok(block.length > 50, "MASS_DM_PRICE not found — this scan proves nothing");
+  assert.match(block, /MASS_DM_PRICE_SOL\) \|\| 2/, "SOL: 2");
+  assert.match(block, /MASS_DM_PRICE_BNB\) \|\| 0\.3/, "BNB: 0.3");
+  assert.match(block, /MASS_DM_PRICE_ETH\) \|\| 0\.1/, "ETH: 0.1");
 });
 
 // ── one price, one product ──────────────────────────────────────────────────
@@ -85,9 +101,9 @@ test("⚠️ a currency the add-on cannot price is DROPPED from the order's rail
   // leaving TRX at its bare listing price would sell a Tron rail that charges
   // for the listing and throws the broadcast in for free.
   const t = addon.pricesWithAddon(XPRESS, "solana");
-  assert.strictEqual(t.SOL, 2);
-  assert.strictEqual(t.ETH, 0.11);
-  assert.strictEqual(t.BNB, 0.4);
+  assert.strictEqual(t.SOL, addAmount(XPRESS.SOL, MASS_DM_PRICE.SOL));
+  assert.strictEqual(t.ETH, addAmount(XPRESS.ETH, MASS_DM_PRICE.ETH));
+  assert.strictEqual(t.BNB, addAmount(XPRESS.BNB, MASS_DM_PRICE.BNB));
   assert.ok(!("TRX" in t), "TRX has no add-on price — it may not stay at 900");
   assert.ok(!("TON" in t), "TON has no add-on price");
 });
@@ -104,7 +120,8 @@ test("…and the order's own network survives, so it can still be armed", () => 
 test("⚠️ Robinhood keeps BOTH its ETH rails, and both carry the fee", () => {
   const opts = payOptionsFor({ chain: "robinhood", prices: addon.pricesWithAddon(XPRESS, "robinhood") });
   assert.deepStrictEqual(opts.map((o) => o.chain), ["robinhood", "ethereum"]);
-  assert.deepStrictEqual(opts.map((o) => o.amount), [0.11, 0.11], "a choice of rail, never of price");
+  const eth = addAmount(XPRESS.ETH, MASS_DM_PRICE.ETH);
+  assert.deepStrictEqual(opts.map((o) => o.amount), [eth, eth], "a choice of rail, never of price");
 });
 
 // ── the flow, driven ────────────────────────────────────────────────────────
@@ -148,7 +165,7 @@ test("the review card offers the add-on, with its fee ON the button", async () =
   const b = buttons(ctx);
   const row = b.find((t) => /Broadcast/.test(t));
   assert.ok(row, "a Solana listing must be offered the add-on");
-  assert.match(row, /1 SOL/, "the price a buyer reads before tapping is on the button");
+  assert.ok(row.includes(`${MASS_DM_PRICE.SOL} SOL`), `the fee a buyer reads before tapping is on the button: ${row}`);
 });
 
 test("⚠️ …and a Tron listing is offered NO such button at all", async () => {
@@ -161,7 +178,7 @@ test("composing a broadcast attaches it and returns to the review card", async (
   const ctx = mkCtx(form());
   await listing.broadcastAdd(ctx);
   assert.strictEqual(ctx.session.awaitingField, "broadcast");
-  assert.match(ctx.sent[ctx.sent.length - 1].text, /1 SOL/, "the prompt states the fee");
+  assert.ok(ctx.sent[ctx.sent.length - 1].text.includes(`${MASS_DM_PRICE.SOL} SOL`), "the prompt states the fee");
 
   ctx.message = { text: "  gm from Acai", entities: [{ type: "bold", offset: 2, length: 2 }] };
   await listing.handleText(ctx);
@@ -238,11 +255,11 @@ test("the fee rides ONE order, in ONE coin, with the message attached", async ()
     pay.startPayment = real;
   }
   assert.ok(armed, "goPay must reach the payment path");
-  assert.strictEqual(armed.humanAmount, 2, "1 SOL listing + 1 SOL broadcast");
+  assert.strictEqual(armed.humanAmount, addAmount(XPRESS.SOL, MASS_DM_PRICE.SOL), "the listing plus the fee, in SOL");
   assert.strictEqual(armed.native, "SOL");
   assert.strictEqual(armed.chain, "solana");
   assert.strictEqual(armed.payload.broadcast.text, "gm", "the composed message travels with the order");
-  assert.strictEqual(armed.prices.SOL, 2);
+  assert.strictEqual(armed.prices.SOL, addAmount(XPRESS.SOL, MASS_DM_PRICE.SOL));
 });
 
 test("…and without one, nothing about the order changes", async () => {

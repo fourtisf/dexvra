@@ -425,11 +425,23 @@ const RAID_BAR_WIDTH = Math.min(12, Math.max(3, int(env.RAID_BAR_WIDTH, 6)));
 
 // ── Paid Mass DM (public pays a flat price to DM the /start audience once) ────
 const MASS_DM_ENABLED = bool(env.MASS_DM_ENABLED, true);
-// 50%-off launch pricing (was 2 / 0.3 / 0.1). Override per-chain via env.
+// FULL price — the 50%-off launch discount (1 / 0.15 / 0.05) was withdrawn on
+// the operator's call: "skrg tidak ada diskon skrg harus 100%".
+//
+// ⚠️ ONE TABLE, TWO PRODUCTS. This is the standalone /massdm price AND the fee
+// the broadcast add-on charges on a listing order (config/broadcastAddon.js
+// reads this constant rather than keeping a copy), so moving it moves both at
+// once — which is the point: the day they could differ is the day a buyer is
+// quoted one number and charged the other.
+//
+// ⚠️ AND A BOX THAT ALREADY SET THESE KEEPS ITS OWN VALUES. An operator whose
+// bot/.env carries MASS_DM_PRICE_SOL from the discount era is still on the
+// discount after this deploys, silently — the "config a fix depends on" rule,
+// on a price. Unset them to pick this up.
 const MASS_DM_PRICE = {
-  SOL: Number(env.MASS_DM_PRICE_SOL) || 1,
-  BNB: Number(env.MASS_DM_PRICE_BNB) || 0.15,
-  ETH: Number(env.MASS_DM_PRICE_ETH) || 0.05,
+  SOL: Number(env.MASS_DM_PRICE_SOL) || 2,
+  BNB: Number(env.MASS_DM_PRICE_BNB) || 0.3,
+  ETH: Number(env.MASS_DM_PRICE_ETH) || 0.1,
 };
 // Chat that receives paid Mass DM jobs for admin review + the delivery report.
 const MASS_DM_REVIEW_CHAT_ID = env.MASS_DM_REVIEW_CHAT_ID || "";

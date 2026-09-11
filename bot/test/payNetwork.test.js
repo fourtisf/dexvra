@@ -34,6 +34,10 @@ nativeprice.usdToNative = async (chain) => {
 const { payOptionsFor, optionFor, networkLabel } = require("../src/config/payOptions");
 const banner = require("../src/handlers/banner");
 const { TIER_MAP, trendingPrices } = require("../src/config/packages");
+// ⚠️ Read, never retyped: what the two payFor() cases below pin is the CHAIN
+// MAPPING (a Tron token pays BNB on BSC), and a literal price there expires
+// silently the next time the price moves — which it just did.
+const { MASS_DM_PRICE } = require("../src/config/constants");
 const { startPayment, netPick, ensureNetwork } = require("../src/handlers/pay");
 const tpl = require("../src/templates");
 
@@ -554,11 +558,11 @@ test("a Robinhood listing paid on Ethereum mainnet is still LISTED on Robinhood"
 const massdm = require("../src/handlers/massdm");
 
 test("a Robinhood project's Mass DM is billed in ETH on Robinhood Chain, like its listing", () => {
-  assert.deepStrictEqual(massdm.payFor("robinhood"), { currency: "ETH", payChain: "robinhood", native: "ETH", price: 0.05 });
-  assert.deepStrictEqual(massdm.payFor("solana"), { currency: "SOL", payChain: "solana", native: "SOL", price: 1 });
+  assert.deepStrictEqual(massdm.payFor("robinhood"), { currency: "ETH", payChain: "robinhood", native: "ETH", price: MASS_DM_PRICE.ETH });
+  assert.deepStrictEqual(massdm.payFor("solana"), { currency: "SOL", payChain: "solana", native: "SOL", price: MASS_DM_PRICE.SOL });
   // A coin the Mass DM table does not price still settles in BNB on BSC — what
   // those buyers have always been offered, and the picker adds ETH beside it.
-  assert.deepStrictEqual(massdm.payFor("tron"), { currency: "BNB", payChain: "bsc", native: "BNB", price: 0.15 });
+  assert.deepStrictEqual(massdm.payFor("tron"), { currency: "BNB", payChain: "bsc", native: "BNB", price: MASS_DM_PRICE.BNB });
   assert.strictEqual(massdm.payFor("sui").payChain, "bsc", "a payVia chain bills where it always did");
 });
 
@@ -569,8 +573,12 @@ test("…and its picker offers both ETH rails, own chain first", async () => {
     massForm: { ca: RH_TOKEN, chain: "robinhood", pay: massdm.payFor("robinhood"), text: "gm", entities: [], mediaFileId: null },
   };
   await massdm.payPick(ctx);
+  // Built from the price table, not retyped: what this pins is the two RAILS
+  // and their order, and a literal fee here expires silently the next time the
+  // price moves — which it just did when the launch discount was withdrawn.
+  const eth = MASS_DM_PRICE.ETH;
   assert.deepStrictEqual(
     rails(ctx).map((b) => b.text),
-    ["0.05 ETH · Robinhood Chain", "0.05 ETH · Ethereum"],
+    [`${eth} ETH · Robinhood Chain`, `${eth} ETH · Ethereum`],
   );
 });

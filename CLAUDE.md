@@ -10629,7 +10629,7 @@ reads better than an appended one.
 ## "Di bawahnya ada fitur add broadcast dengan fee tambahan"
 
 A project buying a listing can now attach a **Mass DM** to the same order
-instead of buying it separately: `📣 + Broadcast to all users (+1 SOL)` on the
+instead of buying it separately: `📣 + Broadcast to all users (+2 SOL)` on the
 review card, compose, and the fee rides the listing's own payment.
 
 **Nothing new sends anything.** The message goes through the EXISTING paid Mass
@@ -10648,6 +10648,20 @@ ever sees it.
   quoted one number and charged the other. A test scans for it, because "reads
   the same constant" is a property no value comparison can prove once the two
   numbers happen to coincide.
+- ⚠️ **THE 50% LAUNCH DISCOUNT IS WITHDRAWN** — "skrg tidak ada diskon skrg
+  harus 100%". `MASS_DM_PRICE` ships at the full **2 SOL / 0.3 BNB / 0.1 ETH**
+  (it was 1 / 0.15 / 0.05). One table, two products, so this DOUBLES the
+  standalone `/massdm` price as well as the add-on fee — deliberately, and the
+  same shape as the trending floors shipping on. A test pins the shipped default
+  by reading the SOURCE rather than the resolved constant, because an operator's
+  `.env` beats the code and asserting the resolved value would go red on their
+  box for a reason that has nothing to do with the code.
+- ⚠️ **A test pinned to a PRICE expires the moment the price moves**, silently.
+  Withdrawing the discount turned eight assertions red across two files, every
+  one of them retyping a number whose SUBJECT was something else — the chain
+  mapping, the two ETH rails, the fee reaching the button. They read
+  `MASS_DM_PRICE` now, and the price itself is pinned in exactly two places: the
+  shipped-default scan and the one "add it up by hand" test.
 - **It is billed in the ORDER'S OWN coin**, one order, one amount, one address,
   one network — the rule the whole payment path now enforces. That is also why
   availability is computed rather than assumed: `MASS_DM_PRICE` prices SOL, BNB
@@ -10710,8 +10724,11 @@ between one and three tests.
 cd bot && node scripts/run-tests.js test/listingBroadcast.test.js   # 23 tests, no network
 ```
 
-**Config a fix depends on:** nothing — it ships on and needs no new value.
-`MASS_DM_PRICE_SOL` / `_BNB` / `_ETH` in `bot/.env` move the fee, and
+**Config a fix depends on:** nothing to ADD — but ⚠️ **a box that already set
+`MASS_DM_PRICE_SOL` / `_BNB` / `_ETH` in `bot/.env` keeps its own values and
+stays on the old discount after this deploys, silently.** That is the "config a
+fix depends on" rule landing on a price: `grep MASS_DM_PRICE /opt/dexvra/bot/.env`
+is the check, and unsetting those lines is what picks the full price up.
 `MASS_DM_ENABLED=0` removes the button everywhere. ⚠️ Scoped to the LISTING
 flow deliberately: trending and banner orders do not offer it, and adding them
 is the same three lines in their own `goPay` if that is wanted.
