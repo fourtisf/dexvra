@@ -304,6 +304,12 @@ const DEFAULTS = {
     "🔹 Already paid? Contact support with order ID `{order}`.",
   payment_snag:
     "⚠️ **We're on it**\n\n🔹 Your payment for order `{order}` arrived, but finalizing hit a snag. Your funds are safe — contact support and we'll complete your order.",
+  // A pay card outlives the payment it was made for: the watcher that credits a
+  // late transfer runs after the handler returned, so it cannot clear the card
+  // from the session. Without this, a second tap re-reads a wallet that has been
+  // SWEPT and answers "payment not detected" about an order already paid for.
+  payment_already_credited:
+    "✅ **Already received**\n\n🔹 Order `{order}` is paid — there's nothing left to confirm. Your receipt is posted here the moment it's ready.",
   // Receipt shape follows the reference bot the operator asked for: one congrats
   // line, the token's page as a BARE url, then one line per post that went out.
   // Each destination is its OWN line with its OWN label, so the operator can
@@ -1215,6 +1221,7 @@ const META = {
   pay_card_admin: { group: "Bot Messages", label: "Payment card (admin free)", ph: ["label"] },
   payment_not_detected: { group: "Bot Messages", label: "Payment not detected", ph: ["amount", "native", "address", "order"] },
   payment_snag: { group: "Bot Messages", label: "Payment snag", ph: ["order"] },
+  payment_already_credited: { group: "Bot Messages", label: "Payment already credited", ph: ["order"] },
   success_listing: { group: "Bot Messages", label: "Success: Xpress listing", ph: ["symbol", "name", "siteUrl", "listingUrl", "xUrl", "postLinks", "announceX", "site", "listing", "trending", "announce", "xlisting"] },
   success_listing_tiered: { group: "Bot Messages", label: "Success: Listing & Trending", ph: ["symbol", "name", "tier", "tierEmoji", "hours", "siteUrl", "listingUrl", "xUrl", "announceUrl", "trendingUrl", "postLinks", "announceX", "site", "listing", "trending", "announce", "xlisting"] },
   success_trending: { group: "Bot Messages", label: "Success: trending", ph: ["symbol", "hours", "siteUrl", "trendingUrl", "announceUrl", "xUrl", "postLinks", "announceX", "site", "listing", "trending", "announce", "xlisting"] },

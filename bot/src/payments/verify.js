@@ -1,8 +1,17 @@
-// Payment verification: a synchronous t=0 balance check, then a poll up to the
-// timeout. On success the sweep is fired (not awaited) so onSuccess/fulfilment
-// is never blocked by — or gated on — the sweep landing.
+// Payment verification: a t=0 balance check, then a poll up to the timeout. On
+// success the sweep is fired (not awaited) so onSuccess/fulfilment is never
+// blocked by — or gated on — the sweep landing.
+//
+// ⚠️ BOTH HALVES ARE OPTIONAL TO THE CALLER, and that is not tidiness. A caller
+// running inside a Telegraf handler cannot afford either of them unbounded:
+// the polling loop does not fetch the next batch of updates until every handler
+// has settled, so waiting here is the whole bot going deaf (see
+// PAYMENT_CONFIRM_MS). `opts.timeout: 0` asks one question and answers it;
+// `opts.firstReadMs` bounds the RPC read that answers it. The background scans
+// (recovery.js) pass neither and behave exactly as they always have.
 const { PAYMENT_POLL_MS, PAYMENT_TIMEOUT_MS, PAYMENT_TOLERANCE_PCT } = require("../config/constants");
 const wallets = require("./wallets");
+const { bounded } = require("../helpers/bounded");
 const log = require("../helpers/logger");
 
 // Ceiling on the tolerance knob. A typo (PAYMENT_TOLERANCE_PCT=95) must not
@@ -63,19 +72,64 @@ async function noteSwept(chain, address, txid) {
   }
 }
 
-/** Confirm `amount` (smallest-unit string/BigInt) has landed at `address`. */
-async function verifyPayment(chain, address, amount) {
+/** The t=0 read, BOUNDED.
+ *
+ *  `wallets.getBalance` is an RPC call with no deadline of its own, and this one
+ *  runs on the Confirm tap — where a wedged public node does not cost one slow
+ *  answer, it parks Telegraf's polling loop and the bot answers nobody (see
+ *  PAYMENT_CONFIRM_MS). A read we could not finish is reported as `null`, never
+ *  as a zero balance: "we could not ask" and "the money is not there" are
+ *  different facts, and only the second one is about the buyer. Both are handled
+ *  the same way by the caller — hand it to the watcher — but the log line has to
+ *  be able to tell them apart, because one of them is our RPC.
+ */
+async function balanceNow(chain, address, ms) {
+  const MISS = Symbol("timeout");
+  const r = await bounded(
+    wallets.getBalance(chain, address).catch((e) => {
+      log.debug(`[verify] t0 ${chain}: ${e.message}`);
+      return null;
+    }),
+    ms,
+    () => MISS,
+  );
+  if (r === MISS) {
+    log.warn(`[verify] t0 ${chain} did not answer in ${ms}ms — handing off to the watcher`);
+    return null;
+  }
+  return r;
+}
+
+/** Confirm `amount` (smallest-unit string/BigInt) has landed at `address`.
+ *
+ *  `opts.timeout` is how long to KEEP LOOKING after the first read comes up
+ *  short. 0 means "look once and answer" — which is what the Confirm tap uses,
+ *  because anything longer runs inside Telegraf's polling loop. The full poll
+ *  still happens; it happens detached.
+ *
+ *  `opts.firstReadMs` bounds that first read. Absent, the read is unbounded,
+ *  which is right for the background scans (recovery.js) and wrong for a tap.
+ */
+async function verifyPayment(chain, address, amount, opts = {}) {
   if (BigInt(amount) <= 0n) return { paid: true, free: true };
   const target = acceptThreshold(amount);
+  const timeout = opts.timeout == null ? PAYMENT_TIMEOUT_MS : Math.max(0, Number(opts.timeout) || 0);
 
-  let bal = 0n;
-  try {
-    bal = await wallets.getBalance(chain, address);
-  } catch (e) {
-    log.debug(`[verify] t0 ${chain}: ${e.message}`);
+  let bal = null;
+  if (opts.firstReadMs > 0) {
+    bal = await balanceNow(chain, address, opts.firstReadMs);
+  } else {
+    try {
+      bal = await wallets.getBalance(chain, address);
+    } catch (e) {
+      log.debug(`[verify] t0 ${chain}: ${e.message}`);
+    }
   }
-  let paid = bal >= target;
-  if (!paid) paid = await pollBalance(chain, address, target, PAYMENT_TIMEOUT_MS);
+  let paid = bal != null && bal >= target;
+  // `timeout > 0` and not merely truthy: a caller asking for no wait must not
+  // buy one interval tick's worth of it, and pollBalance's own floor would give
+  // it one.
+  if (!paid && timeout > 0) paid = await pollBalance(chain, address, target, timeout);
 
   if (paid) {
     // Sweep BEFORE the caller runs fulfilment — but don't block on confirmation.
@@ -91,4 +145,4 @@ async function verifyPayment(chain, address, amount) {
   return { paid };
 }
 
-module.exports = { verifyPayment, pollBalance, acceptThreshold };
+module.exports = { verifyPayment, pollBalance, acceptThreshold, balanceNow };

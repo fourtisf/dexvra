@@ -598,6 +598,16 @@ test("⚠️ 🧹 Clear history is NOT undone by a scan that started before it",
   let release;
   const gate = new Promise((r) => (release = r));
   stubApi(t, { listings: [{ chain: "solana", address: "Old1", status: "approved" }] });
+  // ⚠️ SYNCHRONISED ON THE SCAN, NOT ON A TICK. This used to wait one
+  // setImmediate and assume the scan had got as far as its first lookup — and
+  // therefore past the point where it takes its ledger snapshot. That is a race:
+  // under load (a busy `node --test`, which runs files in parallel) the scan is
+  // still in discovery or the site read, resetState lands BEFORE the snapshot,
+  // and the assertion inverts. Green on a quiet machine, red on a full suite —
+  // which is exactly what it did. The stub signals when it is genuinely
+  // mid-flight.
+  let reached;
+  const midFlight = new Promise((r) => (reached = r));
   // A scan whose ledger snapshot is taken, and which then stalls mid-flight —
   // the real window is up to forty serial lookups, minutes wide when
   // DexScreener is slow, which is exactly when an operator taps Clear history.
@@ -606,12 +616,13 @@ test("⚠️ 🧹 Clear history is NOT undone by a scan that started before it",
     deps: {
       fetchDiscovery: async () => THREE,
       fetchTokenInfo: async () => {
+        reached();
         await gate;
         return healthy();
       },
     },
   });
-  await new Promise((r) => setImmediate(r));
+  await midFlight;
   await al.resetState(now + 1000); // the operator taps 🧹 Clear history
   release();
   await scan;
@@ -623,17 +634,22 @@ test("…and an ordinary scan still merges a ledger entry another writer added m
   let release;
   const gate = new Promise((r) => (release = r));
   stubApi(t);
+  // Same handshake as the test above, and for the same reason: one setImmediate
+  // is not a signal that the scan has reached its first lookup.
+  let reached;
+  const midFlight = new Promise((r) => (reached = r));
   const scan = al.runOnce({
     now,
     deps: {
       fetchDiscovery: async () => THREE,
       fetchTokenInfo: async () => {
+        reached();
         await gate;
         return healthy({ mcap: 100 }); // rejected, so the scan writes only its report
       },
     },
   });
-  await new Promise((r) => setImmediate(r));
+  await midFlight;
   // fulfillment.js: a PAID listing went live while the scan was running.
   await al.rememberListed([{ chain: "solana", address: "Paid1" }], now + 500);
   release();

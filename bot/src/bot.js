@@ -40,32 +40,68 @@ const rateLimitConfig = {
 };
 
 // Past this a tap is worth a line — well under Telegraf's 120s handlerTimeout,
-// so a handler on its way to being killed is visible BEFORE it is.
+// so a handler on its way to being killed is visible BEFORE it is, and well
+// past any healthy handler, so the line means what it says.
 const SLOW_HANDLER_MS = Math.max(1000, Number(process.env.SLOW_HANDLER_MS) || 8000);
+
+/**
+ * Time every update, and say so WHILE one is stuck.
+ *
+ * Exported and registered by reference for the reason onHandlerError is:
+ * applyMiddleware boots every background service and its timers, so a test that
+ * called it would never let the process exit. This is the piece worth driving.
+ */
+async function timingMiddleware(ctx, next) {
+  log.debug(`[upd] ${ctx.updateType} chat=${ctx.chat && ctx.chat.id} from=${ctx.from && ctx.from.id}`);
+  ctx.__t0 = Date.now();
+  // ⚠️ IT FIRES WHILE THE HANDLER IS STILL RUNNING, NOT WHEN IT FINISHES.
+  //
+  // The first cut of this logged from the `finally` — so a handler that hung
+  // wrote NOTHING until it was over, and the one shape worth catching is
+  // exactly the one that does not finish. A stuck symptom reading as no
+  // symptom is the state that looks most like a healthy one, and this repo has
+  // paid for it twice already (lastFeedOkAt, lastCheckedAt).
+  //
+  // The wording is the diagnosis, because the duration alone points at the
+  // wrong thing. Telegraf's polling loop is `for await (const updates of this)
+  // await Promise.all(updates.map(handleUpdate))`: it does not ask for the
+  // next batch until every handler in this one has settled. So this line does
+  // not mean "one tap is slow", it means THE BOT IS ANSWERING NOBODY — which
+  // is how it was reported (three unanswered /start messages), and what no
+  // line anywhere had ever said.
+  //
+  // This is the tradebot's `[ui] slow cb:` line, which exists for the same
+  // reason and says so: "respon sangat lambat" is measured, not argued. Silent
+  // under the threshold — a fast tap must not write a line per update into a log
+  // the background loops are already filling.
+  let stalled = false;
+  const warn = setTimeout(() => {
+    stalled = true;
+    log.warn(
+      `[ui] ${ctx.updateType} tap=${tapOf(ctx)} STILL RUNNING after ${(SLOW_HANDLER_MS / 1000).toFixed(0)}s` +
+        " — Telegraf fetches no further updates until it returns, so the bot is not answering ANY chat right now",
+    );
+  }, SLOW_HANDLER_MS);
+  // unref'd: nothing awaits this timer, it is a side-effect logger, and an
+  // unref'd one must not be what keeps the process alive.
+  warn.unref?.();
+  try {
+    return await next();
+  } finally {
+    clearTimeout(warn);
+    // Only the ones that warned get a second line: a stall with no end recorded
+    // is one nobody can size, and the rest stay silent.
+    if (stalled) {
+      log.warn(`[ui] ${ctx.updateType} released after ${((Date.now() - ctx.__t0) / 1000).toFixed(1)}s — polling resumes`);
+    }
+  }
+}
 
 function applyMiddleware(bot) {
   if (middlewareApplied) return bot;
   middlewareApplied = true;
 
-  bot.use(async (ctx, next) => {
-    log.debug(`[upd] ${ctx.updateType} chat=${ctx.chat && ctx.chat.id} from=${ctx.from && ctx.from.id}`);
-    // ⚠️ A HANDLER THAT IS MERELY SLOW LEAVES NO TRACE AT ALL. Only the ones
-    // that reach handlerTimeout are reported, and by then the framework has
-    // killed the promise and the user has been staring at a spinner for two
-    // minutes. This is the tradebot's `[ui] slow cb:` line, which exists for
-    // the same reason and says so: "respon sangat lambat" is measured, not
-    // argued. Silent under the threshold — a fast tap must not write a line
-    // per update into a log the background loops are already filling.
-    ctx.__t0 = Date.now();
-    try {
-      return await next();
-    } finally {
-      const ms = Date.now() - ctx.__t0;
-      if (ms >= SLOW_HANDLER_MS) {
-        log.warn(`[ui] slow ${ctx.updateType} tap=${tapOf(ctx)} handle=${(ms / 1000).toFixed(1)}s`);
-      }
-    }
-  });
+  bot.use(timingMiddleware);
   bot.use(session({ getSessionKey: generateSessionKey, defaultSession: () => ({}) }));
   bot.use(rateLimit(rateLimitConfig));
 
@@ -404,6 +440,8 @@ function xSelfCheck() {
 module.exports = {
   startBot,
   applyMiddleware,
+  timingMiddleware,
+  SLOW_HANDLER_MS,
   generateSessionKey,
   rateLimitConfig,
   setCommandsWithRetry,

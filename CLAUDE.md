@@ -10193,6 +10193,145 @@ the run again. Each fails between one and two tests.
 **Config a fix depends on:** nothing. The alert goes to the ops channel the
 health monitor already uses; unset, it is a pm2 line like everything else.
 
+## "mengapa bot tidak bisa merespon lagi" — ONE tap made the whole bot deaf
+
+Reported 2026-09-11 with a screenshot: an Xpress Listing pay card, the buyer's
+tap on **✅ I've Paid — Confirm**, the bot's own *"🌀 Verifying your payment… —
+on-chain confirmation usually takes 30–60 seconds. We'll confirm here
+automatically"* at 18:38 — and then **three `/start` messages that were never
+answered at all.** Not a slow reply. No reply.
+
+**Nothing had crashed, and nothing was down.** `confirmPayHandler` awaited
+`verify.verifyPayment`, whose poll runs for `PAYMENT_TIMEOUT_MS` — **five
+minutes** by default. And Telegraf's long-polling loop is, verbatim
+(`telegraf@4.16.3`, `lib/core/network/polling.js`):
+
+```js
+for await (const updates of this)
+  await Promise.all(updates.map(handleUpdate));
+```
+
+⚠️ **IT DOES NOT ASK TELEGRAM FOR THE NEXT BATCH OF UPDATES UNTIL EVERY HANDLER
+IN THE CURRENT ONE HAS SETTLED.** So a handler that waits is not slow for the
+person who tapped — **it is the whole bot going deaf, for every user in every
+chat**, and those three `/start` messages were sitting unfetched on Telegram's
+server the entire time. At 120s `handlerTimeout` (p-timeout) rejected, so the
+buyer got *"something went wrong"* instead of a verdict; it does not CANCEL the
+promise, so `pollBalance`'s `setInterval` kept hitting the RPC for three minutes
+more. Tap Confirm a second early and the bot is unreachable for two minutes.
+
+- **The tap gets ONE balance read, bounded by `PAYMENT_CONFIRM_MS` (5s).** The
+  common case is that the buyer tapped BECAUSE they had already paid, and one
+  read answers that — unchanged from today, including clearing the spent pay card
+  from the session inside the handler where the middleware chain still owns it.
+- **Everything past it is `watchPayment()`, detached.** This is the atrun lesson
+  and it was **already written in this very function** for the FULFILMENT half
+  (*"a callback answer is the one channel with a DEADLINE, so it carries the
+  ACKNOWLEDGEMENT and the RESULT arrives as a message"*). The VERIFICATION half,
+  thirty lines above it in the same `try`, still awaited. **A lesson applied to
+  one branch of one function is a lesson half-learnt** — this file already says
+  so about the snipe panel's refusal path and about `reset()` missing the guard
+  its sibling got.
+- **The copy was already right.** `checking_payment` has always promised *"We'll
+  confirm here automatically"* — true of the intent and false of the
+  implementation, because the waiting happened where it froze the bot. It is now
+  what actually runs, so no new message was needed on the miss path.
+- ⚠️ **THE POLL WAS ALSO REDUNDANT.** `services/recovery.js` already re-checks
+  every pending order every **10 minutes for a day** — it exists in its own words
+  for *"anyone who simply pays after the 5-minute window closes, which is
+  common"*. So the handler was freezing the bot to do a job a timer already did
+  safely. The watcher only decides how fast the buyer hears; it is not what
+  decides whether they are served.
+- ⚠️ **THE t=0 READ IS BOUNDED TOO.** `wallets.getBalance` is an RPC call with no
+  deadline of its own, so on a public node that stops answering an unbounded read
+  on this path is the same outage by a different route. `balanceNow` reports a
+  read it could not finish as `null`, never as a zero balance: "we could not ask"
+  and "the money is not there" are different facts, and only the second is about
+  the buyer.
+- ⚠️ **`ctx.session._verifying` CANNOT GUARD THIS ANY MORE** — it is cleared when
+  the handler returns, which is now BEFORE verification finishes, so a second tap
+  would start a second watcher. A module-level `verifying` Set does it, held
+  until the fulfilment it triggers has finished too. Same guard, same reason, as
+  the `fulfilling` Set six lines down.
+- ⚠️ **AND THE WATCHER CANNOT CLEAR THE PAY CARD.** Telegraf writes the session
+  back when the middleware chain exhausts, so a buyer whose late payment the
+  watcher credited still holds a live card — and tapping it would re-read a
+  wallet that has since been **SWEPT** and answer *"payment not detected"* about
+  an order already paid for and delivered. The durable order status is checked
+  first (`payment_already_credited`); the order file knows better than the
+  session does.
+- ⚠️ **`fulfilDetached.test.js` COULD NEVER HAVE CAUGHT THIS.** It proves the
+  same rule for the fulfilment half — and every order it drives is
+  `adminFree: true`, which is the one kind that **skips `verifyPayment`
+  entirely**. The paid path had no test at all, which is why a five-minute await
+  sat on the money path behind a green suite.
+
+### So it cannot go deaf unnoticed again
+
+⚠️ **THE DETECTOR WAS THERE AND COULD NOT DETECT.** `bot.js` has had a
+slow-handler warning since the last round of "bot lelet merespon" — and it logged
+from the `finally`, so it said **nothing at all** until the handler finished, and
+the one shape worth catching is precisely the one that does not. Through this
+entire outage pm2 carried not one line about it. A stuck symptom reading as no
+symptom is the state that looks most like a healthy one, and this file has now
+paid for that three times (`lastFeedOkAt`, `lastCheckedAt`, here).
+
+- **It fires on a TIMER, while the handler is still stuck**, at
+  `SLOW_HANDLER_MS` (8s), and a stall that ended is SIZED on the way out — or
+  nobody can tell how long the bot was unreachable.
+- **The wording is the diagnosis.** "one tap is slow" sends the reader to that
+  handler; the truth is that nobody is being answered at all, so the line says
+  so: *"Telegraf fetches no further updates until it returns, so the bot is not
+  answering ANY chat right now."*
+- **`timingMiddleware` is exported and registered by reference**, for the reason
+  `onHandlerError` is: `applyMiddleware` boots every background service and its
+  timers, so a test that called it would never let the process exit.
+
+⚠️ **AND THE EXISTING GUARD FOR IT PINNED THE DEFECT.** `slowTap.test.js`
+asserted the literal `[ui] slow ${ctx.updateType} tap=` and
+`if (ms >= SLOW_HANDLER_MS)` — i.e. the `finally` computation itself — so it
+would have passed on the revision that logged nothing through a two-minute
+outage, and it went RED over the fix. That is this repo's own recurring defect
+(the four-way pool-TTL guard, the `{ ok: true,` build stamp): **a guard that
+pins a SPELLING fails on the code that keeps its rule and passes on the code
+that breaks it.** It asserts the rules now — a threshold, the tap named, the
+timer armed before the `await` and cleared after — and the BEHAVIOUR moved to
+`pollingStall.test.js`, which drives the middleware, because a source scan
+cannot tell a warning that fires from one that is merely written down.
+
+⚠️ **One unrelated test was flaky and the heavier suite found it.**
+`listingBlocked.test.js`'s two mid-scan tests waited `one setImmediate` and then
+assumed the scan had reached its first lookup — and therefore taken its ledger
+snapshot. That is not a synchronisation point: under load (`node --test` runs
+files in parallel) the scan is still in discovery, the operator's 🧹 Clear
+history lands BEFORE the snapshot, and the assertion inverts. Green on a quiet
+machine, red on a full one, which is exactly what it did. The stub signals when
+it is genuinely mid-flight. Verified not to have weakened it: the same mutation
+survives both the old and the new version.
+
+| layer | stops |
+| --- | --- |
+| the tap gets one bounded read | a Confirm tap parking the polling loop |
+| `watchPayment` + `recovery.js` | a detached verify meaning a dropped order |
+| `confirmDetached.test.js` drives the real handler | the await creeping back onto the tap |
+| the in-flight stall warning | the next one of these being invisible for two minutes |
+
+```bash
+cd bot && node scripts/run-tests.js test/confirmDetached.test.js test/pollingStall.test.js   # 11 tests, no network
+pm2 logs dexvra-bot --lines 200 --nostream | grep -F '[ui]'                                  # was the loop ever stalled
+```
+
+Seven guarantees are MUTATION-TESTED rather than argued: the handler awaiting the
+full poll again, the watcher never started, the first read unbounded, the durable
+already-credited guard dropped, the in-flight guard dropped, the stall warning
+back in the `finally`, and its timer never cleared. Each fails between one and
+three tests.
+
+**Config a fix depends on:** nothing — `PAYMENT_CONFIRM_MS` (1–15s, default 5s)
+bounds the tap and `PAYMENT_TIMEOUT_MS` still bounds the watch. ⚠️ This is a
+`bot/` change, so the deploy is the **ecosystem restart**, not `pm2 restart
+dexvra` — see "Two bot processes, one config".
+
 ## Conventions
 
 - Tests live beside the code they cover, in `bot/test/`, `tradebot/*.test.js`

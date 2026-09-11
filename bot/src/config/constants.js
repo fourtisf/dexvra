@@ -93,6 +93,26 @@ const INTERNAL_API_TOKEN = env.INTERNAL_API_TOKEN || "";
 // user taps Confirm.
 const PAYMENT_POLL_MS = Math.min(10000, Math.max(1500, int(env.PAYMENT_POLL_MS, 3000)));
 const PAYMENT_TIMEOUT_MS = Math.max(30000, int(env.PAYMENT_TIMEOUT_MS, 300000));
+// ⚠️ HOW LONG THE TAP ITSELF MAY SPEND CHECKING — and it is not the same number.
+//
+// Telegraf's long-polling loop is `for await (const updates of this) await
+// Promise.all(updates.map(handleUpdate))`: it does not ask for the NEXT batch of
+// updates until every handler in the current one has settled. So a handler that
+// waits is not slow for the person who tapped — IT IS THE WHOLE BOT GOING DEAF,
+// for every user in every chat, until it returns.
+//
+// confirmPayHandler used to await the full PAYMENT_TIMEOUT_MS poll (5 min) here.
+// Reported 2026-09-11: a buyer tapped ✅ I've Paid before the transfer landed,
+// saw "Verifying your payment…", and then sent /start three times to a bot that
+// answered nothing at all — because no getUpdates call was being made. At 120s
+// Telegraf's handlerTimeout killed the promise, so they got an error instead of
+// a verdict, and the abandoned interval kept polling the RPC for three minutes
+// more.
+//
+// So the tap gets ONE balance read, and everything past it runs detached: the
+// copy the buyer already has says "We'll confirm here automatically", which is
+// what payments/payment.js watchPayment now actually does.
+const PAYMENT_CONFIRM_MS = Math.min(15000, Math.max(1000, int(env.PAYMENT_CONFIRM_MS, 5000)));
 // Added to every quoted amount so dust/rounding never leaves an order short.
 const PAYMENT_TOLERANCE_PCT = Math.max(0, int(env.PAYMENT_TOLERANCE_PCT, 0));
 
@@ -443,6 +463,7 @@ module.exports = {
   INTERNAL_API_TOKEN,
   PAYMENT_POLL_MS,
   PAYMENT_TIMEOUT_MS,
+  PAYMENT_CONFIRM_MS,
   PAYMENT_TOLERANCE_PCT,
   RPC,
   TON_API_KEY,
