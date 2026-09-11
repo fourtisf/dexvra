@@ -75,10 +75,13 @@ function copyBtn(label, text) {
 /** The pay card's keyboard. The address is long enough that a mistyped
  *  character means lost funds, so copying it must not depend on the buyer
  *  finding the tap-to-copy monospace run. */
-function confirmPayment(address) {
+function confirmPayment(address, extraRows = []) {
   const rows = [];
   if (address) rows.push([copyBtn("📋 Copy Address", address)]);
   rows.push([Markup.button.callback("✅ I've Paid — Confirm", "confirm_pay")]);
+  // Upsells (the broadcast add-on) sit BETWEEN Confirm and Home: below the
+  // action the buyer came here for, above the way out.
+  rows.push(...extraRows);
   rows.push([homeBtn()]);
   return Markup.inlineKeyboard(rows);
 }

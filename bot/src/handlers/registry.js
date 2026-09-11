@@ -72,8 +72,6 @@ function registerHandlers(bot) {
   bot.action(/^lc_(.+)$/, listing.chainPick);
   bot.action(/^lt_(.+)$/, listing.tierPick);
   bot.action(/^edit_([a-z_]+)$/, listing.editField);
-  bot.action("bc_add", listing.broadcastAdd);   // broadcast add-on: compose
-  bot.action("bc_del", listing.broadcastRemove); // …and drop it again
   bot.action("approve_listing", listing.approve);
   bot.action("discard_listing", listing.discard);
 
@@ -99,6 +97,10 @@ function registerHandlers(bot) {
   // directly before it.
   bot.action(/^paynet_(.+)$/, pay.netPick);
   bot.action("confirm_pay", payment.confirmPayHandler);
+  // The broadcast add-on lives on the PAY CARD, beside Confirm — every package
+  // ends there, so one pair of actions serves all of them.
+  bot.action("bcpay", (ctx) => require("./pay").broadcastAsk(ctx));
+  bot.action("bcpayx", (ctx) => require("./pay").broadcastCancel(ctx));
 
   // ── Free-text + media routers (LAST) ──────────────────────────────────────
   // The group one first, and it calls next() for anything that is not a reply

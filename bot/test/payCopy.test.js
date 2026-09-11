@@ -81,16 +81,61 @@ test("the FREE admin card has no address, so it grows no copy button", () => {
   assert.ok(kb.flat().some((b) => b.callback_data === "confirm_pay"));
 });
 
-test("every package pays through the one card that was fixed", () => {
+test("every package pays through the one card that was fixed", async () => {
   // listing / trending / banner / mass DM all call startPayment — so wiring the
   // copy affordance there covers all of them, and must keep doing so.
   const src = fss.readFileSync(require.resolve("../src/handlers/pay.js"), "utf8");
   assert.match(src, /premium\.ensureCode\(/, "the address is force-marked copyable");
-  assert.match(src, /menu\.confirmPayment\(r\.address\)/, "…and the button gets the real address");
   for (const f of ["listing", "trending", "banner", "massdm"]) {
     const h = fss.readFileSync(require.resolve(`../src/handlers/${f}.js`), "utf8");
     assert.match(h, /startPayment\(/, `${f} must not hand-roll its own pay card`);
   }
+
+  // ⚠️ The Copy button carries the REAL address — asserted by RENDERING the
+  // card, not by matching `menu.confirmPayment(r.address)` in the source. That
+  // spelling is what this test used to pin, and it went red the day the card
+  // grew a second argument for the broadcast add-on row — over code that keeps
+  // the rule perfectly. A guard on a spelling is a guard on nothing; this repo
+  // has now paid for that three times (the four-way pool TTL, the `{ ok: true,`
+  // build stamp, and here).
+  const wallets = require("../src/payments/wallets");
+  const orders = require("../src/payments/orders");
+  const { startPayment } = require("../src/handlers/pay");
+  const ADDR = "So11111111111111111111111111111111111111112";
+  const realW = wallets.generateWallet;
+  const realS = orders.saveOrder;
+  wallets.generateWallet = async () => ({ address: ADDR });
+  orders.saveOrder = async () => {};
+  const sent = [];
+  const ctx = {
+    from: { id: 1 },
+    chat: { id: 1, type: "private" },
+    session: {},
+    answerCbQuery: async () => true,
+    reply: async (t, extra) => {
+      sent.push({ t, extra: extra || {} });
+      return { message_id: sent.length };
+    },
+    telegram: { deleteMessage: async () => {} },
+  };
+  try {
+    await startPayment(ctx, {
+      kind: "xpress_listing",
+      chain: "solana",
+      native: "SOL",
+      humanAmount: 1,
+      prices: { SOL: 1 },
+      label: "Xpress Listing — $X",
+      payload: {},
+    });
+  } finally {
+    wallets.generateWallet = realW;
+    orders.saveOrder = realS;
+  }
+  const kb = ((sent[sent.length - 1].extra.reply_markup || {}).inline_keyboard || []).flat();
+  const copy = kb.find((b) => b.copy_text);
+  assert.ok(copy, "the pay card must carry a Copy Address button");
+  assert.strictEqual(copy.copy_text.text, ADDR, "…and it must copy the address that was actually armed");
 });
 
 test("the payment-not-detected nudge repeats the address, still copyable", () => {

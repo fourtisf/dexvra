@@ -34,11 +34,24 @@ const { addAmount } = require("../payments/units");
  * null means exactly one thing: no button. Callers must not fall back to
  * another currency, which is the rule the whole payment path now enforces.
  */
-function addonPrice(tokenChain) {
+function addonPriceForNative(native) {
   if (!MASS_DM_ENABLED) return null;
-  const native = payNativeOf(tokenChain);
   const p = Number(MASS_DM_PRICE[native]);
   return p > 0 ? p : null;
+}
+
+/**
+ * The same question asked of an ARMED order, which knows its currency and has
+ * no idea what chain the token lives on.
+ *
+ * That is the whole reason the add-on sits on the pay card rather than the
+ * review card: by then the buyer may have picked a RAIL (a Robinhood order can
+ * settle on Robinhood Chain or on Ethereum), and the fee has to be charged in
+ * what this order actually settles in — which is `order.native`, not anything
+ * derivable from the token.
+ */
+function addonPrice(tokenChain) {
+  return addonPriceForNative(payNativeOf(tokenChain));
 }
 
 /** Can a listing on this chain attach a broadcast at all? */
@@ -72,4 +85,4 @@ function totalWithAddon(baseAmount, tokenChain) {
   return fee == null ? baseAmount : addAmount(baseAmount, fee);
 }
 
-module.exports = { addonPrice, canAddBroadcast, pricesWithAddon, totalWithAddon };
+module.exports = { addonPrice, addonPriceForNative, canAddBroadcast, pricesWithAddon, totalWithAddon };

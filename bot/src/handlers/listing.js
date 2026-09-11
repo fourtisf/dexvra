@@ -17,7 +17,6 @@ const { normalizeTicker, isValidTicker, sanitizeTicker } = require("../helpers/t
 // the attached broadcast) is exactly what needs pinning. The rule autoTrend.js
 // and trendingPoster.js already state at their own requires.
 const pay = require("./pay");
-const addon = require("../config/broadcastAddon");
 const menu = require("./menu");
 const { Markup } = menu;
 const tpl = require("../templates");
@@ -149,23 +148,6 @@ async function handleText(ctx) {
     return showReview(ctx);
   }
 
-  // The broadcast add-on's compose step. ⚠️ The text is stored RAW, not the
-  // trimmed `input`: Telegram entity offsets are counted from the start of the
-  // message, so trimming a leading space shifts every bold run and every custom
-  // emoji one character left. /cancel is matched on the trimmed copy, which is
-  // the only thing trimming is safe for here.
-  if (field === "broadcast") {
-    if (input === "/cancel") {
-      s.awaitingField = null;
-      return showReview(ctx);
-    }
-    return attachBroadcast(ctx, {
-      text: ctx.message.text || "",
-      entities: ctx.message.entities || [],
-      mediaFileId: null,
-    });
-  }
-
   switch (field) {
     case "address": {
       if (!isValidAddress(f.chain, input)) {
@@ -266,17 +248,7 @@ async function handleText(ctx) {
 
 async function handlePhoto(ctx) {
   const s = ctx.session;
-  if (!s || !s.form) return;
-  if (s.awaitingField === "broadcast") {
-    const bid = getMediaFileId(ctx);
-    if (!bid) return;
-    return attachBroadcast(ctx, {
-      text: ctx.message.caption || "",
-      entities: ctx.message.caption_entities || [],
-      mediaFileId: bid,
-    });
-  }
-  if (s.awaitingField !== "logo") return;
+  if (!s || !s.form || s.awaitingField !== "logo") return;
   const id = getMediaFileId(ctx);
   if (!id) return;
   s.form.logoFileId = id;
@@ -286,75 +258,15 @@ async function handlePhoto(ctx) {
 }
 
 // ── Review card ──────────────────────────────────────────────────────────────
-/**
- * The broadcast add-on row, or nothing at all.
- *
- * ⚠️ ABSENT, NEVER DISABLED, on a chain the add-on cannot be priced in. The fee
- * rides the SAME order in the SAME coin ("kalo client book chain bsc pembayaran
- * harus bsc"), and MASS_DM_PRICE prices only SOL, BNB and ETH — so on a Tron or
- * TON listing there is no fee to charge. A greyed-out button whose only outcome
- * is a refusal is the "row the engine ignores" this file already names; a row
- * that is not there asks no question.
- *
- * The fee is printed ON the button because that is the one place the buyer
- * reads before tapping — the review CARD is an admin-editable template, and
- * putting it there would leave every operator who ever saved that template
- * showing no price at all until they hit ♻️ Reset default.
- */
-function broadcastRow(f) {
-  const fee = addon.addonPrice(f && f.chain);
-  if (fee == null) return [];
-  const money = `${fee} ${payNativeOf(f.chain)}`;
-  const has = f.broadcast && (f.broadcast.text || f.broadcast.mediaFileId);
-  return has
-    ? [[Markup.button.callback(`✏️ Broadcast (+${money})`, "bc_add"), Markup.button.callback("❌", "bc_del")]]
-    : [[Markup.button.callback(`📣 + Broadcast to all users (+${money})`, "bc_add")]];
-}
-
-function reviewKb(f) {
+function reviewKb() {
   return Markup.inlineKeyboard([
     [Markup.button.callback("✏️ Name", "edit_name"), Markup.button.callback("✏️ Symbol", "edit_symbol")],
     [Markup.button.callback("🖼 Logo", "edit_logo"), Markup.button.callback("📝 Overview", "edit_overview")],
     [Markup.button.callback("🌐 Website", "edit_website"), Markup.button.callback("🐦 X", "edit_twitter")],
     [Markup.button.callback("💬 Telegram", "edit_telegram")],
-    ...broadcastRow(f),
     [Markup.button.callback("✅ Confirm", "approve_listing"), Markup.button.callback("🗑 Discard", "discard_listing")],
     [Markup.button.callback("🏠 Home", "home")],
   ]);
-}
-
-// ── Broadcast add-on ─────────────────────────────────────────────────────────
-async function broadcastAdd(ctx) {
-  await answer(ctx);
-  if (!isListing(ctx)) return;
-  const f = ctx.session.form;
-  const fee = addon.addonPrice(f && f.chain);
-  // Re-checked at the tap, not trusted to the row that offered it: a card left
-  // open in the chat can outlive a chain switch, and MASS_DM_ENABLED can go off
-  // under it.
-  if (fee == null) {
-    return toast(ctx, tpl.render("broadcast_addon_unavailable", { chain: chainOf(f.chain).label }));
-  }
-  ctx.session.awaitingField = "broadcast";
-  await sendCard(ctx, tpl.render("broadcast_addon_prompt", { fee: `${fee} ${payNativeOf(f.chain)}` }), menu.withHome([]));
-}
-
-async function broadcastRemove(ctx) {
-  await answer(ctx);
-  if (!isListing(ctx)) return;
-  ctx.session.form.broadcast = null;
-  ctx.session.awaitingField = null;
-  return showReview(ctx);
-}
-
-/** Attach a composed broadcast and go back to the review card. */
-async function attachBroadcast(ctx, content) {
-  const f = ctx.session.form;
-  f.broadcast = content;
-  ctx.session.awaitingField = null;
-  const fee = addon.addonPrice(f.chain);
-  await toast(ctx, tpl.render("broadcast_addon_attached", { fee: `${fee} ${payNativeOf(f.chain)}` }));
-  return showReview(ctx);
 }
 
 /**
@@ -403,8 +315,8 @@ async function showReview(ctx) {
     telegram: v(f.telegram),
   });
   const photo = f.logoFileId || (f.logoUrl && f.logoUrl.startsWith("http") ? f.logoUrl : null);
-  if (photo) return sendPhotoCard(ctx, photo, text, reviewKb(f));
-  return sendCard(ctx, text, reviewKb(f));
+  if (photo) return sendPhotoCard(ctx, photo, text, reviewKb());
+  return sendCard(ctx, text, reviewKb());
 }
 
 // ── Edit buttons ─────────────────────────────────────────────────────────────
@@ -452,28 +364,21 @@ async function goPay(ctx, tier) {
   const label =
     (tier === "XPRESS" ? "Xpress Listing" : `${tierLabel(tier)} Listing`) +
     ` — $${f.sym} on ${chainOf(chain).label}`;
-  // The broadcast add-on rides THIS order: one amount, one address, one
-  // network. `hasBc` is re-read from the form rather than trusted to the button
-  // that set it, and addonPrice() is consulted again — a review card left open
-  // across a chain switch must not carry a fee the new chain cannot charge.
-  const hasBc = Boolean(f.broadcast && (f.broadcast.text || f.broadcast.mediaFileId) && addon.canAddBroadcast(chain));
-  const basePrices = (tierMeta(tier) || {}).price;
   await pay.startPayment(ctx, {
     kind,
     chain: payChainOf(chain),
     native: payNativeOf(chain),
-    humanAmount: hasBc ? addon.totalWithAddon(price, chain) : price,
+    humanAmount: price,
     // Every tier is priced per CURRENCY already, so handing the table over is
     // what lets the buyer settle in ETH instead — on Ethereum or on Robinhood
     // Chain, same amount either way. Without it there is no choice to offer and
     // startPayment arms the token's own chain exactly as it always did.
-    prices: hasBc ? addon.pricesWithAddon(basePrices, chain) : basePrices,
+    prices: (tierMeta(tier) || {}).price,
     label,
     payload: {
       listingInput: buildListingInput(f, tier),
       logoFileId: f.logoFileId || null,
       trendHours: tierTrendingHours(tier),
-      broadcast: hasBc ? f.broadcast : null,
     },
   });
 }
@@ -538,8 +443,6 @@ async function discard(ctx) {
 }
 
 module.exports = {
-  broadcastAdd,
-  broadcastRemove,
   showReview,
   goPay,
   entryXpress,

@@ -10629,8 +10629,39 @@ reads better than an appended one.
 ## "Di bawahnya ada fitur add broadcast dengan fee tambahan"
 
 A project buying a listing can now attach a **Mass DM** to the same order
-instead of buying it separately: `📣 + Broadcast to all users (+2 SOL)` on the
-review card, compose, and the fee rides the listing's own payment.
+instead of buying it separately: `➕ Add Broadcast to all users (+2 SOL)` sits
+on the **PAY CARD, beside Confirm Payment** — "harusnya ada fitur add broadcast
+setelah dpt address kaya fourtisbot", which is also where the bot this was
+compared against puts it. Compose, and the fee joins the amount already on the
+card.
+
+⚠️ **WHICH MAKES THE DEPOSIT ADDRESS THE WHOLE DESIGN CONSTRAINT.**
+`generateWallet()` mints a fresh keypair on every call, so re-arming the order
+to add the fee would hand the buyer a SECOND address — and a buyer who had
+already sent to the first would have paid into a wallet this order no longer
+verifies against. The order is **edited in place**: same address, higher total,
+`amountSmallest` re-derived, and `verifyPayment` compares the BALANCE there
+against the new amount — so whatever was already sent still counts toward it. A
+test mints a different address on any re-arm and fails if the card's address
+moves.
+
+- **It was on the review card first, and was MOVED, not duplicated.** Two
+  surfaces for one add-on is the `/withdraw` vs `/withdrawall` lesson — "a
+  second way in that does not do a second thing is a question the user has to
+  answer before they can start".
+- ⚠️ **The fee is read from `order.native`, not from the token's chain.** By the
+  pay card a Robinhood buyer may have PICKED a rail (ETH on Robinhood Chain or
+  ETH on Ethereum), so the only currency that can be charged is the one this
+  order actually settles in. `addonPriceForNative()` is that question;
+  `addonPrice(tokenChain)` is the wrapper for anything asking earlier.
+- ⚠️ **The compose step is routed ABOVE every flow dispatch**, and above
+  `textRouter`'s `!s.type` early return. The pay card is shared by listing,
+  trending, banner and Mass DM, so an armed order has no `session.type` of its
+  own — caught inside any one flow it would work from that flow only. A test
+  drives the router with no type set at all.
+- **An admin test order stays FREE.** Re-deriving `amountSmallest` from the new
+  total would put a real price behind a card that says "no payment needed", and
+  `confirmPayHandler` would then verify against it.
 
 **Nothing new sends anything.** The message goes through the EXISTING paid Mass
 DM machinery — composed by the buyer, queued `pending_review` by fulfilment,
@@ -10683,14 +10714,14 @@ ever sees it.
   offsets are counted from the start of the message, so trimming one leading
   space shifts every bold run and every custom emoji a character left. `/cancel`
   is matched on the trimmed copy, which is the only thing trimming is safe for.
-- **The fee is printed ON the button**, not on the review card: `review_card` is
-  an admin-editable template, and putting it there would show no price at all to
+- **The fee is printed ON the button**, not in the card text: `pay_card` is an
+  admin-editable template, and putting it there would show no price at all to
   every operator who has ever saved that template until they hit ♻️ Reset
   default.
-- **The tap is re-checked, not trusted to the row that offered it.** A review
-  card left open in the chat can outlive a chain switch, and `MASS_DM_ENABLED`
-  can go off under it.
-- **An empty compose is not a broadcast** and is never charged for.
+- **The tap is re-checked, not trusted to the card that offered it.** A pay card
+  left open in the chat outlives a restart that switched `MASS_DM_ENABLED` off
+  under it, or an add-on already attached from another tap — and the button is
+  GONE once one is attached, so nothing can be charged for twice.
 - ⚠️ **The add-on is queued LAST and can never fail the listing.** By then the
   row is live, the channel posts are out and the funds were swept before
   fulfilment even started — so a queue that will not take the message is a thing
@@ -10713,12 +10744,19 @@ the channel posts, the banner build and the tweet stubbed, and the assertion is
 that a job really reaches the queue — plus its negative, that a listing without
 an add-on queues nothing. The curveBuyPath scar, one package over.
 
-Eleven guarantees are MUTATION-TESTED rather than argued: float addition, an
-unpriceable chain falling back to BNB, an undropped currency, the button offered
-everywhere, the tap not re-checked, the fee not folded in, an empty compose
-charged, the text trimmed, the message not travelling with the order, a paid
+Twelve guarantees are MUTATION-TESTED rather than argued: a re-arm minting a
+second address, a stale `amountSmallest`, the fee never added, the button on
+every currency, the button surviving attachment, the tap not re-checked,
+cancelling attaching anyway, the composed text trimmed, the compose step routed
+below the flow dispatch, an unpriceable currency falling back to BNB, a paid
 broadcast sent without review, and fulfilment never queueing it. Each fails
-between one and three tests.
+between one and two tests.
+
+⚠️ **And one of them survived its first run**: the raw-text guard drove
+`broadcastCapture` directly, so it never crossed the ROUTER where the trim
+happens — and the router test's own message had no leading whitespace, so
+trimming it changed nothing. A test that cannot reach the defect is a test about
+nothing; it carries two leading spaces and a bold run over them now.
 
 ```bash
 cd bot && node scripts/run-tests.js test/listingBroadcast.test.js   # 23 tests, no network
