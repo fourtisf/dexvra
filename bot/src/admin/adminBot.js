@@ -110,6 +110,8 @@ const SAMPLE_VARS = {
   bonding: "\n\n🚀 **Still bonding** on pump.fun — **49%** to graduation\n_No DEX pool yet, so charts and liquidity stay empty until it migrates._",
   website: "https://bullcat.io", twitter: "https://x.com/bullcat", telegram: "https://t.me/bullcat",
   label: "Diamond Listing — $BULLCAT on Solana", amount: "1", order: "k3n8_a1b2",
+  // The pay card names the network because two ETH options share one 0x shape.
+  network: "Robinhood Chain",
   // The pasted-CA confirmation card. `current` is a WHOLE row (the "this
   // replaces …" warning), so the preview shows the swap case — the one an
   // operator needs to read carefully — rather than the empty first-setup one.
@@ -2733,6 +2735,7 @@ const PH_HELP = {
   firstMc: "market cap at listing",
   lastMc: "current market cap",
   native: "native coin (SOL / BNB / ETH)",
+  network: "which network to send on (Ethereum / Robinhood Chain)",
   hours: "number of hours",
   discount: "renewal discount %",
   reached: "number of users reached",

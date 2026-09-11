@@ -129,6 +129,9 @@ async function payPick(ctx) {
     chain: pay.payChain,
     native: pay.native,
     humanAmount: pay.price,
+    // Mass DM is priced in all three currencies already; handing the table over
+    // lets a Solana or BSC buyer settle in ETH on Ethereum or Robinhood Chain.
+    prices: MASS_DM_PRICE,
     label: `Mass DM broadcast — to all Dexvra users`,
     payload: {
       text: s.massForm.text,

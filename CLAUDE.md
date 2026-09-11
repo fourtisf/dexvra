@@ -10332,6 +10332,133 @@ bounds the tap and `PAYMENT_TIMEOUT_MS` still bounds the watch. ⚠️ This is a
 `bot/` change, so the deploy is the **ecosystem restart**, not `pm2 restart
 dexvra` — see "Two bot processes, one config".
 
+## "bisa bayar pake ethereum eth dan eth robinhood" — a choice of RAIL, not of price
+
+Asked after establishing that a Robinhood listing bills in **ETH on Robinhood
+Chain** (`native: "ETH"`, no `payVia`, its own RPC), and the request was to make
+ETH payable on **every** package: listing, trending, Mass DM, banner.
+
+**Most of it already existed and was unreachable.** Every package here is priced
+by CURRENCY, never by chain — `price: { BNB: 1.5, SOL: 5, ETH: 0.26, TON: 250,
+TRX: 5000 }` — and `tierPrice(key, chain)` resolves the currency FROM the chain.
+So an ETH price has been sitting in every table since the catalogue was written,
+and the only thing standing between a buyer and it was that the pay chain was
+locked to the chain their TOKEN lives on:
+
+```js
+chain: payChainOf(f.chain), native: payNativeOf(f.chain)   // handlers/listing.js
+```
+
+⚠️ **THE TWO ETH NETWORKS COST THE SAME, AND THAT IS NOT A COINCIDENCE TO
+RESTATE ANYWHERE.** `payNativeOf("ethereum") === "ETH" === payNativeOf("robinhood")`,
+so both read ONE row of ONE table. This adds a choice of rail; a second price
+for the same package would be a feature nobody asked for and two numbers to keep
+in sync with `src/lib/packages.ts`.
+
+- **`config/payOptions.js` is the one owner** of which networks may settle an
+  order: the order's own chain FIRST (an existing buyer's flow must not move
+  under them, and a purchase in SOL is still a purchase), then ETH on Ethereum
+  and ETH on Robinhood Chain. Deduped, so a token already on an ETH chain is not
+  offered twice.
+- ⚠️ **A NETWORK IS OFFERED ONLY IF THE PACKAGE HAS A PRICE IN ITS CURRENCY**,
+  and trending is why that is a rule rather than an assumption: the durations
+  differ per currency — the ETH table has no 3H row and the BNB table no 16H —
+  so a network offered for a duration it cannot price would arm an order for
+  `undefined`. `trendingPrices(duration, discountPct)` builds the map and skips
+  what it cannot price; the renewal discount is applied to every currency alike,
+  or a slot that was 20% off in BNB comes back at full price in ETH.
+- **`prices` is what turns the choice on, and a caller that omits it behaves
+  exactly as it did before.** That is the whole backward-compatibility story:
+  `payOptionsFor` returns `[]` with no table, and `startPayment` arms the order
+  as supplied.
+- ⚠️ **THE AMOUNT COMES FROM THE TABLE, NEVER FROM THE TAP.** `paynet_<chain>`
+  is callback data a user can craft, so the option is re-derived server-side and
+  the amount re-read from the package's own map. Carrying `humanAmount` through
+  the pick would let a tap decide what an order costs.
+- ⚠️ **THE CRAFTED-CHAIN REFUSAL IS ON BOTH PATHS, AND EACH HAS ITS OWN
+  OBSERVABLE PROPERTY** — because a mutation run said neither was individually
+  killable while they shared one. The ARMING guard is what makes a crafted chain
+  unspendable and covers every caller that pins `payChain` (the banner flow
+  does, from its own callback data); the PICKER guard refuses *before the stash
+  is spent*, which is what makes a stray tap on an older picker card cost the
+  buyer nothing. Two guards, two reasons, two tests.
+- ⚠️ **AND THE payVia CHECK WAS DEAD, so it is a comment now.** `payChainOf()`
+  has already resolved Sui to BSC by the time anything is added, and both ETH
+  networks are payable by definition — the mutation run proved no caller can
+  reach `add()` with an unresolved id. A line that claims cover it does not
+  provide is worse than the comment explaining what actually keeps it true.
+- **The banner flow needed one word.** It has had a USD-quoted network picker
+  since it was written (`PAY_CHAINS`) and Robinhood was simply absent from the
+  list; its quoted amount is still armed as the STRING it quoted, byte-identical
+  to before, and the map it now passes exists only so the card can name the
+  network.
+
+### ⚠️ Two ETH networks share one `0x` address shape, so the card must name one
+
+The pay card has never named the network — `"👜 Send {native} to this wallet"`
+and nothing else — and the only thing that made that survivable was that a buyer
+had no choice to get wrong. With Ethereum and Robinhood Chain both offering
+"Send ETH" to a `0x…`, an exchange withdrawal on mainnet against a Robinhood
+order is credited by nobody: `verifyPayment` reads that chain's RPC alone,
+`recovery.js` re-checks the same one for a day, and the sweep only ever touches
+orders marked `paid` — so the funds sit in a temp wallet with nothing anywhere
+saying why.
+
+- **`{network}` is on the template AND enforced at the call site.** Same reason
+  the address and the amount are — *"enforced here rather than trusted to the
+  template's backticks, which a re-saved card loses"*. `data/templates.json`
+  wins over the code default for ever, so an operator who edited `pay_card`
+  before this shipped renders no network at all, on the one line whose absence
+  costs a buyer their money. `ensureNetwork()` appends it when the render does
+  not already carry it.
+- **Appended at the END, which is what makes it safe.** Telegram entity offsets
+  are UTF-16 code units counted from the start, so nothing already in the
+  payload moves; the `html` shape is handled separately because entities do not
+  apply to it.
+- ⚠️ **AND THE WIRING WAS UNPROVED UNTIL A MUTATION RUN SAID SO.** The shipped
+  template already carries `{network}`, so `ensureNetwork` is a no-op on it and
+  deleting the call from `startPayment` left every assertion green — a unit test
+  of the rule beside a call that need not exist. The test drives the real
+  handler over a stubbed operator-saved card instead.
+- ⚠️ **`Robinhood` ALONE IS AMBIGUOUS on the one line a buyer acts on**: it is
+  also a broker most of them have an account with, and sending mainnet ETH from
+  an exchange is the exact mistake this label exists to prevent. `Robinhood
+  Chain` here; the chain's own label is right everywhere else in the bot.
+
+### The flows had to be told, and a scan is what says they were
+
+⚠️ **THE FIRST CUT OF THE TESTS BUILT ITS ORDERS BY HAND**, so it proved the
+machinery and said nothing about whether any real flow used it — deleting
+`prices:` from the listing flow left all of them green, and the buyer would
+simply never be offered ETH again, silently, with a full suite behind it. That
+is the `curveBuyPath` scar: *a wiring that does nothing refuses beautifully.*
+A comment-stripped scan walks every `startPayment(ctx, { … })` literal in
+`src/handlers/` and fails on any that omits its price table — with a vacuity
+assertion, because a brace walker that mis-indexes matches zero call sites and
+passes for the wrong reason. `pay.js` is excluded and says why: it OWNS
+`startPayment` and re-enters it with the pick already spread in.
+
+```bash
+cd bot && node scripts/run-tests.js test/payNetwork.test.js   # 20 tests, no network
+```
+
+Sixteen guarantees are MUTATION-TESTED rather than argued: the amount taken from
+the tap, each crafted-chain guard alone and both together, the picker never
+asking, the stash never spent, the ETH networks dropped, a currency with no
+price offered anyway, the buyer's own chain no longer first, the dedupe dropped,
+the trending duration filter dropped, the `ensureNetwork` wiring removed, the
+bold entity landing off the words, each of the four flows dropping its price
+table, and the scan matching nothing. Each fails between one and ten tests.
+
+**Config a fix depends on:** nothing — every package already carried its ETH
+price, and both ETH networks are payable chains with adapters and a treasury
+(`TREASURY_EVM` covers ethereum/bsc/base/robinhood alike). ⚠️ This is a `bot/`
+change only, so the deploy is the **ecosystem restart** and there is no web
+rebuild. ⚠️ And an operator who has ever edited the **Payment card** template in
+@dexvraadminbot should hit **♻️ Reset default** on it to pick up the `{network}`
+line — the enforced fallback covers them either way, but the template's own line
+reads better than an appended one.
+
 ## Conventions
 
 - Tests live beside the code they cover, in `bot/test/`, `tradebot/*.test.js`

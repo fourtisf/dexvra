@@ -3,7 +3,7 @@
 // Per-chain contract-address validation is enforced (the reference bot skipped it).
 const { answer, toast, sendCard, sendPhotoCard, getMediaFileId } = require("../helpers/message");
 const { chainOf, isValidAddress, payChainOf, payNativeOf } = require("../config/chains");
-const { RANKED_TIERS, tierPrice, tierLabel, tierEmoji, tierTrendingHours } = require("../config/packages");
+const { RANKED_TIERS, tierPrice, tierMeta, tierLabel, tierEmoji, tierTrendingHours } = require("../config/packages");
 const { fetchMarket, fetchTokenDescription } = require("../marketdata");
 // Autofill asks every source that indexes the chain, not just DexScreener —
 // on Robinhood Chain, which DexScreener does not index, pools.trade is the only
@@ -364,6 +364,11 @@ async function goPay(ctx, tier) {
     chain: payChainOf(chain),
     native: payNativeOf(chain),
     humanAmount: price,
+    // Every tier is priced per CURRENCY already, so handing the table over is
+    // what lets the buyer settle in ETH instead — on Ethereum or on Robinhood
+    // Chain, same amount either way. Without it there is no choice to offer and
+    // startPayment arms the token's own chain exactly as it always did.
+    prices: (tierMeta(tier) || {}).price,
     label,
     payload: {
       listingInput: buildListingInput(f, tier),

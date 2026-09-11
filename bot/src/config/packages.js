@@ -92,6 +92,29 @@ const TRENDING = {
 // Priced in the chain's PAY currency (Sui → BNB table, Plasma → ETH table).
 const trendingForChain = (chain) => TRENDING[payNativeOf(chain)] ?? TRENDING.SOL;
 
+/** What one duration costs in EVERY currency that offers it — the shape
+ *  payOptionsFor() reads, so a buyer can settle a trending slot in ETH.
+ *
+ *  ⚠️ THE DURATIONS ARE NOT THE SAME ACROSS CURRENCIES, which is why this
+ *  filters rather than assuming: the ETH table has no 3H row and the BNB table
+ *  no 16H, so a currency offered for a duration it cannot price would arm an
+ *  order for `undefined`. A currency missing here is simply not offered.
+ *
+ *  `discountPct` is the renewal cut (trendingUpsell), applied to every currency
+ *  alike — a renewal that was 20% off in BNB must not become full price in ETH.
+ */
+const trendingPrices = (duration, discountPct = 0) => {
+  const want = String(duration).trim().toUpperCase();
+  const out = {};
+  for (const [native, rows] of Object.entries(TRENDING)) {
+    const row = rows.find((r) => String(r.duration).toUpperCase() === want);
+    if (!row) continue;
+    const price = Number(row.price) * (1 - (Number(discountPct) || 0) / 100);
+    out[native] = Number(price.toFixed(6));
+  }
+  return out;
+};
+
 /** "3H" → 3, "48H" → 48. */
 const durationToHours = (d) => {
   const m = /^(\d+)\s*H$/i.exec(String(d).trim());
@@ -145,7 +168,7 @@ const fmtUsd = (n) => `$${Number(n).toLocaleString("en-US")}`;
 module.exports = {
   LISTING_TIERS, TIER_MAP, RANKED_TIERS, XPRESS_TIER,
   tierMeta, tierLabel, tierColor, tierGlyph, tierEmoji, tierRank, tierAnnounces, tierPrice,
-  TRENDING, trendingForChain, durationToHours, trendingAnnounces,
+  TRENDING, trendingForChain, trendingPrices, durationToHours, trendingAnnounces,
   BANNERS, bannerByKey,
   TIER_TREND_HOURS, tierTrendingHours,
   fmtAmount, fmtNative, fmtUsd,

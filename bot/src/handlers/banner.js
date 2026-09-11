@@ -17,7 +17,12 @@ const { Markup } = menu;
 
 const URL_RE = /^https?:\/\/\S+$/i;
 // Pay currencies offered for USD-priced banners (one per native coin).
-const PAY_CHAINS = ["solana", "bsc", "ethereum", "tron", "ton"];
+// Banner ads are billed in USD and quoted per chain (usdToNative), so this list
+// IS the network picker for this flow — which is why Robinhood being absent was
+// the whole of its half of "pay in ETH on either network". Ethereum and
+// Robinhood both quote from the ETH price, so the two rows show the same amount
+// on purpose: a choice of rail, not of price.
+const PAY_CHAINS = ["solana", "bsc", "ethereum", "robinhood", "tron", "ton"];
 
 function freshSession(ctx, patch) {
   const prev = ctx.session && ctx.session.latest_bot_message;
@@ -160,6 +165,14 @@ async function payPick(ctx) {
     chain,
     native: nativeOf(chain),
     humanAmount: q.human,
+    // This flow picked the network already, so pinning it here keeps the pay
+    // card's network line right without offering a second picker on top of the
+    // one the buyer just used.
+    payChain: chain,
+    // The quoted STRING, not Number(q.human): the amount armed here must stay
+    // byte-identical to what this flow has always sent. This map exists only so
+    // the pay card can name the network.
+    prices: { [nativeOf(chain)]: q.human },
     label: `Banner · ${bf.slot} (${bf.size}) · ${bf.duration}`,
     payload: {
       rec: {

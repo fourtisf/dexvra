@@ -3,7 +3,8 @@
 // coin) → pick a duration → pay.
 const { answer, toast, sendCard } = require("../helpers/message");
 const { chainOf, payChainOf, payNativeOf } = require("../config/chains");
-const { trendingForChain, durationToHours } = require("../config/packages");
+const { trendingForChain, trendingPrices, durationToHours } = require("../config/packages");
+const { RENEW_DISCOUNT_PCT } = require("../config/constants");
 const { escapeHtml } = require("../helpers/format");
 const { startPayment } = require("./pay");
 const api = require("../api/dexvra");
@@ -109,6 +110,10 @@ async function durationPick(ctx) {
     chain: payChainOf(coin.chain),
     native: payNativeOf(coin.chain),
     humanAmount: row.price,
+    // The same duration in every currency that prices it — ETH included, so a
+    // Solana or BSC project can settle a trending slot on Ethereum or Robinhood
+    // Chain. A duration a currency has no row for is simply not offered.
+    prices: trendingPrices(row.duration),
     label: `Trending ${row.duration} — $${coin.sym.replace(/^\$/, "")}`,
     payload: { chain: coin.chain, address: coin.address, hours, symbol: coin.sym, name: coin.name },
   });
@@ -130,6 +135,10 @@ async function extendPick(ctx) {
     chain: payChainOf(offer.chain),
     native: payNativeOf(offer.chain),
     humanAmount: renew.price,
+    // The renewal discount applies in every currency alike — a slot that was
+    // 20% off in BNB must not come back at full price because the buyer picked
+    // ETH.
+    prices: trendingPrices(duration, RENEW_DISCOUNT_PCT),
     label: `Trending renewal ${duration} — $${String(offer.sym || "").replace(/^\$/, "")}`,
     payload: { chain: offer.chain, address: offer.address, hours: renew.hours, symbol: offer.sym, name: offer.name },
   });

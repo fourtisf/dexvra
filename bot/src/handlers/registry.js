@@ -9,6 +9,7 @@ const massdm = require("./massdm");
 const groupSetup = require("../group/setup");
 const text = require("./text");
 const payment = require("../payments/payment");
+const pay = require("./pay");
 const { registerRaidHandlers } = require("../raid");
 const { RAID_ENABLED } = require("../config/constants");
 const log = require("../helpers/logger");
@@ -91,6 +92,10 @@ function registerHandlers(bot) {
   bot.action("buybot_help", start.buyBotHelp);
 
   // ── Payment ───────────────────────────────────────────────────────────────
+  // The buyer picks which network settles the order (ETH on Ethereum vs on
+  // Robinhood Chain). Registered beside confirm_pay because it is the step
+  // directly before it.
+  bot.action(/^paynet_(.+)$/, pay.netPick);
   bot.action("confirm_pay", payment.confirmPayHandler);
 
   // ── Free-text + media routers (LAST) ──────────────────────────────────────

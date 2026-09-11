@@ -293,8 +293,18 @@ const DEFAULTS = {
     "⚡ **Order Summary**\n\n" +
     "{label}\n\n" +
     "👜 **Send {native} to this wallet:**\n`{address}`\n\n" +
+    "🔗 **Network: {network}** — send on this network only.\n\n" +
     "💰 **Amount:** `{amount}` {native}\n\n" +
     "⏳ This address is unique to your order. **Please pay within 5 minutes**, then tap **✅ Confirm Payment** — verification usually takes under a minute.",
+  // The buyer chooses which network settles the order. ETH is the same price on
+  // both — this is a choice of RAIL, not of price, and saying so is what stops
+  // "which one is cheaper?" being the next question.
+  pay_pick:
+    "💳 **Choose how to pay**\n\n" +
+    "{label}\n\n" +
+    "🔹 Pick the network you'll send from. The amount is shown on each button.\n" +
+    "🔹 **ETH costs the same on Ethereum and on Robinhood Chain** — Robinhood confirms in seconds with far lower fees.\n\n" +
+    "⚠️ Send only on the network you pick. A transfer on any other network cannot be credited automatically.",
   pay_card_admin:
     "🧪 **Admin Test Order — FREE**\n\n{label}\n\n🔹 No payment needed. Tap **✅ Confirm** to run the flow end-to-end.",
   payment_not_detected:
@@ -1217,7 +1227,8 @@ const META = {
   checking_payment: { group: "Bot Messages", label: "Payment: checking", ph: ["chain", "amount", "native"] },
   still_checking: { group: "Bot Messages", label: "Payment: still checking", ph: [] },
   no_pending_payment: { group: "Bot Messages", label: "Payment: none pending", ph: [] },
-  pay_card: { group: "Bot Messages", label: "Payment card", ph: ["label", "amount", "native", "address"] },
+  pay_card: { group: "Bot Messages", label: "Payment card", ph: ["label", "amount", "native", "address", "network"] },
+  pay_pick: { group: "Bot Messages", label: "Payment: choose network", ph: ["label"] },
   pay_card_admin: { group: "Bot Messages", label: "Payment card (admin free)", ph: ["label"] },
   payment_not_detected: { group: "Bot Messages", label: "Payment not detected", ph: ["amount", "native", "address", "order"] },
   payment_snag: { group: "Bot Messages", label: "Payment snag", ph: ["order"] },
