@@ -6335,6 +6335,32 @@ Mutation-tested: mainnet dropped from the rails, the listing flow and the
 trending flow each withholding their price table, and the private Mass DM map
 restored — each fails between two and nine tests.
 
+#### "bukan bukan seperti ini — kalo solana ya solana, eth ya eth, khusus chain robinhood aja"
+
+Deployed, and the first screenshot back was a **Solana** project buying Xpress
+and being shown a three-button picker — `1 SOL · Solana` · `0.06 ETH ·
+Ethereum` · `0.06 ETH · Robinhood Chain` — where it used to see one pay card.
+That was never the ask. The ask was about ONE chain: a Robinhood project may
+settle its ETH on Robinhood Chain or on Ethereum mainnet, because those are the
+same coin on two networks and an exchange withdrawal lands on mainnet. Every
+other chain pays in its own coin on its own network, full stop.
+
+- **`CHOICE_CHAIN = "robinhood"` gates the rails in `payOptionsFor`.** A
+  Robinhood order reads `[robinhood, ethereum]`; every other order reads
+  exactly its own chain, so `startPayment` arms it on the first call with no
+  picker — byte-for-byte the flow that existed before the picker did. An
+  Ethereum project is NOT offered Robinhood: the choice belongs to the chain
+  whose buyers were asking for it, not to the coin.
+- ⚠️ **The test file's default order was a SOLANA one**, so every picker test
+  had been driving the exact case the operator did not want and calling it the
+  feature. It is a Robinhood order now, and a Solana order has its own test:
+  armed straight away, in SOL, `payPick` never stashed, no network button ever
+  rendered, and the card still names `Network: Solana`.
+- Mass DM follows the same gate through the same function: a Robinhood project
+  gets the two rails, everyone else their own coin.
+
+Mutation-tested: offering the rails to every chain again fails two tests.
+
 **"add broadcast" — what exists and what does not.** A broadcast is sold here as
 **Mass DM** (📣 on the main menu; `MASS_DM_PRICE` SOL 1 · BNB 0.15 · ETH 0.05;
 CA → compose → pay → admin review in @dexvraadminbot → delivered to every

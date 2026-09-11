@@ -15,11 +15,20 @@
 // The rule for what may be offered:
 //   • the order's own default chain, FIRST and unchanged — an existing buyer's
 //     flow must not move under them, and a purchase in SOL is still a purchase;
-//   • ETH on Ethereum and ETH on Robinhood Chain, when the package HAS an ETH
-//     price. Trending is the reason that clause exists rather than being
-//     assumed: its durations differ per currency (ETH has no 3H row, BNB has no
-//     16H), so a network offered for a duration it cannot price would arm an
-//     order for `undefined`.
+//   • ⚠️ ONLY A ROBINHOOD ORDER GETS A CHOICE. "kalo solana ya solana, eth ya
+//     eth — khusus chain robinhood aja": the first cut offered the two ETH
+//     rails to EVERY package on EVERY chain, so a Solana project buying Xpress
+//     saw a three-button picker (SOL · ETH · ETH) where it used to see one pay
+//     card — a question the operator never asked to be asked. The operator's
+//     call is that a token pays in its own chain's coin, full stop, and the ONE
+//     chain with a genuine choice of rail is Robinhood: same coin, two networks,
+//     and an exchange withdrawal lands on mainnet. So a Robinhood project may
+//     settle ETH on Robinhood Chain or ETH on Ethereum; everything else arms
+//     exactly as it always did, no picker.
+//   • …and only when the package HAS an ETH price. Trending is the reason that
+//     clause exists rather than being assumed: its durations differ per
+//     currency (ETH has no 3H row, BNB has no 16H), so a network offered for a
+//     duration it cannot price would arm an order for `undefined`.
 //
 // ⚠️ NOTHING HERE MAY BE TAKEN FROM CALLBACK DATA. The picker's callback
 // carries a chain id the USER can craft, so `optionFor()` re-derives the whole
@@ -27,10 +36,14 @@
 // tap. A chain that is not in the list is refused rather than armed.
 const { payChainOf, payNativeOf, chainOf } = require("./chains");
 
-// Both bill in ETH; Ethereum first because it is the one a buyer recognises.
-// Robinhood is Dexvra's own chain and settles in seconds for a fraction of the
-// fee, which is why it is worth offering beside mainnet rather than instead.
+// The two rails a ROBINHOOD order may settle on. Both bill in ETH; Robinhood
+// is Dexvra's own chain and settles in seconds for a fraction of the fee, and
+// mainnet is where an exchange withdrawal actually lands — which is why it is
+// offered beside Robinhood rather than instead. The order's own chain still
+// comes first, so a Robinhood order reads [robinhood, ethereum].
 const ETH_NETWORKS = ["ethereum", "robinhood"];
+// The one chain whose orders are offered the choice.
+const CHOICE_CHAIN = "robinhood";
 
 // ⚠️ "Robinhood" ALONE IS AMBIGUOUS on the one line a buyer acts on: it is also
 // a broker most of them have an account with, and the mistake this label exists
@@ -67,8 +80,9 @@ function payOptionsFor(order) {
     out.push({ chain: chainId, native, amount, label: networkLabel(chainId) });
   };
 
-  add(payChainOf(order && order.chain));
-  for (const id of ETH_NETWORKS) add(id);
+  const own = payChainOf(order && order.chain);
+  add(own);
+  if (own === CHOICE_CHAIN) for (const id of ETH_NETWORKS) add(id);
   return out;
 }
 
@@ -78,4 +92,4 @@ function optionFor(order, chainId) {
   return payOptionsFor(order).find((o) => o.chain === chainId) || null;
 }
 
-module.exports = { payOptionsFor, optionFor, networkLabel, ETH_NETWORKS };
+module.exports = { payOptionsFor, optionFor, networkLabel, ETH_NETWORKS, CHOICE_CHAIN };

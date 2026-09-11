@@ -58,26 +58,51 @@ const buttons = (ctx) => {
   const rows = (last.extra.reply_markup || {}).inline_keyboard || [];
   return rows.flat().map((b) => ({ text: b.text, data: b.callback_data }));
 };
+// ⚠️ A ROBINHOOD order, because Robinhood is the ONE chain with a choice. The
+// first cut of this file built a Solana order and drove the picker with it —
+// which was the defect: "kalo solana ya solana, eth ya eth — khusus chain
+// robinhood aja". A Solana project pays SOL and is never asked.
 const order = (over = {}) => ({
   kind: "xpress_listing",
-  chain: "solana",
-  native: "SOL",
-  humanAmount: 1,
+  chain: "robinhood",
+  native: "ETH",
+  humanAmount: 0.06,
   prices: XPRESS,
-  label: "Xpress Listing — $ACAI",
-  payload: { listingInput: { chain: "solana", address: "So1111", sym: "ACAI", name: "Acai" } },
+  label: "Xpress Listing — $ORCH",
+  payload: { listingInput: { chain: "robinhood", address: "0x36B44a8034Fe0eEddb8819dA82128bD6959161A6", sym: "ORCH", name: "Orch" } },
   ...over,
 });
+const solOrder = (over = {}) =>
+  order({
+    chain: "solana",
+    native: "SOL",
+    humanAmount: 1,
+    label: "Xpress Listing — $ACAI",
+    payload: { listingInput: { chain: "solana", address: "So1111", sym: "ACAI", name: "Acai" } },
+    ...over,
+  });
 
 // ── what may be offered ─────────────────────────────────────────────────────
 
-test("a package priced in ETH offers BOTH ETH networks, beside the token's own", () => {
+test("a ROBINHOOD order is offered ETH on Robinhood Chain AND on Ethereum, own chain first", () => {
   const opts = payOptionsFor(order());
   assert.deepStrictEqual(
     opts.map((o) => `${o.amount} ${o.native} ${o.chain}`),
-    ["1 SOL solana", "0.06 ETH ethereum", "0.06 ETH robinhood"],
+    ["0.06 ETH robinhood", "0.06 ETH ethereum"],
     "the token's own chain stays FIRST — an existing buyer's flow must not move under them",
   );
+});
+
+// ⚠️ "kalo solana ya solana, eth ya eth". Only Robinhood has a choice of rail;
+// every other chain pays in its own coin on its own network and is never asked.
+test("⚠️ every OTHER chain is offered exactly its own network — no picker", () => {
+  const own = (chain) => payOptionsFor(order({ chain })).map((o) => `${o.chain}/${o.amount} ${o.native}`);
+  assert.deepStrictEqual(own("solana"), ["solana/1 SOL"]);
+  assert.deepStrictEqual(own("ethereum"), ["ethereum/0.06 ETH"], "an Ethereum project is not offered Robinhood");
+  assert.deepStrictEqual(own("base"), ["base/0.06 ETH"]);
+  assert.deepStrictEqual(own("bsc"), ["bsc/0.25 BNB"]);
+  assert.deepStrictEqual(own("tron"), ["tron/900 TRX"]);
+  assert.deepStrictEqual(own("ton"), ["ton/40 TON"]);
 });
 
 test("the two ETH networks are the same price — a choice of rail, not of price", () => {
@@ -100,10 +125,12 @@ test("a payVia chain is offered on the chain it actually bills on", () => {
 
 test("⚠️ a duration a currency cannot price is NOT offered", () => {
   // The ETH trending table has no 3H row. Offering it would arm `undefined`.
-  const three = payOptionsFor({ chain: "bsc", prices: trendingPrices("3H") }).map((o) => o.native);
-  assert.deepStrictEqual(three, ["BNB"], `3H is BNB-only, got ${three}`);
-  const day = payOptionsFor({ chain: "bsc", prices: trendingPrices("24H") }).map((o) => o.native);
-  assert.ok(day.includes("ETH"), `24H must offer ETH, got ${day}`);
+  // (A Robinhood buyer never sees 3H — trendingForChain hands them the ETH
+  // rows — but the table must refuse it on its own, not by luck of the menu.)
+  const three = payOptionsFor({ chain: "robinhood", prices: trendingPrices("3H") }).map((o) => o.chain);
+  assert.deepStrictEqual(three, [], `3H prices no ETH rail, got ${three}`);
+  const day = payOptionsFor({ chain: "robinhood", prices: trendingPrices("24H") }).map((o) => o.chain);
+  assert.deepStrictEqual(day, ["robinhood", "ethereum"], `24H must offer both rails, got ${day}`);
 });
 
 test("the renewal discount applies in every currency alike", () => {
@@ -116,19 +143,34 @@ test("the renewal discount applies in every currency alike", () => {
 
 // ── the picker, driven ──────────────────────────────────────────────────────
 
-test("an order with a choice asks FIRST and arms nothing", async () => {
+test("a Robinhood order asks FIRST and arms nothing", async () => {
   const ctx = mkCtx();
   await startPayment(ctx, order());
   assert.ok(!ctx.session.pendingPayment, "nothing may be armed before the buyer picks");
   assert.deepStrictEqual(
     buttons(ctx).filter((b) => b.data).map((b) => b.data),
-    ["paynet_solana", "paynet_ethereum", "paynet_robinhood", "home"],
+    ["paynet_robinhood", "paynet_ethereum", "home"],
   );
   assert.deepStrictEqual(
     buttons(ctx).filter((b) => b.data && b.data !== "home").map((b) => b.text),
-    ["1 SOL · Solana", "0.06 ETH · Ethereum", "0.06 ETH · Robinhood Chain"],
+    ["0.06 ETH · Robinhood Chain", "0.06 ETH · Ethereum"],
     "each button carries its own amount and names its network",
   );
+});
+
+test("⚠️ a Solana order is armed STRAIGHT AWAY in SOL — no picker, nothing moved", async () => {
+  const ctx = mkCtx();
+  await startPayment(ctx, solOrder());
+  const pp = ctx.session.pendingPayment;
+  assert.ok(pp, "armed on the first call, exactly as before the picker existed");
+  assert.strictEqual(pp.order.chain, "solana");
+  assert.strictEqual(pp.order.native, "SOL");
+  assert.strictEqual(pp.order.humanAmount, 1);
+  assert.ok(!ctx.session.payPick, "no choice was stashed");
+  assert.deepStrictEqual(rails(ctx), [], "no network buttons were ever shown");
+  const card = ctx.sent[ctx.sent.length - 1].text;
+  assert.match(card, /Send SOL to this wallet/);
+  assert.match(card, /Network: Solana/, "the card still names the network it settles on");
 });
 
 test("picking Robinhood arms the order on Robinhood, in ETH, at the TABLE price", async () => {
