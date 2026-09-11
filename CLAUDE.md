@@ -6304,6 +6304,55 @@ Robinhood-token ones — so `RPC_ROBINHOOD_URLS` in `bot/.env` is the line that
 buys a fallback, and `npm run rpc:check` on the box is what says whether it is
 needed.
 
+### "pastikan yang book listing or trending chain robinhood bisa bayar pake eth dan eth robinhood"
+
+Asked as a check on the round above, and this time the answer is measured from
+the FLOWS rather than from the option table: `payNetwork.test.js` drives
+`listing.approve` (Xpress), `listing.tierPick` (every ranked tier) and
+`trending.durationPick` (every duration on the ETH table) for a real Robinhood
+listing and reads the picker a Robinhood buyer is actually shown — `0.06 ETH ·
+Robinhood Chain` first, `0.06 ETH · Ethereum` beside it, one price. A table that
+is right and a flow that never hands it over look identical from the table's
+tests, which is the `curveBuyPath` scar, so the guard is the handler.
+
+- ⚠️ **THE PAY CHAIN MOVES; THE TOKEN'S CHAIN MUST NOT.** A Robinhood project
+  that settles on mainnet is still a Robinhood LISTING: `fulfillOrder` reads the
+  token's chain off the payload and never `order.chain`, and the test pins that
+  a Diamond order picked onto `ethereum` still carries
+  `listingInput.chain === "robinhood"`. An order whose payload followed the
+  rail would list the token on the wrong network.
+- ⚠️ **Mass DM was the one package with its OWN idea of the pay chain.** A
+  private three-way map — solana → SOL, ethereum/base → ETH, everything else →
+  BNB on BSC — written before Robinhood was a chain here, so a Robinhood project
+  buying Mass DM saw *"💳 Pay 0.15 BNB"* and a picker with BSC first, while the
+  listing it had just bought was billed in ETH on its own chain: two packages,
+  two answers to one question. `payChainOf`/`payNativeOf` are the one owner
+  now; a coin the Mass DM table does not price (TRX, TON) still settles in BNB
+  on BSC, which is what those buyers have always been offered, and the picker
+  adds the ETH rails beside it.
+
+Mutation-tested: mainnet dropped from the rails, the listing flow and the
+trending flow each withholding their price table, and the private Mass DM map
+restored — each fails between two and nine tests.
+
+**"add broadcast" — what exists and what does not.** A broadcast is sold here as
+**Mass DM** (📣 on the main menu; `MASS_DM_PRICE` SOL 1 · BNB 0.15 · ETH 0.05;
+CA → compose → pay → admin review in @dexvraadminbot → delivered to every
+`/start` user), and the admin bot has its own free Broadcast Manager. What does
+NOT exist is an **add-on offered inside the Xpress / Listing & Trending
+purchase** — "➕ Add Broadcast" on the tier or pay step, bundled into one order.
+⚠️ It was asked for "samakan kaya fourtis", with the fourtis bot file to follow,
+and that file is not in the repo: the price per currency, where the option sits
+in the flow, what the DM carries (the listing card, or text the buyer composes)
+and whether it is reviewed are all facts about THAT bot. A paid add-on built on
+a guess is a wrong number on a public bot the moment it deploys, so it is
+deliberately not built until the reference is in hand — recorded so it is not
+mistaken for an oversight.
+
+```bash
+cd bot && node scripts/run-tests.js test/payNetwork.test.js   # 30 tests — the Robinhood flows are driven, not read
+```
+
 ## Two bot processes, one config
 
 `bot/` runs **two** PM2 processes: `dexvra-bot` (`main.js`) and

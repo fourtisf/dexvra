@@ -5,7 +5,7 @@
 // PERSISTS a pending_review job on payment (funds are swept before onSuccess,
 // so fulfilment must never throw). Admins get a FREE test-send.
 const { answer, toast, sendCard, getMediaFileId } = require("../helpers/message");
-const { nativeOf, chainOf } = require("../config/chains");
+const { nativeOf, chainOf, payChainOf, payNativeOf } = require("../config/chains");
 const { MASS_DM_PRICE, MASS_DM_ENABLED, isAdminUser, ADMIN_IDS } = require("../config/constants");
 const { startPayment } = require("./pay");
 const groupSetup = require("../group/setup");
@@ -22,17 +22,29 @@ function freshSession(ctx, patch) {
 
 const fmtPrice = (n, sym) => (n == null ? "—" : `${n} ${sym}`);
 
-// The three Mass DM pay currencies, mapped from the token's chain. The buyer
-// pays in the currency of the chain their token lives on.
+// The Mass DM pay currency, mapped from the token's chain. The buyer pays in
+// the currency of the chain their token lives on — through the SAME
+// payChainOf/payNativeOf every other package uses, so a Robinhood project is
+// billed in ETH on Robinhood Chain here exactly as it is for a listing.
+//
+// ⚠️ It used to be a private three-way map — solana → SOL, ethereum/base → ETH,
+// EVERYTHING ELSE → BNB on BSC — written before Robinhood was a chain here. So
+// a Robinhood project buying Mass DM saw "💳 Pay 0.15 BNB" and a picker with BSC
+// first, while the listing it had just bought was billed in ETH on its own
+// chain: two packages, two answers to "what does my chain pay in". The table
+// only prices three currencies, so a chain whose coin it does not price (TRX,
+// TON) still settles in BNB on BSC, which is what those buyers have always
+// been offered.
 function currencyOf(chain) {
-  if (chain === "solana") return "SOL";
-  if (chain === "ethereum" || chain === "base") return "ETH";
-  return "BNB"; // bsc, tron, ton, robinhood, plasma, sui, …
+  const own = payNativeOf(chain);
+  return MASS_DM_PRICE[own] != null ? own : "BNB";
 }
-const PAY_CHAIN = { SOL: "solana", BNB: "bsc", ETH: "ethereum" };
 function payFor(tokenChain) {
   const currency = currencyOf(tokenChain);
-  return { currency, payChain: PAY_CHAIN[currency], native: currency, price: MASS_DM_PRICE[currency] };
+  const own = payNativeOf(tokenChain);
+  // Its own chain when that is what it pays in; the BSC fallback otherwise.
+  const payChain = currency === own ? payChainOf(tokenChain) : "bsc";
+  return { currency, payChain, native: currency, price: MASS_DM_PRICE[currency] };
 }
 
 // Loose CA shape check (matches the chains we support) before we scan it.
@@ -185,4 +197,4 @@ async function downloadMedia(ctx, fileId) {
   return file;
 }
 
-module.exports = { entryMassDm, handleText, handlePhoto, payPick, testSend, refFor, downloadMedia, currencyOf, looksLikeCA };
+module.exports = { entryMassDm, handleText, handlePhoto, payPick, testSend, refFor, downloadMedia, currencyOf, payFor, looksLikeCA };

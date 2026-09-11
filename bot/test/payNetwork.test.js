@@ -411,3 +411,124 @@ test("the two ETH banner rows differ ONLY by network, never by price", async () 
   assert.strictEqual(amounts[0], amounts[1], "a choice of rail, never of price");
   assert.notStrictEqual(eth[0].text, eth[1].text, "and the rails are told apart");
 });
+
+
+// ── a ROBINHOOD project, driven through the real flows ───────────────────────
+//
+// "pastikan yang book listing or trending chain robinhood bisa bayar pake eth
+// dan eth robinhood". The unit tests above prove the option table; these drive
+// the HANDLERS a Robinhood buyer actually taps — approve → tier → duration —
+// and read the picker they are shown. A table that is right and a flow that
+// never hands it over look identical from the table's tests (the
+// `curveBuyPath` scar: a wiring that does nothing refuses beautifully).
+const listing = require("../src/handlers/listing");
+const trending = require("../src/handlers/trending");
+const listed = require("../src/helpers/listedGuard");
+const { RANKED_TIERS, tierPrice, trendingForChain } = require("../src/config/packages");
+
+const RH_TOKEN = "0x36B44a8034Fe0eEddb8819dA82128bD6959161A6"; // $ORCHFLOWS, a real Robinhood listing
+const rails = (ctx) => buttons(ctx).filter((b) => String(b.data).startsWith("paynet_"));
+const rhForm = () => ({ chain: "robinhood", address: RH_TOKEN, name: "Orchflows", sym: "ORCHFLOWS" });
+
+test("a Robinhood token booking Xpress Listing is offered ETH on Robinhood Chain AND on Ethereum", async (t) => {
+  // approve() re-checks the site for a duplicate before money moves; the site
+  // is not here, and "not listed yet" is the answer that reaches the picker.
+  const orig = listed.existingListing;
+  listed.existingListing = async () => null;
+  t.after(() => {
+    listed.existingListing = orig;
+  });
+  const ctx = mkCtx();
+  ctx.session = { type: "xpress_listing", form: rhForm() };
+  await listing.approve(ctx);
+  assert.deepStrictEqual(
+    rails(ctx).map((b) => `${b.text} → ${b.data}`),
+    ["0.06 ETH · Robinhood Chain → paynet_robinhood", "0.06 ETH · Ethereum → paynet_ethereum"],
+    "its own chain first, mainnet beside it, one price",
+  );
+});
+
+test("…and every Listing & Trending tier, at that tier's ETH price", async () => {
+  for (const tier of RANKED_TIERS) {
+    const ctx = mkCtx();
+    ctx.session = { type: "tiered_listing", form: rhForm() };
+    ctx.match = [null, tier.key];
+    await listing.tierPick(ctx);
+    const price = tierPrice(tier.key, "robinhood");
+    assert.deepStrictEqual(
+      rails(ctx).map((b) => b.text),
+      [`${price} ETH · Robinhood Chain`, `${price} ETH · Ethereum`],
+      `${tier.key} must offer both ETH rails at ${price} ETH`,
+    );
+  }
+});
+
+test("…and every Trending duration for a Robinhood token", async () => {
+  const rows = trendingForChain("robinhood");
+  assert.ok(rows.length >= 5, "the ETH trending table is what a Robinhood token sees");
+  for (let i = 0; i < rows.length; i++) {
+    const ctx = mkCtx();
+    ctx.session = { coin: { chain: "robinhood", address: RH_TOKEN, sym: "ORCHFLOWS", name: "Orchflows" } };
+    ctx.match = [null, String(i)];
+    await trending.durationPick(ctx);
+    assert.deepStrictEqual(
+      rails(ctx).map((b) => b.text),
+      [`${rows[i].price} ETH · Robinhood Chain`, `${rows[i].price} ETH · Ethereum`],
+      `${rows[i].duration} must offer both ETH rails`,
+    );
+  }
+});
+
+// ⚠️ THE PAY CHAIN MOVES; THE TOKEN'S CHAIN MUST NOT. A Robinhood project that
+// settles on Ethereum mainnet is still a Robinhood listing — fulfilment reads
+// the token's chain off the payload, and an order whose payload followed the
+// rail would list the token on the wrong network.
+test("a Robinhood listing paid on Ethereum mainnet is still LISTED on Robinhood", async () => {
+  const ctx = mkCtx();
+  ctx.session = { type: "tiered_listing", form: rhForm() };
+  ctx.match = [null, "DIAMOND"];
+  await listing.tierPick(ctx);
+  assert.ok(ctx.session.payPick, "the picker stashed the order");
+  ctx.match = [null, "ethereum"];
+  await netPick(ctx);
+  const pp = ctx.session.pendingPayment;
+  assert.ok(pp, "armed after the pick");
+  assert.strictEqual(pp.order.chain, "ethereum", "settles on the rail that was picked");
+  assert.strictEqual(pp.order.native, "ETH");
+  assert.strictEqual(pp.order.humanAmount, tierPrice("DIAMOND", "robinhood"));
+  assert.strictEqual(pp.order.payload.listingInput.chain, "robinhood", "the TOKEN stays on Robinhood");
+  const card = ctx.sent[ctx.sent.length - 1].text;
+  assert.match(card, /Network: Ethereum/, "and the card names the rail, not the token's chain");
+});
+
+
+// ── Mass DM, the one package that had its OWN idea of the pay chain ──────────
+//
+// A private map — solana → SOL, ethereum/base → ETH, everything else → BNB on
+// BSC — written before Robinhood existed here. So a Robinhood project buying
+// Mass DM saw "💳 Pay 0.15 BNB" and a picker with BSC first, while the listing
+// it had just bought was billed in ETH on its own chain: two packages, two
+// answers to one question. payChainOf/payNativeOf are the one owner now.
+const massdm = require("../src/handlers/massdm");
+
+test("a Robinhood project's Mass DM is billed in ETH on Robinhood Chain, like its listing", () => {
+  assert.deepStrictEqual(massdm.payFor("robinhood"), { currency: "ETH", payChain: "robinhood", native: "ETH", price: 0.05 });
+  assert.deepStrictEqual(massdm.payFor("solana"), { currency: "SOL", payChain: "solana", native: "SOL", price: 1 });
+  // A coin the Mass DM table does not price still settles in BNB on BSC — what
+  // those buyers have always been offered, and the picker adds ETH beside it.
+  assert.deepStrictEqual(massdm.payFor("tron"), { currency: "BNB", payChain: "bsc", native: "BNB", price: 0.15 });
+  assert.strictEqual(massdm.payFor("sui").payChain, "bsc", "a payVia chain bills where it always did");
+});
+
+test("…and its picker offers both ETH rails, own chain first", async () => {
+  const ctx = mkCtx();
+  ctx.session = {
+    type: "massdm",
+    massForm: { ca: RH_TOKEN, chain: "robinhood", pay: massdm.payFor("robinhood"), text: "gm", entities: [], mediaFileId: null },
+  };
+  await massdm.payPick(ctx);
+  assert.deepStrictEqual(
+    rails(ctx).map((b) => b.text),
+    ["0.05 ETH · Robinhood Chain", "0.05 ETH · Ethereum"],
+  );
+});
