@@ -10626,6 +10626,96 @@ rebuild. ⚠️ And an operator who has ever edited the **Payment card** templat
 line — the enforced fallback covers them either way, but the template's own line
 reads better than an appended one.
 
+## "Di bawahnya ada fitur add broadcast dengan fee tambahan"
+
+A project buying a listing can now attach a **Mass DM** to the same order
+instead of buying it separately: `📣 + Broadcast to all users (+1 SOL)` on the
+review card, compose, and the fee rides the listing's own payment.
+
+**Nothing new sends anything.** The message goes through the EXISTING paid Mass
+DM machinery — composed by the buyer, queued `pending_review` by fulfilment,
+approved by an admin with `/reviewmassdm`, delivered by the main bot's sender.
+`queueBroadcast()` is the one door both products go through; `fulfillMassDm()`
+is the standalone product wrapped around it. Two enqueues would be two ideas of
+what a paid broadcast is, and the first thing to drift would be whether an admin
+ever sees it.
+
+- **The fee is `MASS_DM_PRICE` ITSELF, not a second table.** The ask was "ikuti
+  price mass dm", so the add-on charges exactly what the standalone product
+  charges, read from the same constant — which is already env-overridable
+  (`MASS_DM_PRICE_SOL` / `_BNB` / `_ETH`). A private copy would be a second price
+  for one product, and the day an operator changed one of them the buyer would be
+  quoted one number and charged the other. A test scans for it, because "reads
+  the same constant" is a property no value comparison can prove once the two
+  numbers happen to coincide.
+- **It is billed in the ORDER'S OWN coin**, one order, one amount, one address,
+  one network — the rule the whole payment path now enforces. That is also why
+  availability is computed rather than assumed: `MASS_DM_PRICE` prices SOL, BNB
+  and ETH only, so ⚠️ **a Tron or TON listing is offered NO button at all**
+  rather than a disabled one. A button whose only outcome is a refusal is the
+  "row the engine ignores" this file already names.
+- ⚠️ **A CURRENCY THE ADD-ON CANNOT PRICE IS DROPPED FROM THE RAILS, never
+  carried at its bare base price.** `payOptionsFor()` turns the price table into
+  the networks an order may settle on, so leaving TRX in it would sell a Tron
+  rail that charges for the listing and throws the broadcast in for free.
+- ⚠️ **`1.15 + 0.15` IS `1.2999999999999998`.** Both operands are ordinary
+  decimal literals out of `config/packages.js`, so a Platinum listing on BSC with
+  the add-on put `Amount: 1.2999999999999998 BNB` on the one screen that takes
+  the money. Measured before the fix existed, not feared — and note that
+  `0.06 + 0.05` comes out clean, which is exactly the shape that survives a
+  casual test. `addAmount()` lives beside `toSmallest()` because that is the only
+  other place in the bot where a money amount is COMPUTED rather than read.
+- ⚠️ **The composed text is stored RAW, never the trimmed copy.** Telegram entity
+  offsets are counted from the start of the message, so trimming one leading
+  space shifts every bold run and every custom emoji a character left. `/cancel`
+  is matched on the trimmed copy, which is the only thing trimming is safe for.
+- **The fee is printed ON the button**, not on the review card: `review_card` is
+  an admin-editable template, and putting it there would show no price at all to
+  every operator who has ever saved that template until they hit ♻️ Reset
+  default.
+- **The tap is re-checked, not trusted to the row that offered it.** A review
+  card left open in the chat can outlive a chain switch, and `MASS_DM_ENABLED`
+  can go off under it.
+- **An empty compose is not a broadcast** and is never charged for.
+- ⚠️ **The add-on is queued LAST and can never fail the listing.** By then the
+  row is live, the channel posts are out and the funds were swept before
+  fulfilment even started — so a queue that will not take the message is a thing
+  to TELL the buyer about, never a reason to report a delivered listing as
+  failed. `queueBroadcast` returns `{ok, ref, why}` rather than throwing, and the
+  two callers owe the buyer different sentences.
+- **`listing.js` imports the pay MODULE, not a destructured `startPayment`.** A
+  destructured import is bound at require time, so no test could pin what this
+  flow hands the payment path — the total, the coin, the attached message. The
+  rule `autoTrend.js` and `trendingPoster.js` already state at their own
+  requires.
+
+⚠️ **AND THE FIRST MUTATION RUN LEFT A SURVIVOR, on the worst path of the lot.**
+The call site was pinned by a SOURCE SCAN asserting `p.broadcast` and
+`queueBroadcast(` appear in `fulfillListing` — and `if (false) {` leaves every
+one of those strings exactly where it was, so a buyer could be charged for a
+broadcast that was never queued with the suite green. **A guard a mutation run
+cannot kill is not a guard.** `fulfillListing` is DRIVEN now, with the site API,
+the channel posts, the banner build and the tweet stubbed, and the assertion is
+that a job really reaches the queue — plus its negative, that a listing without
+an add-on queues nothing. The curveBuyPath scar, one package over.
+
+Eleven guarantees are MUTATION-TESTED rather than argued: float addition, an
+unpriceable chain falling back to BNB, an undropped currency, the button offered
+everywhere, the tap not re-checked, the fee not folded in, an empty compose
+charged, the text trimmed, the message not travelling with the order, a paid
+broadcast sent without review, and fulfilment never queueing it. Each fails
+between one and three tests.
+
+```bash
+cd bot && node scripts/run-tests.js test/listingBroadcast.test.js   # 23 tests, no network
+```
+
+**Config a fix depends on:** nothing — it ships on and needs no new value.
+`MASS_DM_PRICE_SOL` / `_BNB` / `_ETH` in `bot/.env` move the fee, and
+`MASS_DM_ENABLED=0` removes the button everywhere. ⚠️ Scoped to the LISTING
+flow deliberately: trending and banner orders do not offer it, and adding them
+is the same three lines in their own `goPay` if that is wanted.
+
 ## Conventions
 
 - Tests live beside the code they cover, in `bot/test/`, `tradebot/*.test.js`

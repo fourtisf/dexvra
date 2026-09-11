@@ -72,6 +72,8 @@ function registerHandlers(bot) {
   bot.action(/^lc_(.+)$/, listing.chainPick);
   bot.action(/^lt_(.+)$/, listing.tierPick);
   bot.action(/^edit_([a-z_]+)$/, listing.editField);
+  bot.action("bc_add", listing.broadcastAdd);   // broadcast add-on: compose
+  bot.action("bc_del", listing.broadcastRemove); // …and drop it again
   bot.action("approve_listing", listing.approve);
   bot.action("discard_listing", listing.discard);
 

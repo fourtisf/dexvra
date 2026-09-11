@@ -1,0 +1,75 @@
+// THE BROADCAST ADD-ON — the one owner of "may this order add a Mass DM, what
+// does it cost, and what does the whole order then cost".
+//
+// "di bawahnya ada fitur add broadcast aturan dengan fee tambahan" — a project
+// buying a listing can attach a Mass DM to the same order instead of buying it
+// separately. The message still goes through the EXISTING paid Mass DM
+// machinery: composed by the buyer, queued as pending_review by fulfilment,
+// approved by an admin in @dexvraadminbot, delivered by the main bot's sender.
+// Nothing here sends anything.
+//
+// ⚠️ THE FEE IS MASS_DM_PRICE ITSELF, NOT A SECOND TABLE. "ikuti price mass dm"
+// — so the add-on charges exactly what the standalone product charges, read
+// from the same constant, which is already env-overridable
+// (MASS_DM_PRICE_SOL / _BNB / _ETH). A private copy here would be a second
+// price for one product, and the day the operator changed one of them the
+// buyer would be quoted one number and charged the other.
+//
+// ⚠️ AND IT IS PAID IN THE ORDER'S OWN CURRENCY. "kalo client book chain bsc
+// pembayaran harus bsc" — the add-on is part of one order with one amount, so
+// it is priced in the coin that order already settles in and never in a second
+// one. That is also why availability is decided HERE rather than assumed:
+// MASS_DM_PRICE prices SOL, BNB and ETH only, so a token that pays in TRX or
+// TON has no fee to charge and is never offered the button. Offering it and
+// then failing at the pay step is the "row the engine ignores" this repo keeps
+// paying for.
+const { MASS_DM_PRICE, MASS_DM_ENABLED } = require("./constants");
+const { payNativeOf } = require("./chains");
+const { addAmount } = require("../payments/units");
+
+/**
+ * What the add-on costs for a token on `tokenChain`, in that order's own
+ * currency — or null when it cannot be offered at all.
+ *
+ * null means exactly one thing: no button. Callers must not fall back to
+ * another currency, which is the rule the whole payment path now enforces.
+ */
+function addonPrice(tokenChain) {
+  if (!MASS_DM_ENABLED) return null;
+  const native = payNativeOf(tokenChain);
+  const p = Number(MASS_DM_PRICE[native]);
+  return p > 0 ? p : null;
+}
+
+/** Can a listing on this chain attach a broadcast at all? */
+const canAddBroadcast = (tokenChain) => addonPrice(tokenChain) != null;
+
+/**
+ * The order's price table WITH the add-on folded in, keyed by currency exactly
+ * as payOptionsFor() expects.
+ *
+ * ⚠️ A CURRENCY THE ADD-ON CANNOT PRICE IS DROPPED, never carried at its bare
+ * base price. payOptionsFor() turns this table into the networks an order may
+ * settle on, so leaving TRX in it would offer a Tron rail that charges for the
+ * listing and delivers a broadcast for free. Dropping it is safe because the
+ * button is only ever shown where the order's OWN currency survives.
+ */
+function pricesWithAddon(basePrices, tokenChain) {
+  const fee = addonPrice(tokenChain);
+  if (fee == null) return { ...(basePrices || {}) };
+  const out = {};
+  for (const [native, base] of Object.entries(basePrices || {})) {
+    const each = Number(MASS_DM_PRICE[native]);
+    if (!(each > 0) || !(Number(base) > 0)) continue;
+    out[native] = addAmount(base, each);
+  }
+  return out;
+}
+
+/** The order's own total — base + fee in the currency it settles in. */
+function totalWithAddon(baseAmount, tokenChain) {
+  const fee = addonPrice(tokenChain);
+  return fee == null ? baseAmount : addAmount(baseAmount, fee);
+}
+
+module.exports = { addonPrice, canAddBroadcast, pricesWithAddon, totalWithAddon };

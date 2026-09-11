@@ -689,6 +689,21 @@ async function fulfillListing(ctx, order) {
   // 6. Buyer DM (the tweet was posted before the channel posts above).
   await dm(ctx, successListing(coin, links, { hours }), menu.postPurchase(coin.siteUrl));
   step("dm");
+
+  // 7. The broadcast ADD-ON, if this order carried one.
+  //
+  // ⚠️ LAST, AND IT CAN NEVER FAIL THE LISTING. The listing is already live and
+  // already posted by this point, and the funds were swept before fulfilment
+  // even started — so a queue that will not take the message is a thing to TELL
+  // the buyer about, never a reason to report a delivered listing as failed.
+  // Same rule the free-listing report states one service over: it runs after
+  // the row is live, and a throw there would turn a successful listing into a
+  // failed one.
+  if (p.broadcast && (p.broadcast.text || p.broadcast.mediaFileId)) {
+    const b = await queueBroadcast(ctx, order, p.broadcast);
+    await dm(ctx, tpl.render(b.ok ? "broadcast_addon_queued" : "broadcast_addon_failed", { ref: b.ref })).catch(() => {});
+    step("broadcast");
+  }
   log.info(
     `[fulfil] listing $${input.sym} (${input.tier || "?"}) took ${((Date.now() - _t0) / 1000).toFixed(1)}s — ${_t.marks.join(" ")}`,
   );
@@ -956,10 +971,22 @@ function successBanner(run, links, xUrl, queued) {
 // Funds are already swept before fulfilment, so this must NEVER throw: it only
 // PERSISTS a pending_review job and notifies the review chat. A failed enqueue
 // tells the buyer to contact support — it never bubbles up to abort the order.
-async function fulfillMassDm(ctx, order) {
+//
+// ⚠️ TWO DOORS, ONE QUEUE. A Mass DM is bought on its own (/massdm) and as the
+// broadcast ADD-ON on a listing order, and both must produce the same
+// pending_review job with the same audience and the same review path — a second
+// enqueue would be a second idea of what a paid broadcast is, and the first
+// thing to drift would be whether an admin ever sees it. queueBroadcast() is
+// that one door; fulfillMassDm() is the standalone product wrapped around it.
+//
+// It returns {ok, ref, why} rather than throwing, because its two callers owe
+// the buyer different sentences: the standalone product IS the order, while the
+// add-on rides a listing that has already gone live and must not be reported as
+// failed because its broadcast could not be queued.
+async function queueBroadcast(ctx, order, content) {
   const massStore = require("./massdm/store");
   const { MASS_DM_REVIEW_CHAT_ID } = require("./config/constants");
-  const p = order.payload; // { text, entities, mediaFileId }
+  const p = content || {}; // { text, entities, mediaFileId }
   const ref = require("./handlers/massdm").refFor();
   try {
     let mediaPath = null;
@@ -993,11 +1020,18 @@ async function fulfillMassDm(ctx, order) {
         .sendMessage(MASS_DM_REVIEW_CHAT_ID, `🕵️ New paid Mass DM awaiting review — ref <code>${ref}</code>. Use /reviewmassdm in @dexvraadminbot.`, { parse_mode: "HTML" })
         .catch(() => {});
     }
-    await dm(ctx, tpl.render("massdm_received", { ref }), menu.postPurchase());
+    return { ok: true, ref };
   } catch (e) {
     log.error(`[fulfil] mass DM enqueue FAILED (paid, ref ${ref}): ${e.message}`);
-    await dm(ctx, tpl.render("massdm_enqueue_failed", { ref }), menu.postPurchase()).catch(() => {});
+    return { ok: false, ref, why: e.message };
   }
+}
+
+/** The standalone product: queue it, then tell the buyer either way. */
+async function fulfillMassDm(ctx, order) {
+  const r = await queueBroadcast(ctx, order, order.payload);
+  const key = r.ok ? "massdm_received" : "massdm_enqueue_failed";
+  await dm(ctx, tpl.render(key, { ref: r.ref }), menu.postPurchase()).catch(() => {});
 }
 
 async function fulfillOrder(ctx, order) {
@@ -1040,4 +1074,9 @@ module.exports = {
   // boxes — it measured a font stack that renderer did not draw with.
   _readPostMarket: readPostMarket,
   _adoptChainLogo: adoptChainLogo,
+  // The ONE door a paid broadcast goes through — the standalone /massdm product
+  // and the listing add-on both call it. Exported so a test can DRIVE it rather
+  // than read it: a queue that silently refuses every message is a wiring that
+  // does nothing, and it refuses beautifully.
+  queueBroadcast,
 };
