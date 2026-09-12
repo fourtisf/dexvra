@@ -1078,6 +1078,16 @@ async function queueBroadcast(ctx, order, content, { autoSend = false } = {}) {
       targets: massStore.audience(),
       test: false, // never an admin test run — this one was paid for
       autoSend,
+      // The add-on rides a listing order whose total is the listing + the fee,
+      // so quoting that total here would misreport what the broadcast cost. The
+      // standalone product IS the order, so its total is exactly its price.
+      paid: autoSend
+        ? "included with listing package"
+        : order.adminFree
+          ? "admin order (no payment)"
+          : order.humanAmount && order.native
+            ? `${order.humanAmount} ${order.native}`
+            : "paid broadcast",
       reportChatId: MASS_DM_REVIEW_CHAT_ID || null,
       ref,
     });

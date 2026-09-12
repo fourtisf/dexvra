@@ -53,6 +53,8 @@ const job = (over = {}) => ({
  *  "premium"  — accepts the entities and echoes them (the owner has Premium)
  *  "stripped" — accepts the message, echoes it WITHOUT the custom emoji
  *  "refused"  — rejects any message carrying them
+ *  "blocked"  — every recipient has blocked the bot (the ordinary failure)
+ *  "broken"   — every send fails for a reason that is NOT the user's doing
  */
 function tg(mode) {
   const sent = [];
@@ -61,6 +63,8 @@ function tg(mode) {
     const ents = extra.entities || extra.caption_entities || [];
     const custom = ents.filter((e) => e.type === "custom_emoji");
     if (custom.length && mode === "refused") throw new Error("400: Bad Request: CUSTOM_EMOJI_INVALID");
+    if (mode === "blocked") throw new Error("403: Forbidden: bot was blocked by the user");
+    if (mode === "broken") throw new Error("400: Bad Request: message caption is too long");
     return { message_id: sent.length, entities: mode === "stripped" ? ents.filter((e) => e.type !== "custom_emoji") : ents };
   };
   return {
@@ -105,7 +109,7 @@ test("⚠️ a bot whose owner HAS Premium: the emoji go out and the report says
   assert.strictEqual(wire.parse_mode, undefined, "entities are sent as entities, never re-parsed");
   assert.strictEqual(sender._customCount(wire.entities), 2, "both custom emoji reached the wire");
   assert.strictEqual(j.premiumOut, true);
-  assert.match(report, /Premium emoji:<\/b> ✅ 2 accepted/);
+  assert.match(report, /Premium emoji:<\/b> 2 went out animated/);
 });
 
 // ⚠️ A PLAIN SEND MAY NEVER RENDER AS A ✅ — to anyone without Telegram Premium
@@ -176,4 +180,111 @@ test("⚠️ the media path records it too — a photo job's first send is prime
   assert.strictEqual(j.sent, 1, "primeMedia is the only send this job makes");
   assert.strictEqual(j.premiumOut, false, "the caption's entities are judged the same way");
   assert.match(report, /PLAIN/);
+});
+
+// ── the delivery report ─────────────────────────────────────────────────────
+//
+// "laporanya seperti fourtis aja" — the ref, what paid for it, one line saying
+// it went out, one naming what could not be reached. The shape is copied; every
+// line in it is MEASURED, which is where these tests live.
+
+const rpt = (over) =>
+  sender._reportText({ id: "j", ref: "pbc_mtwzg9m7_sia7fv", total: 12528, sent: 12110, failed: 418, unreachable: 418, ...over });
+
+test("the report reads like the reference bot's", () => {
+  const t = rpt({ paid: "included with listing package" });
+  assert.match(t, /📣 <b>Broadcast delivered<\/b>/);
+  assert.match(t, /<b>Ref:<\/b> <code>pbc_mtwzg9m7_sia7fv<\/code>/);
+  assert.match(t, /<b>Paid:<\/b> included with listing package/);
+  assert.match(t, /📬 <b>Sent to all users<\/b>/);
+  assert.match(t, /🚫 <b>Couldn't reach \(blocked\/inactive\):<\/b> 418/);
+});
+
+// ⚠️ "Sent to all users" is a CLAIM. These two states are the ones where
+// copying the reference's line verbatim would print a falsehood.
+test("⚠️ …but it never claims 'all users' over a run that reached nobody", () => {
+  const t = rpt({ sent: 0, failed: 12528, unreachable: 12528 });
+  assert.ok(!/Sent to all users/.test(t), "every send failed — saying it went out is the tick over a broken thing");
+  assert.match(t, /📭 <b>Delivered to nobody<\/b>/);
+});
+
+test("⚠️ …nor over a run that stopped short", () => {
+  // sent + failed < total: the loop did not get through the audience.
+  const t = rpt({ sent: 40, failed: 2, unreachable: 2 });
+  assert.ok(!/Sent to all users/.test(t));
+  assert.match(t, /Sent to 40 of 12528<\/b> — the run did not finish/);
+});
+
+// ⚠️ The half an operator can act on. Laundering every failure as
+// "blocked/inactive" would be a cause nobody measured.
+test("⚠️ a failure OUTSIDE the blocked family is counted apart and NAMED", () => {
+  const t = rpt({ failed: 428, unreachable: 418, otherFails: 10, otherWhy: "Bad Request: message is too long" });
+  assert.ok(!/\(blocked\/inactive\)/.test(t), "the parenthetical asserts ALL of them — it may not stand here");
+  assert.match(t, /418 blocked\/inactive, <b>10 for another reason<\/b>/);
+  assert.match(t, /message is too long/);
+});
+
+test("…and a clean run prints no failure line at all", () => {
+  const t = rpt({ sent: 12528, failed: 0, unreachable: 0 });
+  assert.ok(!/Couldn't reach/.test(t), "a line saying 0 is noise");
+  assert.match(t, /📬 <b>Sent to all users<\/b>/);
+});
+
+test("the Paid line tells the three products apart", () => {
+  assert.match(rpt({ paid: "included with listing package" }), /<b>Paid:<\/b> included with listing package/);
+  assert.match(rpt({ paid: "2 SOL" }), /<b>Paid:<\/b> 2 SOL/);
+  assert.match(rpt({ test: true, paid: "2 SOL" }), /<b>Paid:<\/b> free admin test/);
+  assert.match(rpt({}), /<b>Paid:<\/b> paid broadcast/, "an older job with no field still says something true");
+});
+
+// ⚠️ parse_mode is HTML and Telegram's own error text is not ours. One stray
+// `<` makes it reject the whole report with a 400 — so the one line that
+// explains a failure would be the line that vanishes.
+test("⚠️ Telegram's error text is escaped before it goes back to Telegram", () => {
+  const t = rpt({ failed: 2, unreachable: 1, otherFails: 1, otherWhy: "Bad Request: <b>nope</b> & co" });
+  assert.ok(!/<b>nope<\/b>/.test(t), "a raw tag out of an upstream error is a 400 on the report");
+  assert.match(t, /&lt;b&gt;nope&lt;\/b&gt; &amp; co/);
+});
+
+test("⚠️ the cause is CLASSIFIED from Telegram's own sentence, not assumed", () => {
+  const j = {};
+  for (const why of [
+    "Forbidden: bot was blocked by the user",
+    "Forbidden: user is deactivated",
+    "Bad Request: chat not found",
+    "Bad Request: PEER_ID_INVALID",
+  ]) sender._noteFailure(j, new Error(why));
+  assert.strictEqual(j.unreachable, 4, "the ordinary family — not a fault");
+  assert.strictEqual(j.otherFails, undefined);
+
+  sender._noteFailure(j, new Error("Bad Request: message caption is too long"));
+  assert.strictEqual(j.otherFails, 1, "anything else is the operator's to see");
+  assert.match(j.otherWhy, /caption is too long/);
+  sender._noteFailure(j, new Error("Something else entirely"));
+  assert.strictEqual(j.otherFails, 2);
+  assert.match(j.otherWhy, /caption is too long/, "the FIRST reason is kept — a later one does not overwrite it");
+});
+
+// ⚠️ A POSITIVE, DRIVEN test, because every report test above builds its job by
+// hand: with `noteFailure` deleted from sendOne outright, all of them stayed
+// green and the report would have gone back to a bare count. A mutation run
+// said so — the "a wiring that does nothing refuses beautifully" scar, on the
+// one line an operator reads to decide whether to worry.
+test("⚠️ the sender really classifies what Telegram told it — driven", async () => {
+  const { job: j, report } = await run("blocked");
+  assert.strictEqual(j.sent, 0);
+  assert.strictEqual(j.failed, 3);
+  assert.strictEqual(j.unreachable, 3, "the sender, not the test, put this on the job");
+  assert.strictEqual(j.otherFails, undefined);
+  assert.match(report, /🚫 <b>Couldn't reach \(blocked\/inactive\):<\/b> 3/);
+  assert.match(report, /📭 <b>Delivered to nobody<\/b>/, "…and it does not claim it went out");
+});
+
+test("⚠️ …and a failure that is NOT the user's doing reaches the report as one", async () => {
+  const { job: j, report } = await run("broken");
+  assert.strictEqual(j.unreachable, undefined, "nothing here was a blocked recipient");
+  assert.strictEqual(j.otherFails, 3);
+  assert.ok(!/\(blocked\/inactive\)/.test(report), "this is the operator's problem, not the audience's");
+  assert.match(report, /<b>3 for another reason<\/b>/);
+  assert.match(report, /caption is too long/);
 });

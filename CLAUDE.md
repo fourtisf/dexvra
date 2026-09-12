@@ -10937,6 +10937,62 @@ still goes out and the delivery report says `⚠️ PLAIN` rather than leaving t
 operator to compare screenshots. `MASS_DM_REVIEW_CHAT_ID` is where that line
 lands.
 
+##### "laporanya seperti fourtis aja" — the shape is copied, every line is measured
+
+Sent with a screenshot of the reference report: the ref, what paid for it,
+`📬 Sent to all users`, `🚫 Couldn't reach (blocked/inactive): 418`. Ours read
+`Reached: 12523  Failed: 5  Audience: 12528` — three bare numbers that make the
+reader do the arithmetic and still answer nothing about the only question that
+matters, **which is whether those failures are ordinary**.
+
+- **A broadcast to a whole `/start` audience ALWAYS has failures**, and nearly
+  all of them are somebody who blocked the bot or deleted their account. That is
+  not a fault, and `Failed: 418` with no cause is exactly the shape that sends an
+  operator hunting for one — the asymmetry this file has now had to fix in five
+  services. Telegram says which in its own error text and we were discarding it.
+- ⚠️ **SO IT IS COUNTED, NEVER ASSUMED.** Printing every failure as
+  "blocked/inactive" because the reference does would be a cause nobody
+  measured. `UNREACHABLE` is the ordinary family (blocked · deactivated · chat
+  not found · `PEER_ID_INVALID`); anything outside it is counted APART and
+  NAMED, because that half is the only one an operator can act on —
+  `428 — 418 blocked/inactive, 10 for another reason (Bad Request: message
+  caption is too long)`.
+- ⚠️ **`Sent to all users` IS A CLAIM, and copying it verbatim would print a
+  falsehood in two states.** It is grotesque over a run that reached NOBODY
+  (`📭 Delivered to nobody`) and false of one that stopped short
+  (`Sent to 40 of 12528 — the run did not finish`), so it is printed only when
+  `sent + failed` really covers the audience. The tick-over-a-broken-thing rule,
+  on the line the reference states unconditionally.
+- **`Paid:` tells the three products apart** — `included with listing package` ·
+  the standalone order's own `2 SOL` · `free admin test`. They land in ONE
+  channel, and the add-on's order total is the listing *plus* the fee, so
+  quoting that total would misreport what the broadcast cost.
+- ⚠️ **Telegram's own error text is ESCAPED before it goes back to Telegram.**
+  The report is `parse_mode: HTML`; one stray `<` in an upstream message makes
+  Telegram reject the whole thing with a 400 — so the one line that explains a
+  failure would be the line that vanishes.
+- **A clean run prints no `🚫` line at all.** A line saying 0 is noise.
+- ⚠️ **AND NOTHING DROVE THE CLASSIFIER.** Every report test built its job by
+  hand, so deleting `noteFailure` from `sendOne` outright left all of them green
+  and the report would have quietly gone back to a bare count. A mutation run
+  said so — the *"a wiring that does nothing refuses beautifully"* scar, on the
+  one line an operator reads to decide whether to worry. Two driven tests run
+  the real sender against a Telegram that blocks every recipient, and against
+  one that fails for a reason the audience did not cause.
+
+```bash
+cd bot && node scripts/run-tests.js test/massdmPremium.test.js   # 16 tests, no network
+```
+
+Twelve more guarantees are MUTATION-TESTED: `Sent to all users` printed
+unconditionally, printed over a run that reached nobody, printed over a short
+run, every failure laundered as blocked/inactive, the other-reason text never
+named, a clean run printing a failure line, the upstream error left unescaped,
+everything counted as unreachable, nothing counted as unreachable, a later
+failure overwriting the first reason, an admin test reading as a paid
+broadcast, and failures never classified at all. Each fails between one and
+three tests.
+
 ## Conventions
 
 - Tests live beside the code they cover, in `bot/test/`, `tradebot/*.test.js`

@@ -57,7 +57,7 @@ async function saveJob(job) {
  * the same artwork the channel post does, and that can be the admin's GIF/MP4
  * clip. A clip sent through sendPhoto is an error, not a still.
  */
-async function createJob({ text, entities, mediaPath, mediaFileId, mediaType, createdBy, createdByUsername, targets, test, autoSend, reportChatId, ref }) {
+async function createJob({ text, entities, mediaPath, mediaFileId, mediaType, createdBy, createdByUsername, targets, test, autoSend, paid, reportChatId, ref }) {
   const job = {
     id: newId(),
     kind: "mass_dm",
@@ -73,6 +73,10 @@ async function createJob({ text, entities, mediaPath, mediaFileId, mediaType, cr
     createdBy,
     createdByUsername: createdByUsername || null,
     test: !!test,
+    // What paid for it, in the operator's words — the delivery report reads it
+    // back. An add-on and a standalone purchase land in the same channel, and
+    // "paid" with no source is a line nobody can act on.
+    paid: paid || null,
     ref: ref || null, // short human ref shown to the buyer / in the receipt
     reportChatId: reportChatId || null, // where the delivery report goes
     targets,

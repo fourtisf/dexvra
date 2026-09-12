@@ -33,6 +33,34 @@ function jobExtra(job, forCaption) {
     : { parse_mode: "HTML", disable_web_page_preview: true };
 }
 
+// ── Why a recipient did not get it ──────────────────────────────────────────
+//
+// A broadcast to a whole /start audience ALWAYS has failures, and nearly all of
+// them are somebody who blocked the bot or deleted their account. That is not a
+// fault and an operator must not be sent hunting for one — but "Failed: 418"
+// with no cause is exactly the shape that sends them, which this file has had
+// to fix in four services. Telegram says which in its own error text, and we
+// were throwing it away.
+//
+// ⚠️ AND IT IS COUNTED, NEVER ASSUMED. Rendering every failure as
+// "blocked/inactive" would be a cause nobody measured — the one thing this repo
+// refuses — so anything OUTSIDE this family is counted apart and named, because
+// that is the only half an operator can act on.
+const UNREACHABLE =
+  /blocked by the user|user is deactivated|chat not found|user not found|bot can'?t initiate|PEER_ID_INVALID|USER_IS_BLOCKED|chat_write_forbidden/i;
+
+function noteFailure(job, e) {
+  const why = String((e && e.message) || "");
+  if (UNREACHABLE.test(why)) {
+    job.unreachable = (job.unreachable || 0) + 1;
+    return;
+  }
+  job.otherFails = (job.otherFails || 0) + 1;
+  if (!job.otherWhy) job.otherWhy = why.slice(0, 140);
+}
+
+const esc = (t) => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
 // ── Premium (custom) emoji ──────────────────────────────────────────────────
 //
 // ⚠️ A DM IS A PRIVATE CHAT, AND THAT IS THE WHOLE POINT. Telegram's rule is
@@ -129,6 +157,7 @@ async function sendOne(telegram, job, userId, afterStrip) {
       stripCustomEmoji(job);
       return sendOne(telegram, job, userId, true);
     }
+    noteFailure(job, e);
     return null;
   }
 }
@@ -151,34 +180,74 @@ async function primeMedia(telegram, job) {
       await sleep((ra + 1) * 1000);
       return primeMedia(telegram, job);
     }
+    noteFailure(job, e);
     job.failed += 1;
     job.cursor += 1;
     await store.saveJob(job);
   }
 }
 
+/**
+ * The delivery report.
+ *
+ * Shaped after the bot this was compared against ("laporanya seperti fourtis
+ * aja") — the ref, what paid for it, one line saying it went out, one naming
+ * what could not be reached. Deliberately NOT a raw `Reached / Failed /
+ * Audience` tally: three bare numbers make the reader do the arithmetic and
+ * still say nothing about the only question that matters, which is whether the
+ * failures are ordinary.
+ *
+ * ⚠️ EVERY LINE IS MEASURED, and that is where it differs from copying a
+ * screenshot. "Sent to all users" is a CLAIM — false of a run that stopped
+ * short and grotesque over a run that reached nobody — so it is printed only
+ * when it is true, and the other two states have their own sentence.
+ */
+function reportText(job) {
+  const reach =
+    job.sent === 0 && job.total > 0
+      ? "📭 <b>Delivered to nobody</b> — every send failed"
+      : job.sent + job.failed >= job.total
+        ? "📬 <b>Sent to all users</b>"
+        : `📬 <b>Sent to ${job.sent} of ${job.total}</b> — the run did not finish`;
+
+  const gone = job.unreachable || 0;
+  const other = job.otherFails || 0;
+  const fail = !job.failed
+    ? ""
+    : other === 0
+      ? `\n🚫 <b>Couldn't reach (blocked/inactive):</b> ${job.failed}`
+      : `\n🚫 <b>Couldn't reach:</b> ${job.failed} — ${gone} blocked/inactive, ` +
+        `<b>${other} for another reason</b>${job.otherWhy ? ` (${esc(job.otherWhy)})` : ""}`;
+
+  // ⚠️ A PLAIN SEND MUST NEVER RENDER AS A ✅ — the rule the trending board's
+  // 🔄 Refresh had to learn: to anyone without Telegram Premium the two are
+  // identical, so "it worked" and "it was downgraded" reach the operator as
+  // one observation unless the line says which. Absent when the job carried
+  // no custom emoji at all: a verdict on nothing is noise.
+  const prem =
+    job.premiumOut == null
+      ? ""
+      : job.premiumOut
+        ? `\n✨ <b>Premium emoji:</b> ${customCount(job.entities)} went out animated`
+        : `\n✨ <b>Premium emoji:</b> ⚠️ PLAIN — ${job.premiumWhy}`;
+
+  // What paid for it — the add-on rides a listing order, the standalone product
+  // IS the order, and an admin test is free. Three different things an operator
+  // reading one channel of reports needs to tell apart.
+  const paid = job.test ? "free admin test" : job.paid || "paid broadcast";
+
+  return (
+    `📣 <b>Broadcast delivered</b>\n` +
+    `<b>Ref:</b> <code>${esc(job.ref || job.id)}</code>\n` +
+    `<b>Paid:</b> ${esc(paid)}\n` +
+    `${reach}${fail}${prem}`
+  );
+}
+
 async function report(telegram, job) {
   if (!job.reportChatId) return;
   try {
-    const label = job.test ? " (admin test)" : "";
-    // ⚠️ A PLAIN SEND MUST NEVER RENDER AS A ✅ — the rule the trending board's
-    // 🔄 Refresh had to learn: to anyone without Telegram Premium the two are
-    // identical, so "it worked" and "it was downgraded" reach the operator as
-    // one observation unless the line says which. Absent when the job carried
-    // no custom emoji at all: a verdict on nothing is noise.
-    const prem =
-      job.premiumOut == null
-        ? ""
-        : job.premiumOut
-          ? `\n<b>Premium emoji:</b> ✅ ${customCount(job.entities)} accepted by Telegram`
-          : `\n<b>Premium emoji:</b> ⚠️ PLAIN — ${job.premiumWhy}`;
-    await telegram.sendMessage(
-      job.reportChatId,
-      `📣 <b>Mass DM delivered${label}</b>\n` +
-        `<b>Ref:</b> <code>${job.ref || job.id}</code>\n` +
-        `<b>Reached:</b> ${job.sent}  <b>Failed:</b> ${job.failed}  <b>Audience:</b> ${job.total}${prem}`,
-      { parse_mode: "HTML" },
-    );
+    await telegram.sendMessage(job.reportChatId, reportText(job), { parse_mode: "HTML" });
   } catch (e) {
     log.debug(`[massdm] report failed: ${e.message}`);
   }
@@ -255,4 +324,4 @@ function start(telegram) {
   };
 }
 
-module.exports = { start, runJob, _sendMethod: sendMethod, _fileIdOf: fileIdOf, _notePremium: notePremium, _stripCustomEmoji: stripCustomEmoji, _customCount: customCount };
+module.exports = { start, runJob, _sendMethod: sendMethod, _fileIdOf: fileIdOf, _notePremium: notePremium, _stripCustomEmoji: stripCustomEmoji, _customCount: customCount, _reportText: reportText, _noteFailure: noteFailure };
