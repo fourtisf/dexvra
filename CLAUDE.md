@@ -84,18 +84,46 @@ exists to prevent: the server sits on a branch, the next change is cut from
 If a pull request for a branch has already been merged, do not add commits to
 that branch — restart it from the current `main` and open a new one.
 
-### The whole deploy, all four processes
+### The whole deploy is ONE command
 
 ```bash
-cd /opt/dexvra && git checkout main && git pull origin main
-cd /opt/dexvra/bot && pm2 restart ecosystem.config.js --update-env   # dexvra-bot + dexvra-adminbot
-pm2 restart dexvra-tradebot --update-env                             # tradebot/ — its OWN process
-# web app (only if src/ or the repo root changed):
-cd /opt/dexvra && npm run build && pm2 restart dexvra
-pm2 ls
+cd /opt/dexvra && npm run deploy
 ```
 
-### Step 5 is not optional
+`scripts/deploy.sh` is the only line to type on the server. It derives the repo
+root from its own location (no path to fill in — this file's first rule),
+refuses a dirty tree, fast-forwards only, and then **decides from the DIFF what
+to rebuild and restart**:
+
+| changed | what runs |
+| --- | --- |
+| `bot/**` | `pm2 restart ecosystem.config.js` — **both** bots |
+| `tradebot/**` | `pm2 restart dexvra-tradebot` |
+| `shared/**` | all three — `shared/launchpads/` is required by every package |
+| anything else | `npm run build` + `pm2 restart dexvra` |
+
+- `npm run deploy:all` — rebuild and restart everything, for a box whose state
+  is in doubt. `--with-bots` still forces the bot suite on.
+- **With nothing new to pull it verifies and restarts nothing**, so a second run
+  is a report rather than another rebuild — which makes it the "what is actually
+  running?" command too.
+
+⚠️ **THE SCOPE WAS A THING AN OPERATOR HAD TO REMEMBER, AND `--with-bots` WAS
+OPT-IN.** Forgetting it deployed the web app and left BOTH bots on the old code
+— which fails silently and reads as a missing feature rather than a stale
+process, the exact defect `bot/DEPLOY.md` and the section below are written
+about. The script has `BEFORE` and `AFTER` in hand, so it computes the answer
+instead of asking for it. Equally, a `tradebot/`-only change no longer pays for
+a Next build it does not need.
+
+The four commands above are still what it runs, and they are still correct by
+hand — but by hand is where the forgetting happens.
+
+```bash
+cd /opt/dexvra && node --test --experimental-strip-types src/lib/deployScript.test.ts   # 17 tests, no network
+```
+
+### Step 5 is not optional — and `npm run deploy` now does it
 
 ```bash
 pm2 logs dexvra-bot      --lines 50 --nostream | grep '\[boot\] build'
@@ -109,6 +137,45 @@ This exists because a pull that never reached the server and a change that did
 not work are indistinguishable from Telegram, and an evening was spent debugging
 the first while assuming the second. Do not report a fix as deployed, and do not
 start diagnosing why one "did not work", until the sha matches.
+
+⚠️ **AND THE SCRIPT ONLY EVER CHECKED THE WEB APP.** The bot suite is where most
+of this repo's features live and where every one of those evenings was lost, and
+its three processes print `[boot] build <sha>` for exactly this reason — nothing
+read them back. All four are verified now, and the web app's stamp is read from
+`/api/tokens` rather than scraped out of the HTML, because `NEXT_PUBLIC_BUILD`
+is inlined into a bundle whose spelling the minifier owns.
+
+- ⚠️ **THE TEST IS A DIFF, NOT AN EQUALITY, and a driven test is what said so.**
+  The first cut compared every process to HEAD — and on a `tradebot/`-only
+  deploy the bot suite sitting on an older commit is CORRECT, so that rule
+  leaves the command permanently red on a healthy box: the state
+  `chart:preview` sat in for weeks, which teaches its reader to ignore the red.
+  A process is behind only when a file in **its own** paths changed since the
+  commit it is running. A process that was just RESTARTED is the strict case.
+- ⚠️ **A STALE LOG LINE MAY NOT BE READ AS THIS BOOT.** `pm2 logs --nostream`
+  reads the log FILE, which still holds every earlier boot, so `grep | tail -1`
+  reports a stamp from three days ago as current. The boot lines are COUNTED
+  before the restart and the read waits for that count to go up.
+- **An unresolvable sha is not a verdict.** A commit this checkout does not have
+  (history rewritten, a tarball deploy) is reported and never counted — "could
+  not establish" and "stale" are different facts.
+
+⚠️ **`bash -n` proves syntax and every defect this repo has had in a script was a
+runtime shape**, so `deployScript.test.ts` DRIVES the script against a real temp
+git repo with `npm`, `pm2` and `curl` stubbed — and the pm2 stub delays its boot
+line, because otherwise a test cannot tell "read the end of the log" from "wait
+for a line this restart produced".
+
+Fourteen guarantees are MUTATION-TESTED rather than argued: the scope ignored,
+the bots forced on regardless, `shared/` treated as web-only, the bot suite
+restarted by name, the bots never verified, a stale log line read as this boot,
+a restarted process allowed to be older, every process compared to HEAD, a
+`+dirty` stamp passing, a missing boot stamp passing, nothing-to-pull rebuilding
+anyway, `npm ci` run for every package, `--with-bots` ignored, and a dirty
+working tree deployed over. Each fails between one and six tests. ⚠️ Four of
+them SURVIVED the first run — all four were test gaps, not code defects, and
+the tests they demanded are the `+dirty`, no-stamp, real-older-commit and
+delayed-boot cases.
 
 ## A third party will move, and it must not cost a user money
 
