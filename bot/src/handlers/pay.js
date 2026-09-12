@@ -38,22 +38,13 @@ const tpl = require("../templates");
 function ensureNetwork(payload, network) {
   if (!payload || typeof payload !== "object" || !network) return payload;
   const said = `Network: ${network}`;
-  const line = `\n\n🔗 ${said} — send on this network only.`;
-  if (payload.html != null) {
-    const html = String(payload.html);
-    if (html.includes(said)) return payload;
-    return { ...payload, html: `${html}\n\n🔗 <b>${said}</b> — send on this network only.` };
-  }
-  const text = String(payload.text || "");
-  if (text.includes(said)) return payload;
   // Bold the "Network: <name>" run so it reads as the instruction it is.
-  const boldFrom = text.length + "\n\n🔗 ".length;
-  const boldLen = said.length;
-  return {
-    ...payload,
-    text: text + line,
-    entities: [...(payload.entities || []), { type: "bold", offset: boldFrom, length: boldLen }],
+  const block = {
+    text: `🔗 ${said} — send on this network only.`,
+    html: `🔗 <b>${said}</b> — send on this network only.`,
+    entities: [{ type: "bold", offset: "🔗 ".length, length: said.length }],
   };
+  return premium.appendBlock(payload, block, { seen: said });
 }
 
 /** Render the network picker for an order that can settle on more than one. */
@@ -145,27 +136,22 @@ const hasBroadcast = (order) => Boolean(order && order.payload && order.payload.
  * The buyer is about to send a number they did not pick off a price list; the
  * card has to say why it is bigger than the tier they chose.
  *
- * ⚠️ THE SENTENCE IS THE CALLER'S, because there are two of them and they carry
- * different facts. A paid card names the FEE — that is what explains the bigger
- * number. An admin card quotes no price anywhere, so with no fee on the button
- * nothing at all would say the DM is real; there it names the AUDIENCE instead.
- * This function owns the APPENDING (the offsets, the html shape, the "already
- * there" test) and nothing else.
+ * ⚠️ IT TAKES A RENDERED BLOCK, NOT A SENTENCE, AND THAT IS THE FIX ITSELF.
+ * "saya tidak [ada] bot message tentang broadcast" — the line used to be a
+ * string typed into this file, so it appeared in no template group and an
+ * operator could neither edit it nor put a premium emoji in it. It is
+ * `pay_card_broadcast` / `pay_card_broadcast_admin` now, rendered whole by the
+ * caller and appended whole, because a custom_emoji lives in the ENTITIES and a
+ * string carries none — the rule the Mass DM attachment row paid for one
+ * handler over. Two templates rather than one, because the two cards carry
+ * different facts: see their comments in templates.js.
+ *
+ * premium.appendBlock owns the APPENDING (the offsets, the html shape, the
+ * "already there" test) for all three enforced lines; this wrapper exists so
+ * the call sites read as what they are.
  */
-function ensureBroadcastLine(payload, said) {
-  if (!payload || typeof payload !== "object" || !said) return payload;
-  if (payload.html != null) {
-    const html = String(payload.html);
-    return html.includes(said) ? payload : { ...payload, html: `${html}\n\n📣 <b>${said}</b>.` };
-  }
-  const text = String(payload.text || "");
-  if (text.includes(said)) return payload;
-  const boldFrom = text.length + "\n\n📣 ".length;
-  return {
-    ...payload,
-    text: `${text}\n\n📣 ${said}.`,
-    entities: [...(payload.entities || []), { type: "bold", offset: boldFrom, length: said.length }],
-  };
+function ensureBroadcastLine(payload, block) {
+  return premium.appendBlock(payload, block);
 }
 
 /**
@@ -217,8 +203,8 @@ async function renderPayCard(ctx, order, address, adminFree, network) {
   const said = !on
     ? null
     : adminFree
-      ? "Includes a Mass DM Broadcast — it really goes out to every bot user, not a test send"
-      : `Includes a Mass DM Broadcast to all users (+${feeLabel})`;
+      ? tpl.render("pay_card_broadcast_admin")
+      : tpl.render("pay_card_broadcast", { fee: feeLabel });
 
   if (adminFree) {
     await sendCard(

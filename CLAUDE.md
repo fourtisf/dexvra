@@ -11671,6 +11671,77 @@ restart** — and an operator who saved **Mass DM: preview / pay** yesterday kee
 their copy: the attachment row is appended onto it either way, but the word
 "recompose" in their own text stays until ♻️ Reset default.
 
+#### "saya tidak bot message tentang broadcast" — the one broadcast line that was not a template
+
+Reported with a screenshot of 📝 Templates, straight after the round above
+promised that every bot message is editable with premium emoji. **The Mass DM
+group has 23 broadcast templates and the line the operator was looking for is in
+none of them**, because it is not a template at all: the pay card's
+
+```
+📣 Includes a Mass DM Broadcast to all users (+2 SOL).
+```
+
+was a STRING inside `pay.js`. So the one buyer-facing broadcast message on the
+card that takes the money could be neither found, nor edited, nor given a 💎 —
+and the promise made one round earlier was true of 168 templates and false of
+the sentence the operator had in front of them.
+
+- **`pay_card_broadcast` / `pay_card_broadcast_admin` are templates now**, in
+  **Bot Messages** beside `pay_card`, labelled so they read as belonging to it.
+- ⚠️ **TWO KEYS, BECAUSE THE TWO CARDS CARRY DIFFERENT FACTS.** A paid card
+  names the FEE — that is what explains a number bigger than the tier the buyer
+  picked. An admin card quotes no price anywhere ("No payment needed"), so with
+  no fee to name, nothing at all would say the DM is REAL: it queues against the
+  whole `/start` audience with `autoSend` and no review, and it is not the
+  🧪 Test send. One key with a `{fee}` that renders empty would put that whole
+  distinction on an operator remembering why.
+- ⚠️ **IT STILL APPENDS, and that is not a fallback.** Whether the add-on is
+  attached is a fact about the ORDER, not about the card, and an operator who
+  saved `pay_card` before the add-on existed keeps their copy for ever — so a
+  `{broadcast}` placeholder would render nothing on exactly the cards that need
+  the line most.
+- ⚠️ **THE LINE IS RENDERED WHOLE AND APPENDED WHOLE.** A `custom_emoji` lives
+  in the ENTITIES and a string carries none, so appending a SENTENCE flattens a
+  pasted 💎 to its fallback glyph — silently, on the money screen. This is the
+  `{media}` hole from the round above, one handler over: *"render the row whole
+  and append it, and the entities travel."*
+- **`premium.appendBlock` is the ONE appender.** There were three — the network
+  line, the broadcast line, the Mass DM attachment row — and each lost the
+  entities its own way; a fourth private copy is how one of them flattens a 💎
+  again. A comment-stripped scan fails on any handler that shifts
+  `e.offset + …` itself.
+- ⚠️ **`seen` IS A SEAM AND IT IS LOAD-BEARING.** The network line tests the
+  PHRASE `Network: <name>` because that is what the template emits and the whole
+  line is not; the other two test the block's own text, which is right for a row
+  an operator cannot have typed. Folding them together either re-appends the
+  network line onto a card that carries it or lets a bare mention suppress it —
+  and this file already records what the second one cost ("we accept Ethereum,
+  Solana and BNB" names no network for THIS order).
+  ⚠️ **The first test written for that seam could not reach it**: the SHIPPED
+  `pay_card` renders a line byte-identical to the block, so the default `seen`
+  suppresses it too and the mutant survived. An operator's own wording
+  (*"Kirim di Network: Robinhood Chain saja ya"*) is the fixture that sees it.
+- **The BUTTON labels stay hardcoded, and that is not the same gap.** An inline
+  keyboard button carries no entities at all, so a premium emoji is unavailable
+  there whatever we do — a template behind it would promise something Telegram
+  cannot render.
+
+```bash
+cd bot && node scripts/run-tests.js test/listingBroadcast.test.js test/premiumAnywhere.test.js   # 40 + 15 tests, no network
+```
+
+Eight guarantees are MUTATION-TESTED rather than argued: the line back to a
+string, the templates existing but the card ignoring them, `appendBlock`
+dropping the block's entities, forgetting to shift them, ignoring the `seen`
+seam, losing the already-there test, the templates filed away from the pay card,
+and a handler growing its own appender back. Each fails between one and seven
+tests.
+
+**Config a fix depends on:** nothing. ⚠️ `bot/` only, so the **ecosystem
+restart** and no web rebuild — and the two new lines are NEW keys, so no
+operator has a saved copy of them and ♻️ Reset default is not needed anywhere.
+
 ## Conventions
 
 - Tests live beside the code they cover, in `bot/test/`, `tradebot/*.test.js`

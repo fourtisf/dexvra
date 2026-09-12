@@ -246,8 +246,10 @@ test("⚠️ the card SAYS the broadcast is in the price", async () => {
 });
 
 test("⚠️ …even over an operator's own saved card, which carries no such line", () => {
-  const said = "Includes a Mass DM Broadcast to all users (+2 SOL)";
-  const saved = pay.ensureBroadcastLine({ text: "Pay me 3 SOL", entities: [] }, said);
+  const saved = pay.ensureBroadcastLine(
+    { text: "Pay me 3 SOL", entities: [] },
+    require("../src/templates").render("pay_card_broadcast", { fee: "2 SOL" }),
+  );
   assert.match(saved.text, /Includes a Mass DM Broadcast to all users \(\+2 SOL\)/);
   const bold = saved.entities.find((e) => e.type === "bold");
   assert.ok(bold, "the line is bolded so it reads as part of the price");
@@ -257,6 +259,59 @@ test("⚠️ …even over an operator's own saved card, which carries no such li
     "⚠️ an entity offset that lands off the words is markup on the wrong run",
   );
   assert.strictEqual(pay.ensureBroadcastLine({ text: "x", entities: [] }, null).text, "x", "nothing added when nothing is attached");
+});
+
+// "saya tidak [ada] bot message tentang broadcast" — an operator went looking
+// through 📝 Templates for the sentence they can see on their own pay card and
+// it was not there: it was a string inside pay.js, so it belonged to no group,
+// could not be edited, and could not carry a premium emoji. Both halves are
+// pinned here — that the editor LISTS them, and that the card renders THEM
+// rather than a sentence of its own.
+test("⚠️ the broadcast line is a TEMPLATE an operator can find and edit", async () => {
+  const tplMod = require("../src/templates");
+  for (const key of ["pay_card_broadcast", "pay_card_broadcast_admin"]) {
+    assert.ok(tplMod.keys().includes(key), `${key} is not in the editor at all`);
+    assert.notStrictEqual(tplMod.meta(key).label, key, `${key} shows its raw key in the editor`);
+    assert.strictEqual(tplMod.meta(key).group, "Bot Messages", `${key} is filed away from the pay card`);
+  }
+
+  // Driven, not asserted about: a template nothing renders is a template the
+  // operator edits and never sees change — the curveBuyPath scar.
+  await tplMod.setTemplate("pay_card_broadcast", "📣 Operator wording, {fee} included.");
+  try {
+    const { ctx } = await arm(order());
+    await pay.broadcastToggle(ctx);
+    assert.match(lastText(ctx), /Operator wording, 2 SOL included\./, "the card ignores the operator's copy");
+  } finally {
+    await tplMod.resetTemplate("pay_card_broadcast");
+  }
+});
+
+// ⚠️ …AND A PREMIUM EMOJI PASTED INTO IT SURVIVES. A custom_emoji lives in the
+// ENTITIES, so a line built from a plain string flattens it to its fallback
+// glyph — which is exactly what the old code did, silently, on the card that
+// takes the money.
+test("⚠️ a premium emoji pasted into the broadcast line reaches the card", async () => {
+  const tplMod = require("../src/templates");
+  await tplMod.setTemplate("pay_card_broadcast", {
+    text: "⚡ Broadcast included — {fee}.",
+    entities: [{ type: "custom_emoji", offset: 0, length: 1, custom_emoji_id: "5771234567890123456" }],
+  });
+  try {
+    const { ctx } = await arm(order());
+    await pay.broadcastToggle(ctx);
+    const sent = ctx.sent[ctx.sent.length - 1];
+    const ents = (sent && sent.extra && sent.extra.entities) || [];
+    const em = ents.find((e) => e.type === "custom_emoji");
+    assert.ok(em, "the premium emoji was flattened to its fallback glyph");
+    assert.strictEqual(
+      sent.text.slice(em.offset, em.offset + em.length),
+      "⚡",
+      "⚠️ an entity offset that lands off the glyph is markup on the wrong run",
+    );
+  } finally {
+    await tplMod.resetTemplate("pay_card_broadcast");
+  }
 });
 
 test("the button says it is attached, and offers the way back", async () => {

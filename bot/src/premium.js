@@ -295,8 +295,63 @@ function ensureCode(payload, ...values) {
   return { ...payload, entities };
 }
 
+/**
+ * Append a rendered BLOCK to a rendered PAYLOAD, carrying the block's own
+ * entities across.
+ *
+ * ⚠️ THIS IS WHAT KEEPS A PASTED PREMIUM EMOJI ALIVE ON AN ENFORCED LINE.
+ * An enforced line is one the card must carry whether or not the operator's
+ * saved template mentions it — the network on the pay card, the broadcast
+ * add-on beneath it, the Mass DM attachment row. Every one of those built its
+ * line from a plain STRING, so a 💎 pasted into the template behind it was
+ * flattened to its fallback glyph: a custom_emoji lives in the ENTITIES and a
+ * string has none. Render the row whole and append it, and they travel — the
+ * rule the Mass DM attachment row already had to learn one handler over, and
+ * the reason there is now ONE appender rather than a third private copy.
+ *
+ * Appended at the END, which is what makes it safe: Telegram entity offsets are
+ * UTF-16 code units counted from the start, so nothing already in the payload
+ * moves and only the block's own offsets shift.
+ *
+ * ⚠️ `seen` IS A SEAM, NOT DECORATION. The "already there" test is the block's
+ * own rendered text by default — right for a row an operator cannot have typed
+ * — but the network line tests a PHRASE instead, because `Network: <name>` is
+ * what the template emits and the whole line is not. Folding the two together
+ * would either re-append the network line onto every card that carries it or
+ * let a bare mention suppress it, and this file has already paid for the second
+ * one ("we accept Ethereum, Solana and BNB" names no network for THIS order).
+ *
+ * A legacy `html` card cannot carry entities at all, so the block goes in as
+ * its html (or its text) there: losing the premium emoji beats losing the line.
+ */
+function appendBlock(payload, block, opts) {
+  if (!payload || typeof payload !== "object") return payload;
+  if (!block || typeof block !== "object") return payload;
+  const add = String(block.text != null ? block.text : block.html || "");
+  if (!add) return payload;
+  const seen = opts && opts.seen != null ? String(opts.seen) : add;
+  if (payload.html != null) {
+    const html = String(payload.html);
+    const asHtml = String(block.html != null ? block.html : add);
+    if (html.includes(seen) || html.includes(asHtml)) return payload;
+    return { ...payload, html: `${html}\n\n${asHtml}` };
+  }
+  const text = String(payload.text || "");
+  if (text.includes(seen)) return payload;
+  const shift = text.length + 2; // the "\n\n" join
+  return {
+    ...payload,
+    text: `${text}\n\n${add}`,
+    entities: [
+      ...(payload.entities || []),
+      ...(block.entities || []).map((e) => ({ ...e, offset: e.offset + shift })),
+    ],
+  };
+}
+
 module.exports = {
   ensureCode,
+  appendBlock,
   parse,
   toGramJs,
   substituteEntities,

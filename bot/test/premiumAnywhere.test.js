@@ -192,3 +192,78 @@ test("⚠️ the bulk screen says the rest is out of scope AND still styleable",
   }
   assert.ok(!/📝 Templates/.test(t), "a button that does not exist is worse than no instruction");
 });
+
+// ── The ENFORCED lines: a row the card carries whether or not the operator's
+// saved template mentions it ────────────────────────────────────────────────
+//
+// "saya tidak [ada] bot message tentang broadcast" — the pay card's broadcast
+// sentence was a STRING inside pay.js, so it was in no group, could not be
+// edited, and could not carry a premium emoji. Three such lines exist (the
+// network, the broadcast add-on, the Mass DM attachment row) and each built its
+// own; premium.appendBlock is the one appender now, and it takes a rendered
+// BLOCK because a custom_emoji lives in the ENTITIES and a string carries none.
+const premium = require("../src/premium");
+
+test("⚠️ an enforced line carries the block's own entities, shifted", () => {
+  const out = premium.appendBlock(
+    { text: "Pay me 3 SOL", entities: [{ type: "bold", offset: 0, length: 3 }] },
+    {
+      text: "⚡ Included — 2 SOL.",
+      entities: [{ type: "custom_emoji", offset: 0, length: 1, custom_emoji_id: "577" }],
+    },
+  );
+  const em = out.entities.find((e) => e.type === "custom_emoji");
+  assert.ok(em, "the premium emoji was dropped");
+  assert.strictEqual(out.text.slice(em.offset, em.offset + em.length), "⚡", "…or landed off the glyph");
+  const bold = out.entities.find((e) => e.type === "bold");
+  assert.strictEqual(out.text.slice(bold.offset, bold.offset + bold.length), "Pay", "the payload's own run moved");
+});
+
+// ⚠️ `seen` IS THE SEAM AND IT IS LOAD-BEARING IN BOTH DIRECTIONS. The network
+// line tests the PHRASE "Network: <name>" because that is what pay_card emits;
+// the block's whole text is not on the card, so testing that would re-append the
+// line onto every card that already carries it.
+test("⚠️ the network line is not appended twice to a card that emits it", () => {
+  const { ensureNetwork } = require("../src/handlers/pay");
+  const card = tpl.render("pay_card", {
+    label: "x", amount: "1", native: "SOL", address: "So1", network: "Robinhood Chain",
+  });
+  assert.strictEqual(ensureNetwork(card, "Robinhood Chain"), card, "the shipped card already says it");
+
+  // ⚠️ THE CASE THAT REACHES THE SEAM is an operator's OWN wording: the phrase
+  // is on the card, the block's whole sentence is not. Without `seen` the line
+  // is appended anyway and the buyer reads the network twice, in two voices, on
+  // the message that takes the money. (The shipped card cannot prove this — its
+  // rendered line happens to be byte-identical to the block, so the default
+  // suppresses it too. A mutation run is what said so.)
+  const operator = { text: "Kirim di Network: Robinhood Chain saja ya.", entities: [] };
+  assert.strictEqual(ensureNetwork(operator, "Robinhood Chain"), operator, "the line is appended over their own");
+
+  const once = ensureNetwork({ text: "Pay me", entities: [] }, "Robinhood Chain");
+  assert.strictEqual((ensureNetwork(once, "Robinhood Chain").text.match(/Network:/g) || []).length, 1);
+});
+
+// …and without a `seen` the default is the block's own text, which is right for
+// a row an operator cannot have typed.
+test("an enforced block is not appended twice", () => {
+  const block = { text: "📣 Included.", entities: [] };
+  const once = premium.appendBlock({ text: "Pay", entities: [] }, block);
+  assert.strictEqual(premium.appendBlock(once, block), once);
+});
+
+// ⚠️ ONE APPENDER, because there were three and each lost the entities its own
+// way. A fourth private copy is how one of them ends up flattening a 💎 again.
+test("⚠️ no handler grows its own entity-shifting appender", () => {
+  const strip = (src) => src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const files = ["src/handlers/pay.js", "src/handlers/massdm.js"];
+  for (const f of files) {
+    const src = strip(fss.readFileSync(path.join(__dirname, "..", f), "utf8"));
+    assert.ok(/premium\.appendBlock\(/.test(src), `${f} does not go through the one appender`);
+    assert.ok(
+      !/offset:\s*e\.offset\s*\+/.test(src),
+      `${f} shifts entity offsets itself — that is premium.appendBlock's job`,
+    );
+  }
+  // Vacuity: the scan can see a shift when there is one to see.
+  assert.ok(/offset:\s*e\.offset\s*\+/.test("...map((e) => ({ ...e, offset: e.offset + shift }))"));
+});

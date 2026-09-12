@@ -307,6 +307,29 @@ const DEFAULTS = {
     "⚠️ Send only on the network you pick. A transfer on any other network cannot be credited automatically.",
   pay_card_admin:
     "🧪 **Admin Test Order — FREE**\n\n{label}\n\n🔹 No payment needed. Tap **✅ Confirm** to run the flow end-to-end.",
+  // ── The broadcast add-on's line on the pay card ───────────────────────────
+  //
+  // "saya tidak [ada] bot message tentang broadcast" — reported by an operator
+  // looking through 📝 Templates for the sentence they can see on the pay card.
+  // It was not there: the line was built from a STRING inside pay.js, so it was
+  // the one buyer-facing broadcast message in the bot that could be neither
+  // edited nor given a premium emoji, on the card that takes the money.
+  //
+  // ⚠️ THEY ARE TWO TEMPLATES BECAUSE THEY CARRY DIFFERENT FACTS, and folding
+  // them into one with a "{fee}" that renders empty would put the whole weight
+  // on an operator remembering why. A paid card names the FEE — that is what
+  // explains a number bigger than the tier the buyer picked. An admin card
+  // quotes no price anywhere ("No payment needed"), so with no fee to name,
+  // nothing at all would say this DM is REAL: it queues against the whole
+  // /start audience with no review, and it is not the 🧪 Test send.
+  //
+  // ⚠️ THE ROW IS APPENDED, NEVER A PLACEHOLDER ON pay_card. Whether the add-on
+  // is attached is a fact about the ORDER, not about the card, and an operator
+  // who saved pay_card before the add-on existed keeps their copy for ever —
+  // so appending is the mechanism here rather than a fallback.
+  pay_card_broadcast: "📣 **Includes a Mass DM Broadcast to all users (+{fee})**.",
+  pay_card_broadcast_admin:
+    "📣 **Includes a Mass DM Broadcast — it really goes out to every bot user, not a test send**.",
   payment_not_detected:
     "❌ **Payment not detected yet**\n\n" +
     "🔹 We haven't seen your transfer of **{amount} {native}** to:\n`{address}`\n\n" +
@@ -1331,6 +1354,12 @@ const META = {
   pay_card: { group: "Bot Messages", label: "Payment card", ph: ["label", "amount", "native", "address", "network"] },
   pay_pick: { group: "Bot Messages", label: "Payment: choose network", ph: ["label"] },
   pay_card_admin: { group: "Bot Messages", label: "Payment card (admin free)", ph: ["label"] },
+  pay_card_broadcast: { group: "Bot Messages", label: "Payment card: broadcast add-on line", ph: ["fee"] },
+  pay_card_broadcast_admin: {
+    group: "Bot Messages",
+    label: "Payment card: broadcast add-on line (admin free)",
+    ph: [],
+  },
   payment_not_detected: { group: "Bot Messages", label: "Payment not detected", ph: ["amount", "native", "address", "order"] },
   payment_snag: { group: "Bot Messages", label: "Payment snag", ph: ["order"] },
   payment_already_credited: { group: "Bot Messages", label: "Payment already credited", ph: ["order"] },

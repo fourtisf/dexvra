@@ -166,33 +166,14 @@ function mediaLine(s) {
  * for ever, so a card saved before {media} existed would say nothing at all
  * about what is attached — on the screen the buyer taps Pay from.
  *
- * Appended at the END, which is what makes it safe: Telegram entity offsets are
- * UTF-16 code units counted from the start, so nothing already in the payload
- * moves and only the appended block's own offsets shift.
+ * premium.appendBlock owns the appending — the offsets, the html shape, the
+ * "already there" test — for this row and for the pay card's two. It is where
+ * the entity-carrying shape lives, which is what keeps a premium emoji pasted
+ * into massdm_media_on alive; this wrapper exists so the call site reads as
+ * what it is.
  */
 function ensureMediaLine(payload, line) {
-  if (!payload || typeof payload !== "object" || !line || typeof line !== "object") return payload;
-  const body = String(line.html != null ? line.html : line.text || "");
-  if (!body) return payload;
-  if (payload.html != null) {
-    const html = String(payload.html);
-    // A legacy HTML card cannot carry entities, so the block goes in as its
-    // plain text: losing the bold beats losing the line.
-    const plain = String(line.text != null ? line.text : body);
-    return html.includes(plain) || html.includes(body) ? payload : { ...payload, html: `${html}\n\n${body}` };
-  }
-  const text = String(payload.text || "");
-  const add = String(line.text != null ? line.text : body);
-  if (text.includes(add)) return payload;
-  const shift = text.length + 2; // the "\n\n" join
-  return {
-    ...payload,
-    text: `${text}\n\n${add}`,
-    entities: [
-      ...(payload.entities || []),
-      ...(line.entities || []).map((e) => ({ ...e, offset: e.offset + shift })),
-    ],
-  };
+  return premium.appendBlock(payload, line);
 }
 
 /** The ONE preview renderer — the message, then the card. */
