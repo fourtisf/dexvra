@@ -629,16 +629,24 @@ test("every emoji on the buy card is reachable from the editor", () => {
   assert.deepStrictEqual(stranded, [], `emoji on the card that no template owns: ${stranded.join(" ")}`);
 });
 
-test("the editor warns that a group card cannot render premium emoji", () => {
-  // Telegram strips custom-emoji entities from a regular bot, and the group
-  // cards are posted by one. The swap is accepted, saved, and then invisible —
-  // the worst way for a setting to fail, so the screen says so before somebody
-  // pastes one.
-  const src = fss.readFileSync(path.join(__dirname, "..", "src", "admin", "adminBot.js"), "utf8");
-  assert.match(src, /GROUP_PREMIUM_NOTE/, "the note exists");
-  assert.match(src, /isGroupPosted\(key\) \? GROUP_PREMIUM_NOTE/, "and it is shown on the picker");
-  assert.strictEqual((src.match(/isGroupPosted\(key\) \? GROUP_PREMIUM_NOTE/g) || []).length, 2,
-    "on the list AND on the per-slot prompt — either one alone is missable");
+test("the editor warns where a premium emoji can and cannot light up", () => {
+  // A swap that is accepted, saved and then invisible is the worst way for a
+  // setting to fail, so the screen says so before somebody pastes one.
+  //
+  // ⚠️ THIS USED TO PIN THE SPELLING `isGroupPosted(key) ? GROUP_PREMIUM_NOTE`,
+  // twice — so it went RED over code that keeps its rule on MORE screens
+  // through one owner, and would have passed on a premiumNoteFor() that always
+  // returned "". The rule is "every prompt carries it", and it is asserted by
+  // CALLING the owner; premiumAnywhere.test.js counts the prompts.
+  // Required HERE rather than at the top: this file is about the buy monitor,
+  // and pulling the admin bot in at module scope for one assertion would boot
+  // it for every test in it.
+  const { premiumNoteFor } = require("../src/admin/adminBot")._premium;
+  assert.match(premiumNoteFor("group_buy_alert"), /PEMILIK bot/, "a group card names the one account that lights it");
+  assert.match(premiumNoteFor("buybot_intro"), /PEMILIK bot/);
+  // …and the surfaces the prefix test could never speak for.
+  assert.match(premiumNoteFor("pay_card"), /PEMILIK bot/, "a DM card is the same Telegram rule");
+  assert.match(premiumNoteFor("x_trending"), /tidak punya custom emoji/, "a tweet can never animate one");
 });
 
 test("dust never spends a pacing slot — a real buy behind it must not wait hours", () => {

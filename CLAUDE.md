@@ -11230,6 +11230,92 @@ copy and will still see `reached N users`.** ♻️ Reset default on that templa
 what picks the new shape up; this is the standing rule for every copy change
 here, and it is the one thing a `git pull` cannot do.
 
+### "semua template … bisa di edit pakai emoji premium" — it already could, and nothing said so
+
+Asked over the pay card's network picker and the broadcast receipt. **Measured
+before a line was changed**: every template already takes premium emoji, two
+ways — paste a message carrying them (the editor stores it verbatim as
+`{text, entities}` when `hasAuthoredFormatting` is true) or 😀 Swap emoji on the
+template itself. Driven end to end for `pay_pick`, `pay_card` and `massdm_done`:
+the `custom_emoji` entity survives `substituteEntities`, lands on the right
+glyph after every placeholder has grown, and goes on the wire as entities with
+no `parse_mode`. All 94 template call sites go through `payloadArgs`, so there
+is no surface that silently drops them.
+
+**So the gap was what the screens SAY**, and it is two things:
+
+- ⚠️ **The 🎨 bulk screen read as a verdict on the rest.** *"Hanya dua kartu ini
+  yang tersentuh. Struk, prompt dan pesan lain tidak ikut berubah"* is true of
+  THAT SCREEN and reads as "those cannot be styled at all" — which is what
+  produced the question. It still states its scope (that sentence is load-
+  bearing) and now names the route for everything else, by the button an
+  operator taps.
+- ⚠️ **The swap prompt's caveat was a PREFIX TEST**, `isGroupPosted(key)` over
+  `group_`/`buybot_`. Right while the picker only pointed at those; silent the
+  moment it could reach a pay card or a broadcast receipt — where the SAME
+  owner-Premium rule applies, and an operator pasting one there was told
+  nothing — and **wrong** the moment it could reach a tweet.
+
+`premiumSurface` / `premiumNoteFor` are the one owner of "which caveat is true
+of this template", and the three surfaces are genuinely different settings:
+
+| surface | what lights a 💎 up |
+| --- | --- |
+| private DM, group, supergroup (the bot's own sends) | the **BotFather OWNER** account having Telegram Premium |
+| a CHANNEL post | the **GramJS premium account** — channels are in neither half of Telegram's rule |
+| an **X post** | ⚠️ **nothing.** X has no custom emoji; a swap there publishes the fallback character to a public tweet and can never animate |
+
+- ⚠️ **AND THE PATH THE SCREEN NAMES HAS TO EXIST.** Its first cut said
+  *"📝 Templates → pilih templatenya"* and there is no such button — the groups
+  are on the main menu itself. An instruction pointing at a screen nobody can
+  find is this file's placeholder rule one surface over, so it names the real
+  groups (**Bot Messages** for the pay card, **Mass DM** for the broadcast
+  receipt) and a test asserts both are groups `groupNames()` really returns.
+- **A slot spanning two surfaces carries BOTH caveats**, rather than the first
+  one winning — one icon can live on a DM card and a channel post at once.
+- ⚠️ **THE BULK SCREEN'S SCOPE IS DELIBERATELY UNCHANGED**, and the first cut of
+  this change widened it before `allEmojiScreen.test.js` said why not: *"khusus
+  buy alert dan raid, yang lainnya ga usah, jangan diubah apapun"* is an
+  operator instruction on the record, pinned as *"a swap aimed at a buy alert
+  must not drag a receipt or a prompt along with it"*. That screen dedupes by
+  GLYPH, so folding 156 templates in would make one ✅ swap repaint a receipt, a
+  prompt and a buy card together — unaimable, and the exact harm the instruction
+  names. Per template a swap stays aimable, which is why that is the route the
+  screen now points at.
+- ⚠️ **A CAVEAT NOBODY IS SHOWN IS NO CAVEAT.** Four screens prompt for an
+  emoji, and deleting the call from any ONE of them was invisible to every
+  assertion — a mutation run said so, not a reading. The rule is COUNTED now
+  (one definition + four prompts, over the comment-stripped source).
+- ⚠️ **AND THE OLD GUARD FOR IT PINNED THE SPELLING.** `buyMonitor.test.js`
+  matched `isGroupPosted(key) ? GROUP_PREMIUM_NOTE` and counted it twice — so it
+  went RED over code that keeps its rule on MORE screens through one owner, and
+  would have passed on a `premiumNoteFor()` that always returned `""`. This
+  repo's own recurring defect (the four-way pool TTL, the `{ ok: true,` build
+  stamp, the in-flight stall warning). It CALLS the owner now.
+- ⚠️ **`premiumSurface`'s try/catch is DEAD and says so.** `tpl.meta()`
+  synthesises `{group:"Other"}` for any string, so an unknown key resolves
+  through the FALLTHROUGH — the direction that shows a caveat rather than
+  hiding one — and a mutant in the catch changes nothing. A line that claims
+  cover it does not provide is worse than the comment explaining what actually
+  keeps it true.
+
+```bash
+cd bot && node scripts/run-tests.js test/premiumAnywhere.test.js test/allEmojiScreen.test.js   # 9 + 30 tests, no network
+```
+
+Ten guarantees are MUTATION-TESTED rather than argued: an X template treated as
+an ordinary bot message, a channel post sent to @BotFather, only the first
+surface's caveat surviving, each of the four prompts dropping it, the bulk
+screen swallowing every group again, and the screen no longer naming the route
+for the rest. Each fails between one and three tests.
+
+**Config a fix depends on:** ⚠️ **nothing in this repo — the switch is an
+account.** A 💎 in a DM or a group card needs the **BotFather owner** on
+Telegram Premium (@BotFather → Bot Settings → Transfer Ownership); a channel
+post needs the GramJS account connected (💎 Premium status). Until then a swap
+is saved and shows its fallback character, which is exactly what these notes now
+say on the screen where it is pasted.
+
 ## Conventions
 
 - Tests live beside the code they cover, in `bot/test/`, `tradebot/*.test.js`

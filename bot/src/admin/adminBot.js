@@ -366,12 +366,67 @@ function groupText(name, p, pages) {
 // WHO OWNS THE BOT in BotFather — say so, or the operator reads the fallback
 // char as "premium gagal" and files it as a bug (which happened).
 const GROUP_PREMIUM_NOTE =
-  "\n\n⚠️ <b>Premium emoji di kartu grup menyala kalau akun PEMILIK bot ber-Telegram Premium.</b> " +
-  "Aturan Telegram: bot boleh mengirim custom emoji ke grup hanya jika akun pemilik bot (di @BotFather) " +
+  "\n\n⚠️ <b>Premium emoji di kartu yang DIKIRIM BOT (DM, grup, supergrup) menyala kalau akun PEMILIK bot ber-Telegram Premium.</b> " +
+  "Aturan Telegram: bot boleh mengirim custom emoji ke private/grup/supergrup hanya jika akun pemilik bot (di @BotFather) " +
   "sedang berlangganan Premium — kalau tidak, yang tampil emoji cadangannya. " +
   "Pindahkan kepemilikan bot ke akun Premium Anda lewat @BotFather → Bot Settings → Transfer Ownership, " +
-  "dan 💎 langsung menyala di kartu buy/whale. Post channel tetap lewat akun premium/GramJS.";
-const isGroupPosted = (key) => String(key).startsWith("group_") || String(key).startsWith("buybot_");
+  "dan 💎 langsung menyala di kartu buy/whale, kartu bayar, dan resi broadcast.";
+// A CHANNEL is in neither half of Telegram's rule, which is the whole reason
+// src/gramjs.js exists. Saying "akun pemilik bot" over a channel post would
+// send an operator to @BotFather for a setting that cannot help there.
+const CHANNEL_PREMIUM_NOTE =
+  "\n\n💎 <b>Post channel keluar lewat akun GramJS premium</b>, bukan lewat bot — " +
+  "emoji premium di sini menyala selama akun itu tersambung dan masih berlangganan (cek 💎 Premium status).";
+// ⚠️ AND ONE SURFACE CAN NEVER ANIMATE ONE. X has no custom emoji at all, so a
+// 💎 swap on an x_* template publishes its FALLBACK character to a public tweet
+// and nothing else — a setting that is accepted, saved, and then invisible,
+// which is the exact failure GROUP_PREMIUM_NOTE was written about. Those
+// templates are kept off the 🎨 all-emoji screen entirely; this note is for the
+// per-template swap, which can still reach them.
+const X_PREMIUM_NOTE =
+  "\n\n⚠️ <b>X (Twitter) tidak punya custom emoji.</b> Ikon di template X terbit sebagai karakter cadangannya — " +
+  "swap premium di sini tidak akan pernah menyala di tweet.";
+
+/**
+ * WHERE a template's icons end up, which decides which caveat is true of it.
+ *
+ * ⚠️ `tpl.meta()` SYNTHESISES `{group:"Other"}` for a key it does not know, so
+ * an unknown key resolves to "telegram" — the direction that SHOWS a caveat
+ * rather than hiding one. That is the FALLTHROUGH below doing the work, not the
+ * try/catch: a mutation run proved the catch unreachable today (meta answers
+ * for every string), so it is belt-and-braces for the day meta starts throwing
+ * and NOT a guard any test can claim to cover.
+ */
+function premiumSurface(key) {
+  let group = "";
+  try {
+    group = tpl.meta(key).group;
+  } catch {
+    /* unreachable today — see above; the fallthrough is what decides */
+  }
+  if (group === "X Posts") return "x";
+  if (group === "Channel Posts") return "channel";
+  return "telegram";
+}
+
+/**
+ * The caveats true of THESE keys, in one string — the ONE OWNER of that
+ * question.
+ *
+ * It used to be `isGroupPosted(key) ? GROUP_PREMIUM_NOTE : ""`, a prefix test
+ * over `group_`/`buybot_` — right while the picker only ever pointed at those,
+ * and silent the moment it could reach a pay card, a broadcast receipt or a
+ * tweet. A slot can span several surfaces at once, so every caveat that applies
+ * is appended rather than the first one winning.
+ */
+function premiumNoteFor(keys) {
+  const seen = new Set([].concat(keys).map(premiumSurface));
+  return (
+    (seen.has("telegram") ? GROUP_PREMIUM_NOTE : "") +
+    (seen.has("channel") ? CHANNEL_PREMIUM_NOTE : "") +
+    (seen.has("x") ? X_PREMIUM_NOTE : "")
+  );
+}
 
 /*
  * ── The buy card's emoji, all on one screen ─────────────────────────────────
@@ -435,6 +490,22 @@ const BUY_CARD_EMOJI_KEYS = [
  * day somebody rebranded a chain.
  */
 const ALL_EMOJI_PER_PAGE = 21;
+/**
+ * ⚠️ SCOPED, AND THE SCOPE IS AN OPERATOR INSTRUCTION ON THE RECORD — "khusus
+ * buy alert dan raid, yang lainnya ga usah, jangan diubah apapun", pinned by
+ * allEmojiScreen.test.js ("a swap aimed at a buy alert must not drag a receipt
+ * or a prompt along with it").
+ *
+ * "saya ingin semua template kaya tdi broadcast sama payment ini bisa di edit
+ * pakai emoji premium" is NOT a request to widen this: every template is
+ * already editable with premium emoji two ways — paste a message carrying them
+ * (stored verbatim as {text, entities}) or 😀 Swap emoji on the template
+ * itself. What was missing is that this screen's own copy read as though the
+ * rest could not be styled at all, and that the swap prompt said nothing true
+ * about a DM or a tweet. Widening it instead would make one ✅ swap repaint a
+ * receipt, a prompt and a buy card together — the exact harm the instruction
+ * above names, and unaimable once a bot has 156 templates.
+ */
 const ALL_EMOJI_GROUPS = ["Group Buy Bot", "Dexvra Raid"];
 
 /**
@@ -602,7 +673,12 @@ function allEmojiText(page = 0) {
     `Angka <b>×N</b> di tombol adalah berapa tempat yang ikut berubah, jadi Anda tahu dampaknya sebelum menekan. ` +
     `Diurutkan dari yang paling sering dipakai.\n\n` +
     `<b>Teksnya tidak disentuh sama sekali</b> — hanya ikonnya.\n\n` +
-    `ℹ️ Hanya dua kartu ini yang tersentuh. Struk, prompt dan pesan lain tidak ikut berubah.\n` +
+    `ℹ️ Hanya dua kartu ini yang tersentuh: struk, prompt dan pesan lain <b>tidak ikut berubah</b>, ` +
+    `supaya satu swap tidak menyeret kartu yang sudah pas.\n` +
+    `ℹ️ Tapi mereka <b>tetap bisa pakai emoji premium</b> — satu per satu dari menu utama: ` +
+    `pilih grupnya (<b>Bot Messages</b> untuk kartu bayar, <b>Mass DM</b> untuk resi broadcast) → ` +
+    `pilih templatenya → <b>😀 Swap emoji</b>, atau <b>✏️ Edit</b> lalu kirim ulang teksnya ` +
+    `lengkap dengan emoji premiumnya.\n` +
     `ℹ️ Lambang jaringan juga tidak ada di sini: bot memilihnya sendiri sesuai chain token. ` +
     `Aturnya di <b>Channel Posts → Chain emoji</b>.` +
     (nPrem ? `\n\n💎 ${nPrem} ikon sudah premium.` : "")
@@ -3389,7 +3465,8 @@ function build() {
         `${slot.label ? ` — <b>${escapeHtml(slot.label)}</b>` : ""}${slot.id ? " (sekarang 💎 premium)" : ""}.\n\n` +
         `Ini akan mengubah <b>${slot.spots.length} tempat</b> di ${keys.length} template:\n` +
         labels.map((l) => `• ${escapeHtml(l)}`).join("\n") +
-        `\n\nTeks template tidak diubah sama sekali.\n\n/cancel untuk batal.`,
+        `\n\nTeks template tidak diubah sama sekali.\n\n/cancel untuk batal.` +
+        premiumNoteFor(keys),
       HTML,
     );
     // …and the card itself, so the icon is seen where it lives. Only the
@@ -3417,7 +3494,7 @@ function build() {
         `Teks template tidak diubah sama sekali` +
         (slot.spots.length > 1 ? `, dan ${slot.spots.length} tempat yang memakai ikon ini ikut berubah` : "") +
         `. /cancel untuk batal.` +
-        GROUP_PREMIUM_NOTE,
+        premiumNoteFor(slot.spots.map((sp) => sp.key)),
       HTML,
     );
   });
@@ -3433,7 +3510,7 @@ function build() {
       `⌨ Send the emoji to put in place of <b>${escapeHtml(cur.char)}</b> (#${i + 1})` +
         `${cur.id ? " — 💎 currently premium" : ""}.\n\n` +
         `Send a <b>premium</b> emoji and it stays premium. Everything else in the template is left untouched. /cancel to abort.` +
-        (isGroupPosted(key) ? GROUP_PREMIUM_NOTE : ""),
+        premiumNoteFor(key),
       HTML,
     );
   });
@@ -3494,7 +3571,7 @@ function build() {
           (bothCards
             ? `\n\nℹ️ Ini hanya kartu <b>${escapeHtml(tpl.meta(key).label)}</b>. Untuk mengganti ikon di ${sharedScreen}.`
             : "") +
-          (isGroupPosted(key) ? GROUP_PREMIUM_NOTE : ""),
+          premiumNoteFor(key),
         { ...HTML, ...Markup.inlineKeyboard(rows) },
       )
       .catch(() => {});
@@ -5509,6 +5586,7 @@ module.exports._board = { tbText, tbKb, tbChainsText, tbChainsKb, tbMark, tbRefr
 module.exports._net = { fetchTelegramFileBuffer };
 // Exposed for tests: the template controls card and its broken-placeholder guard.
 module.exports._tpl = { viewText, placeholderWarning, viewKb };
+module.exports._premium = { premiumSurface, premiumNoteFor, GROUP_PREMIUM_NOTE, CHANNEL_PREMIUM_NOTE, X_PREMIUM_NOTE };
 // Exposed for tests: the one screen that owns every icon on the buy card.
 module.exports._buyEmoji = { buyEmojiSlots, buyEmojiKb, buyEmojiText, emojiHint, buyPreviews, BUY_CARD_EMOJI_KEYS, CARD_OF_KEY, sendBuyPreview, sendTemplatePreview };
 module.exports._allEmoji = { allEmojiSlots, allEmojiKeys, allEmojiKb, allEmojiText, allEmojiPages, ALL_EMOJI_PER_PAGE };
