@@ -47,7 +47,21 @@ const MAX_AGE_MS = 30 * 60 * 1000;
 // buyMonitor caps what it will post anyway (MAX_PER_POLL), and reading a
 // thousand transactions to throw away 992 of them is how a free RPC key gets
 // spent by lunchtime.
-const MAX_TX = 40;
+//
+// ⚠️ AND IT IS THE BIGGEST SINGLE NUMBER IN THIS BOT'S SOLANA BILL, so it is a
+// knob rather than a constant. Measured: one tracked Solana pool costs
+// `1 + MAX_TX` requests every `BUYBOT_POOL_MIN_MS` — at the shipped 40 and 25s
+// that is up to 41 requests per pool per 25s, ~142,000 a DAY per pool, and
+// `getTransaction` is one of the heavier methods a provider meters. The whole
+// TRADE bot spends on the order of 1,500 a day, so this reader outweighs it by
+// three orders of magnitude: "we are on a paid key and still hitting the limit"
+// is answered here, not there.
+//
+// LOWERING IT COSTS COVERAGE, NOT CORRECTNESS. The window is sorted NEWEST
+// first before the slice, so a smaller cap drops the OLDEST buys of a busy
+// poll — an alert that was going to be minutes stale anyway. That is a
+// trade-off for whoever pays the bill, which is exactly why it is an env var.
+const MAX_TX = Math.max(4, Math.min(200, Number(process.env.BUYBOT_MAX_TX) || 40));
 // How far back a FIRST sight looks. buyMonitor applies its own first-sight
 // window on top; this only bounds the work.
 const FIRST_SIGHT_BLOCKS = 500;

@@ -273,3 +273,20 @@ test("buys that cannot be priced are HELD, not dropped", () => {
   const around = src.slice(at - 400, at + 200);
   assert.doesNotMatch(around, /state\.cursors\[entry\.key\] =/, "the cursor must not advance past a held buy");
 });
+
+// ── "kita sudah pakai helius dan limit" ───────────────────────────────────────
+// Measured before this became a knob: one tracked Solana pool costs
+// `1 + MAX_TX` requests every BUYBOT_POOL_MIN_MS — ~142,000 a DAY at the
+// shipped 40 and 25s, against a whole trade bot that spends ~1,500. The bill is
+// dominated by this number, so it has to be reachable without a deploy.
+test("BUYBOT_MAX_TX is a knob, and it is clamped", () => {
+  const src = fss.readFileSync(path.join(__dirname, "..", "src", "group", "chainTrades.js"), "utf8");
+  const expr = (src.match(/const MAX_TX = (.*);/) || [])[1];
+  assert.ok(expr, "MAX_TX must still be one declaration");
+  const at = (v) => eval(expr.replace("process.env.BUYBOT_MAX_TX", JSON.stringify(v)));
+  assert.equal(at(undefined), 40, "unset is the shipped default");
+  assert.equal(at(""), 40, "blank is ABSENT, not zero — Number('') is 0 and 0 here is a dead reader");
+  assert.equal(at("10"), 10, "an operator paying the bill can lower it");
+  assert.equal(at("1"), 4, "…but never to a reader that cannot see a burst");
+  assert.equal(at("9999"), 200, "…and never to one that empties a key on one poll");
+});

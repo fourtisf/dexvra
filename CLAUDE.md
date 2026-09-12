@@ -11974,6 +11974,69 @@ did not. ⚠️ `tradebot/` only, so the deploy is `pm2 restart dexvra-tradebot
 --update-env` — not the ecosystem file, and no web rebuild.
 
 
+#### "kita sudah pakai helius dan limit" — the trade bot was never the spender
+
+Asked one round after the Solana balance fix, and the answer is that the
+previous round's arithmetic **measured the wrong process**. It counted
+`tradebot/` and concluded ~1,500 requests a day — true, and irrelevant, because
+the two packages have SEPARATE Solana endpoints and the other one is three
+orders of magnitude larger:
+
+| | reads Solana from | cost |
+| --- | --- | --- |
+| `tradebot/` | `SOLANA_RPC` in **`tradebot/.env`** | 1 request per `/wallet`, ~10 per trade |
+| `bot/` (the buy bot) | `RPC_SOLANA_URLS` / `RPC_SOLANA` in **`bot/.env`** | **1 + `MAX_TX` per pool per `BUYBOT_POOL_MIN_MS`** |
+
+Measured off the code rather than guessed: `chainTrades.js` reads a Solana pool
+with one `getSignaturesForAddress` and then up to **40** `getTransaction`, every
+**25 seconds**, **per tracked pool**. That is up to 41 requests per pool per
+poll — **~142,000 a day for ONE pool**, on `getTransaction`, which is among the
+heaviest methods a provider meters. Six busy pools is a sustained ~10 req/s.
+
+- **So "we are on a paid key and still hit the limit" is answered in `bot/`, not
+  in `tradebot/`.** The trade bot's entire Solana appetite is a rounding error
+  against a single tracked pool, and pointing a key at only one of the two
+  `.env` files leaves the other on the public endpoint — which is the third time
+  this repo has been bitten by two owners of one upstream.
+- ⚠️ **AND THE BUDGETS MUST ADD UP TO THE CEILING**, the rule `GT_MAX_RPM`
+  already states for GeckoTerminal across these same two processes. One key
+  shared by a bulk poller and a latency-critical money path means the bulk one
+  starves the money one — and the money one is the one whose failure a user
+  sees as `Couldn't reach Solana` on their own balance.
+- **`BUYBOT_MAX_TX` is a knob now** (clamped 4–200, default 40, blank is
+  ABSENT). It is the single biggest number in this bot's Solana bill and it was
+  a hardcoded constant, so the only lever an operator had was
+  `BUYBOT_POOL_MIN_MS`. ⚠️ Lowering it costs COVERAGE, not correctness: the
+  window is sorted newest-first before the slice, so a smaller cap drops the
+  OLDEST buys of a busy poll — an alert that was already going to be minutes
+  stale. That trade-off belongs to whoever pays the bill.
+
+⚠️ **THE REAL ANSWER IS THAT POLLING IS THE WRONG SHAPE, and nothing here is
+subscribed to anything.** A grep for `onLogs`, `logsSubscribe` or `wss://`
+across this repo returns NOTHING: every Solana read in both processes is a
+poll. `logsSubscribe` over a WebSocket pushes a pool's trades down one
+persistent connection instead of ~142,000 requests a day, and every provider's
+free tier includes it. That is a real change to `chainTrades.js` with a real
+failure mode of its own (a dropped socket is a pool that goes silent, which is
+this file's own `lastFeedOkAt` scar), so it is recorded here as the next move
+rather than done quietly.
+
+Mutation-tested: the knob removed, the clamp dropped, and a blank read as zero
+each fail a test.
+
+```bash
+cd bot && node scripts/run-tests.js test/chainTrades.test.js   # 21 tests, no network
+grep -c SOLANA_RPC /opt/dexvra/tradebot/.env                   # which process is actually on the key
+grep -c RPC_SOLANA /opt/dexvra/bot/.env
+```
+
+**Config a fix depends on:** ⚠️ **TWO files, and setting one is not setting the
+other.** `SOLANA_RPC` in `tradebot/.env`; `RPC_SOLANA_URLS` (a comma list, wins
+outright) or `RPC_SOLANA` (one endpoint, defaults follow) in `bot/.env`.
+`BUYBOT_MAX_TX` and `BUYBOT_POOL_MIN_MS` are the two knobs that change the bill
+without changing a provider.
+
+
 ## Conventions
 
 - Tests live beside the code they cover, in `bot/test/`, `tradebot/*.test.js`
