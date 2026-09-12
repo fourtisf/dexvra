@@ -155,12 +155,22 @@ test('core.nativeBalances batches on svm and keeps EVM per-address', () => {
   assert.match(fn, /p\.getBalance\(a\)/, 'EVM is unchanged — those endpoints are not the ones refusing us');
 });
 
-test('⚠️ the wallet screen SAYS why a chain went unread', () => {
+test('⚠️ the reason a chain went unread has ONE owner on the screen', () => {
+  // This guard used to pin the reason to a POSITION — inside the active
+  // wallet's block — and so went red over code that keeps its rule on more
+  // surfaces through one owner, while passing on the code that broke it. That
+  // is this repo's own recurring defect (the four-way pool TTL, the
+  // `{ ok: true,` build stamp), and it is what let the reported screen say the
+  // 429 once at the top and `⚠️ 1 chain(s) unread` on four rows underneath.
+  //
+  // The rule is ONE WRITE, ONE READ: a second reader is how one of them loses
+  // it. The proof that the sentence reaches the reader is DRIVEN, in
+  // walletRender.test.js — a source scan cannot tell a line that renders from
+  // one that is merely written down.
   const t = src('telegram.js');
   assert.match(t, /chainWhy\[c\.key\] = cols\[ci\]\.why/, 'the reason is captured per chain');
-  const block = t.slice(t.indexOf("if (unreadChains.length)"), t.indexOf("const evmChain"));
-  assert.match(block, /chainWhy\[/, "…and printed — 'Couldn't reach Solana' with no reason is why this took a screenshot to diagnose");
-  assert.match(block, /new Set\(/, 'de-duplicated: five chains behind one dead host is one sentence');
+  assert.equal((t.match(/chainWhy\[/g) || []).length, 2, 'one write, one read');
+  assert.match(t, /byWhy/, 'grouped by REASON, so one dead host behind two chains is one line');
 });
 
 test("⚠️ the READ connections switch web3.js's 429 retry OFF", () => {
@@ -189,4 +199,106 @@ test('every Solana read goes through ONE door in core', () => {
   assert.match(eb.slice(0, eb.indexOf('\n}') + 2), /nativeBalances\(chainKey, \[addr\]\)/);
   const br = c.slice(c.indexOf('async function _balanceResilient('), c.indexOf('async function walletFunds('));
   assert.match(br, /nativeBalances\(chainKey, \[addr\]\)/, 'the removal survey too — two doors is how two screens disagree');
+});
+
+// ── The placeholder that was pasted into a live shell ─────────────────────────
+// `SOLANA_RPC=https://endpoint-berbayar-anda,…` — "your paid endpoint" — handed
+// over as a pasteable line and pasted verbatim. This repo's first rule, and the
+// fix it prescribes is that the CODE refuses a value that cannot be right.
+
+test('a placeholder host is refused, and a real one beside it survives', () => {
+  const out = sol.rpcUrls('https://endpoint-berbayar-anda,https://api.mainnet-beta.solana.com');
+  assert.deepEqual(out, ['https://api.mainnet-beta.solana.com']);
+});
+
+test('a list of nothing but placeholders falls back to the built-in host', () => {
+  // Never leave no host at all: a bad paste degrades to today's behaviour.
+  assert.deepEqual(sol.rpcUrls('https://endpoint-berbayar-anda'), ['https://api.mainnet-beta.solana.com']);
+});
+
+test('the dot is the test — a scheme check sees nothing wrong with the paste', () => {
+  assert.equal(sol.rpcUsable('https://endpoint-berbayar-anda'), false, 'parses fine, resolves nowhere');
+  assert.equal(sol.rpcUsable('https://your-endpoint-here'), false);
+  assert.equal(sol.rpcUsable('https://…'), false);
+  // …and everything an operator might legitimately set still passes.
+  assert.equal(sol.rpcUsable('https://mainnet.helius-rpc.com/?api-key=abc'), true);
+  assert.equal(sol.rpcUsable('https://api.mainnet-beta.solana.com'), true);
+  assert.equal(sol.rpcUsable('http://localhost:8899'), true, 'the one legitimate dotless host');
+});
+
+test('a refused entry is WARNED about, and the warning never prints the path', () => {
+  const seen = [];
+  const w = console.warn; console.warn = (m) => seen.push(String(m));
+  try { sol.rpcUrls('https://endpoint-berbayar-anda/secret-key-in-the-path'); }
+  finally { console.warn = w; }
+  assert.equal(seen.length, 1, 'being ignored silently is how "it did not work" and "it was never read" become one observation');
+  assert.match(seen[0], /SOLANA_RPC/, 'name the variable');
+  assert.match(seen[0], /endpoint-berbayar-anda/, 'name the host so it can be found');
+  assert.doesNotMatch(seen[0], /secret-key-in-the-path/, 'a paid endpoint carries its key in the path, and this goes to pm2');
+});
+
+// ── A host that just refused us is not asked again ───────────────────────────
+
+/** A stub that reports an endpoint, so the park has something to key on. */
+function stubAt(url, opts) { return Object.assign(stubConn(opts), { rpcEndpoint: url }); }
+
+test('a 429 parks the host — the next read spends no request at all', async () => {
+  sol._rpcUnpark();
+  const c = stubAt('https://one.example/rpc', { limit: 0 });
+  const a = await sol.solBalancesX(c, ADDRS, { conns: [c] });
+  assert.equal(a.ok, false);
+  assert.equal(c.calls, 1);
+  assert.match(a.why, /rate-limiting/);
+
+  const b = await sol.solBalancesX(c, ADDRS, { conns: [c] });
+  assert.equal(c.calls, 1, 'every /wallet render must not re-prove a refusal we already have');
+  assert.equal(b.ok, false);
+  assert.match(b.why, /rate-limiting/, 'and the screen still says the same true sentence');
+  sol._rpcUnpark();
+});
+
+test('a TIMEOUT does not park — that says nothing about a quota', async () => {
+  sol._rpcUnpark();
+  const c = stubAt('https://slow.example/rpc', { fail: new Error('request timed out') });
+  await sol.solBalancesX(c, ADDRS, { conns: [c] });
+  await sol.solBalancesX(c, ADDRS, { conns: [c] });
+  assert.equal(c.calls, 2, 'a host that is merely slow is still asked');
+  sol._rpcUnpark();
+});
+
+test('a parked host does not stop the next one from answering', async () => {
+  sol._rpcUnpark();
+  const bad = stubAt('https://bad.example/rpc', { limit: 0 });
+  const good = stubAt('https://good.example/rpc');
+  const a = await sol.solBalancesX(bad, ADDRS, { conns: [bad, good] });
+  assert.equal(a.ok, true, 'failover still runs on the first pass');
+
+  const b = await sol.solBalancesX(bad, ADDRS, { conns: [bad, good] });
+  assert.equal(b.ok, true);
+  assert.equal(bad.calls, 1, 'the refused host is skipped');
+  assert.equal(good.calls, 2, 'and the one that works takes the calls');
+  sol._rpcUnpark();
+});
+
+test('a connection reporting no endpoint is never parked', async () => {
+  // An `undefined` key would park under one entry and skip EVERY host at once.
+  sol._rpcUnpark();
+  const c = stubConn({ limit: 0 });
+  await sol.solBalancesX(c, ADDRS, { conns: [c] });
+  const other = stubConn();
+  const r = await sol.solBalancesX(other, ADDRS, { conns: [other] });
+  assert.equal(r.ok, true, 'an unrelated connection must not inherit that park');
+  assert.equal(other.calls, 1);
+  sol._rpcUnpark();
+});
+
+test('"custom" is a claim about what SURVIVED, not about what was typed', () => {
+  // The boot line is what an operator reads after setting SOLANA_RPC. Reporting
+  // a list of refused placeholders as "custom" tells them their override is
+  // live while every read still goes to the public default.
+  assert.equal(sol.rpcIsCustom('https://endpoint-berbayar-anda'), false, 'nothing survived — this box is on the default');
+  assert.equal(sol.rpcIsCustom('https://api.mainnet-beta.solana.com'), false);
+  assert.equal(sol.rpcIsCustom('https://endpoint-berbayar-anda,https://api.mainnet-beta.solana.com'), false);
+  assert.equal(sol.rpcIsCustom('https://mainnet.helius-rpc.com/?api-key=abc'), true);
+  assert.equal(sol.rpcIsCustom('https://mine.example/rpc,https://api.mainnet-beta.solana.com'), true, 'a real host beside the default IS custom');
 });

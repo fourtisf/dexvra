@@ -259,12 +259,18 @@ test('other wallets carry a one-line per-chain breakdown', () => {
 test('bags collapse to one figure and unread chains are counted, not hidden', () => {
   // A wallet whose reads all failed must not render as empty — "empty" and "we
   // could not look" are different facts, the rule the active block already keeps.
-  assert.match(OTHERS, /if \(b == null\) \{ unread\+\+; return; \}/);
-  assert.match(OTHERS, /if \(unread\) bits\.push\(T\(chatId, 'wal\.row_unread', \{ n: unread \}\)\)/);
+  // ⚠️ THE RULE, NOT THE SPELLING. This pinned `unread++` and `{ n: unread }`,
+  // so it went red the day the row started NAMING the chain — which is what the
+  // count could never do, and why "masih 1 chain unread" had to be reported with
+  // a screenshot. The property is that a null is neither dropped nor rendered as
+  // a zero; WHICH chain reaches the row is driven in walletRender.test.js.
+  assert.match(OTHERS, /if \(b == null\) \{ [A-Za-z]+\.push\(allChains\[ci\]\.name\); return; \}/,
+    'an unread cell is collected by NAME, never skipped and never counted as 0');
+  assert.match(OTHERS, /bits\.push\(T\(chatId, 'wal\.row_unread'/, '…and reaches the row');
   assert.match(OTHERS, /tokenUsdArr\[i\] \|\| 0\) > 0\.05/);
   const i18n = require('./i18n');
   for (const lang of i18n.LANGS) {
-    assert.match(i18n.t(lang, 'wal.row_unread', { n: 2 }), /2/, `${lang} drops the count`);
+    assert.match(i18n.t(lang, 'wal.row_unread', { chains: 'Solana' }), /Solana/, `${lang} drops the chain name`);
   }
 });
 

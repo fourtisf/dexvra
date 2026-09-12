@@ -127,7 +127,7 @@ const S = {
   'wal.others_head': { en: '<b>Your other wallets</b>', id: '<b>Wallet kamu yang lain</b>' },
   // The per-wallet breakdown's unread marker. Counted, not vague: "some chains"
   // reads as a shrug where a number reads as a fact the total is missing.
-  'wal.row_unread': { en: '⚠️ {n} chain(s) unread', id: '⚠️ {n} chain tak terbaca' },
+  'wal.row_unread': { en: '⚠️ {chains} unread', id: '⚠️ {chains} tak terbaca' },
   'wal.tokens_row': { en: '🪙 Tokens', id: '🪙 Token' },
   'wal.empty_on': { en: '<i>Nothing yet on {chains}</i>', id: '<i>Belum ada isinya di {chains}</i>' },
   'wal.unread_on': {

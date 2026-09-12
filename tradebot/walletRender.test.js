@@ -429,3 +429,41 @@ test('a chain that answered says nothing about a reason', async () => {
   const txt = plain((await t.walletScreen(1)).text);
   assert.doesNotMatch(txt, /Couldn't reach/);
 });
+
+// ── "masih 1 chain unread ini chain solana yang tidak bisa di read" ───────────
+// The reported screen said `the Solana RPC is rate-limiting this server (429)`
+// on the active wallet and `⚠️ 1 chain(s) unread` on the four below it — the
+// same fact, rendered once with an answer and four times without one.
+
+test('a non-active wallet NAMES the chain it could not read', async () => {
+  WALLETS = [W('w1'), W('w2')];
+  BAL = [[E(1), 0n, 0n, E(2)], [E(1), 0n, 0n, 'fail']];
+  FAIL_WHY = { solana: 'the Solana RPC is rate-limiting this server (429)' };
+  const txt = plain((await t.walletScreen(1)).text);
+  // A count cannot say WHICH, and at n=1 it says nothing at all.
+  assert.doesNotMatch(txt, /1 chain\(s\) unread/);
+  assert.match(txt, /Solana unread/);
+});
+
+test('the reason prints when ONLY a non-active wallet is unread', async () => {
+  // The hole the old placement could not cover: the reason lived inside the
+  // ACTIVE wallet's block, and here that wallet read Solana perfectly well.
+  WALLETS = [W('w1'), W('w2')];
+  BAL = [[E(1), 0n, 0n, E(2)], [E(1), 0n, 0n, 'fail']];
+  FAIL_WHY = { solana: 'the Solana RPC is rate-limiting this server (429)' };
+  const txt = plain((await t.walletScreen(1)).text);
+  assert.doesNotMatch(txt, /Couldn't reach Solana/, 'the active wallet read it — it has no unread line');
+  assert.match(txt, /rate-limiting this server \(429\)/, 'and the screen still says why');
+  assert.match(txt, /Solana — the Solana RPC is rate-limiting/, 'named, so the line stands alone');
+});
+
+test('one reason covers the screen, however many wallets hit it', async () => {
+  WALLETS = [W('w1'), W('w2'), W('w3'), W('w4')];
+  BAL = [0, 1, 2, 3].map(() => [E(1), 0n, 0n, 'fail']);
+  FAIL_WHY = { solana: 'the Solana RPC is rate-limiting this server (429)' };
+  const txt = plain((await t.walletScreen(1)).text);
+  assert.strictEqual(txt.split('rate-limiting this server').length - 1, 1,
+    'four wallets behind one refused host is one sentence, not four');
+  // …and every row still says which chain, because that is per row.
+  assert.strictEqual(txt.split('Solana unread').length - 1, 3, 'the three non-active rows name it');
+});

@@ -184,7 +184,15 @@ test('boot names both Solana execution knobs, and never the RPC url', () => {
   // without this the only way to learn whether either was picked up is to spend
   // real money and read `prio=` off a buy. An operator who edits the wrong file
   // gets no signal at all: the bot boots clean, trades fine, and stays slow.
-  assert.match(boot, /rpc \$\{process\.env\.SOLANA_RPC \? 'custom' : 'PUBLIC default \(rate-limited\)'\}/);
+  // ⚠️ THE RULE, NOT THE SPELLING. This used to pin the ternary verbatim, so it
+  // went red the day "custom" started being asked of the hosts that SURVIVED
+  // rather than of whether the variable was set — and would have passed on a
+  // line that claimed "custom" over a list of refused placeholders. The
+  // property is that the line reports the tier and that the verdict has one
+  // owner (solana.rpcIsCustom), which is tested by being CALLED in
+  // solBalanceBatch.test.js.
+  assert.match(boot, /rpc \$\{sol[A-Za-z]*ustom \? 'custom' : 'PUBLIC default \(rate-limited\)'\}/);
+  assert.match(boot, /solana\.rpcIsCustom\(/, 'the verdict is asked of the one owner');
   assert.match(boot, /priority fee \$\{prio > 0 \?/);
   assert.match(boot, /OFF — transactions queue behind every paying one/);
   // THE SECRET. A paid RPC carries its API key in the path, and this line goes

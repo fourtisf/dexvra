@@ -11847,6 +11847,133 @@ so a refused host is parked and the next takes the same calls. ⚠️ This is a
 `tradebot/` change, so the deploy is `pm2 restart dexvra-tradebot --update-env`
 — not the ecosystem file, and no web rebuild.
 
+### "masih 1 chain unread ini chain solana yang tidak bisa di read"
+
+The batch shipped and the screen still said it — but read the two screenshots
+together and they name three different things, only one of which is the RPC.
+
+**1. ⚠️ THE FIX'S OWN HANDOVER BROKE THIS FILE'S FIRST RULE, FOR THE FIFTH
+TIME.** The operator was handed `SOLANA_RPC=https://endpoint-berbayar-anda,…`
+— *"your paid endpoint"* — as a line to paste, and pasted it, **at a shell
+prompt**. `VAR=value` is a legal assignment whatever the value is, so the shell
+returned a clean prompt and said nothing; pm2 never saw it, and had it reached
+`.env` every Solana read would have gone to a host that resolves nowhere and
+reported `could not reach the Solana RPC (ENOTFOUND)` — which reads as a network
+fault rather than an unfilled blank. **That is the `LAUNCHPAD_PONS_TOKEN_PATH`
+incident verbatim**, in the handover for the fix, on the one lever that was
+supposed to end the outage. So the operator's config change did nothing, and
+nothing anywhere said so.
+
+- **The fix is never to reword the placeholder** — it is to make the code refuse
+  a value that cannot possibly be right (`report.js` `_looksLikeChatId`,
+  `pads.js` `realValue`). `rpcUsable` refuses it, `rpcUrls` drops it, and the
+  survivors are what the bot uses.
+- ⚠️ **THE DOT IS THE TEST, and a scheme check is not.**
+  `https://endpoint-berbayar-anda` parses as a URL perfectly well — protocol
+  fine, hostname fine — and its host has no TLD, which no reachable public
+  endpoint lacks. `localhost` and `127.0.0.1` are the legitimate dotless hosts
+  and are allowed by name; a keyed url (`…helius-rpc.com/?api-key=…`) passes
+  untouched.
+- **A refused entry is WARNED about, once per value**, naming the variable —
+  "the override did not work" and "the override was never read" are otherwise
+  the same observation, which is exactly what happened. ⚠️ The warning prints
+  the **host and never the path**: a rejected value is a placeholder, but a paid
+  endpoint carries its key in the path and this line goes to pm2's log.
+- **A list of nothing but placeholders falls back to the built-in default**, so
+  a bad paste degrades to today's behaviour rather than to an outage.
+- ⚠️ **AND `rpcIsCustom` ASKS WHAT SURVIVED, NEVER WHAT WAS TYPED.** The boot
+  line read `process.env.SOLANA_RPC ? 'custom' : …`, so a list of refused
+  placeholders would have printed **custom** on the one line an operator checks
+  after setting it — telling them their override is live while every read went
+  exactly where it always did. One owner, beside the list it reads, tested by
+  being CALLED.
+
+**2. ⚠️ THE PER-WALLET ROW NAMED NEITHER THE CHAIN NOR THE REASON.** The
+reported screen said `the Solana RPC is rate-limiting this server (429)` on the
+active wallet and `⚠️ 1 chain(s) unread` on the four rows underneath — the same
+fact, rendered once with an answer and four times without one. **A lesson
+applied to one of two surfaces, for the tenth time in this file**, and it is why
+this needed a screenshot instead of being read off the screen that was already
+showing it. A count cannot say WHICH, and at n=1 it says nothing at all.
+
+- **The row names the chain** (`⚠️ Solana unread`), the way its other segments
+  already name what the wallet holds.
+- ⚠️ **THE REASON HAS ONE OWNER FOR THE WHOLE SCREEN**, because it is a fact
+  about the CHAIN and not about a wallet. Printing it in both places would be
+  two owners of one sentence — and the active wallet is not even reliably one of
+  them: the ≤10-min last-known cache can carry ITS cell while another wallet's
+  stays null, so the block that held the reason renders no unread line to hang
+  it on. That hole is now a driven test.
+- **Grouped by REASON, not by chain**, so two chains behind one dead host are
+  one line, and the line NAMES them (`Solana — the Solana RPC is rate-limiting
+  this server (429)`) so it stands alone wherever it sits.
+
+**3. A HOST THAT JUST REFUSED US IS NOT ASKED AGAIN.** *"A client that hammers
+through its own 429"* is this repo's own defect — fixed for CoinGecko,
+DexScreener, GeckoTerminal and Jupiter, and never for the chain this bot signs
+on. Every `/wallet` render is one `getMultipleAccounts`, so a box the endpoint
+is refusing spends one request per tap proving the same refusal, for ever, while
+the screen shows the same sentence either way. `SOL_RPC_PARK_MS` (15s, clamped
+1s–120s) parks it and the reason is kept, so the screen says the same true thing
+without making the request.
+
+- ⚠️ **A REFUSAL PARKS; A TIMEOUT DOES NOT.** 429/401/403 is a fact about the
+  bucket; a dead socket or a slow answer says nothing about a quota, and parking
+  one would bench a host that is merely having a bad second. The line `gt.ts`
+  and `logoFill` already draw.
+- ⚠️ **READ PATH ONLY.** `getConnection` is untouched: a confirmation waiting on
+  a signed transaction must go out, and parking it would strand a trade that has
+  already spent money.
+- **A parked host never stops the next one**, and a host that answers is
+  unparked.
+
+⚠️ **AND TWO EXISTING GUARDS WENT RED OVER CODE THAT KEEPS THEIR RULE** — this
+repo's own recurring defect (the four-way pool TTL, the `{ ok: true,` build
+stamp, the in-flight stall warning), twice in one round. `statusBatch` pinned
+the boot line's ternary *verbatim*, so it failed the day "custom" started being
+asked of the hosts that survived — **and would have passed on a line claiming
+custom over a list of placeholders**. `walletScreen` pinned `unread++` and
+`{ n: unread }`, so it failed the day the row started naming the chain, which is
+the one thing the count could never do. Both assert their property now, and the
+third — the reason's placement — was rewritten from *"it is inside the active
+block"* to *"one write, one read"*.
+
+```bash
+cd tradebot && node --test solBalanceBatch.test.js walletRender.test.js   # 23 + 33 tests, no network
+pm2 logs dexvra-tradebot --lines 50 --nostream | grep -F '[solana]'        # was an entry ignored?
+```
+
+Fourteen guarantees are MUTATION-TESTED rather than argued: `rpcUsable` always
+true, the dot test dropped, no fallback when every entry is refused, the refusal
+gone silent, the warning printing the path, "custom" asked of what was typed,
+the boot line inlining the env check, no park on a refusal, a timeout parking
+too, the row collecting a count instead of a name, the row's template back to
+`{n}`, the reason never printed, the reason not naming its chain, and a reason
+per chain instead of per host. Each fails between one and six tests.
+
+⚠️ **A fifteenth SURVIVED, and that is what the comment in `solBalancesX` now
+says.** The park has a guard at both ends — a normalised `url` on the read and
+`url &&` on the write — and dropping the read-side one changes no outcome while
+the write guard stands. So the WRITE is the boundary, the read-side
+normalisation is belt-and-braces, and the code says which rather than carrying a
+test that claims cover it does not provide.
+
+⚠️ **What this does NOT do is make Solana answer.** One public endpoint shared
+by every wallet, the snipe loop and every confirmation is still one public
+endpoint, and a box it is refusing stays refused however few requests we make.
+**The only thing that RAISES that ceiling rather than dividing it is a second
+host**, and `SOLANA_RPC` in `/opt/dexvra/tradebot/.env` takes a comma list for
+exactly that — which is what the placeholder above was supposed to deliver and
+did not.
+
+**Config a fix depends on:** nothing for the code. ⚠️ `SOLANA_RPC` lives in
+**`tradebot/.env`** (the trade bot reads its OWN), it is a FILE and not a shell
+variable, and every entry must be a real host — the boot line now says `custom`
+only when one survived, and `[solana] SOLANA_RPC entry ignored` names any that
+did not. ⚠️ `tradebot/` only, so the deploy is `pm2 restart dexvra-tradebot
+--update-env` — not the ecosystem file, and no web rebuild.
+
+
 ## Conventions
 
 - Tests live beside the code they cover, in `bot/test/`, `tradebot/*.test.js`

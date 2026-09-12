@@ -858,16 +858,26 @@ async function walletScreen(chatId) {
   if (emptyChains.length) chainBlock += T(chatId, 'wal.empty_on', { chains: esc(emptyChains.join(' · ')) }) + '\n';
   if (unreadChains.length) {
     chainBlock += T(chatId, 'wal.unread_on', { chains: esc(unreadChains.join(' · ')) }) + '\n';
-    // ⚠️ AND WHY. A chain that could not be read has exactly one line on this
-    // screen, and until now it said nothing an operator could act on — a rate
-    // limit, a host refusing this server and our own 2.5s bound all rendered as
-    // "Couldn't reach Solana", which is why this was reported instead of fixed.
-    // De-duplicated: five chains behind one dead endpoint is one sentence.
-    const reasons = [...new Set(unreadChains
-      .map((n) => chainWhy[(allChains.find((c) => c.name === n) || {}).key])
-      .filter(Boolean))];
-    if (reasons.length) chainBlock += `<i>${esc(reasons.join(' · '))}</i>\n`;
   }
+  // ⚠️ AND WHY — ONCE, FOR THE WHOLE SCREEN, because it is a fact about the
+  // CHAIN and not about a wallet.
+  //
+  // It used to live inside the active wallet's block, which is how the reported
+  // screen came to say "the Solana RPC is rate-limiting this server (429)" at
+  // the top and `⚠️ 1 chain(s) unread` on four rows underneath with nothing at
+  // all. Printing it in both places would be two owners of one sentence, and
+  // the active wallet is not even reliably one of them: the ≤10-min last-known
+  // cache can carry ITS cell while another wallet's stays null, so the block
+  // that held the reason renders no unread line to hang it on.
+  const unreadAnywhere = allChains.filter((c, ci) => matrix.some((row) => row[ci] == null));
+  const byWhy = new Map();   // reason -> [chain names], so one dead host is one line
+  unreadAnywhere.forEach((c) => {
+    const w = chainWhy[c.key];
+    if (w) byWhy.set(w, [...(byWhy.get(w) || []), c.name]);
+  });
+  const whyBlock = [...byWhy.entries()]
+    .map(([w, names]) => `<i>${esc(names.join(' · '))} — ${esc(w)}</i>`)
+    .join('\n');
   // One EVM key = one 0x address shared by every EVM chain; Solana has its own key.
   // Show BOTH addresses per wallet so it's obvious where to deposit each — but
   // the ACTIVE chain's goes first. Depositing is the reason someone reads this
@@ -927,15 +937,20 @@ async function walletScreen(chatId) {
         // failed says so instead of rendering as empty — "empty" and "we could
         // not look" stay different facts, same rule as the block above.
         const bits = [];
-        let unread = 0;
+        const rowUnread = [];
         (matrix[i] || []).forEach((b, ci) => {
-          if (b == null) { unread++; return; }
+          // ⚠️ NAME THE CHAIN. This row said `⚠️ 1 chain(s) unread` and nothing
+          // else — not which chain, not why — while the active wallet's block
+          // three lines up said both. A lesson applied to one of two surfaces,
+          // and it is why "masih 1 chain unread" had to be reported with a
+          // screenshot: the count is meaningless at one and unhelpful at two.
+          if (b == null) { rowUnread.push(allChains[ci].name); return; }
           const amt = Number(fmtNat(b, allChains[ci].key));
           if (!(amt > 0)) return;
           bits.push(`${allChains[ci].emoji} ${+amt.toFixed(4)} ${allChains[ci].native}`);
         });
         if ((tokenUsdArr[i] || 0) > 0.05) bits.push(`🪙 ${usdX(tokenUsdArr[i])}`);
-        if (unread) bits.push(T(chatId, 'wal.row_unread', { n: unread }));
+        if (rowUnread.length) bits.push(T(chatId, 'wal.row_unread', { chains: esc(rowUnread.join(' · ')) }));
         others += `▫️ <b>${esc(label)}</b> · ${usdX(walletUsd[i])}${orders}\n`
           + (bits.length ? `└ ${bits.join(' · ')}\n` : '');
       }
@@ -1007,7 +1022,8 @@ async function walletScreen(chatId) {
     + chainBlock
     + addrBlock
     + (others ? `\n${T(chatId, 'wal.others_head')}\n${others}` : '')
-    + (rolledUp ? `<i>${T(chatId, 'wal.more', { n: rolledUp, usd: usdX(rolledUpUsd) })}</i>\n` : '');
+    + (rolledUp ? `<i>${T(chatId, 'wal.more', { n: rolledUp, usd: usdX(rolledUpUsd) })}</i>\n` : '')
+    + (whyBlock ? `\n${whyBlock}\n` : '');
   const guide = !anyFunds
     ? `\n${T(chatId, 'wal.first_steps', { native: esc(ch.native) })}\n\n${T(chatId, 'wal.keys_note')}`
     : `\n${T(chatId, 'wal.hint')}`;
@@ -5757,8 +5773,12 @@ async function start() {
     // A count is safe where the urls are not, and "1 host" beside
     // "PUBLIC default" is the whole diagnosis for a screen that says
     // "Couldn't reach Solana": nowhere else to ask.
-    const solHosts = solana.rpcUrls(core.chainOf('solana') && core.chainOf('solana').rpc).length;
-    console.log(`[boot] solana: rpc ${process.env.SOLANA_RPC ? 'custom' : 'PUBLIC default (rate-limited)'}`
+    const solUrls = solana.rpcUrls(core.chainOf('solana') && core.chainOf('solana').rpc);
+    const solHosts = solUrls.length;
+    // "custom" is a claim about what SURVIVED, not about what was typed —
+    // solana.rpcIsCustom owns that question, beside the list it reads.
+    const solCustom = solana.rpcIsCustom(core.chainOf('solana') && core.chainOf('solana').rpc);
+    console.log(`[boot] solana: rpc ${solCustom ? 'custom' : 'PUBLIC default (rate-limited)'}`
       + ` · ${solHosts} host${solHosts === 1 ? ' (no failover — SOLANA_RPC takes a comma list)' : 's, failover on'}`
       + ` · priority fee ${prio > 0 ? prio + ' lamports (~' + (prio / 1e9).toFixed(6) + ' SOL/trade)' : 'OFF — transactions queue behind every paying one'}`);
     // …AND THE THIRD KNOB, WHICH IS THE ONE FIVE WALLETS RAN OUT OF. The keyless

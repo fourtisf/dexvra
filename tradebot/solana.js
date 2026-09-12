@@ -288,10 +288,101 @@ function getConnection(rpc) {
  * signed and confirmed against one node's view of the chain, and re-asking a
  * different host mid-flight is a different problem with its own failure modes.
  */
+const SOL_DEFAULT_RPC = 'https://api.mainnet-beta.solana.com';
+const _rpcWarned = new Set();
+/**
+ * Is this a host we could actually reach, or is it the blank somebody meant to
+ * fill in?
+ *
+ * ⚠️ THIS FILE'S OWN FIRST RULE, AND IT WAS BROKEN IN THE HANDOVER THAT SHIPPED
+ * THE COMMA LIST. The line an operator was handed read
+ * `SOLANA_RPC=https://endpoint-berbayar-anda,…` — "your paid endpoint" in
+ * Indonesian — and it was pasted verbatim. `VAR=value` is a legal shell
+ * assignment whatever the value is, so the shell returned a clean prompt and
+ * said nothing; had it reached `.env`, every Solana read would have gone to a
+ * host that resolves nowhere and reported `could not reach the Solana RPC
+ * (ENOTFOUND)` — which reads as a network fault rather than an unfilled blank,
+ * and is indistinguishable from the outage the override exists to fix. Exactly
+ * what `LAUNCHPAD_PONS_TOKEN_PATH` already cost, one registry over.
+ *
+ * The fix this repo prescribes is not to reword the placeholder: it is to make
+ * the code refuse a value that cannot possibly be right (`report.js`
+ * `_looksLikeChatId`, `pads.js` `realValue`).
+ *
+ * THE TEST THAT CATCHES IT IS THE DOT. `https://endpoint-berbayar-anda` parses
+ * as a URL perfectly well — a scheme check sees nothing wrong — and its hostname
+ * has no TLD, which no reachable public endpoint lacks. `localhost` is the one
+ * legitimate dotless host and is allowed by name.
+ */
+function rpcUsable(u) {
+  if (/[…<>\s]|\.\.\./.test(u)) return false;
+  try {
+    const p = new URL(u);
+    if (!/^https?:$/.test(p.protocol)) return false;
+    return p.hostname === 'localhost' || p.hostname === '127.0.0.1' || p.hostname.includes('.');
+  } catch (_) { return false; }
+}
+/** Is this box actually on an endpoint of its own?
+ *
+ * ⚠️ ASKED OF WHAT SURVIVED, never of what was typed. A SOLANA_RPC whose every
+ * entry was refused as a placeholder falls back to the public default, and the
+ * boot line reporting that as "custom" would tell an operator their override is
+ * live while every read goes exactly where it always did — the reassuring
+ * reading, on the one line they check after setting it. */
+function rpcIsCustom(rpc) {
+  return rpcUrls(rpc).some((u) => u !== SOL_DEFAULT_RPC);
+}
 function rpcUrls(rpc) {
-  const raw = String(rpc || process.env.SOLANA_RPC || 'https://api.mainnet-beta.solana.com');
-  const list = raw.split(',').map((u) => u.trim()).filter(Boolean);
-  return list.length ? list : ['https://api.mainnet-beta.solana.com'];
+  const raw = String(rpc || process.env.SOLANA_RPC || SOL_DEFAULT_RPC);
+  const all = raw.split(',').map((u) => u.trim()).filter(Boolean);
+  const list = all.filter(rpcUsable);
+  // An operator who set something and is being ignored must be TOLD, or "the
+  // override did not work" and "the override was never read" are the same
+  // observation — the silence this whole section is about. Once per value: this
+  // is called on every read.
+  for (const bad of all.filter((u) => !rpcUsable(u))) {
+    if (_rpcWarned.has(bad)) continue;
+    _rpcWarned.add(bad);
+    // The HOST, never the path: a rejected value is a placeholder, but a paid
+    // endpoint carries its key in the path and this line goes to pm2's log.
+    let host = 'an unparseable value';
+    try { host = new URL(bad).hostname || host; } catch (_) { /* keep */ }
+    console.warn(`[solana] SOLANA_RPC entry ignored — "${host}" is not a reachable host.`
+      + ' It looks like a placeholder that was pasted instead of filled in.'
+      + ' Set it to the url your RPC provider gave you, or remove the entry.');
+  }
+  // Never leave no host at all. A refused list falls back to the built-in
+  // default, so a bad paste degrades to today's behaviour rather than to an
+  // outage — the rule the launchpad registry already states.
+  return list.length ? list : [SOL_DEFAULT_RPC];
+}
+/**
+ * A host that just REFUSED us, and until when.
+ *
+ * "A client that hammers through its own 429" is this repo's own defect, fixed
+ * for CoinGecko, DexScreener, GeckoTerminal and Jupiter and never for the chain
+ * this bot signs on. Every /wallet render is one `getMultipleAccounts`, so a
+ * box the endpoint is refusing spends one request per tap proving the same
+ * refusal — for ever, while the screen shows the same sentence either way.
+ *
+ * ⚠️ READ PATH ONLY. `getConnection` is untouched: a confirmation that is
+ * waiting on a signed transaction must go out, and parking it would strand a
+ * trade that has already spent money.
+ */
+const _rpcPark = new Map();
+const SOL_PARK_MS = Math.min(120000, Math.max(1000, Number(process.env.SOL_RPC_PARK_MS) || 15000));
+function rpcParked(url) {
+  const p = _rpcPark.get(url);
+  if (!p) return null;
+  if (Date.now() >= p.until) { _rpcPark.delete(url); return null; }
+  return p;
+}
+/** A REFUSAL is about the bucket, so it parks the host. A timeout or a dead
+ *  socket is not: those say nothing about a quota, and parking one would hide a
+ *  host that is merely slow. Same line `gt.ts` and `logoFill` already draw. */
+function rpcRefusal(e) {
+  const m = String((e && (e.message || e)) || '');
+  return /429|too many requests|rate.?limit|\b40[13]\b|forbidden|unauthorized/i.test(m);
 }
 /**
  * A Connection per configured host, in order — for READS only.
@@ -381,6 +472,21 @@ async function solBalancesX(conn, addresses, opts) {
   const conns = (opts && opts.conns) || [conn];
   let why = null;
   for (const c of conns) {
+    // A host we already know is refusing us is not asked again until its park
+    // expires — the whole point is to stop spending a request per render on an
+    // answer we have. The reason is kept, so the screen says the same true
+    // sentence it would have said after making the request.
+    // ⚠️ Keyed by the host, so a connection that reports none is never parked:
+    // an `undefined` key would park under one entry and skip EVERY host at once.
+    //
+    // THE BOUNDARY IS THE WRITE (`url &&` on the _rpcPark.set below) — that is
+    // what a mutation run kills. The normalisation here is belt-and-braces and
+    // changes no outcome while that guard stands; it says so rather than
+    // carrying a test that claims cover it does not provide. Drop the write
+    // guard and this line becomes load-bearing again.
+    const url = typeof c.rpcEndpoint === 'string' && c.rpcEndpoint ? c.rpcEndpoint : null;
+    const parked = url && rpcParked(url);
+    if (parked) { if (!why) why = parked.why; continue; }
     let failed = false;
     for (let off = 0; off < keys.length; off += SOL_ACCOUNTS_PER_CALL) {
       const slice = keys.slice(off, off + SOL_ACCOUNTS_PER_CALL);
@@ -394,10 +500,11 @@ async function solBalancesX(conn, addresses, opts) {
       } catch (e) {
         failed = true;
         if (!why) why = solRpcWhy(e);   // the FIRST host's reason, never the last
+        if (url && rpcRefusal(e)) _rpcPark.set(url, { until: Date.now() + SOL_PARK_MS, why: solRpcWhy(e) });
         break;
       }
     }
-    if (!failed) return { bals: out, ok: true, why: null };
+    if (!failed) { if (url) _rpcPark.delete(url); return { bals: out, ok: true, why: null }; }
   }
   return { bals: out, ok: false, why: why || 'the Solana RPC did not answer' };
 }
@@ -1298,7 +1405,10 @@ module.exports = {
   solToLamports, lamportsToSol, fmtUnits, toRaw,
   quoteUrl, quotePath, swapBody, parseQuote, feeLamports, netErr,
   jupBase: () => _jupBase,   // which host actually answered — for the preflight
-  getConnection, rpcUrls, readConnections, solBalance, solBalanceOrNull, solBalancesOrNull, solBalancesX, solRpcWhy, splDecimalsOrNull, splBalance, splBalanceOrNull, sendJupiterSwap, sendSplToken, confirmSignature,
+  // `_rpcUnpark` is a TEST SEAM and says so: the park is module state and the
+  // suite shares one process, so a test that leaves a host parked silences the
+  // next test's read — which looks exactly like the batch being broken.
+  getConnection, rpcUrls, rpcUsable, rpcIsCustom, readConnections, _rpcUnpark: () => _rpcPark.clear(), solBalance, solBalanceOrNull, solBalancesOrNull, solBalancesX, solRpcWhy, splDecimalsOrNull, splBalance, splBalanceOrNull, sendJupiterSwap, sendSplToken, confirmSignature,
   rentExemptMin, transferFee,
   getQuote, getSwapTx, swap, sendSol, splDecimals, jupTokenMeta, splMeta, dexScreener, pumpfunNew,
   jupErr, jupKeyed: () => !!JUP_API_KEY, jupHeaders, jupStats,
