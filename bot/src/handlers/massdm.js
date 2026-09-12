@@ -70,14 +70,23 @@ async function captureCa(ctx, input) {
   const ca = String(input || "").trim().split(/\s+/)[0];
   if (!looksLikeCA(ca)) return sendCard(ctx, tpl.render("massdm_ca_invalid"), menu.withHome([]));
   await ctx.reply("🔍 Detecting your token's chain…").catch(() => {});
-  const res = await groupSetup.resolveToken(ca).catch(() => null);
+  // ⚠️ BOUNDED. resolveToken probes five candidate chains SERIALLY through the
+  // shared GeckoTerminal queue, which has no deadline of its own — so on a busy
+  // box this step used to sit there for minutes and the paste was answered by
+  // nothing at all. See resolveTokenSoon for the whole reasoning.
+  const { res } = await groupSetup.resolveTokenSoon(ca);
   const chain = res ? res.chain : groupSetup.candidateChains(ca)[0]; // fall back to the shape guess
   const pay = payFor(chain);
   s.massForm = { ca, chain, pay };
   s.awaitingField = "massdm_compose";
+  // ⚠️ A GUESSED CHAIN MAY NOT BE ANNOUNCED AS A DETECTED ONE. Which chain this
+  // is decides which CURRENCY the buyer pays in, and for any 0x… address the
+  // fallback is simply the first candidate — so "✅ Token detected on Ethereum"
+  // over an unresolved BSC token is a wrong number on the screen that takes the
+  // money. The two facts get two cards.
   await sendCard(
     ctx,
-    tpl.render("massdm_compose_prompt", {
+    tpl.render(res ? "massdm_compose_prompt" : "massdm_chain_unconfirmed", {
       chain: chainOf(chain) ? chainOf(chain).label : chain,
       amount: `${pay.price} ${pay.native}`,
     }),

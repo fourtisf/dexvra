@@ -77,6 +77,53 @@ async function resolveToken(address) {
   return null;
 }
 
+// ⚠️ A DEADLINE FOR THE CALLERS WHO HAVE SOMEBODY WAITING.
+//
+// Reported 2026-09-12: a Mass DM buyer pasted an 0x… address, the bot replied
+// "🔍 Detecting your token's chain…" and never said another word.
+//
+// Nothing had crashed. resolveToken is SERIAL and an 0x… address has FIVE
+// candidate chains, so it is up to five gt.fetchPool calls — each queued on
+// gtSlot(PRIO_BACKGROUND), which has NO DEADLINE OF ITS OWN — and then up to
+// five chainPools log sweeps behind them. On the keyless budget, behind nine
+// background pipelines, a user-prompted paste sits in the background tier for
+// minutes. From Telegram that is a dead bot, and it was reported as one.
+//
+// This is the LISTING FORM's defect, verbatim, in the two flows that never got
+// its fix ("bot tidak merespon untuk paket listing setelah di minta drop ca" —
+// bounded at LISTING_AUTOFILL_MS for exactly this reason). A lesson applied to
+// one flow is a lesson half-learnt, so the deadline lives HERE, once, rather
+// than at each caller: a rule the second caller has to remember is one the
+// third forgets.
+//
+// The background callers keep their queue semantics untouched — only the
+// people who are waiting stop waiting on them.
+//
+// ⚠️ IT RETURNS WHICH SILENCE IT WAS. "We could not ask in time" and "no live
+// pool exists on any chain we support" are different facts and the two flows
+// owe the user different sentences: one is about us, the other is about their
+// token. Collapsing them into a bare null is how a timeout gets rendered as a
+// fact about somebody's contract.
+const CA_RESOLVE_MS = Math.max(1000, Number(process.env.CA_RESOLVE_MS || 8000));
+
+function resolveTokenSoon(address, ms = CA_RESOLVE_MS) {
+  // ⚠️ THE TIMER IS NOT unref'd — somebody is awaiting this, and an unref'd
+  // timer does not hold the event loop open, so a process with nothing else
+  // pending exits with the flow hung for ever. Cleared on the winning path, or
+  // an 8s budget keeps the loop alive for 8s after a 200ms answer. The scar is
+  // in helpers/bounded.js and in tradebot's own bounded(); this is the third
+  // time it has had to be written down.
+  return new Promise((resolve) => {
+    const t = setTimeout(() => resolve({ res: null, timedOut: true }), ms);
+    Promise.resolve()
+      .then(() => resolveToken(address))
+      .then(
+        (res) => { clearTimeout(t); resolve({ res: res || null, timedOut: false }); },
+        () => { clearTimeout(t); resolve({ res: null, timedOut: false }); },
+      );
+  });
+}
+
 const usd$ = (n) => "$" + Number(n).toLocaleString("en-US");
 
 // chatId → the outstanding "paste your contract address" prompt: the message it
@@ -343,8 +390,12 @@ async function settoken(ctx) {
 
 async function applyToken(ctx, address) {
   await say(ctx, "settoken_resolving");
-  const res = await resolveToken(address);
-  if (!res) return say(ctx, "settoken_not_found");
+  // ⚠️ BOUNDED, and the two silences get two answers: see resolveTokenSoon.
+  // A lookup that ran out of time says nothing about the address, and telling
+  // an admin "no live pool on that CA" about a token that has one sends them
+  // off to check something that is not broken.
+  const { res, timedOut } = await resolveTokenSoon(address);
+  if (!res) return say(ctx, timedOut ? "settoken_resolve_slow" : "settoken_not_found");
   // One extra lookup, once, for the token's NAME — the pool listing only knows
   // the PAIR ("HOPPY / WETH"), and the name is what headlines every alert.
   const info = await gt.fetchTokenInfo(res.chain, address).catch(() => null);
@@ -868,6 +919,7 @@ module.exports = {
   settingsTap,
   setPin,
   resolveToken,
+  resolveTokenSoon,
   candidateChains,
   MIN_BUY_PRESETS,
   WHALE_PRESETS,

@@ -11316,6 +11316,115 @@ post needs the GramJS account connected (💎 Premium status). Until then a swap
 is saved and shows its fallback character, which is exactly what these notes now
 say on the screen where it is pasted.
 
+## "bot merespon yg msih diskon" — the price moved and the sentence beside it did not
+
+Reported with the Mass DM card on a box whose `[boot] build` matched `main` to
+the character. **Every figure on it was right** — `◎ 2 SOL · 🟡 0.3 BNB ·
+⧫ 0.1 ETH` is the full price, and the launch discount really is withdrawn. What
+was wrong is the line above them:
+
+```
+**Flat price — 50% off** (charged in your token's chain)
+{sol}  ·  {bnb}  ·  {eth}
+```
+
+The three figures are PLACEHOLDERS fed from `MASS_DM_PRICE`, so they moved with
+the code. The words were typed into the template, so they did not — and the
+card advertised a discount over the full price, which reads from Telegram as a
+bot quoting one number and charging another.
+
+- ⚠️ **THE PRICE WAS GUARDED AND THE SENTENCE ABOUT THE PRICE WAS NOT.**
+  `listingBroadcast.test.js` has pinned the shipped default (`|| 2`, `|| 0.3`,
+  `|| 0.1`) since the discount was withdrawn, and it passed for the whole
+  deploy. A discount is a CLAIM about a number, and this repo already refuses a
+  printed `0.00%` and a captured-at-listing `$0` for exactly that reason; it had
+  never been applied to a claim in COPY.
+- **So a discount must ride a placeholder, never the copy**, and a scan of every
+  template DEFAULT enforces it — the values, not the source, so the comment in
+  `constants.js` recording the withdrawn discount is not caught.
+- ⚠️ **AND THE FIRST CUT OF THAT SCAN FLAGGED THE ONE CORRECT CASE.**
+  `upsell_expiry` says *"a **{discount}% renewal discount** is already applied"*
+  — computed, and therefore exactly what the rule ASKS for. Matching the WORD
+  would have taught the next reader that a computed discount is the thing being
+  forbidden. It matches a LITERAL percentage beside a discount word, in either
+  order, and asserts both directions: it sees `50% off` and leaves
+  `{discount}%` alone.
+
+## "detect token onchain not works" — five serial chain probes with no deadline
+
+Same session, same card, one step later: the buyer pasted
+`0x92e4…bd8d7`, the bot replied **"🔍 Detecting your token's chain…"** — and
+said nothing else, for minutes, on a box whose four processes were all online.
+
+**Nothing had crashed.** `group/setup.js` `resolveToken` is SERIAL, and an
+`0x…` address has **five** candidate chains: up to five `gt.fetchPool` calls,
+each queued on `gtSlot(PRIO_BACKGROUND)` — **which has no deadline of its
+own** — and then up to five `chainPools` log sweeps behind them. On the keyless
+budget, behind nine background pipelines, a user-prompted paste sits in the
+background tier for minutes.
+
+⚠️ **This file already documents that defect and its fix** — *"bot tidak
+merespon untuk paket listing setelah di minta drop ca"*, bounded at
+`LISTING_AUTOFILL_MS` — **in the flow that got it.** Mass DM and `/settoken`
+paste a CA into the same discovery and neither was ever bounded: a lesson
+applied to one flow is a lesson half-learnt, which is this repo's most repeated
+shape.
+
+- **`resolveTokenSoon` is the ONE OWNER of the deadline** (`CA_RESOLVE_MS`, 8s,
+  floor 1s), and it lives beside `resolveToken` rather than at each caller — a
+  rule the second caller has to remember is one the third forgets. The
+  BACKGROUND callers keep their queue semantics untouched; only the people who
+  are waiting stop waiting on them.
+- ⚠️ **IT RETURNS WHICH SILENCE IT WAS.** `{res, timedOut}` — *"we could not ask
+  in time"* and *"no live pool exists on any chain we support"* are different
+  facts, and the two flows owe the user different sentences. `/settoken` had a
+  null branch already, so without this a hang would have been reported as
+  **"❌ No live pool on that CA"**: a failure of ours rendered as a fact about
+  somebody's contract, sending an admin off to check an address that is fine.
+- ⚠️ **AND A GUESSED CHAIN MAY NOT BE ANNOUNCED AS A DETECTED ONE.** On no
+  answer the Mass DM flow falls back to `candidateChains(ca)[0]`, which for any
+  `0x…` is simply *ethereum* — and the chain decides which CURRENCY the buyer
+  pays in (ETH vs BNB). `massdm_chain_unconfirmed` is its own template so the
+  card says it is going by the address shape and offers a way out; the
+  confident *"✅ Token detected on X"* is kept for a chain we really resolved.
+  Its own key, not a placeholder on the existing card, so an operator who has
+  saved that card is unaffected.
+- ⚠️ **The deadline timer is NOT `unref`'d** — somebody is awaiting it — and is
+  therefore CLEARED on the winning path, or an 8s budget holds the loop open 8s
+  past a 200ms answer. Third time this scar has been written in this repo
+  (`helpers/bounded.js`, tradebot's own `bounded()`); measured here rather than
+  argued, with `process.getActiveResourcesInfo()`.
+- **The tests DRIVE the real bound** — `gt.fetchPool` is made to hang and
+  `handleText` / `settoken` are called the way a paste calls them. A unit test
+  of `resolveTokenSoon` alone passes on a `captureCa` that never calls it, which
+  is the `curveBuyPath` scar.
+
+⚠️ **AND THE MUTATION HARNESS REPORTED THE REPORTED BUG AS SURVIVING.** The
+hang mutant makes five tests fail — and node ends such a file with *"Promise
+resolution is still pending but the event loop has already resolved"* and
+leaves its own `# fail` tally at **0**, which is the line the harness was
+reading. The mutant was killed the whole time and the instrument could not see
+it. Two fixes, because either alone is a half-fix: the harness counts
+`not ok`, and the driven tests race their own named deadline so a hang fails
+with *"still nothing after Nms — this is the reported hang"* rather than with
+node's internal sentence.
+
+```bash
+cd bot && node scripts/run-tests.js test/caResolveBound.test.js test/listingBroadcast.test.js   # 48 tests, no network
+```
+
+Seven guarantees are MUTATION-TESTED rather than argued: the bound removed
+entirely (the reported hang), the timeout claiming a detection, the deadline
+timer never cleared, a timeout reported as a fact about the token, `/settoken`
+calling a real "no pool" a timeout, the frozen discount claim restored, and the
+scan blind to a computed discount. Each fails between one and three tests.
+
+**Config a fix depends on:** nothing. `CA_RESOLVE_MS` widens the wait for an
+operator with a GeckoTerminal key and an empty queue. ⚠️ This is a `bot/` change,
+so the deploy is the **ecosystem restart** and there is no web rebuild — and an
+operator who has ever edited **Mass DM: intro + price** in @dexvraadminbot keeps
+their own copy and will still see *"50% off"* until they hit ♻️ Reset default.
+
 ## Conventions
 
 - Tests live beside the code they cover, in `bot/test/`, `tradebot/*.test.js`

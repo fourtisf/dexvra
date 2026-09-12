@@ -639,6 +639,14 @@ const DEFAULTS = {
   settoken_not_found:
     "❌ **No live pool on that CA**\n\n" +
     "Check the address, or name the chain first with /setchain <chain> and run /settoken again.",
+  // ⚠️ NOT "no pool" — a read we could not FINISH says nothing about the token.
+  // Pool discovery probes every candidate chain serially through the shared
+  // GeckoTerminal queue, so on a busy box it can outlast anyone's patience;
+  // reporting that as "no live pool on that CA" sends an admin off to check an
+  // address that is perfectly fine.
+  settoken_resolve_slow:
+    "⏳ **Still looking — we ran out of time.**\n\n" +
+    "That says nothing about your token: the market-data queue is busy right now. Run /settoken again in a minute, or name the chain first with /setchain to narrow the search.",
   // The token is set and the bot is LIVE — so this says what is already running,
   // not what to run next. It used to end on a row of three commands, which reads
   // as homework at the exact moment the setup finished.
@@ -972,7 +980,13 @@ const DEFAULTS = {
   massdm_intro:
     `${em("📢", E.megaphone)} **Mass DM Broadcast**\n\n` +
     "Send your message as a **direct DM to every Dexvra user** — the strongest reach we offer. Every broadcast is admin-reviewed before it sends (keeps the audience clean and the bot safe).\n\n" +
-    "**Flat price — 50% off** (charged in your token's chain)\n" +
+    // ⚠️ NO DISCOUNT CLAIM HERE. The three prices below are placeholders fed
+    // from MASS_DM_PRICE and therefore live; a "— 50% off" typed beside them
+    // is frozen, so the day the discount was withdrawn this card went on
+    // advertising one over the full price — the label contradicting its own
+    // figures, which is the buy card's two-ideas-of-"whale" defect on a price.
+    // A real discount must ride a placeholder, never the copy.
+    "**Flat price** (charged in your token's chain)\n" +
     "◎ {sol}  ·  🟡 {bnb}  ·  ⧫ {eth}\n\n" +
     `${em("🔗", E.link)} **First, paste your token's contract address (CA).**\n` +
     "It sets the chain you'll pay in:",
@@ -982,6 +996,19 @@ const DEFAULTS = {
   massdm_compose_prompt:
     "✅ Token detected on **{chain}** — you'll pay **{amount}**.\n\n" +
     "Now send your broadcast — **text, or a photo with a caption** (formatting & emoji are kept):",
+  // ⚠️ ITS OWN KEY, because the card above makes a CLAIM. Chain detection is
+  // bounded (CA_RESOLVE_MS) and can come back with nothing — the queue was
+  // long, or the token has no live pool anywhere — and the flow then bills the
+  // buyer in whatever currency the ADDRESS SHAPE suggests, which for any 0x… is
+  // simply the first candidate. Rendering that through "✅ Token detected on X"
+  // is a failure of ours dressed as a fact about their token, on the screen
+  // that decides what they pay. Same two placeholders, so an operator who has
+  // saved the card above is unaffected by this one existing.
+  massdm_chain_unconfirmed:
+    "⚠️ **We couldn't confirm this token's chain just now.**\n\n" +
+    "Going by the address, it looks like **{chain}** — so you'd pay **{amount}**. " +
+    "If that's the wrong network, tap 🏠 Home and start again.\n\n" +
+    "Otherwise send your broadcast — **text, or a photo with a caption** (formatting & emoji are kept):",
   massdm_preview:
     "👆 **This is your broadcast.**\n\n" +
     "It goes to every Dexvra user as a DM once an admin approves — **{amount}**. Pay below, or recompose:",
@@ -1284,6 +1311,7 @@ const META = {
   settoken_prompt: { group: "Group Setup", label: "/settoken — paste prompt", ph: [] },
   settoken_resolving: { group: "Group Setup", label: "/settoken — looking it up", ph: [] },
   settoken_not_found: { group: "Group Setup", label: "/settoken — no pool found", ph: [] },
+  settoken_resolve_slow: { group: "Group Setup", label: "/settoken — lookup timed out", ph: [] },
   settoken_ok: {
     group: "Group Setup",
     label: "/settoken — live ✅",
@@ -1351,6 +1379,7 @@ const META = {
   massdm_intro: { group: "Mass DM", label: "Mass DM: intro + price (ask CA)", ph: ["sol", "bnb", "eth"] },
   massdm_ca_invalid: { group: "Mass DM", label: "Mass DM: invalid CA", ph: [] },
   massdm_compose_prompt: { group: "Mass DM", label: "Mass DM: compose prompt", ph: ["chain", "amount"] },
+  massdm_chain_unconfirmed: { group: "Mass DM", label: "Mass DM: chain unconfirmed (compose prompt)", ph: ["chain", "amount"] },
   massdm_preview: { group: "Mass DM", label: "Mass DM: preview / pay", ph: ["amount"] },
   massdm_received: { group: "Mass DM", label: "Mass DM: paid, in review", ph: ["ref"] },
   massdm_enqueue_failed: { group: "Mass DM", label: "Mass DM: enqueue failed", ph: ["ref"] },

@@ -73,6 +73,33 @@ test("the shipped fee is the FULL Mass DM price — the launch discount is gone"
   assert.match(block, /MASS_DM_PRICE_ETH\) \|\| 0\.1/, "ETH: 0.1");
 });
 
+// ⚠️ THE PRICE WAS GUARDED AND THE SENTENCE ABOUT THE PRICE WAS NOT, so the
+// test above passed for the whole deploy while the Mass DM card advertised
+// "Flat price — 50% off" over the FULL price: the three figures beside it are
+// placeholders fed from MASS_DM_PRICE and therefore live, and the words were
+// frozen. A discount is a CLAIM about a number, so it belongs where the number
+// comes from — a placeholder — never typed into copy that cannot move with it.
+// Scans the DEFAULT VALUES rather than the source, so a comment recording the
+// withdrawn discount (constants.js says so at MASS_DM_PRICE) is not caught.
+test("no template default freezes a discount claim in its copy", () => {
+  const keys = Object.keys(tpl.DEFAULTS);
+  assert.ok(keys.length > 100, `only ${keys.length} defaults scanned — this proves nothing`);
+  // A LITERAL percentage beside a discount word, in either order. The figure is
+  // what has to be able to move, so `{discount}% renewal discount` in
+  // upsell_expiry is fine and MUST stay fine — its number is a placeholder, fed
+  // from the code that applies it. That is the whole rule, and the first cut of
+  // this scan matched the WORD and flagged it, which would have taught the next
+  // reader that a computed discount is the thing being forbidden.
+  const W = "(off|discount|diskon)";
+  const N = "\\d[\\d.]*\\s*%";
+  const frozen = new RegExp(`${N}[^\n]{0,16}\\b${W}\\b|\\b${W}\\b[^\n]{0,16}${N}`, "i");
+  const bad = keys.filter((k) => frozen.test(tpl.DEFAULTS[k]));
+  assert.deepStrictEqual(bad, [], `these assert a discount the code cannot move: ${bad.join(", ")}`);
+  // …and the scan can see the real one, while leaving the computed one alone.
+  assert.ok(frozen.test("**Flat price — 50% off** (charged in your token's chain)"), "blind to the reported defect");
+  assert.ok(!frozen.test("a **{discount}% renewal discount** is already applied below:"), "a computed discount is not frozen");
+});
+
 test("the fee IS the Mass DM price, never a second table", () => {
   assert.strictEqual(addon.addonPriceForNative("SOL"), MASS_DM_PRICE.SOL);
   assert.strictEqual(addon.addonPriceForNative("BNB"), MASS_DM_PRICE.BNB);
