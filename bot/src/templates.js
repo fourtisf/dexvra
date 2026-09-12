@@ -995,7 +995,8 @@ const DEFAULTS = {
     "Paste a valid token CA — an 0x… address (Ethereum / BSC / Base), a Solana mint, a Tron or TON address:",
   massdm_compose_prompt:
     "✅ Token detected on **{chain}** — you'll pay **{amount}**.\n\n" +
-    "Now send your broadcast — **text, or a photo with a caption** (formatting & emoji are kept):",
+    "Now send your broadcast — **text, or a photo/GIF with a caption** (formatting & emoji are kept).\n" +
+    "📎 A photo is **optional**: send the text now and you can attach one — or leave it text-only — on the next screen.",
   // ⚠️ ITS OWN KEY, because the card above makes a CLAIM. Chain detection is
   // bounded (CA_RESOLVE_MS) and can come back with nothing — the queue was
   // long, or the token has no live pool anywhere — and the flow then bills the
@@ -1008,10 +1009,49 @@ const DEFAULTS = {
     "⚠️ **We couldn't confirm this token's chain just now.**\n\n" +
     "Going by the address, it looks like **{chain}** — so you'd pay **{amount}**. " +
     "If that's the wrong network, tap 🏠 Home and start again.\n\n" +
-    "Otherwise send your broadcast — **text, or a photo with a caption** (formatting & emoji are kept):",
+    "Otherwise send your broadcast — **text, or a photo/GIF with a caption** (formatting & emoji are kept).\n" +
+    "📎 A photo is **optional** — you can attach one, or leave it text-only, on the next screen.",
+  // ⚠️ {media} SAYS WHAT IS ATTACHED, because "a photo is attached" and "this
+  // is text-only" rendered identically here — the buyer taps Pay off this card.
+  // It is ENFORCED at the call site (ensureMediaLine) the way {network} is on
+  // the pay card: data/templates.json wins over this default for ever, so an
+  // operator who saved this card before the line existed would otherwise see no
+  // attachment state at all.
   massdm_preview:
     "👆 **This is your broadcast.**\n\n" +
+    "{media}\n\n" +
     "It goes to every Dexvra user as a DM once an admin approves — **{amount}**. Pay below, or recompose:",
+  massdm_media_none: "📎 **No photo attached** — it will go out as text only. That is fine; tap 📎 Add a photo below if you want one.",
+  massdm_media_on: "📎 **{kind} attached** — it goes out with your message. Tap 🖼 Change or 🗑 Remove below.",
+  // ⚠️ The preview above the card is best-effort, and a preview that did not
+  // render leaves "👆 This is your broadcast" pointing at nothing — a claim over
+  // a broken thing. Said, rather than swallowed.
+  massdm_media_unpreviewable:
+    "📎 **{kind} attached**, but Telegram wouldn't show it back to you just now. " +
+    "It is still on your broadcast — tap 🗑 Remove below if you would rather send text only.",
+  massdm_media_prompt:
+    "📎 **Send the photo or GIF now.**\n\n" +
+    "Send it as a **photo/GIF, not as a file**. A caption is optional — send one and it replaces your text; send none and your text is kept as the caption.\n\n" +
+    "Don't want one? Use the button below — text-only broadcasts are perfectly fine.",
+  // ⚠️ NAMES BOTH READINGS RATHER THAN GUESSING. Text arriving at the photo step
+  // is either a new caption or a buyer who forgot to attach, and silently taking
+  // one reading overwrites what they wrote.
+  massdm_media_not_photo:
+    "That came through as text, not a photo.\n\n" +
+    "Send the **photo or GIF** itself (a caption on it replaces your text), or tap the button below to keep your broadcast text-only.",
+  massdm_media_as_file:
+    "That arrived as a **file**, and Telegram will not let us broadcast it as a photo.\n\n" +
+    "Send the same image from your gallery as a **photo** (not \"send as file\"), or keep the broadcast text-only.",
+  // ⚠️ REFUSED, NEVER TRIMMED. Telegram caps a media caption at {limit} UTF-16
+  // units and THROWS past it, so attaching a photo to a longer text would fail
+  // every single send of a broadcast somebody paid for — and trimming it instead
+  // would silently delete most of what they wrote. Nothing is changed.
+  massdm_media_too_long:
+    "⚠️ **That photo can't go on this message.**\n\n" +
+    "Your text is **{len}** characters and a photo caption holds at most **{limit}**. " +
+    "Nothing was changed — tap ✏️ Recompose to shorten it, or send the broadcast text-only.",
+  massdm_media_set: "📎 **{kind} attached.** {caption}",
+  massdm_media_cleared: "🗑 **Photo removed** — your broadcast goes out as text only.",
   massdm_received:
     "✅ **Payment received — your broadcast is in review.**\n\n" +
     "Ref `{ref}`. An admin will approve it shortly; delivery starts right after. You'll get a receipt here when it's done.",
@@ -1380,7 +1420,16 @@ const META = {
   massdm_ca_invalid: { group: "Mass DM", label: "Mass DM: invalid CA", ph: [] },
   massdm_compose_prompt: { group: "Mass DM", label: "Mass DM: compose prompt", ph: ["chain", "amount"] },
   massdm_chain_unconfirmed: { group: "Mass DM", label: "Mass DM: chain unconfirmed (compose prompt)", ph: ["chain", "amount"] },
-  massdm_preview: { group: "Mass DM", label: "Mass DM: preview / pay", ph: ["amount"] },
+  massdm_preview: { group: "Mass DM", label: "Mass DM: preview / pay", ph: ["amount", "media"] },
+  massdm_media_none: { group: "Mass DM", label: "Mass DM: preview — no photo attached", ph: [] },
+  massdm_media_on: { group: "Mass DM", label: "Mass DM: preview — photo attached", ph: ["kind"] },
+  massdm_media_unpreviewable: { group: "Mass DM", label: "Mass DM: preview — photo would not render", ph: ["kind"] },
+  massdm_media_prompt: { group: "Mass DM", label: "Mass DM: ask for the photo", ph: [] },
+  massdm_media_not_photo: { group: "Mass DM", label: "Mass DM: text sent at the photo step", ph: [] },
+  massdm_media_as_file: { group: "Mass DM", label: "Mass DM: image sent as a file", ph: [] },
+  massdm_media_too_long: { group: "Mass DM", label: "Mass DM: text too long for a caption", ph: ["len", "limit"] },
+  massdm_media_set: { group: "Mass DM", label: "Mass DM: photo attached", ph: ["kind", "caption"] },
+  massdm_media_cleared: { group: "Mass DM", label: "Mass DM: photo removed", ph: [] },
   massdm_received: { group: "Mass DM", label: "Mass DM: paid, in review", ph: ["ref"] },
   massdm_enqueue_failed: { group: "Mass DM", label: "Mass DM: enqueue failed", ph: ["ref"] },
   massdm_test_queued: { group: "Mass DM", label: "Mass DM: test queued", ph: [] },

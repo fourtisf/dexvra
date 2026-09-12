@@ -1064,8 +1064,13 @@ async function queueBroadcast(ctx, order, content, { autoSend = false } = {}) {
   try {
     let media = {};
     if (p.mediaFileId) {
+      // ⚠️ THE TYPE TRAVELS, AND THE EXTENSION FOLLOWS IT. Hardcoding "photo"
+      // here sent an animation file through sendPhoto, which THROWS — so a paid
+      // broadcast carrying a GIF failed on every one of 12,000 recipients. The
+      // same lesson the add-on path already carries, on the standalone product.
+      const mediaType = p.mediaType || "photo";
       const buf = await downloadFile(ctx.telegram, p.mediaFileId);
-      if (buf) media = { mediaPath: massFile(order.id, "jpg", buf), mediaType: "photo" };
+      if (buf) media = { mediaPath: massFile(order.id, mediaType === "photo" ? "jpg" : "mp4", buf), mediaType };
     } else {
       media = broadcastMedia(p.media, order.id);
     }

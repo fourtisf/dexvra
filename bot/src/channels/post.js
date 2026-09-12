@@ -233,4 +233,10 @@ async function sendMedia(channel, media, payload, { replyTo, pin } = {}) {
 // module (the gainers preview, and the listing broadcast, which must cut a
 // caption exactly where a channel post does) and an underscore said "test only"
 // about a function two features already depend on.
-module.exports = { attach, sendText, sendPhoto, sendMedia, fitCaption, ensurePinned, mirrorToGroup, CHANNELS, GROUP_CHAT, isAttached: () => !!tg, telegram: () => tg };
+// CAPTION_LIMIT is exported beside fitCaption because a second caller needs
+// the NUMBER rather than the cut: the Mass DM flow lets a buyer attach a photo
+// to text they have already composed, and a caption that will not fit must be
+// REFUSED there (truncating two thirds of a paid broadcast is worse than losing
+// the photo). One owner for the limit, or the two disagree the day Telegram
+// moves it.
+module.exports = { attach, sendText, sendPhoto, sendMedia, fitCaption, CAPTION_LIMIT, ensurePinned, mirrorToGroup, CHANNELS, GROUP_CHAT, isAttached: () => !!tg, telegram: () => tg };

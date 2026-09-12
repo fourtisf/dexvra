@@ -11500,6 +11500,112 @@ recorded here rather than half-patched.
 **Config a fix depends on:** nothing. ⚠️ This is a `bot/` change, so the deploy
 is the **ecosystem restart** and there is no web rebuild.
 
+### "aturan bisa set media juga kalo mau skip juga bisa dn kasih tau"
+
+Sent with a screenshot of the standalone `/massdm` flow: a CA pasted, the word
+`test` sent as plain text, and the preview card offering `💳 Pay 0.1 ETH ·
+✏️ Recompose · 🏠 Home`. **The flow was ONE-SHOT.** Whatever the buyer's first
+message happened to carry was the whole broadcast for ever — send text and
+there was no way to attach a photo afterwards; the only route was ✏️ Recompose,
+which is `ad_massdm`, which `freshSession`s and asks for the CA again, throwing
+away the chain resolution that had just been paid for in latency.
+
+And the card said nothing either way. **"A photo is attached" and "this is
+text-only" rendered identically on the screen the buyer taps Pay from** — the
+💎-means-premium-not-yours defect, one product over.
+
+- **`showPreview` is the ONE renderer**, and both doors go through it. Two
+  copies of "draw the preview" is how the compose path and the attach path come
+  to disagree about what is on the broadcast.
+- **`{media}` says which of the three states it is in** — none · attached ·
+  attached-but-Telegram-would-not-show-it-back. ⚠️ **The third exists because
+  the preview send is best-effort**: `catch {}` over a failed `replyWithPhoto`
+  leaves *"👆 This is your broadcast"* pointing at nothing at all, which is a
+  claim over a broken thing.
+- ⚠️ **AND IT IS ENFORCED AT THE CALL SITE** (`ensureMediaLine`), because
+  `data/templates.json` wins over the shipped default for ever: an operator who
+  saved `massdm_preview` before `{media}` existed would render no attachment
+  state at all. The `{network}` rule on the pay card, one product over —
+  appended at the END so the payload's own entity offsets do not move, and only
+  the appended block's shift. ⚠️ Both paths are pinned separately, because
+  either alone is behaviour-neutral: the placeholder puts the row where the
+  OPERATOR put it (above the price), the enforcement is what gets it onto a card
+  that has no placeholder, and a mutation run kills each only against its own
+  fixture.
+- **The SKIP is a button, not an inference.** `⏭ Keep it text-only` on the photo
+  step and `🗑 Remove photo` on the preview — and ⚠️ the remove button exists
+  only while there is something to remove, because a button whose only outcome
+  is a no-op is the row the engine ignores.
+- ⚠️ **A CARD CARRIES THE BUTTON ITS OWN SENTENCE NAMES.** The too-long refusal
+  says *"tap ✏️ Recompose"*, and the photo step's keyboard does not have one —
+  an instruction pointing at a button that is not on the screen is the
+  *"📝 Templates → pilih templatenya"* defect, on the one card whose whole job is
+  handing the buyer something they can act on.
+- ⚠️ **A PHOTO DROPPED ON THE PREVIEW ATTACHES.** It used to `return` silently
+  (`awaitingField !== "massdm_compose"`), and a buyer who drops a photo onto the
+  card they are about to pay from means to attach it: answering that with
+  nothing is "the button does nothing", on a money screen.
+- ⚠️ **A CAPTION SENT WITH THE PHOTO REPLACES THE TEXT — AND WE SAY WHICH.**
+  Which of the two readings holds (a deliberate rewrite, or a line typed out of
+  habit over the paragraph they already wrote) cannot be inferred from the
+  message, and taking either silently destroys the other. Both outcomes are
+  named in the notice, and the preview re-renders so they see the result.
+- ⚠️ **TEXT ARRIVING AT THE PHOTO STEP NAMES BOTH READINGS and changes
+  nothing** — a new caption, or a buyer who forgot to attach. The `3` vs `3h`
+  refusal on the pace row, one flow over.
+- ⚠️ **AN OVER-LONG CAPTION IS REFUSED, NEVER TRIMMED.** Telegram caps a media
+  caption at 1024 UTF-16 units and **throws** past it, so attaching a photo to
+  text longer than that would fail **every one of 12,000 sends** of a broadcast
+  somebody paid for — and trimming instead would silently delete most of what
+  they wrote. The refusal carries both numbers and says nothing was changed.
+  `CAPTION_LIMIT` is exported from `channels/post.js`, the one owner of that
+  number, rather than retyped here.
+- **A document is REFUSED, naming the fix.** Telegram will not take a document
+  `file_id` in `sendPhoto`, so accepting one queues a paid broadcast that fails
+  for every recipient — and the buyer fixes it by re-sending from the gallery.
+
+⚠️ **AND THE TYPE HAD NEVER TRAVELLED, which is a live defect on the money
+path.** `getMediaFileId` answers for animations and videos too, and this flow
+hardcoded `"photo"` all the way down — the preview through `replyWithPhoto`, the
+`.jpg` the test-send writes, and `queueBroadcast`'s
+`{ mediaPath: massFile(id, "jpg", buf), mediaType: "photo" }`. So a GIF broadcast
+previewed as nothing (the bare `catch`) and then failed on **every** `sendPhoto`
+call. **This file already records that exact lesson for the listing add-on** —
+*"⚠️ A CLIP SENT THROUGH `sendPhoto` IS AN ERROR, NOT A STILL"* — and it was
+never applied to the standalone product: a lesson applied to one of two
+siblings, for the eighth time here. `mediaType` now rides the session, the
+preview method, the payload, the job and the file extension.
+
+- ⚠️ **`massdm.js` IMPORTS THE PAY MODULE, NOT A DESTRUCTURED `startPayment`.**
+  A destructured import is bound at require time, so **no test could pin what
+  this flow hands the payment path** — the amount, the coin, or the media type
+  that decides whether 12,000 sends go out as `sendPhoto` or `sendAnimation`.
+  The rule `listing.js` already states at its own require; found by writing the
+  test, which could not stub it.
+
+```bash
+cd bot && node scripts/run-tests.js test/massdmMedia.test.js   # 21 tests, no network
+```
+
+Twenty guarantees are MUTATION-TESTED rather than argued: a photo dropped on the
+preview ignored again, text at the photo step silently taking one reading, a
+document accepted as a photo, a GIF filed as a photo, the type never reaching
+the payload, an over-long caption attached anyway, a caption discarded,
+attaching wiping the composed text, the removal saying nothing, the skip off
+screen, the too-long card naming a button it does not offer, the preview
+offering no way to set media, the card ignoring `{media}`, the shipped card
+losing its `{media}` row, the row always claiming no photo, the appended line's
+bold landing off the words, the enforced line doubling up, the test-send writing
+a clip as `.jpg`, a clip previewed through `sendPhoto`, and a paid GIF queued as
+a photo. Each fails between one and two tests.
+
+**Config a fix depends on:** nothing. ⚠️ This is a `bot/` change, so the deploy
+is the **ecosystem restart** and there is no web rebuild — and an operator who
+has ever edited **Mass DM: preview / pay** or either compose prompt in
+@dexvraadminbot keeps their own copy: the attachment row is enforced onto the
+card either way, but the *"a photo is optional, you can add one later"* line on
+the compose prompt only appears after ♻️ Reset default.
+
 ## Conventions
 
 - Tests live beside the code they cover, in `bot/test/`, `tradebot/*.test.js`

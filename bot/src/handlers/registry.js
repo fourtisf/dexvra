@@ -89,6 +89,12 @@ function registerHandlers(bot) {
   bot.action("ad_massdm", massdm.entryMassDm);
   bot.action("md_pay", massdm.payPick);
   bot.action("md_test", massdm.testSend);
+  // The photo is optional and settable AFTER the text: md_media asks for one,
+  // md_back is the stated skip ("keep it text-only" / "keep it"), md_nomedia is
+  // the explicit removal — which only ever exists while something is attached.
+  bot.action("md_media", massdm.mediaAsk);
+  bot.action("md_back", massdm.mediaBack);
+  bot.action("md_nomedia", massdm.mediaClear);
   bot.action("buybot_help", start.buyBotHelp);
 
   // ── Payment ───────────────────────────────────────────────────────────────

@@ -4,10 +4,15 @@
 // everything else→BNB). Then they compose one message and pay. The order only
 // PERSISTS a pending_review job on payment (funds are swept before onSuccess,
 // so fulfilment must never throw). Admins get a FREE test-send.
-const { answer, toast, sendCard, getMediaFileId } = require("../helpers/message");
+const { answer, toast, sendCard } = require("../helpers/message");
 const { nativeOf, chainOf, payChainOf, payNativeOf } = require("../config/chains");
 const { MASS_DM_PRICE, MASS_DM_ENABLED, isAdminUser, ADMIN_IDS } = require("../config/constants");
-const { startPayment } = require("./pay");
+// ⚠️ THE MODULE, NOT A DESTRUCTURED startPayment. A destructured import is
+// bound at require time, so no test could pin what this flow hands the payment
+// path — the amount, the coin, or (since the photo became settable) the media
+// TYPE that decides whether 12,000 sends go out as sendPhoto or sendAnimation.
+// The rule listing.js already states at its own require.
+const payFlow = require("./pay");
 const groupSetup = require("../group/setup");
 const menu = require("./menu");
 const { Markup } = menu;
@@ -94,30 +99,258 @@ async function captureCa(ctx, input) {
   );
 }
 
-// Step 2 — capture the broadcast message, show the preview + pay/test controls.
-async function capture(ctx, { text, entities, mediaFileId }) {
+// ── The photo is OPTIONAL, and both halves of that had to be sayable ────────
+//
+// "aturan bisa set media juga kalo mau skip juga bisa dn kasih tau": the flow
+// was ONE-SHOT. Whatever the buyer's first message carried was the whole
+// broadcast for ever — send text and there was no way to attach a photo
+// afterwards, and the preview card neither said whether one was attached nor
+// that text-only is perfectly fine. Both states rendered identically on the
+// screen the buyer taps Pay from.
+//
+// ⚠️ AND THE TYPE HAS TO TRAVEL. getMediaFileId answers for animations and
+// videos too, and this flow hardcoded "photo" all the way down — so a GIF
+// preview threw into a bare catch (the card claiming "👆 This is your
+// broadcast" over nothing) and every one of 12,000 sendPhoto calls would have
+// failed on an animation file_id. CLAUDE.md records that exact lesson for the
+// listing add-on ("a clip sent through sendPhoto is an ERROR, not a still") and
+// it was never applied to the standalone product: a lesson applied to one of
+// two siblings.
+const MEDIA_KIND = { photo: "Photo", animation: "GIF", video: "Video" };
+const REPLY_METHOD = { photo: "replyWithPhoto", animation: "replyWithAnimation", video: "replyWithVideo" };
+// The extension follows the TYPE: an .mp4 written as .jpg uploads as a document
+// and Telegram renders a file card instead of an inline, autoplaying clip.
+const MEDIA_EXT = { photo: "jpg", animation: "mp4", video: "mp4" };
+
+/** {fileId, type} for something we can broadcast, else {why} naming the fix. */
+function mediaOf(ctx) {
+  const m = (ctx && ctx.message) || {};
+  if (m.photo && m.photo.length) return { fileId: m.photo[m.photo.length - 1].file_id, type: "photo" };
+  if (m.animation) return { fileId: m.animation.file_id, type: "animation" };
+  if (m.video) return { fileId: m.video.file_id, type: "video" };
+  // ⚠️ A DOCUMENT IS REFUSED, and that is the honest answer rather than a
+  // narrow one. Telegram will not take a document file_id in sendPhoto, so
+  // accepting one queues a paid broadcast that fails for every single
+  // recipient — and the buyer fixes it by re-sending from the gallery.
+  if (m.document) return { fileId: null, why: "massdm_media_as_file" };
+  return { fileId: null, why: null };
+}
+
+// Telegram counts a caption in UTF-16 units, which is exactly String#length.
+// Read from channels/post, the ONE owner of that number.
+const captionLimit = () => require("../channels/post").CAPTION_LIMIT;
+
+// THREE states, and ONE owner of which it is: the card renders the row through
+// {media} (as markup, so an operator can move it) and ensureMediaLine appends
+// it (as a rendered payload, for a saved card that has no placeholder). Two
+// copies of the state test is how those two come to say different things about
+// one broadcast.
+function mediaState(s) {
+  const f = (s && s.massForm) || {};
+  const key = !f.mediaFileId
+    ? "massdm_media_none"
+    : f.mediaShown === false
+      ? "massdm_media_unpreviewable"
+      : "massdm_media_on";
+  return { key, vars: { kind: MEDIA_KIND[f.mediaType] || MEDIA_KIND.photo } };
+}
+
+/** The attachment row, rendered — an operator can edit all three states. */
+function mediaLine(s) {
+  const { key, vars } = mediaState(s);
+  return tpl.render(key, vars);
+}
+
+/**
+ * ⚠️ ENFORCED HERE, NOT TRUSTED TO THE TEMPLATE — the same rule, and the same
+ * reason, as ensureNetwork on the pay card: `massdm_preview` is editable in
+ * @dexvraadminbot and an operator's saved copy wins over the shipped default
+ * for ever, so a card saved before {media} existed would say nothing at all
+ * about what is attached — on the screen the buyer taps Pay from.
+ *
+ * Appended at the END, which is what makes it safe: Telegram entity offsets are
+ * UTF-16 code units counted from the start, so nothing already in the payload
+ * moves and only the appended block's own offsets shift.
+ */
+function ensureMediaLine(payload, line) {
+  if (!payload || typeof payload !== "object" || !line || typeof line !== "object") return payload;
+  const body = String(line.html != null ? line.html : line.text || "");
+  if (!body) return payload;
+  if (payload.html != null) {
+    const html = String(payload.html);
+    // A legacy HTML card cannot carry entities, so the block goes in as its
+    // plain text: losing the bold beats losing the line.
+    const plain = String(line.text != null ? line.text : body);
+    return html.includes(plain) || html.includes(body) ? payload : { ...payload, html: `${html}\n\n${body}` };
+  }
+  const text = String(payload.text || "");
+  const add = String(line.text != null ? line.text : body);
+  if (text.includes(add)) return payload;
+  const shift = text.length + 2; // the "\n\n" join
+  return {
+    ...payload,
+    text: `${text}\n\n${add}`,
+    entities: [
+      ...(payload.entities || []),
+      ...(line.entities || []).map((e) => ({ ...e, offset: e.offset + shift })),
+    ],
+  };
+}
+
+/** The ONE preview renderer — the message, then the card. */
+async function showPreview(ctx) {
   const s = ctx.session;
-  s.massForm = { ...s.massForm, text: text || "", entities: entities || [], mediaFileId: mediaFileId || null };
+  const f = s.massForm;
   s.awaitingField = null;
-  const previewExtra = (s.massForm.entities || []).length
-    ? { entities: s.massForm.entities, disable_web_page_preview: true }
+  const extra = (f.entities || []).length
+    ? { entities: f.entities, disable_web_page_preview: true }
     : { disable_web_page_preview: true };
+  f.mediaShown = true;
   try {
-    if (s.massForm.mediaFileId) {
-      await ctx.replyWithPhoto(s.massForm.mediaFileId, s.massForm.text ? { caption: s.massForm.text, caption_entities: s.massForm.entities } : {});
-    } else if (s.massForm.text) {
-      await ctx.reply(s.massForm.text, previewExtra);
+    if (f.mediaFileId) {
+      const method = REPLY_METHOD[f.mediaType] || REPLY_METHOD.photo;
+      await ctx[method](f.mediaFileId, f.text ? { caption: f.text, caption_entities: f.entities } : {});
+    } else if (f.text) {
+      await ctx.reply(f.text, extra);
     }
   } catch {
-    /* preview best-effort */
+    // Best-effort, and never SILENT: the card below says "👆 This is your
+    // broadcast", and over nothing at all that is a claim about a broken thing.
+    f.mediaShown = false;
   }
-  await sendCard(ctx, tpl.render("massdm_preview", { amount: `${s.massForm.pay.price} ${s.massForm.pay.native}` }), reviewKb(ctx));
+  const line = mediaLine(s);
+  const card = tpl.render("massdm_preview", {
+    amount: `${f.pay.price} ${f.pay.native}`,
+    media: mediaMarkup(s),
+  });
+  await sendCard(ctx, ensureMediaLine(card, line), reviewKb(ctx));
+}
+
+/** The same row as MARKUP, for the {media} placeholder inside the card — so the
+ *  outer render parses it once and its bold lands on the card's own entities. */
+function mediaMarkup(s) {
+  const { key, vars } = mediaState(s);
+  const raw = tpl.getRaw(key);
+  const src = raw && typeof raw === "object" ? raw.text || "" : String(raw == null ? "" : raw);
+  return tpl.substitute(src, vars);
+}
+
+const composing = (s) => !!(s && s.massForm && s.massForm.pay && s.massForm.text != null);
+
+/** 📎 Add / 🖼 Change — ask for the photo, with the skip on screen. */
+async function mediaAsk(ctx) {
+  await answer(ctx);
+  const s = ctx.session;
+  if (!composing(s)) return toast(ctx, tpl.render("session_expired"));
+  s.awaitingField = "massdm_media";
+  await sendCard(ctx, tpl.render("massdm_media_prompt"), mediaKb(s));
+}
+
+/** ⏭ Keep it text-only / ↩️ Keep it — back to the preview, nothing changed. */
+async function mediaBack(ctx) {
+  await answer(ctx);
+  const s = ctx.session;
+  if (!composing(s)) return toast(ctx, tpl.render("session_expired"));
+  return showPreview(ctx);
+}
+
+/** 🗑 Remove — the explicit skip, once something is attached. */
+async function mediaClear(ctx) {
+  await answer(ctx);
+  const s = ctx.session;
+  if (!composing(s)) return toast(ctx, tpl.render("session_expired"));
+  s.massForm.mediaFileId = null;
+  s.massForm.mediaType = null;
+  await note(ctx, tpl.render("massdm_media_cleared"));
+  return showPreview(ctx);
+}
+
+/** A short spoken notice — SENT, not edited into a card that may be off screen. */
+async function note(ctx, payload) {
+  const { text, extra } = require("../helpers/message").payloadArgs(payload, false);
+  await ctx.reply(text, extra).catch(() => {});
+}
+
+/** Attach media to a message that has already been composed. */
+async function setMedia(ctx, { fileId, type, caption, captionEntities }) {
+  const s = ctx.session;
+  const f = s.massForm;
+  // ⚠️ A CAPTION SENT WITH THE PHOTO REPLACES THE TEXT, AND WE SAY SO. Which of
+  // the two readings holds — a deliberate rewrite, or a buyer who typed a line
+  // out of habit over the paragraph they already wrote — cannot be inferred
+  // from the message, and taking either silently destroys the other.
+  const hasCaption = !!(caption && caption.trim());
+  const text = hasCaption ? caption : f.text || "";
+  const entities = hasCaption ? captionEntities || [] : f.entities || [];
+  const limit = captionLimit();
+  if (text.length > limit) {
+    // ⚠️ REFUSED, NEVER TRIMMED, and NOTHING IS CHANGED. A caption past the
+    // limit makes every sendPhoto THROW, so attaching here would fail all
+    // 12,000 sends of a broadcast somebody paid for; trimming instead would
+    // silently delete most of what they wrote. The numbers are on the card.
+    // ⚠️ …and the card carries the ✏️ Recompose it tells them to tap. An
+    // instruction pointing at a button that is not on the screen is the
+    // "📝 Templates → pilih templatenya" defect, on the one card whose whole job
+    // is handing the buyer something they can act on.
+    return sendCard(
+      ctx,
+      tpl.render("massdm_media_too_long", { len: String(text.length), limit: String(limit) }),
+      mediaKb(s, { recompose: true }),
+    );
+  }
+  f.text = text;
+  f.entities = entities;
+  f.mediaFileId = fileId;
+  f.mediaType = type;
+  await note(
+    ctx,
+    tpl.render("massdm_media_set", {
+      kind: MEDIA_KIND[type] || MEDIA_KIND.photo,
+      caption: hasCaption ? "Its caption replaced your text." : "Your text is kept as its caption.",
+    }),
+  );
+  return showPreview(ctx);
+}
+
+function mediaKb(s, { recompose = false } = {}) {
+  const rows = [];
+  if (recompose) rows.push([Markup.button.callback("✏️ Recompose", "ad_massdm")]);
+  if (s && s.massForm && s.massForm.mediaFileId) {
+    rows.push([
+      Markup.button.callback("🗑 Remove the photo", "md_nomedia"),
+      Markup.button.callback("↩️ Keep it", "md_back"),
+    ]);
+  } else {
+    // THE SKIP, stated as a button rather than left to be inferred.
+    rows.push([Markup.button.callback("⏭ Keep it text-only", "md_back")]);
+  }
+  return menu.withHome(rows);
+}
+
+// Step 2 — capture the broadcast message, show the preview + pay/test controls.
+async function capture(ctx, { text, entities, mediaFileId, mediaType }) {
+  const s = ctx.session;
+  s.massForm = {
+    ...s.massForm,
+    text: text || "",
+    entities: entities || [],
+    mediaFileId: mediaFileId || null,
+    mediaType: mediaFileId ? mediaType || "photo" : null,
+  };
+  return showPreview(ctx);
 }
 
 function reviewKb(ctx) {
-  const pay = ctx.session.massForm.pay;
-  const rows = [[Markup.button.callback(`💳 Pay ${pay.price} ${pay.native}`, "md_pay")]];
+  const f = ctx.session.massForm;
+  const rows = [[Markup.button.callback(`💳 Pay ${f.pay.price} ${f.pay.native}`, "md_pay")]];
   if (isAdminUser(ctx)) rows.push([Markup.button.callback("🧪 Test send (admins only • FREE)", "md_test")]);
+  // ⚠️ 🗑 Remove exists only while there is something to remove. A button whose
+  // only outcome is a no-op is the row the engine ignores, one screen over.
+  rows.push(
+    f.mediaFileId
+      ? [Markup.button.callback("🖼 Change photo", "md_media"), Markup.button.callback("🗑 Remove photo", "md_nomedia")]
+      : [Markup.button.callback("📎 Add a photo", "md_media")],
+  );
   rows.push([Markup.button.callback("✏️ Recompose", "ad_massdm"), Markup.button.callback("🏠 Home", "home")]);
   return Markup.inlineKeyboard(rows);
 }
@@ -129,14 +362,37 @@ async function handleText(ctx) {
   if (!text) return;
   if (s.awaitingField === "massdm_ca") return captureCa(ctx, text);
   if (s.awaitingField === "massdm_compose") return capture(ctx, { text, entities: ctx.message.entities || [] });
+  // ⚠️ TEXT AT THE PHOTO STEP NAMES BOTH READINGS rather than guessing which it
+  // is — a new caption, or a buyer who forgot to attach. Taking either silently
+  // overwrites the other.
+  if (s.awaitingField === "massdm_media") return sendCard(ctx, tpl.render("massdm_media_not_photo"), mediaKb(s));
 }
 
 async function handlePhoto(ctx) {
   const s = ctx.session;
-  if (s.type !== "massdm" || s.awaitingField !== "massdm_compose") return;
-  const id = getMediaFileId(ctx);
-  if (!id) return toast(ctx, "Couldn't read that image — send a photo, or text.");
-  return capture(ctx, { text: ctx.message.caption || "", entities: ctx.message.caption_entities || [], mediaFileId: id });
+  if (s.type !== "massdm") return;
+  const m = mediaOf(ctx);
+  if (s.awaitingField === "massdm_compose") {
+    if (!m.fileId) return sendCard(ctx, tpl.render(m.why || "massdm_media_as_file"), menu.withHome([]));
+    return capture(ctx, {
+      text: ctx.message.caption || "",
+      entities: ctx.message.caption_entities || [],
+      mediaFileId: m.fileId,
+      mediaType: m.type,
+    });
+  }
+  // The photo step, and the PREVIEW itself: a buyer who drops a photo onto the
+  // preview means to attach it, and answering that with silence is "the button
+  // does nothing" on a screen they are about to pay from.
+  const atPreview = !s.awaitingField && s.massForm && s.massForm.pay && s.massForm.text != null;
+  if (s.awaitingField !== "massdm_media" && !atPreview) return;
+  if (!m.fileId) return sendCard(ctx, tpl.render(m.why || "massdm_media_as_file"), mediaKb(s));
+  return setMedia(ctx, {
+    fileId: m.fileId,
+    type: m.type,
+    caption: ctx.message.caption || "",
+    captionEntities: ctx.message.caption_entities || [],
+  });
 }
 
 async function payPick(ctx) {
@@ -145,7 +401,7 @@ async function payPick(ctx) {
   if (!s.massForm || !s.massForm.pay || s.massForm.text == null) return toast(ctx, tpl.render("session_expired"));
   const pay = s.massForm.pay;
   if (pay.price == null) return toast(ctx, tpl.render("pricing_unavailable"));
-  await startPayment(ctx, {
+  await payFlow.startPayment(ctx, {
     kind: "mass_dm",
     chain: pay.payChain,
     native: pay.native,
@@ -158,6 +414,10 @@ async function payPick(ctx) {
       text: s.massForm.text,
       entities: s.massForm.entities,
       mediaFileId: s.massForm.mediaFileId,
+      // ⚠️ THE TYPE TRAVELS. Without it queueBroadcast files every attachment as
+      // a photo, and a GIF broadcast fails on every one of 12,000 sendPhoto
+      // calls — the job the buyer just paid for, delivered to nobody.
+      mediaType: s.massForm.mediaType || null,
       tokenCa: s.massForm.ca,
       tokenChain: s.massForm.chain,
     },
@@ -172,11 +432,13 @@ async function testSend(ctx) {
   const composer = String(ctx.from.id);
   const targets = Array.from(new Set([...ADMIN_IDS.map(String), composer])).filter(Boolean);
   let mediaPath = null;
-  if (s.massForm.mediaFileId) mediaPath = await downloadMedia(ctx, s.massForm.mediaFileId).catch(() => null);
+  const mediaType = s.massForm.mediaFileId ? s.massForm.mediaType || "photo" : undefined;
+  if (s.massForm.mediaFileId) mediaPath = await downloadMedia(ctx, s.massForm.mediaFileId, mediaType).catch(() => null);
   await store.createJob({
     text: s.massForm.text,
     entities: s.massForm.entities,
     mediaPath,
+    mediaType,
     createdBy: ctx.from.id,
     createdByUsername: ctx.from.username || null,
     targets,
@@ -192,7 +454,7 @@ function refFor() {
   return `MD-${Date.now().toString(36).toUpperCase().slice(-6)}`;
 }
 
-async function downloadMedia(ctx, fileId) {
+async function downloadMedia(ctx, fileId, mediaType) {
   const os = require("node:os");
   const path = require("node:path");
   const { promises: fs } = require("node:fs");
@@ -201,9 +463,10 @@ async function downloadMedia(ctx, fileId) {
   if (!res.ok) throw new Error(`download ${res.status}`);
   const dir = path.join(os.tmpdir(), "dexvra-massdm");
   await fs.mkdir(dir, { recursive: true });
-  const file = path.join(dir, `${Date.now()}_${Math.random().toString(36).slice(2, 8)}.jpg`);
+  const ext = MEDIA_EXT[mediaType] || MEDIA_EXT.photo;
+  const file = path.join(dir, `${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`);
   await fs.writeFile(file, Buffer.from(await res.arrayBuffer()));
   return file;
 }
 
-module.exports = { entryMassDm, handleText, handlePhoto, payPick, testSend, refFor, downloadMedia, currencyOf, payFor, looksLikeCA };
+module.exports = { entryMassDm, handleText, handlePhoto, payPick, testSend, refFor, downloadMedia, currencyOf, payFor, looksLikeCA, mediaAsk, mediaBack, mediaClear, mediaOf, ensureMediaLine, mediaLine };
