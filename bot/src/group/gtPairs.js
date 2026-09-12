@@ -13,7 +13,7 @@
 // its OWN geckoNetwork, so a same-address deploy elsewhere cannot leak in.
 // (fourtis published a "+100% pump" for a token that was down 62%, because a
 // same-address token on another chain supplied the price.)
-const { chainOf } = require("../config/chains");
+const { chainOf, DEXSCREENER_SLUG } = require("../config/chains");
 const log = require("../helpers/logger");
 
 // GeckoTerminal's free endpoint, and the Pro one an API key unlocks. The free
@@ -462,18 +462,72 @@ async function fetchGtPool(net, address) {
   };
 }
 
-const DS_CHAIN = { solana: "solana", bsc: "bsc", ethereum: "ethereum", base: "base", tron: "tron", ton: "ton", sui: "sui" };
+// ⚠️ ONE OWNER FOR THE DEXSCREENER CHAIN MAP, and this is the THIRD module to
+// have needed that fix. `config/chains.js` DEXSCREENER_SLUG is the map; this
+// file carried a private seven-entry copy of it, and the copy had **no
+// robinhood** — so fetchDsPool("robinhood", …) returned null WITHOUT MAKING A
+// REQUEST, and DexScreener was never asked about the chain with the most
+// listings on this box. GT was then the only source left, and GT queues.
+//
+// It is the identical defect this repo already recorded for the auto-lister
+// ("TWO OWNERS FOR THE DEXSCREENER SLUG, disagreeing about one chain" — sei
+// answered 'no market data' for every token), fixed in `dexscreener.js` and
+// left standing here. A lesson applied to one of two modules.
+//
+// Reading the real map also picks up the July 2026 Robinhood flip and the
+// fifteen chains this copy never had — and the slug is not always the chain
+// key (`sei` → `seiv2`), which is exactly what a hand-written copy gets wrong.
+const dsSlug = (chain) => DEXSCREENER_SLUG[String(chain || "").toLowerCase()] || null;
 
-async function fetchDsPool(chain, address) {
-  const dsChain = DS_CHAIN[chain];
-  if (!dsChain) return null;
+// DexScreener's chainId → our chain key. Built from the one map rather than
+// typed out, so it can never disagree with the forward direction.
+const DS_KEY = new Map(Object.entries(DEXSCREENER_SLUG).map(([k, slug]) => [slug, k]));
+
+// One DexScreener request for a token, whatever chain it is on.
+//
+// ⚠️ `latest/dex/tokens/{address}` ANSWERS FOR EVERY CHAIN AT ONCE, and this
+// file used to throw away all but one of them — so resolving a pasted contract
+// made FIVE identical requests to this same URL and discarded four fifths of
+// each answer, then fell through to the GeckoTerminal queue for the chains the
+// private map above did not have. The answer was in the first response.
+const dsFetch = async (address) => {
   const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${address}`, { signal: AbortSignal.timeout(TIMEOUT_MS) });
   if (!res.ok) return null;
   const j = await res.json();
-  const pairs = (j.pairs || []).filter((p) => p && p.chainId === dsChain);
-  if (!pairs.length) return null;
-  pairs.sort((a, b) => (num(b.liquidity?.usd) || 0) - (num(a.liquidity?.usd) || 0));
-  const p = pairs[0];
+  return Array.isArray(j && j.pairs) ? j.pairs : [];
+};
+
+// The deepest pair wins. A token seen through a thin pool reads as a different
+// asset — the rule `deepestPool` and `topPoolAddress` already state.
+const byDepth = (a, b) => (num(b.liquidity?.usd) || 0) - (num(a.liquidity?.usd) || 0);
+
+/**
+ * Which of `chains` does DexScreener actually have this token on, and on which
+ * is its pool deepest? ONE request, no GeckoTerminal, no queue.
+ *
+ * ⚠️ CHOSEN BY DEPTH, NEVER BY THE ORDER OF THE CANDIDATE LIST. `0x…` resolves
+ * to five candidates with ethereum first and robinhood FOURTH, so a positional
+ * pick answers "ethereum" for every EVM token that has so much as a dust pair
+ * there — which decides, on the Mass DM flow, what currency the buyer is
+ * charged.
+ */
+async function dsResolveAcross(address, chains) {
+  const want = new Map();
+  for (const c of chains || []) {
+    const slug = dsSlug(c);
+    if (slug) want.set(slug, c);
+  }
+  if (!want.size) return null;
+  const pairs = await dsFetch(address).catch(() => null);
+  if (!pairs || !pairs.length) return null;
+  const mine = pairs.filter((p) => p && want.has(p.chainId));
+  if (!mine.length) return null;
+  mine.sort(byDepth);
+  const best = mine[0];
+  return { chain: want.get(best.chainId), pool: dsPoolOf(best, address) };
+}
+
+function dsPoolOf(p, address) {
   const tx = (p.txns && p.txns.h24) || {};
   const quoteSide = sameToken(p.quoteToken && p.quoteToken.address, address);
   const ours = (quoteSide ? p.quoteToken : p.baseToken) || {};
@@ -495,6 +549,17 @@ async function fetchDsPool(chain, address) {
   };
 }
 
+async function fetchDsPool(chain, address) {
+  const dsChain = dsSlug(chain);
+  if (!dsChain) return null;
+  const pairs = await dsFetch(address);
+  if (!pairs) return null;
+  const mine = pairs.filter((p) => p && p.chainId === dsChain);
+  if (!mine.length) return null;
+  mine.sort(byDepth);
+  return dsPoolOf(mine[0], address);
+}
+
 /** Test seam — clear the shared cooldown and the metadata cache. */
 function _reset() {
   cooldownUntil = 0;
@@ -514,6 +579,7 @@ module.exports = {
   GT_FREE_CEILING_RPM,
   hasApiKey: () => !!GT_KEY,
   fetchPool,
+  dsResolveAcross,
   fetchPoolCached,
   isGtPrimary,
   gtGet,

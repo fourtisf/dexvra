@@ -11425,6 +11425,81 @@ so the deploy is the **ecosystem restart** and there is no web rebuild — and a
 operator who has ever edited **Mass DM: intro + price** in @dexvraadminbot keeps
 their own copy and will still see *"50% off"* until they hit ♻️ Reset default.
 
+### "masih tidak mau detect ini chain robinhood" — the bound made it answer; the map made it answer WRONG
+
+The deploy above landed and the bot ANSWERED — which is that fix working — and
+the answer was wrong. The same `0x92e4…bd8d7` came back
+
+```
+⚠️ We couldn't confirm this token's chain just now.
+Going by the address, it looks like Ethereum — so you'd pay 0.1 ETH.
+```
+
+about a **Robinhood** token. Two causes, and neither one is the deadline.
+
+⚠️ **1. A THIRD PRIVATE COPY OF THE DEXSCREENER CHAIN MAP, WITH NO ROBINHOOD.**
+`gtPairs.js` carried `DS_CHAIN` — seven entries, hand-written — and
+`fetchDsPool("robinhood", …)` therefore returned `null` **without making a
+request**. DexScreener was never asked about the chain with the most listings on
+the box, so GeckoTerminal was the only source left, and GT queues.
+
+**This file already records that exact defect and its fix** — *"TWO OWNERS FOR
+THE DEXSCREENER SLUG, disagreeing about one chain … every Sei token answered
+'no market data' … One owner"* — applied to `dexscreener.js` and left standing
+here. A lesson applied to one of two modules. The July 2026 Robinhood flip put
+`robinhood` into `config/chains.js`'s `DEXSCREENER_SLUG` and this copy never got
+it, along with fifteen other chains — and `sei → seiv2` is the reminder that the
+slug is not always the chain key, which is precisely what a hand-written copy
+gets wrong.
+
+⚠️ **2. FIVE IDENTICAL REQUESTS, FOUR FIFTHS OF EACH DISCARDED.**
+`fetchDsPool` calls `latest/dex/tokens/{address}` — **which answers for EVERY
+chain at once** — and then filters to the one chain the caller named. So
+`resolveToken`'s five-candidate loop made five identical requests to one URL and
+threw away most of each answer, each able to fall through to the GT queue. The
+answer was in the first response.
+
+- **`dsResolveAcross(address, candidates)` is ONE request, no GT, no queue**,
+  and `resolveToken` asks it FIRST. The serial per-chain loop stays as the
+  fallback for tokens that endpoint does not carry.
+- ⚠️ **THE CHAIN IS CHOSEN BY POOL DEPTH, NEVER BY THE CANDIDATE LIST'S ORDER.**
+  `0x…` resolves to `[ethereum, bsc, base, robinhood, plasma]` — robinhood
+  FOURTH — so a positional pick answers "ethereum" for any EVM token with so
+  much as a dust pair there. On the Mass DM flow that decides **which currency
+  the buyer is charged**. It is the `deepestPool` / `topPoolAddress` rule, on the
+  one read that picks a network.
+- **A pair on a chain the paste has no candidate for is ignored**, or the same
+  `0x` address on a network we were not asked about could name the rail.
+- ⚠️ **The bound alone could never have fixed this**, which is why it was
+  reported twice. Under `CA_RESOLVE_MS` the loop never reached candidate four
+  whatever DexScreener knew — so the timeout fix made the bot *answer*, and only
+  the map and the single request make it answer *correctly*. A fix that removes
+  the silence is not a fix that removes the wrong number.
+
+```bash
+cd bot && node scripts/run-tests.js test/caResolveBound.test.js   # 18 tests, no network
+```
+
+Four more guarantees are MUTATION-TESTED rather than argued: the private map
+restored (no robinhood), the single request dropped from `resolveToken`, the
+chain picked by candidate order again, and a chain outside the candidates
+allowed to answer. Each fails between one and four tests.
+
+⚠️ **FOUND AND DELIBERATELY NOT FIXED: `data/templates.json` has a cross-process
+lost update.** `setTemplate` is read → modify → **await write** on one shared
+file, and `node --test` runs each test FILE in its own process, concurrently —
+so two files that save a template can clobber each other, which is what makes
+`buyEmojiScreen`'s "each button says what its icon is for" flaky (green on a
+re-run, red under load). ⚠️ **It is not only a test problem**: `dexvra-bot` and
+`dexvra-adminbot` are two PM2 processes sharing `DATA_DIR`, so an admin saving a
+template while the other process writes one is the same lost update. An
+in-process mutex does NOT fix it — this needs a file lock or a per-file
+`DATA_DIR` in the runner, which is its own change with its own design, so it is
+recorded here rather than half-patched.
+
+**Config a fix depends on:** nothing. ⚠️ This is a `bot/` change, so the deploy
+is the **ecosystem restart** and there is no web rebuild.
+
 ## Conventions
 
 - Tests live beside the code they cover, in `bot/test/`, `tradebot/*.test.js`

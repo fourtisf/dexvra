@@ -275,3 +275,113 @@ test("both outcomes have a real, admin-editable template", () => {
   // …and the timeout card must not assert the thing it cannot know.
   assert.doesNotMatch(tpl.DEFAULTS.settoken_resolve_slow, /No live pool/i);
 });
+
+// ── the chain the bot NAMES ───────────────────────────────────────────────
+
+// Reported 2026-09-12, after the deadline above shipped: the bot ANSWERED —
+// which is the fix working — and the answer was wrong. A Robinhood contract
+// came back "it looks like Ethereum … so you'd pay 0.1 ETH".
+//
+// Two causes, and neither is the timeout:
+//
+//   1. `gtPairs` carried a PRIVATE seven-entry copy of the DexScreener chain
+//      map with NO robinhood, so fetchDsPool("robinhood", …) returned null
+//      WITHOUT MAKING A REQUEST. DexScreener was never asked about the chain
+//      with the most listings on the box.
+//   2. resolveToken loops the five candidates SERIALLY with robinhood FOURTH,
+//      and each one can fall through to the GeckoTerminal queue — so under the
+//      8s bound it never reached candidate 4 whatever DexScreener knew.
+//
+// And the endpoint it was calling per-chain answers for EVERY chain at once,
+// so the loop made five identical requests and discarded four fifths of each.
+
+const { DEXSCREENER_SLUG } = require("../src/config/chains");
+
+/** DexScreener's token endpoint, answering for several chains in one payload. */
+function dsServing(pairs) {
+  const calls = [];
+  globalThis.fetch = async (url) => {
+    calls.push(String(url));
+    return { ok: true, status: 200, json: async () => ({ pairs }) };
+  };
+  return calls;
+}
+const pair = (chainId, liq, extra = {}) => ({
+  chainId,
+  pairAddress: `0xpool-${chainId}`,
+  baseToken: { address: CA, symbol: "HMM", name: "Hmm" },
+  quoteToken: { address: "0xweth", symbol: "WETH" },
+  priceUsd: "1",
+  liquidity: { usd: liq },
+  ...extra,
+});
+
+// ⚠️ THE MAP HAS ONE OWNER. A hand-written copy is how robinhood went missing,
+// and the slug is not always the chain key (`sei` → `seiv2`), which is exactly
+// what a copy gets wrong. Asserted by SCAN because the copy was private: a
+// value test cannot see a map that is never exported.
+test("gtPairs reads the one DexScreener chain map, never its own copy", () => {
+  const src = fss.readFileSync(require.resolve("../src/group/gtPairs.js"), "utf8");
+  assert.ok(!/const\s+DS_CHAIN\s*=\s*\{/.test(src), "gtPairs declares its own DexScreener chain map again");
+  assert.match(src, /DEXSCREENER_SLUG/, "gtPairs must read the one owner");
+  assert.strictEqual(DEXSCREENER_SLUG.robinhood, "robinhood", "the one map carries robinhood");
+  assert.strictEqual(DEXSCREENER_SLUG.sei, "seiv2", "…and a slug that is not its chain key");
+});
+
+test("a Robinhood contract resolves to robinhood, not to the first candidate", async () => {
+  const calls = dsServing([pair("robinhood", 90_000)]);
+  hang(); // GeckoTerminal and the log walk never answer — DexScreener alone must do it
+  try {
+    const { res, timedOut } = await groupSetup.resolveTokenSoon(CA);
+    assert.strictEqual(timedOut, false, "one DexScreener request must beat the deadline");
+    assert.strictEqual(res && res.chain, "robinhood", `resolved to ${res && res.chain}`);
+    assert.strictEqual(calls.length, 1, `made ${calls.length} requests — the endpoint answers every chain at once`);
+  } finally { restore(); }
+});
+
+// ⚠️ NOT BY THE CANDIDATE LIST'S ORDER. `0x…` puts ethereum first and robinhood
+// fourth, so a positional pick answers "ethereum" for any EVM token with so
+// much as a dust pair there — and on the Mass DM flow that decides whether the
+// buyer is charged in ETH or in something else.
+test("the chain is chosen by POOL DEPTH, not by candidate order", async () => {
+  dsServing([pair("ethereum", 800), pair("robinhood", 250_000)]);
+  hang();
+  try {
+    const { res } = await groupSetup.resolveTokenSoon(CA);
+    assert.strictEqual(res && res.chain, "robinhood", "a dust ethereum pair must not outrank a real robinhood pool");
+  } finally { restore(); }
+});
+
+test("…and the deepest pool still wins when it IS the first candidate", async () => {
+  dsServing([pair("ethereum", 500_000), pair("robinhood", 250)]);
+  hang();
+  try {
+    const { res } = await groupSetup.resolveTokenSoon(CA);
+    assert.strictEqual(res && res.chain, "ethereum");
+  } finally { restore(); }
+});
+
+// A chain nobody asked about may not answer: the same 0x address can carry a
+// pair on a network this paste has no candidate for.
+test("a pair on a chain outside the candidates is ignored", async () => {
+  dsServing([pair("polygon", 900_000)]);
+  hang();
+  try {
+    const { res, timedOut } = await groupSetup.resolveTokenSoon(CA, 400);
+    assert.strictEqual(res, null, "polygon is not a candidate for this paste");
+    assert.strictEqual(timedOut, true, "…so it falls through to the bounded loop");
+  } finally { restore(); }
+});
+
+test("the Mass DM card names the chain it really resolved", async () => {
+  dsServing([pair("robinhood", 90_000)]);
+  hang();
+  const ctx = ctxFor(CA);
+  try {
+    await withDeadline(massdm.handleText(ctx), DEADLINE * 12, "the pasted CA");
+    const card = ctx.sent[ctx.sent.length - 1];
+    assert.match(card, /Token detected/, card);
+    assert.doesNotMatch(card, /Ethereum/, `named the wrong network: ${card}`);
+    assert.strictEqual(ctx.session.massForm.chain, "robinhood");
+  } finally { restore(); }
+});

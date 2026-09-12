@@ -54,9 +54,31 @@ function candidateChains(address) {
 
 /** Probe candidate chains for a live pool; return {chain, pool} or null. */
 async function resolveToken(address) {
-  // The indexer first, on every candidate chain: one cheap request, and it
-  // carries the price and market cap the chain cannot.
-  for (const chain of candidateChains(address)) {
+  const candidates = candidateChains(address);
+
+  // ⚠️ ONE REQUEST ANSWERS EVERY CANDIDATE CHAIN, and not asking it this way is
+  // what made a Robinhood contract resolve as "Ethereum".
+  //
+  // Reported 2026-09-12: an 0x… Robinhood token pasted into Mass DM came back
+  // "We couldn't confirm this token's chain … it looks like Ethereum". Two
+  // causes, both here. `gtPairs` carried a PRIVATE seven-entry copy of the
+  // DexScreener chain map with no robinhood in it, so DexScreener was never
+  // asked about that chain at all (fixed at its own definition — one owner);
+  // and the loop below is SERIAL over five candidates with robinhood FOURTH,
+  // each one able to fall through to the GeckoTerminal queue, which has no
+  // deadline of its own. Under CA_RESOLVE_MS it never reached candidate 4.
+  //
+  // DexScreener's token endpoint returns the pairs on EVERY chain in one
+  // answer, and this file was making five identical requests to it and
+  // discarding four fifths of each. One request, no queue, and the chain is
+  // picked by POOL DEPTH rather than by the candidate list's order.
+  const across = await gt.dsResolveAcross(address, candidates).catch(() => null);
+  if (across && across.pool && across.pool.poolAddress) return across;
+
+  // Then per chain, for the tokens that endpoint does not carry. Serial and in
+  // candidate order: a bounded caller may not reach the end of it, which is the
+  // whole reason the single request above runs first.
+  for (const chain of candidates) {
     const pool = await gt.fetchPool(chain, address).catch(() => null);
     if (pool && pool.poolAddress) return { chain, pool };
   }
@@ -69,7 +91,7 @@ async function resolveToken(address) {
   // Second pass rather than per-chain, so the cheap probe covers ALL five
   // chains before any expensive one runs: a token the indexer knows never pays
   // for a log sweep.
-  for (const chain of candidateChains(address)) {
+  for (const chain of candidates) {
     if (!chainPools.supports(chain)) continue;
     const found = await chainPools.findPool(chain, address).catch(() => null);
     if (found && found.poolAddress) return { chain, pool: found };
