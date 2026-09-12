@@ -12037,6 +12037,70 @@ outright) or `RPC_SOLANA` (one endpoint, defaults follow) in `bot/.env`.
 without changing a provider.
 
 
+##### "masih sama aja solana unread" — the sentence stopped one word short
+
+The rendering fix landed and the screenshot proves it: `⚠️ Solana unread` on
+every row, and ONE `Solana — the Solana RPC is rate-limiting this server (429)`
+for the screen. So the chain is named, the reason is named, and it is still not
+a diagnosis — **because it does not name the HOST.**
+
+With a failover list those are two completely different problems wearing one
+sentence:
+
+| what happened | where the fix is |
+| --- | --- |
+| a paid endpoint IS configured and IS refusing us | the provider |
+| the paid endpoint never arrived; this is the public one | the `.env` |
+
+Three rounds of this went to the second reading while the screen was read as
+the first. And the fact that settles it — the host list — lives on the boot
+line, which an operator's `pm2 logs | grep` came back EMPTY for on a box
+producing it, because the snipe loop writes several lines a second. **That is
+the `[curve]` and `[jup]` scar for the third time: a fact that lives only in a
+log line is not retrievable.**
+
+- **`npm run sol:check` asks it on demand**, and asks the half a config dump
+  cannot: it DRIVES `solBalancesX` — the exact call the dashboard makes — once
+  per configured host and reports which answered, with latency. A check that
+  asked its own way is how `fonts:check` printed nine green ticks over a banner
+  publishing boxes.
+- ⚠️ **IT PRINTS A HOSTNAME AND NEVER A URL.** A paid endpoint carries its API
+  key in the path or the query, and this output is read off a terminal that
+  gets screenshotted — three have been sent in this investigation alone. Driven,
+  because it is the one property no source scan can prove: the test runs the
+  script with a keyed url and asserts the key appears in neither stream.
+- **A refused placeholder entry is NAMED in the report**, not merely dropped —
+  "a fix that changed nothing at all" is exactly what
+  `https://endpoint-berbayar-anda` cost.
+- **It names the OTHER process and does not measure it.** `bot/` has its own
+  Solana endpoint and is the heavy one; reporting another process's
+  configuration as this one's is the defect `trending:check` was caught by.
+- ⚠️ **The wallet screen deliberately keeps the plain sentence.** It is
+  user-facing, and a hostname there tells every user which provider the
+  operator pays. The host belongs in the operator's own tool.
+- ⚠️ **AND THE CHECK MAY NOT INFLATE ITS OWN TALLY.** The first cut counted one
+  dead endpoint twice — once per host, once in the verdict — and printed
+  `✗ 3 problem(s)` for two. A number a reader learns to discount is worse than
+  no number.
+
+⚠️ **The first cut of its own test measured the WRONG STREAM.** `rpcUrls` warns
+on stderr about a refused entry in wording close to the check's own, so the
+assertion passed while the check printed nothing at all — a mutation run said
+so, not a reading. `run()` returns stdout and the concatenation separately now:
+the REPORT is stdout, and only the key question spans both, because a key
+leaked to stderr is still leaked.
+
+```bash
+cd /opt/dexvra/tradebot && npm run sol:check    # which host, and does it answer FROM THIS BOX
+cd tradebot && SKIP_DOTENV=1 node --test solCheck.test.js   # 5 tests, the script is RUN
+```
+
+Six guarantees are MUTATION-TESTED rather than argued: the url printed whole in
+the host list, the url printed in the per-host verdict, a refused entry dropped
+silently, solana required before core, the probe never run, and the verdict
+section deleted. Each fails between one and two tests.
+
+
 ## Conventions
 
 - Tests live beside the code they cover, in `bot/test/`, `tradebot/*.test.js`
