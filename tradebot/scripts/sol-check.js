@@ -47,8 +47,14 @@ const no = (s) => { bad++; console.log('  ✗ ' + s); };
 const warn = (s) => console.log('  ⚠ ' + s);
 const note = (s) => console.log('    ' + s);
 
-/** The one thing that may reach the screen. Never the path, never the query. */
-const hostOf = (u) => { try { return new URL(u).hostname; } catch (_) { return 'an unparseable value'; } };
+/**
+ * The one thing that may reach the screen. Never the path, never the query.
+ *
+ * `.host`, not `.hostname`: the PORT is not a secret and is the only thing that
+ * tells two endpoints on one hostname apart. A key lives in the path or the
+ * query on every provider there is, and neither is in `.host`.
+ */
+const hostOf = (u) => { try { return new URL(u).host; } catch (_) { return 'an unparseable value'; } };
 
 function build() {
   try {
@@ -87,12 +93,20 @@ const PROBE = ['11111111111111111111111111111111', 'So11111111111111111111111111
     for (const r of refused) no(`"${hostOf(r)}" is not a reachable host — ignored (it looks like a placeholder)`);
   }
 
-  const urls = solana.rpcUrls(null);
+  // ⚠️ readUrls, NOT rpcUrls — the read path appends SOL_READ_FALLBACKS, and a
+  // check that listed only the configured hosts would report "no failover" on a
+  // box that has two, then probe neither. It must measure the walk the screen
+  // makes, which is the whole reason this script drives solBalancesX at all.
+  const configured = solana.rpcUrls(null);
+  const urls = solana.readUrls(null);
   const custom = solana.rpcIsCustom(null);
-  note(`hosts the bot will use, in order:`);
-  urls.forEach((u, i) => note(`  ${i + 1}. ${hostOf(u)}${u === PUBLIC ? '   ← public default' : ''}`));
-  if (!custom) warn('every host is the public default — nothing here raises the ceiling');
-  if (urls.length === 1) note('one host: there is no failover. SOLANA_RPC takes a comma-separated list.');
+  note(`hosts a balance READ walks, in order:`);
+  urls.forEach((u, i) => note(`  ${i + 1}. ${hostOf(u)}`
+    + (u === PUBLIC ? '   ← public default' : '')
+    + (configured.includes(u) ? '' : '   ← read-only fallback')));
+  if (!custom) warn('every configured host is the public default — nothing here raises the ceiling');
+  // SIGNING never walks the list: getConnection takes the configured first entry.
+  note(`trades are signed and confirmed on ${hostOf(configured[0])} — that one does not fail over.`);
 
   // ── 2. Does each one actually answer THIS box? ────────────────────────────
   //
@@ -106,18 +120,24 @@ const PROBE = ['11111111111111111111111111111111', 'So11111111111111111111111111
     const t0 = Date.now();
     const r = await solana.solBalancesX(conn, PROBE, { conns: [conn] });
     const ms = Date.now() - t0;
+    // ⚠️ A HOST THAT REFUSES IS NOT A FAULT WHILE ANOTHER ANSWERS — that is the
+    // failover working, and marking it ✗ would leave this check permanently red
+    // on a box whose screen is fine. `chart:preview` sat in that state for
+    // weeks and taught its reader to ignore the red. The EXIT CODE follows the
+    // SCREEN, in section 3, which is `market:check`'s rule.
     if (r.ok) { answered++; ok(`${hostOf(u)} — answered in ${ms}ms`); }
-    else no(`${hostOf(u)} — ${r.why} (${ms}ms)`);
+    else warn(`${hostOf(u)} — ${r.why} (${ms}ms)`);
   }
   solana._rpcUnpark();   // …and one left behind would skip it for the verdict below
 
   // ── 3. What the wallet screen would say ───────────────────────────────────
   console.log('\n3 · What /wallet would show');
-  // ⚠️ Does NOT count again. Section 2 already counted the host that refused,
-  // and a check that inflates its own tally ("3 problem(s)" for one dead
-  // endpoint) teaches the reader to discount the number.
-  if (answered) ok('Solana balances read — the screen shows them');
-  else console.log("  ✗ every host refused: /wallet would say `Couldn't reach Solana`");
+  if (answered === urls.length) ok('every host answers — Solana balances read');
+  else if (answered) {
+    ok(`Solana balances read — ${answered} of ${urls.length} hosts answered, the walk falls through`);
+    note('The screen is fine. A host above that refuses is worth fixing at its');
+    note('provider, but it is not what stops a balance from showing.');
+  } else no("every host refused: /wallet says `Couldn't reach Solana`");
 
   console.log('\n4 · The OTHER process');
   // Not measured here, on purpose: it is a different package with a different

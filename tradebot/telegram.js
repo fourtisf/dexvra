@@ -5769,12 +5769,16 @@ async function start() {
   // reporting; which one it is, is a secret.
   if (core.chains.isSvm('solana') || core.chains.ENABLED.includes('solana')) {
     const prio = Number(core.CFG.solPriorityLamports) || 0;
-    // …and HOW MANY hosts, because one is what the balance reads ran out of.
-    // A count is safe where the urls are not, and "1 host" beside
-    // "PUBLIC default" is the whole diagnosis for a screen that says
+    // …and HOW MANY hosts a READ will walk, because one is what the balance
+    // reads ran out of. A count is safe where the urls are not, and "1 host"
+    // beside "PUBLIC default" is the whole diagnosis for a screen that says
     // "Couldn't reach Solana": nowhere else to ask.
-    const solUrls = solana.rpcUrls(core.chainOf('solana') && core.chainOf('solana').rpc);
-    const solHosts = solUrls.length;
+    //
+    // ⚠️ readUrls, NOT rpcUrls. The read path appends SOL_READ_FALLBACKS, so
+    // counting the configured list alone would print "no failover" on a box
+    // that has two — a claim that sends an operator to add hosts it already
+    // has, on the one line they check after an outage.
+    const solHosts = solana.readUrls(core.chainOf('solana') && core.chainOf('solana').rpc).length;
     // "custom" is a claim about what SURVIVED, not about what was typed —
     // solana.rpcIsCustom owns that question, beside the list it reads.
     const solCustom = solana.rpcIsCustom(core.chainOf('solana') && core.chainOf('solana').rpc);

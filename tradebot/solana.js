@@ -385,6 +385,80 @@ function rpcRefusal(e) {
   return /429|too many requests|rate.?limit|\b40[13]\b|forbidden|unauthorized/i.test(m);
 }
 /**
+ * READ-PATH FALLBACK HOSTS — the thing that makes the comma list above stop
+ * being inert on a box nobody has configured.
+ *
+ * ⚠️ THE FAILOVER SHIPPED AND COULD NOT FIRE. `SOL_DEFAULT_RPC` is ONE host, so
+ * on a default install `rpcUrls` returns a single entry and there is nowhere to
+ * fail over TO: the machinery was there, the wallet screen still said
+ * `Couldn't reach Solana`, and "a fallback that cannot fire reads exactly like
+ * one that never helps" is this repo's own name for it. Reported three times.
+ *
+ * THESE ARE NOT INVENTED, AND THAT IS THE WHOLE LICENCE FOR THEM.
+ * `bot/src/config/rpc.js` has shipped exactly these two as Solana defaults on
+ * this same box since it was written, and `cd bot && npm run rpc:check`
+ * measures them — so the trade bot had ONE host while the sibling package
+ * beside it had three, which is two owners of one upstream disagreeing.
+ *
+ * ⚠️ READS ONLY, AND THAT IS WHAT KEEPS THE STANDING RULE INTACT. The comment
+ * above refuses a guessed endpoint "on the chain that signs trades", and
+ * `getConnection` takes `rpcUrls(rpc)[0]` — the CONFIGURED first entry — so
+ * nothing here moves signing, broadcasting or confirming. `rpcIsCustom` asks
+ * `rpcUrls` too, or a default box would report its override as live.
+ *
+ * ⚠️ WHAT ACTUALLY GUARDS SIGNING IS THE APPEND ORDER, not that spelling.
+ * `readUrls` appends and `rpcUrls` never returns an empty list, so
+ * `readUrls(rpc)[0]` and `rpcUrls(rpc)[0]` are the same host for every input —
+ * swapping them in `getConnection` is behaviour-neutral and a mutation run says
+ * so. The rule is enforced by the tests that fail when a fallback LEADS; this
+ * says which, rather than carrying a test that claims cover it does not
+ * provide (the `url &&` scar in solBalancesX, one function down).
+ *
+ * An operator's own hosts always come FIRST; these are appended behind them, so
+ * a paid endpoint is never displaced by a public one. `SOL_READ_FALLBACK=0`
+ * removes them (blank is ON — the `raid/sourceFlag.js` rule).
+ */
+const SOL_READ_FALLBACKS = [
+  'https://solana-rpc.publicnode.com',
+  'https://solana.drpc.org',
+];
+function readFallbacksOn() {
+  const v = String(process.env.SOL_READ_FALLBACK || '').trim().toLowerCase();
+  return !(v === '0' || v === 'false' || v === 'off');
+}
+/** The hosts a READ will walk, in order: configured first, fallbacks behind. */
+function readUrls(rpc) {
+  const out = rpcUrls(rpc);
+  if (!readFallbacksOn()) return out;
+  for (const u of SOL_READ_FALLBACKS) if (!out.includes(u)) out.push(u);
+  return out;
+}
+/**
+ * No single host may consume the whole read budget.
+ *
+ * ⚠️ WITHOUT THIS THE FALLBACK ABOVE IS DEFEATED BY THE FAILURE IT IS FOR. The
+ * wallet column is bounded at 2500ms TOTAL, so one host that HANGS — as opposed
+ * to refusing, which comes straight back with `disableRetryOnRateLimit` — eats
+ * the entire window and hosts 2 and 3 are never asked, on every render, for
+ * ever. `curveTrade`'s STAGE_MS rule, on the read the screen waits for.
+ *
+ * A slice that runs out is INCONCLUSIVE, never a verdict: it does not park the
+ * host (a timeout is not a fact about a quota — the line `gt.ts` draws) and it
+ * does not stop the walk.
+ */
+const SOL_HOST_MS = Math.min(10000, Math.max(200, Number(process.env.SOL_HOST_MS) || 1200));
+function withinHost(p) {
+  // ⚠️ NOT unref'd, and CLEARED on the winning path: a read is being awaited, so
+  // an unref'd timer lets a process with nothing else pending exit with the
+  // caller hung — and an uncleared one holds the loop open for the full slice
+  // after a 200ms answer. Third time this scar is written in this repo.
+  let t;
+  return Promise.race([
+    p.finally(() => clearTimeout(t)),
+    new Promise((_, rej) => { t = setTimeout(() => rej(new Error(`no answer within ${SOL_HOST_MS}ms`)), SOL_HOST_MS); }),
+  ]);
+}
+/**
  * A Connection per configured host, in order — for READS only.
  *
  * ⚠️ `disableRetryOnRateLimit`, AND THAT IS THE HALF THAT MEASURES. web3.js
@@ -403,7 +477,7 @@ function rpcRefusal(e) {
  */
 const _readConns = {};
 function readConnections(rpc) {
-  return rpcUrls(rpc).map((u) => {
+  return readUrls(rpc).map((u) => {
     if (!_readConns[u]) _readConns[u] = new Connection(u, { commitment: 'confirmed', disableRetryOnRateLimit: true });
     return _readConns[u];
   });
@@ -491,7 +565,7 @@ async function solBalancesX(conn, addresses, opts) {
     for (let off = 0; off < keys.length; off += SOL_ACCOUNTS_PER_CALL) {
       const slice = keys.slice(off, off + SOL_ACCOUNTS_PER_CALL);
       try {
-        const res = await c.getMultipleAccountsInfo(slice.map((k) => k.pk), 'confirmed');
+        const res = await withinHost(c.getMultipleAccountsInfo(slice.map((k) => k.pk), 'confirmed'));
         slice.forEach((k, n) => {
           const acc = (res || [])[n];
           // null account = never funded = a genuine zero.
@@ -1408,7 +1482,7 @@ module.exports = {
   // `_rpcUnpark` is a TEST SEAM and says so: the park is module state and the
   // suite shares one process, so a test that leaves a host parked silences the
   // next test's read — which looks exactly like the batch being broken.
-  getConnection, rpcUrls, rpcUsable, rpcIsCustom, readConnections, _rpcUnpark: () => _rpcPark.clear(), solBalance, solBalanceOrNull, solBalancesOrNull, solBalancesX, solRpcWhy, splDecimalsOrNull, splBalance, splBalanceOrNull, sendJupiterSwap, sendSplToken, confirmSignature,
+  getConnection, rpcUrls, rpcUsable, rpcIsCustom, readUrls, readConnections, _rpcUnpark: () => _rpcPark.clear(), solBalance, solBalanceOrNull, solBalancesOrNull, solBalancesX, solRpcWhy, splDecimalsOrNull, splBalance, splBalanceOrNull, sendJupiterSwap, sendSplToken, confirmSignature,
   rentExemptMin, transferFee,
   getQuote, getSwapTx, swap, sendSol, splDecimals, jupTokenMeta, splMeta, dexScreener, pumpfunNew,
   jupErr, jupKeyed: () => !!JUP_API_KEY, jupHeaders, jupStats,

@@ -193,6 +193,14 @@ test('boot names both Solana execution knobs, and never the RPC url', () => {
   // solBalanceBatch.test.js.
   assert.match(boot, /rpc \$\{sol[A-Za-z]*ustom \? 'custom' : 'PUBLIC default \(rate-limited\)'\}/);
   assert.match(boot, /solana\.rpcIsCustom\(/, 'the verdict is asked of the one owner');
+  // ⚠️ The COUNT is the read walk, not the configured list. The read path
+  // appends SOL_READ_FALLBACKS, so counting rpcUrls would print
+  // "1 host (no failover)" on a box that has three — a claim that sends an
+  // operator to add hosts it already has, on the line they check after an
+  // outage. `custom` above still asks rpcUrls: the fallbacks are not an
+  // override, and reporting them as one is the reassuring reading.
+  assert.match(boot, /const solHosts = solana\.readUrls\(/, 'the host count is what a READ walks');
+  assert.ok(!/const solHosts = solana\.rpcUrls\(/.test(boot), '…never the configured list alone');
   assert.match(boot, /priority fee \$\{prio > 0 \?/);
   assert.match(boot, /OFF — transactions queue behind every paying one/);
   // THE SECRET. A paid RPC carries its API key in the path, and this line goes

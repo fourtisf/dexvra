@@ -14,7 +14,8 @@ const test = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
 const fs = require('node:fs');
-const { execFileSync } = require('node:child_process');
+const http = require('node:http');
+const { execFileSync, execFile } = require('node:child_process');
 
 const SCRIPT = path.join(__dirname, 'scripts', 'sol-check.js');
 const SECRET = 'SUPERSECRETKEY123';
@@ -85,4 +86,95 @@ test('⚠️ core is required BEFORE solana — order, not presence', () => {
   const s = src.indexOf("require(path.join(__dirname, '..', 'solana'))");
   assert.ok(c > -1 && s > -1, 'both requires must still be there');
   assert.ok(c < s, 'solana.js reads the env at module-eval — core must load it first');
+});
+
+/**
+ * ⚠️ `execFileSync` BLOCKS THIS PROCESS'S EVENT LOOP, so a stub server living
+ * here could never answer the child while it ran. The two tests below stand up
+ * real local nodes, so they need the async form.
+ */
+function runAsync(env) {
+  return new Promise((res) => {
+    execFile(process.execPath, [SCRIPT], {
+      env: { ...process.env, SKIP_DOTENV: '1', ...env },
+      encoding: 'utf8', timeout: 90000,
+    }, (_e, out, err) => res({ out: String(out || ''), both: String(out || '') + String(err || '') }));
+  });
+}
+
+/**
+ * A local node that answers `getMultipleAccounts` — or refuses with a 429.
+ *
+ * Hermetic on purpose: "does the exit code follow the SCREEN" cannot be asked
+ * of a sandbox with no egress, where every host refuses and the two branches
+ * are indistinguishable.
+ */
+function stubNode({ refuse = false } = {}) {
+  const srv = http.createServer((req, r) => {
+    if (refuse) { r.writeHead(429, { 'content-type': 'text/plain' }); r.end('Too Many Requests'); return; }
+    let body = '';
+    req.on('data', (d) => { body += d; });
+    req.on('end', () => {
+      let n = 1; let id = 1;
+      try {
+        const j = JSON.parse(body);
+        id = j.id;
+        n = (j.params && j.params[0] && j.params[0].length) || 1;
+      } catch (_) { /* answer one */ }
+      const value = Array.from({ length: n }, () => ({
+        data: ['', 'base64'], executable: false, lamports: 123,
+        owner: '11111111111111111111111111111111', rentEpoch: 0, space: 0,
+      }));
+      r.writeHead(200, { 'content-type': 'application/json' });
+      r.end(JSON.stringify({ jsonrpc: '2.0', id, result: { context: { apiVersion: '1.18.0', slot: 1 }, value } }));
+    });
+  });
+  return new Promise((res) => srv.listen(0, '127.0.0.1', () => res({
+    url: `http://127.0.0.1:${srv.address().port}`, close: () => srv.close(),
+  })));
+}
+
+test('⚠️ a host that refuses while another answers is NOT a failure', async () => {
+  // The exit code follows the SCREEN, not the host tally. Marking a refused
+  // host ✗ while the walk falls through leaves this check permanently red on a
+  // box whose /wallet is fine — the state `chart:preview` sat in for weeks,
+  // which teaches its reader to ignore the red.
+  const good = await stubNode();
+  const bad = await stubNode({ refuse: true });
+  try {
+    const { out } = await runAsync({
+      SOLANA_RPC: `${good.url},${bad.url}`,
+      SOL_READ_FALLBACK: '0',   // measure exactly these two, not the public pair
+    });
+    assert.match(out, /1 of 2 hosts answered/, 'the walk falling through is the feature working');
+    // The PROPERTY, not the global verdict: section 1 also counts (this sandbox
+    // has no tradebot/.env), so asserting the exit line would measure the
+    // environment rather than the rule under test.
+    assert.doesNotMatch(out, /✗ .*rate-limiting/, 'a refused host is ⚠ while another answers, never ✗');
+    assert.match(out, /⚠ .*rate-limiting/, 'it is still REPORTED — that host is worth fixing at its provider');
+  } finally { good.close(); bad.close(); }
+});
+
+test('…and EVERY host refusing still is', async () => {
+  const bad = await stubNode({ refuse: true });
+  try {
+    const { out } = await runAsync({ SOLANA_RPC: bad.url, SOL_READ_FALLBACK: '0' });
+    assert.match(out, /every host refused/);
+    assert.match(out, /problem\(s\) above/, 'green must mean the screen is safe');
+  } finally { bad.close(); }
+});
+
+test('it lists the hosts a READ actually walks, fallbacks included', async () => {
+  // A check that listed only the configured hosts would report "no failover" on
+  // a box that has two, then probe neither — measuring a stack the screen does
+  // not use, which is `fonts:check`'s nine green ticks over a broken banner.
+  const good = await stubNode();
+  try {
+    const { out } = await runAsync({ SOLANA_RPC: good.url });
+    assert.match(out, /solana-rpc\.publicnode\.com.*read-only fallback/,
+      'the read-path fallbacks have to be visible, or nobody knows a read can land there');
+    assert.match(out, /solana\.drpc\.org/);
+    assert.match(out, /signed and confirmed on 127\.0\.0\.1/,
+      'and the one host that does NOT fail over must be named — that is where money moves');
+  } finally { good.close(); }
 });

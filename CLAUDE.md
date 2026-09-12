@@ -12101,6 +12101,102 @@ silently, solana required before core, the probe never run, and the verdict
 section deleted. Each fails between one and two tests.
 
 
+###### "solana masih unread" — the failover shipped INERT
+
+Fourth report of one symptom, and this time the screenshot rules out the
+rendering: `⚠️ Solana unread` on every row, one `Solana — the Solana RPC is
+rate-limiting this server (429)` for the screen. Both of those are the last two
+rounds working. **What was wrong is that there was nowhere to fail over TO.**
+
+`SOL_DEFAULT_RPC` is ONE host. So on a box nobody has configured, `rpcUrls`
+returns a single entry, the walk built last round has one stop, and the comma
+list is a feature that cannot fire — *"a fallback that cannot fire reads exactly
+like one that never helps"*, this file's own name for it, on the fix written to
+end this exact outage. Every round since has told the operator to set
+`SOLANA_RPC`, which is a request, not a fix: **"apt-get install is not a fix"**,
+for the second time in this investigation.
+
+- **`SOL_READ_FALLBACKS` — and they are NOT invented, which is the whole licence
+  for them.** `bot/src/config/rpc.js` has shipped `solana-rpc.publicnode.com`
+  and `solana.drpc.org` as Solana defaults on this same box since it was
+  written, and `cd bot && npm run rpc:check` measures them. So the trade bot
+  had one host while the sibling package beside it had three: **two owners of
+  one upstream, disagreeing**, which is the shape that left `tradebot/solana.js`
+  and `bot/src/marketdata.js` on different pump.fun hosts.
+- ⚠️ **READS ONLY, and an operator's own host always LEADS.** The standing rule
+  refuses a guessed endpoint *"on the chain that signs trades"*, and
+  `getConnection` takes `rpcUrls(rpc)[0]` — the CONFIGURED first entry — so
+  nothing here moves signing, broadcasting or confirming. `rpcIsCustom` asks
+  `rpcUrls` too, or every default box would print **custom** on the one line an
+  operator checks after setting the override.
+- ⚠️ **What actually guards signing is the APPEND ORDER, not that spelling.**
+  `readUrls` appends and `rpcUrls` never returns empty, so `readUrls[0]` and
+  `rpcUrls[0]` are the same host for every input — swapping them in
+  `getConnection` is behaviour-neutral and a mutation run says so. The rule is
+  enforced by the tests that fail when a fallback LEADS, and the comment says
+  which rather than carrying a test that claims cover it does not provide.
+- `SOL_READ_FALLBACK=0` removes them; **blank is ON** (`raid/sourceFlag.js`).
+
+⚠️ **AND WITHOUT A PER-HOST SLICE THE FALLBACK IS DEFEATED BY THE FAILURE IT IS
+FOR.** The wallet column is bounded at 2500ms TOTAL, so one host that **hangs**
+— as opposed to refusing, which comes straight back now that
+`disableRetryOnRateLimit` is on — eats the whole window and hosts 2 and 3 are
+never asked, on every render, for ever. `SOL_HOST_MS` (1200ms) is
+`curveTrade`'s STAGE_MS rule on the read the screen waits for: a slice that runs
+out is INCONCLUSIVE, never a verdict — it does not park the host (a timeout is
+no fact about a quota) and it does not stop the walk. ⚠️ Its timer is **not**
+unref'd (a read is being awaited) and IS cleared, measured with
+`getActiveResourcesInfo` rather than reasoned about — third time that scar is
+written here.
+
+- ⚠️ **The boot line counts the READ walk, not the configured list.** Counting
+  `rpcUrls` would print *"1 host (no failover)"* on a box that has three, which
+  sends an operator to add hosts it already has.
+- ⚠️ **AND `sol:check` WOULD HAVE GONE PERMANENTLY RED.** A host that refuses
+  while another answers is the failover WORKING; marking it ✗ leaves the check
+  red on a box whose `/wallet` is fine, which is the state `chart:preview` sat
+  in for weeks and which teaches its reader to ignore the red. The exit code
+  follows the SCREEN (`market:check`'s rule): every host refusing is a fault,
+  one of three refusing is a ⚠ and a note. It lists the fallbacks as such, and
+  names the one host that does **not** fail over — that is where money moves.
+- `hostOf` prints `.host`, not `.hostname`: a PORT is not a secret and is the
+  only thing telling two endpoints on one hostname apart, while a key lives in
+  the path or the query on every provider there is.
+- ⚠️ The sol:check tests stand up **local stub nodes** (one answering, one
+  429-ing), because *"does the exit code follow the screen"* cannot be asked of
+  a sandbox with no egress, where every host refuses and the two branches are
+  indistinguishable. ⚠️ `execFileSync` BLOCKS this process's event loop, so a
+  stub server living beside it could never answer the child — those tests need
+  the async form.
+
+```bash
+cd tradebot && SKIP_DOTENV=1 node --test solBalanceBatch.test.js solCheck.test.js   # 34 + 8 tests, no network
+cd /opt/dexvra/tradebot && npm run sol:check                                        # which hosts, and which answer
+pm2 logs dexvra-tradebot --lines 50 --nostream | grep -F '[boot] solana'
+```
+
+Twelve guarantees are MUTATION-TESTED rather than argued: no fallbacks at all,
+the fallbacks leading instead of trailing, a named fallback asked twice, blank
+read as OFF, `rpcIsCustom` asking the read list, `readConnections` walking the
+configured list, no per-host slice, the slice timer never cleared, a slice
+that ran out parking the host, the boot line counting the configured list,
+`sol:check` listing only the configured hosts, and `sol:check` going red when
+the failover works. Each fails between two and eight tests.
+
+⚠️ **What this does NOT do is raise the ceiling.** Three public endpoints are
+three public endpoints, and a box all of them refuse stays refused. What changed
+is that one of them refusing is no longer the whole outage. `SOLANA_RPC` in
+**`tradebot/.env`** is still the only thing that raises it rather than dividing
+it — and `bot/.env`'s `RPC_SOLANA_URLS` is a **different file** for the process
+that actually spends.
+
+**Config a fix depends on:** nothing — the fallbacks ship on and need no `.env`.
+`SOL_READ_FALLBACK=0` restores the single-host behaviour and `SOL_HOST_MS`
+widens the per-host slice. ⚠️ `tradebot/` only, so the deploy is
+`pm2 restart dexvra-tradebot --update-env` — not the ecosystem file, and no web
+rebuild.
+
+
 ## Conventions
 
 - Tests live beside the code they cover, in `bot/test/`, `tradebot/*.test.js`
