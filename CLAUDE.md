@@ -11090,6 +11090,83 @@ on top for anyone else. ⚠️ This is a `bot/` change, so the deploy is the
 dexvra` — and the account must have `@dexvraceo` set as its **public Telegram
 username**, because that is the only thing an update carries.
 
+### "aturan walaupun 0 juga ada fitur add broadcast"
+
+Reported with a screenshot of an `🧪 Admin Test Order — FREE` pay card for
+`Xpress Listing — $HOLYFROG on Solana` carrying `✅ I've Paid — Confirm` and
+`🏠 Home` and nothing else. `renderPayCard`'s `if (adminFree)` branch **returned
+early**, above the line where the add-on row is built — so an order armed at 0
+was the one card in this bot offering FEWER features than the card it stands in
+for, and the operator's own account was the only one that could not exercise it.
+
+- ⚠️ **AN ADMIN ORDER IS NOT A DRY RUN**, which is the whole reason this
+  matters. The same `fulfillListing` creates the real site row, posts to the
+  real @dexvraio and sends the real tweet; `armPayment` waives the CHARGE and
+  nothing else (`amountSmallest = 0n`, `humanAmount` untouched — a waived
+  charge, not a free package). So a feature missing from that card is a feature
+  that cannot be exercised end to end, which is the one thing that card is for.
+- **The GATE is unchanged and SHARED.** `addonFee(order)` is still the only
+  thing that decides whether the row exists, so `MASS_DM_ENABLED=0` and a
+  currency the add-on cannot price (TRX, TON) remove the button on the free card
+  exactly as they do on a paid one. A second idea of "can this order take the
+  add-on" for the free path is how the two come to disagree.
+- ⚠️ **THE FEE IS NAMED ONLY WHERE THERE IS ONE TO PAY.** The admin card quotes
+  no price anywhere — `pay_card_admin` renders "No payment needed" and never
+  prints `humanAmount` — so `(+2 SOL)` on a button under that line is a label
+  contradicting its own sign, the buy card's two ideas of "whale" in miniature.
+- ⚠️ **…SO THE LINE HAS TO NAME THE AUDIENCE INSTEAD.** On a paid card the fee
+  IS the warning: a buyer sending 2 SOL knows this is a real product. With no
+  fee on the button, nothing else would say that this DM **really goes out to
+  every `/start` user, with `autoSend` and no review** — it is not the
+  🧪 Test send, which targets `ADMIN_IDS` alone — and "Admin Test Order"
+  directly above it invites exactly the wrong reading. Nothing here spends
+  silently, and 12,000 inboxes is the loudest thing this bot does.
+- **`ensureBroadcastLine` now takes the SENTENCE, not the fee.** It owns the
+  APPENDING — the entity offsets, the `html` shape, the "already there" test —
+  and the wording is computed once by its single caller, because the two cards
+  carry different facts.
+- **`broadcastToggle` needed nothing**: `if (!pp.adminFree)` already guarded the
+  smallest-unit re-derivation, so only the RENDERING half had excluded the free
+  card. The toggle is still exact in both directions (`addAmount`/`subAmount`),
+  and an admin order lands back on the package's listed price with
+  `amountSmallest` still `"0"`.
+- ⚠️ **The delivery report was about to call it a purchase.** `queueBroadcast`'s
+  `paid:` had an `order.adminFree` branch reachable only from the standalone
+  product, so an admin add-on would have reported `included with listing
+  package` on an order that paid nothing — the one line an operator reads to
+  know what a DM to 12,000 inboxes cost.
+
+⚠️ **AND THE TEST HARNESS'S ADMIN PATH WAS INERT.** `arm(o, {admin:true})`
+existed already and set `process.env.ADMIN_IDS = "9"` — but `ADMIN_IDS` is
+resolved at REQUIRE time, so an "admin" order armed that way is an ordinary one
+and every assertion about the free card would have been measuring the paid card.
+No test had ever used it, which is why nobody noticed. The identity is what
+makes the order free now (a BUILT-IN owner id, driven through the real
+`isAdminUser`), and the first assertion of every free-card test is
+`adminFree === true` — a vacuity guard, because a mutation run showed the
+harness losing that identity fails six tests rather than none.
+
+⚠️ **A SOURCE SCAN COULD NOT SEE THE REPORT RULE.** The first guard sliced the
+`paid:` expression and matched `/adminFree/` — which the mutant still satisfies,
+because the OTHER branch mentions it. It SURVIVED. `queueBroadcast` is driven
+instead, and the same test measures what the card now claims: an admin order's
+add-on really carries `targets: audience()` and `test: false`.
+
+```bash
+cd bot && node scripts/run-tests.js test/listingBroadcast.test.js   # 35 tests, no network
+```
+
+Eight guarantees are MUTATION-TESTED rather than argued: the admin branch
+returning early again, the fee printed on the free card, the `addonFee` gate
+bypassed, the free card no longer naming the audience, the toggle charging an
+admin order, the harness unable to arm an admin order at all, an admin add-on
+reading as a purchase, and an admin add-on quietly becoming a test send. Each
+fails between one and six tests.
+
+**Config a fix depends on:** nothing. `MASS_DM_ENABLED=0` still removes the
+button everywhere, free card included. ⚠️ This is a `bot/` change, so the deploy
+is the **ecosystem restart** and there is no web rebuild.
+
 ## Conventions
 
 - Tests live beside the code they cover, in `bot/test/`, `tradebot/*.test.js`

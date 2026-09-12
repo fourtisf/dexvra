@@ -144,10 +144,16 @@ const hasBroadcast = (order) => Boolean(order && order.payload && order.payload.
  *
  * The buyer is about to send a number they did not pick off a price list; the
  * card has to say why it is bigger than the tier they chose.
+ *
+ * ⚠️ THE SENTENCE IS THE CALLER'S, because there are two of them and they carry
+ * different facts. A paid card names the FEE — that is what explains the bigger
+ * number. An admin card quotes no price anywhere, so with no fee on the button
+ * nothing at all would say the DM is real; there it names the AUDIENCE instead.
+ * This function owns the APPENDING (the offsets, the html shape, the "already
+ * there" test) and nothing else.
  */
-function ensureBroadcastLine(payload, feeLabel) {
-  if (!payload || typeof payload !== "object" || !feeLabel) return payload;
-  const said = `Includes a Mass DM Broadcast to all users (+${feeLabel})`;
+function ensureBroadcastLine(payload, said) {
+  if (!payload || typeof payload !== "object" || !said) return payload;
   if (payload.html != null) {
     const html = String(payload.html);
     return html.includes(said) ? payload : { ...payload, html: `${html}\n\n📣 <b>${said}</b>.` };
@@ -162,27 +168,66 @@ function ensureBroadcastLine(payload, feeLabel) {
   };
 }
 
-/** Render (or re-render) the pay card for an order that is already armed. */
+/**
+ * Render (or re-render) the pay card for an order that is already armed.
+ *
+ * ⚠️ THE ADD-ON ROW IS BUILT ABOVE THE ADMIN BRANCH, NOT INSIDE THE PAID HALF.
+ * "aturan walaupun 0 juga ada fitur add broadcast" — the admin card used to
+ * return early, so an order armed at 0 was the one card in the bot that offered
+ * fewer features than the card it stands in for. And an admin order is not a
+ * dry run: the same fulfilment creates the real site row, posts to the real
+ * @dexvraio and sends the real tweet, with the CHARGE waived and nothing else.
+ * A feature missing from it is a feature that cannot be exercised end to end,
+ * which is the one thing that card exists for.
+ *
+ * ⚠️ THE GATE IS UNCHANGED AND SHARED. addonFee() is still the only thing that
+ * decides whether the row exists, so MASS_DM_ENABLED=0 and a currency the
+ * add-on cannot price (TRX, TON) remove the button here exactly as they do on a
+ * paid card — one owner for "can this order take the add-on", never a second
+ * idea of it for the free path.
+ */
 async function renderPayCard(ctx, order, address, adminFree, network) {
   const label = premium.sanitizeVar(order.label || order.kind);
-  if (adminFree) {
-    await sendCard(ctx, tpl.render("pay_card_admin", { label }), menu.confirmPayment());
-    return;
-  }
   const fee = addonFee(order);
   const on = hasBroadcast(order);
-  const feeLabel = fee == null ? null : `${fee} ${order.native}`;
+  // ⚠️ …AND THE FEE IS NAMED ONLY WHERE THERE IS ONE TO PAY. The admin card
+  // quotes no price at all ("No payment needed"), so "(+2 SOL)" on a button
+  // sitting under that line is a label contradicting its own sign — the buy
+  // card's two ideas of "whale", in miniature. What replaces it is the sentence
+  // below: with no fee on the button, nothing else would say this DM is real.
+  const feeLabel = fee == null || adminFree ? null : `${fee} ${order.native}`;
+  const feeSuffix = feeLabel ? ` (+${feeLabel})` : "";
   const rows =
     fee == null
       ? []
       : [
           [
             Markup.button.callback(
-              on ? `✅ Broadcast added (+${feeLabel}) — tap to remove` : `➕ Add Broadcast to all users (+${feeLabel})`,
+              on ? `✅ Broadcast added${feeSuffix} — tap to remove` : `➕ Add Broadcast to all users${feeSuffix}`,
               "bcpay",
             ),
           ],
         ];
+  // ⚠️ THE ADMIN LINE NAMES THE AUDIENCE, because on a free card the fee is not
+  // there to do it. The add-on queues a REAL job against the whole `/start`
+  // audience with autoSend (no review) — it is not the 🧪 Test send, which goes
+  // to the admins alone — and "Admin Test Order" directly above it invites
+  // exactly the wrong reading. Nothing here spends silently, and 12,000 inboxes
+  // is the loudest thing this bot does.
+  const said = !on
+    ? null
+    : adminFree
+      ? "Includes a Mass DM Broadcast — it really goes out to every bot user, not a test send"
+      : `Includes a Mass DM Broadcast to all users (+${feeLabel})`;
+
+  if (adminFree) {
+    await sendCard(
+      ctx,
+      ensureBroadcastLine(tpl.render("pay_card_admin", { label }), said),
+      menu.confirmPayment(null, rows),
+    );
+    return;
+  }
   // The address (and the exact amount) are tap-to-copy: enforced here rather
   // than trusted to the template's backticks, which a re-saved card loses.
   const text = premium.ensureCode(
@@ -191,7 +236,7 @@ async function renderPayCard(ctx, order, address, adminFree, network) {
         tpl.render("pay_card", { label, amount: order.humanAmount, native: order.native, address, network }),
         network,
       ),
-      on ? feeLabel : null,
+      said,
     ),
     address,
     order.humanAmount,

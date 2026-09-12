@@ -1082,7 +1082,9 @@ async function queueBroadcast(ctx, order, content, { autoSend = false } = {}) {
       // so quoting that total here would misreport what the broadcast cost. The
       // standalone product IS the order, so its total is exactly its price.
       paid: autoSend
-        ? "included with listing package"
+        ? order.adminFree
+          ? "included with listing package (admin order — no payment)"
+          : "included with listing package"
         : order.adminFree
           ? "admin order (no payment)"
           : order.humanAmount && order.native

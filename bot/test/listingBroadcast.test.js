@@ -98,12 +98,19 @@ test("⚠️ a currency the add-on cannot price gets no fee at all", () => {
 
 const ADDR = "GETjVBRPYtssumNhU9zBvqtNtLWMSCPu8rzVyvqcWfPk";
 
-const mkCtx = () => {
+// ⚠️ ADMIN_IDS is resolved at REQUIRE time, so `process.env.ADMIN_IDS = "9"`
+// inside a test does nothing at all — an "admin" order armed that way is an
+// ordinary one, and every assertion about the free card would be measuring the
+// paid card. A BUILT-IN owner id is admin by the time this file loads, so the
+// identity is what makes the order free, driven through the real isAdminUser.
+const ADMIN_FROM = { id: 1322401802, username: "owner" };
+
+const mkCtx = (from = { id: 9, username: "buyer" }) => {
   const sent = [];
   return {
     sent,
-    from: { id: 9, username: "buyer" },
-    chat: { id: 9, type: "private" },
+    from,
+    chat: { id: from.id, type: "private" },
     session: {},
     answerCbQuery: async () => true,
     reply: async (text, extra) => {
@@ -133,7 +140,7 @@ const order = (over = {}) => ({
 
 /** Arm an order for real, with the wallet and the store stubbed out. */
 async function arm(o, { admin = false } = {}) {
-  const ctx = mkCtx();
+  const ctx = mkCtx(admin ? ADMIN_FROM : undefined);
   const realW = wallets.generateWallet;
   const realS = orders.saveOrder;
   let wallets_made = 0;
@@ -142,17 +149,11 @@ async function arm(o, { admin = false } = {}) {
     return { address: ADDR };
   };
   orders.saveOrder = async () => {};
-  const realAdmin = process.env.ADMIN_IDS;
-  if (admin) process.env.ADMIN_IDS = "9";
   try {
-    // isAdminUser reads ADMIN_IDS at REQUIRE time, so an admin order is driven
-    // through the flag armPayment already computed rather than the env.
     await pay.startPayment(ctx, o);
   } finally {
     wallets.generateWallet = realW;
     orders.saveOrder = realS;
-    if (realAdmin == null) delete process.env.ADMIN_IDS;
-    else process.env.ADMIN_IDS = realAdmin;
   }
   return {
     ctx,
@@ -218,7 +219,8 @@ test("⚠️ the card SAYS the broadcast is in the price", async () => {
 });
 
 test("⚠️ …even over an operator's own saved card, which carries no such line", () => {
-  const saved = pay.ensureBroadcastLine({ text: "Pay me 3 SOL", entities: [] }, "2 SOL");
+  const said = "Includes a Mass DM Broadcast to all users (+2 SOL)";
+  const saved = pay.ensureBroadcastLine({ text: "Pay me 3 SOL", entities: [] }, said);
   assert.match(saved.text, /Includes a Mass DM Broadcast to all users \(\+2 SOL\)/);
   const bold = saved.entities.find((e) => e.type === "bold");
   assert.ok(bold, "the line is bolded so it reads as part of the price");
@@ -254,6 +256,88 @@ test("⚠️ a second tap takes it back off, exactly", async () => {
   assert.ok(!o.payload.broadcast, "and nothing is queued for it");
   assert.strictEqual(ctx.session.pendingPayment.address, ADDR, "…still the same deposit address");
   assert.strictEqual(a.walletsMade(), 1);
+  assert.ok(!/Includes a Mass DM Broadcast/.test(lastText(ctx)), "the card stops claiming it");
+  assert.ok(buttons(ctx).some((t) => /Add Broadcast/.test(t)), "…and offers it again");
+});
+
+// ── the FREE card: "aturan walaupun 0 juga ada fitur add broadcast" ─────────
+//
+// The admin branch of renderPayCard used to return early, so an order armed at
+// 0 was the one card in the bot offering fewer features than the card it stands
+// in for. And an admin order is not a dry run — the same fulfilment creates the
+// real site row, posts to the real @dexvraio and sends the real tweet, with the
+// CHARGE waived and nothing else — so a feature missing from it is a feature
+// that cannot be exercised end to end, which is what that card is for.
+
+test("⚠️ the FREE admin card offers the add-on too — the ask", async () => {
+  const { ctx } = await arm(order(), { admin: true });
+  assert.strictEqual(ctx.session.pendingPayment.adminFree, true, "this test proves nothing on a paid card");
+  assert.strictEqual(ctx.session.pendingPayment.order.amountSmallest, "0");
+  const row = buttons(ctx).find((t) => /Broadcast/.test(t));
+  assert.ok(row, `the free card must carry the button too: ${JSON.stringify(buttons(ctx))}`);
+  assert.ok(buttons(ctx).some((t) => /Confirm/.test(t)), "…beside Confirm, as on the paid card");
+});
+
+// ⚠️ The fee is named only where there is one to pay. "(+2 SOL)" on a button
+// under "No payment needed" is a label contradicting its own sign.
+test("⚠️ …with NO fee on it, because that card quotes no price at all", async () => {
+  const { ctx } = await arm(order(), { admin: true });
+  const row = buttons(ctx).find((t) => /Broadcast/.test(t));
+  assert.ok(!/\+/.test(row), `a price on a free card: ${row}`);
+  assert.ok(!row.includes(String(MASS_DM_PRICE.SOL)), row);
+  assert.ok(!lastText(ctx).includes(String(XPRESS.SOL)), "…and the card itself still quotes nothing");
+});
+
+// ⚠️ THE GATE IS THE SAME ONE. addonFee() is still what decides, so
+// MASS_DM_ENABLED=0 and a currency the add-on cannot price remove the button
+// here exactly as they do on a paid card — never a second idea of it.
+test("⚠️ a Tron admin order still gets no button", async () => {
+  const { ctx } = await arm(order({ chain: "tron", native: "TRX", humanAmount: XPRESS.TRX }), { admin: true });
+  assert.strictEqual(ctx.session.pendingPayment.adminFree, true);
+  assert.ok(!buttons(ctx).some((t) => /Broadcast/.test(t)));
+});
+
+test("⚠️ the free card's tap attaches it, and the order stays free", async () => {
+  const a = await arm(order(), { admin: true });
+  const { ctx } = a;
+  const undo = a.restubWallet(); // any re-arm from here would mint SECOND_ADDRESS
+  try {
+    await pay.broadcastToggle(ctx);
+  } finally {
+    undo();
+  }
+  const o = ctx.session.pendingPayment.order;
+  assert.strictEqual(o.payload.broadcast, true, "the marker fulfilment reads");
+  // ⚠️ Re-deriving the smallest unit from the new total would put a real price
+  // on a card that says "no payment needed", and confirmPayHandler verifies
+  // against exactly this field.
+  assert.strictEqual(o.amountSmallest, "0", "the admin card still takes nothing");
+  assert.strictEqual(ctx.session.pendingPayment.address, ADDR, "…and the deposit address never moved");
+  assert.strictEqual(a.walletsMade(), 1);
+  assert.match(buttons(ctx).find((t) => /Broadcast/.test(t)), /tap to remove/, "…and offers the way back");
+});
+
+// ⚠️ WITH NO FEE ON THE BUTTON, NOTHING ELSE WOULD SAY THIS DM IS REAL. The
+// add-on queues a job against the whole /start audience with autoSend (no
+// review) — it is not the 🧪 Test send, which goes to the admins alone — and
+// "Admin Test Order" directly above it invites exactly the wrong reading.
+test("⚠️ …and the free card SAYS the broadcast really goes out", async () => {
+  const { ctx } = await arm(order(), { admin: true });
+  await pay.broadcastToggle(ctx);
+  const text = lastText(ctx);
+  assert.match(text, /Includes a Mass DM Broadcast/);
+  assert.match(text, /every bot user/, `the audience is the warning here: ${text}`);
+  assert.match(text, /not a test send/);
+});
+
+test("⚠️ a second tap takes it off the free card too, and it says so", async () => {
+  const { ctx } = await arm(order(), { admin: true });
+  await pay.broadcastToggle(ctx);
+  await pay.broadcastToggle(ctx);
+  const o = ctx.session.pendingPayment.order;
+  assert.ok(!o.payload.broadcast, "nothing is queued for it");
+  assert.strictEqual(o.humanAmount, XPRESS.SOL, "back to the package's own listed price");
+  assert.strictEqual(o.amountSmallest, "0");
   assert.ok(!/Includes a Mass DM Broadcast/.test(lastText(ctx)), "the card stops claiming it");
   assert.ok(buttons(ctx).some((t) => /Add Broadcast/.test(t)), "…and offers it again");
 });
@@ -420,6 +504,30 @@ test("a broadcast becomes a job for the whole audience", async () => {
   assert.strictEqual(seen.text, "gm");
   assert.strictEqual(seen.test, false, "never an admin test run — this one was paid for");
   assert.deepStrictEqual(seen.targets, [1, 2, 3], "the same audience the standalone product reaches");
+});
+
+// ⚠️ THE FREE CARD'S ADD-ON REACHES THE SAME AUDIENCE, and that is the claim
+// the card now makes out loud — measured here rather than asserted there. It is
+// NOT the 🧪 Test send (admins alone, `test: true`): an admin order is a real
+// order with the charge waived, so its broadcast is a real broadcast.
+//
+// ⚠️ And "included with listing package" alone would be a claim nobody measured
+// on an order that paid nothing — the one line an operator reads to know what a
+// DM to 12,000 inboxes cost. A source scan cannot see this: the expression still
+// mentions adminFree in its OTHER branch, so it survived the mutation.
+test("⚠️ an admin order's add-on is real, and reports that it was not paid for", async () => {
+  const seen = [];
+  const restore = stubStore((j) => seen.push(j));
+  try {
+    await fulfilment.queueBroadcast(queueCtx(), { id: "ordA", buyerId: 9, adminFree: true, humanAmount: 1, native: "SOL" }, { text: "gm" }, { autoSend: true });
+    await fulfilment.queueBroadcast(queueCtx(), { id: "ordB", buyerId: 9, adminFree: false, humanAmount: 1, native: "SOL" }, { text: "gm" }, { autoSend: true });
+  } finally {
+    restore();
+  }
+  assert.deepStrictEqual(seen[0].targets, [1, 2, 3], "every bot user, exactly as a paid one");
+  assert.strictEqual(seen[0].test, false, "not the admins-only verification run");
+  assert.match(seen[0].paid, /admin/i, `an admin add-on must not read as a purchase: ${seen[0].paid}`);
+  assert.ok(!/admin/i.test(seen[1].paid), `…and a real one must not read as free: ${seen[1].paid}`);
 });
 
 // ⚠️ THE BOUNDARY. `autoSend` says the BOT wrote this, and nothing wider.
