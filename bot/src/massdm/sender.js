@@ -33,6 +33,67 @@ function jobExtra(job, forCaption) {
     : { parse_mode: "HTML", disable_web_page_preview: true };
 }
 
+// ── Premium (custom) emoji ──────────────────────────────────────────────────
+//
+// ⚠️ A DM IS A PRIVATE CHAT, AND THAT IS THE WHOLE POINT. Telegram's rule is
+// that custom-emoji entities may be used "by bots that purchased additional
+// usernames on Fragment, OR in the messages directly sent by the bot to
+// private, group and supergroup chats if the owner of the bot has a Telegram
+// Premium subscription". A CHANNEL is in neither list — which is why
+// channels/post.js needs the GramJS premium account and why premium.js's own
+// header says animation needs it. That sentence is true of the channel and NOT
+// of this sender, and reading it as a general fact is how a broadcast was
+// reported as unable to do something it can do.
+//
+// So this module sends the entities untouched and lets Telegram decide. Two
+// rules follow, because "it worked" and "it was silently downgraded" are
+// otherwise the same observation — the defect the 🔄 Refresh board button was
+// built to end one surface over.
+const EMOJI_REFUSED = /custom[_ ]?emoji|EMOJI_INVALID/i;
+const customCount = (ents) => (ents || []).filter((e) => e.type === "custom_emoji").length;
+
+/**
+ * Did the custom emoji actually go out?
+ *
+ * Telegram ECHOES the entities it accepted on the Message it returns, so one
+ * missing from the echo is one it stripped — which is exactly the question this
+ * cannot otherwise answer: is this bot allowed to use them at all. ⚠️ What it
+ * can NEVER say is whether a given RECIPIENT sees them animated; that is their
+ * own Telegram Premium, decided client-side, and claiming it here would be a
+ * fact nobody measured.
+ *
+ * Recorded from the FIRST send only — the answer is a property of the bot, not
+ * of the recipient, so 12,000 identical readings are the same reading.
+ */
+function notePremium(job, msg) {
+  if (job.premiumOut != null || !msg) return;
+  const want = customCount(job.entities);
+  if (!want) return; // nothing premium in this job — the report says nothing
+  job.premiumOut = customCount(msg.entities || msg.caption_entities) >= want;
+  job.premiumWhy = job.premiumOut
+    ? null
+    : "Telegram stripped them — the bot's OWNER needs Telegram Premium (or the bot a Fragment username)";
+}
+
+/**
+ * ⚠️ THE EMOJI MAY NEVER COST THE BROADCAST.
+ *
+ * If Telegram refuses the entities outright rather than stripping them, every
+ * one of 12,000 sends fails the same way and a broadcast somebody PAID for
+ * reaches nobody. Dropping them job-wide on the first refusal costs the
+ * animation and delivers the message, which is the trade this repo makes
+ * everywhere else ("losing a link beats losing the listing and the link with
+ * it"). Job-wide because `job` is shared by reference: the sibling sends
+ * already in flight are fixed by whichever one gets here first.
+ */
+function stripCustomEmoji(job) {
+  if (!customCount(job.entities)) return;
+  job.entities = (job.entities || []).filter((e) => e.type !== "custom_emoji");
+  job.premiumOut = false;
+  job.premiumWhy = "Telegram REFUSED the custom emoji — resent with the plain fallback";
+  log.warn(`[massdm] ${job.id}: ${job.premiumWhy}`);
+}
+
 // ⚠️ A CLIP SENT THROUGH sendPhoto IS AN ERROR, NOT A STILL. The listing
 // broadcast add-on carries the SAME artwork the channel post does, and on a box
 // with an admin banner clip configured that is a GIF/MP4 — so the method has to
@@ -49,21 +110,26 @@ function fileIdOf(msg, kind) {
   return photos && photos.length ? photos[photos.length - 1].file_id : null;
 }
 
-async function sendOne(telegram, job, userId) {
+// Returns the sent Message (truthy) or null — the caller only counts, but the
+// MESSAGE is what carries Telegram's verdict on the emoji.
+async function sendOne(telegram, job, userId, afterStrip) {
   try {
-    if (job.mediaFileId) {
-      await telegram[sendMethod(job)](userId, job.mediaFileId, job.text ? jobExtra(job, true) : {});
-    } else {
-      await telegram.sendMessage(userId, job.text, jobExtra(job, false));
-    }
-    return true;
+    const msg = job.mediaFileId
+      ? await telegram[sendMethod(job)](userId, job.mediaFileId, job.text ? jobExtra(job, true) : {})
+      : await telegram.sendMessage(userId, job.text, jobExtra(job, false));
+    notePremium(job, msg);
+    return msg || true;
   } catch (e) {
     const ra = retryAfter(e);
     if (ra != null) {
       await sleep((ra + 1) * 1000);
-      return sendOne(telegram, job, userId);
+      return sendOne(telegram, job, userId, afterStrip);
     }
-    return false;
+    if (!afterStrip && EMOJI_REFUSED.test(String((e && e.message) || ""))) {
+      stripCustomEmoji(job);
+      return sendOne(telegram, job, userId, true);
+    }
+    return null;
   }
 }
 
@@ -73,6 +139,7 @@ async function primeMedia(telegram, job) {
   if (first == null) return;
   try {
     const msg = await telegram[sendMethod(job)](first, { source: job.mediaPath }, job.text ? jobExtra(job, true) : {});
+    notePremium(job, msg);
     const id = fileIdOf(msg, job.mediaType);
     if (id) job.mediaFileId = id;
     job.sent += 1;
@@ -94,11 +161,22 @@ async function report(telegram, job) {
   if (!job.reportChatId) return;
   try {
     const label = job.test ? " (admin test)" : "";
+    // ⚠️ A PLAIN SEND MUST NEVER RENDER AS A ✅ — the rule the trending board's
+    // 🔄 Refresh had to learn: to anyone without Telegram Premium the two are
+    // identical, so "it worked" and "it was downgraded" reach the operator as
+    // one observation unless the line says which. Absent when the job carried
+    // no custom emoji at all: a verdict on nothing is noise.
+    const prem =
+      job.premiumOut == null
+        ? ""
+        : job.premiumOut
+          ? `\n<b>Premium emoji:</b> ✅ ${customCount(job.entities)} accepted by Telegram`
+          : `\n<b>Premium emoji:</b> ⚠️ PLAIN — ${job.premiumWhy}`;
     await telegram.sendMessage(
       job.reportChatId,
       `📣 <b>Mass DM delivered${label}</b>\n` +
         `<b>Ref:</b> <code>${job.ref || job.id}</code>\n` +
-        `<b>Reached:</b> ${job.sent}  <b>Failed:</b> ${job.failed}  <b>Audience:</b> ${job.total}`,
+        `<b>Reached:</b> ${job.sent}  <b>Failed:</b> ${job.failed}  <b>Audience:</b> ${job.total}${prem}`,
       { parse_mode: "HTML" },
     );
   } catch (e) {
@@ -177,4 +255,4 @@ function start(telegram) {
   };
 }
 
-module.exports = { start, runJob, _sendMethod: sendMethod, _fileIdOf: fileIdOf };
+module.exports = { start, runJob, _sendMethod: sendMethod, _fileIdOf: fileIdOf, _notePremium: notePremium, _stripCustomEmoji: stripCustomEmoji, _customCount: customCount };

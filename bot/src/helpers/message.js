@@ -5,8 +5,10 @@
 // Text arguments accept either a plain HTML string (legacy, parse_mode:"HTML")
 // or a template PAYLOAD from templates.render():
 //   { text, entities } — premium-markup template → sent with entity arrays and
-//     NO parse_mode (Telegram strips custom emoji for regular bots, leaving the
-//     unicode fallback — and renders them animated if the bot ever can)
+//     NO parse_mode. These are PRIVATE chats, so the custom emoji animate as
+//     soon as the bot's OWNER has Telegram Premium — see premium.js's header
+//     for the rule and for what the channel needs instead. Telegram strips them
+//     when it does not, which is a downgrade rather than a failure.
 //   { html }           — legacy admin-saved HTML template
 const log = require("./logger");
 

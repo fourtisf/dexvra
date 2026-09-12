@@ -10862,6 +10862,81 @@ receives a *notice* (`📣 Listing broadcast going out now — ref …, N recipi
 rather than only a review request, because a paid DM reaching the whole audience
 with nothing anywhere recording it is the silence this repo keeps paying for.
 
+#### "harus pakai emoji premium kaya fourtis" — and it already did
+
+Asked about the broadcast's premium emoji, and the first answer given was
+**wrong**: that they cannot animate in a DM because only GramJS animates them.
+That sentence came from `premium.js`'s own header, and the header had
+generalised a CHANNEL restriction to every send. Telegram's published rule is
+that a bot may use custom-emoji entities if it holds a Fragment username, **or
+"in the messages directly sent by the bot to private, group and supergroup
+chats if the OWNER of the bot has a Telegram Premium subscription"**.
+
+| surface | chat type | animates when |
+| --- | --- | --- |
+| `@dexvraio` / the board | CHANNEL — in neither list | only through the GramJS premium USER account (💎 Premium status) |
+| every bot card, and this broadcast | **PRIVATE** | the BotFather **owner** has Telegram Premium — plain Bot API, nothing to wire |
+
+**So no code was needed for the emoji**, and measuring said so before anything
+was changed: the listing card's 8 `custom_emoji` entities reach
+`listingBroadcast` intact and go on the wire with **no `parse_mode`**, which is
+the one thing that would have destroyed them. ⚠️ **A comment asserting a
+contract outliving the contract** is this file's own recurring shape — the
+"DexScreener does not index Robinhood" entry sat in five files the same way —
+and it is why both headers now name the chat type rather than the transport.
+
+What WAS missing is everything around it:
+
+- ⚠️ **"IT WORKED" AND "IT WAS SILENTLY DOWNGRADED" WERE ONE OBSERVATION.** To
+  anyone without Telegram Premium — most readers — a stripped send and an
+  animated one are identical, which is exactly what 🔄 Refresh board was built
+  to end one surface over (*"a plain publish must never render as a ✅"*).
+  Telegram ECHOES the entities it accepted on the Message it returns, so one
+  missing from the echo is one it stripped: `notePremium` reads that off the
+  FIRST send (it is a property of the BOT, so 12,000 readings are one reading)
+  and the delivery report carries `✅ 2 accepted` or `⚠️ PLAIN — the bot's OWNER
+  needs Telegram Premium`. ⚠️ It can never claim a RECIPIENT saw them animated:
+  that is their own Premium, client-side, and asserting it would be a figure
+  nobody measured.
+- ⚠️ **A REFUSAL WOULD HAVE COST THE WHOLE BROADCAST.** If Telegram rejects the
+  entities rather than stripping them, all 12,000 sends fail identically and a
+  broadcast somebody paid 2 SOL for reaches nobody. `stripCustomEmoji` drops
+  them **job-wide** on the first refusal and resends plain — the animation is
+  lost and the message arrives, which is the trade this repo makes everywhere
+  else (*"losing a link beats losing the listing and the link with it"*). Only
+  the custom emoji go: the bold runs and the links are not collateral. Job-wide
+  because `job` is shared by reference, so at most one batch (`BROADCAST_
+  CONCURRENCY`) pays a wasted attempt and every batch after it costs nothing.
+- ⚠️ **THE TEST HELPER TOOK AN OVERRIDE AND DROPPED IT.** `job(over)` never
+  spread `over`, so every customised fixture asserted against the DEFAULT job —
+  and the emoji-free case reported a premium verdict it could not have
+  produced. A test measuring its own fake, for the fourth time in this file, and
+  the two failures it caused are what exposed it.
+- ⚠️ **AND `primeMedia`'s OWN CALL SURVIVED ITS FIRST MUTATION RUN.** It sends
+  the first recipient and the loop starts at the cursor it left, so on any wider
+  job `sendOne` records the verdict anyway. The fixture that makes it
+  load-bearing is a **single-recipient media job** — which is what an admin test
+  run is — and the test says so rather than carrying a line that claims cover it
+  does not provide.
+
+```bash
+cd bot && node scripts/run-tests.js test/massdmPremium.test.js   # 6 tests, no network
+pm2 logs dexvra-bot --lines 200 --nostream | grep -F '[massdm]'   # REFUSED, if it ever is
+```
+
+Ten guarantees are MUTATION-TESTED rather than argued: the entities re-parsed
+as HTML instead of sent as entities, a refusal never recovered from, the strip
+taking every entity, the strip made per-send, a stripped send reported as a ✅,
+the report saying nothing either way, the verdict never recorded, the media
+path never recording it, a later send overwriting the first verdict, and a job
+with no emoji given a verdict anyway. Each fails between one and four tests.
+
+**Config a fix depends on:** ⚠️ **nothing in this repo — the switch is the
+BotFather OWNER account having Telegram Premium.** Until it does, the broadcast
+still goes out and the delivery report says `⚠️ PLAIN` rather than leaving the
+operator to compare screenshots. `MASS_DM_REVIEW_CHAT_ID` is where that line
+lands.
+
 ## Conventions
 
 - Tests live beside the code they cover, in `bot/test/`, `tradebot/*.test.js`

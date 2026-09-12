@@ -6,10 +6,24 @@
 // parse() produces clean text + Bot-API-shaped entities (UTF-16 offsets, the
 // unit Telegram uses). toGramJs() converts them for MTProto sends.
 //
-// Premium emoji render truly animated only when sent via GramJS (a Telegram
-// Premium USER account) — a regular bot sending the same entities gets them
-// silently stripped by Telegram, leaving the fallback unicode emoji. Both
-// paths therefore look correct; GramJS just looks better.
+// ⚠️ WHERE THEY ANIMATE IS A PROPERTY OF THE CHAT TYPE, NOT OF THE TRANSPORT,
+// and this comment used to say otherwise. Telegram's rule is that a bot may use
+// custom-emoji entities if it holds a Fragment username, OR "in the messages
+// directly sent by the bot to private, group and supergroup chats if the OWNER
+// of the bot has a Telegram Premium subscription".
+//
+//   CHANNEL (@dexvraio, the board)  → in neither list, so a regular bot's
+//     entities are stripped: this is why channels/post.js reaches for the
+//     GramJS premium USER account, and why 💎 Premium status exists.
+//   PRIVATE chat (every bot card, and the Mass DM broadcast) → they animate
+//     over the plain Bot API as soon as the BotFather owner has Premium.
+//     Nothing in this repo has to do anything for that; the entities already
+//     go out untouched, with no parse_mode.
+//
+// The old wording generalised the channel's restriction to every send, and a
+// broadcast was reported as unable to do something it does by itself — a fact
+// asserted in a comment outliving the fact, which this repo has paid for before
+// (the "DexScreener does not index Robinhood" entry, in five files).
 
 const PH_RE = /\{(\w+)\}/g;
 
