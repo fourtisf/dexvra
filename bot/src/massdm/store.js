@@ -6,6 +6,14 @@
 // against it, and vice-versa (fourtis incident 2026-07-16).
 //
 // Status: pending_review → in_progress → completed | rejected.
+//
+// ⚠️ TWO WAYS TO SKIP THE REVIEW, AND THEY ARE NOT THE SAME THING.
+// `test` is the admin's free verification run (a handful of targets, no
+// receipt, labelled as a test in the report). `autoSend` is a REAL paid job
+// that needs no human because the bot WROTE it: the listing broadcast add-on
+// DMs the listing card this process just rendered and posted to the channel.
+// A stranger's free text — the standalone /massdm product — still waits for an
+// admin, which is what the anti-spam note above is about.
 const fss = require("node:fs");
 const { promises: fs } = require("node:fs");
 const path = require("node:path");
@@ -41,18 +49,27 @@ async function saveJob(job) {
 }
 
 /**
- * Create a Mass DM job. `test` jobs (free admin verification) skip review and go
- * straight to in_progress; paid jobs land in pending_review.
+ * Create a Mass DM job. `test` jobs (free admin verification) and `autoSend`
+ * jobs (content this bot wrote — see the header) skip review and go straight to
+ * in_progress; anything a person typed lands in pending_review.
+ *
+ * `mediaType` is "photo" | "animation" | "video" — the listing add-on carries
+ * the same artwork the channel post does, and that can be the admin's GIF/MP4
+ * clip. A clip sent through sendPhoto is an error, not a still.
  */
-async function createJob({ text, entities, mediaPath, createdBy, createdByUsername, targets, test, reportChatId, ref }) {
+async function createJob({ text, entities, mediaPath, mediaFileId, mediaType, createdBy, createdByUsername, targets, test, autoSend, reportChatId, ref }) {
   const job = {
     id: newId(),
     kind: "mass_dm",
-    status: test ? "in_progress" : "pending_review",
+    status: test || autoSend ? "in_progress" : "pending_review",
     text: text || "",
     entities: entities || [],
     mediaPath: mediaPath || null,
-    mediaFileId: null,
+    // Already a Telegram file_id (or a URL Telegram can fetch): nothing to
+    // upload, so primeMedia skips straight to the paced send.
+    mediaFileId: mediaFileId || null,
+    mediaType: mediaType || "photo",
+    autoSend: !!autoSend,
     createdBy,
     createdByUsername: createdByUsername || null,
     test: !!test,

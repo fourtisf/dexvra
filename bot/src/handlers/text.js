@@ -26,21 +26,13 @@ async function textRouter(ctx) {
   if (!ctx.chat || ctx.chat.type !== "private") return;
   const s = ctx.session || {};
   const raw = ctx.message && ctx.message.text ? ctx.message.text : "";
-  // ⚠️ FIRST, and above the `!s.type` return. The broadcast add-on is composed
-  // from the PAY CARD, which every package shares — a listing, a trending slot
-  // and a banner all end there — so it has no session.type of its own to
-  // dispatch on. Checked here, it works from all of them; checked inside any
-  // one flow it would work from that flow only.
-  const pay = require("./pay");
-  if (pay.awaitingBroadcast(ctx)) {
-    return await pay.broadcastCapture(ctx, {
-      // RAW, never trimmed: entity offsets are counted from the start of the
-      // message, so dropping a leading space moves every bold run one left.
-      text: raw,
-      entities: (ctx.message && ctx.message.entities) || [],
-      mediaFileId: null,
-    });
-  }
+  // The broadcast add-on used to intercept here, above the `!s.type` return,
+  // because it was composed from the PAY CARD and that card has no session.type
+  // of its own. It is ONE TAP now and carries the listing card itself, so there
+  // is no text step to route — see handlers/pay.js. Do not add one back without
+  // reading that header: a compose step on this card must run above the flow
+  // dispatch, not inside any one flow.
+  //
   // No flow running. Pasting a contract straight into the chat is the most
   // common thing a project owner does, and it used to fall into "ignore
   // chatter" — the bot said nothing at all. If the token is already on the
@@ -69,16 +61,6 @@ async function textRouter(ctx) {
 async function mediaRouter(ctx) {
   if (!ctx.chat || ctx.chat.type !== "private") return;
   const s = ctx.session || {};
-  const pay = require("./pay");
-  if (pay.awaitingBroadcast(ctx)) {
-    const id = require("../helpers/message").getMediaFileId(ctx);
-    if (!id) return;
-    return await pay.broadcastCapture(ctx, {
-      text: (ctx.message && ctx.message.caption) || "",
-      entities: (ctx.message && ctx.message.caption_entities) || [],
-      mediaFileId: id,
-    });
-  }
   if (!s.type) return;
   try {
     if (LISTING.has(s.type)) return await require("./listing").handlePhoto(ctx);

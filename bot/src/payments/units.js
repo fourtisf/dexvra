@@ -45,6 +45,17 @@ function addAmount(a, b) {
   return (Math.round(Number(a) * scale) + Math.round(Number(b) * scale)) / scale;
 }
 
+/**
+ * Take the add-on back off — the exact inverse, on the same integer scale.
+ *
+ * ⚠️ NOT `a - b`. The pay-card add-on is a TOGGLE (fourtis: "tap to remove"), so
+ * the removal has to land back on the package's own listed price to the digit:
+ * `1.3 - 0.15` is `1.1500000000000001` in float, and a buyer who added the
+ * broadcast and changed their mind would be quoted a number that is in no price
+ * table, on the card that takes the money.
+ */
+const subAmount = (a, b) => addAmount(a, -Number(b));
+
 /** BigInt smallest unit → human string (trailing zeros trimmed). */
 function toHuman(chain, amount) {
   const d = decimalsOf(chain);
@@ -57,4 +68,4 @@ function humanWithSymbol(chain, amount) {
   return `${toHuman(chain, amount)} ${nativeOf(chain)}`;
 }
 
-module.exports = { toSmallest, toHuman, humanWithSymbol, addAmount };
+module.exports = { toSmallest, toHuman, humanWithSymbol, addAmount, subAmount };

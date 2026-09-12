@@ -99,8 +99,7 @@ function registerHandlers(bot) {
   bot.action("confirm_pay", payment.confirmPayHandler);
   // The broadcast add-on lives on the PAY CARD, beside Confirm — every package
   // ends there, so one pair of actions serves all of them.
-  bot.action("bcpay", (ctx) => require("./pay").broadcastAsk(ctx));
-  bot.action("bcpayx", (ctx) => require("./pay").broadcastCancel(ctx));
+  bot.action("bcpay", (ctx) => require("./pay").broadcastToggle(ctx)); // add / remove, on the pay card
 
   // ── Free-text + media routers (LAST) ──────────────────────────────────────
   // The group one first, and it calls next() for anything that is not a reply

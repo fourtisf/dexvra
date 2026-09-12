@@ -3,10 +3,11 @@
 //
 // "di bawahnya ada fitur add broadcast aturan dengan fee tambahan" — a project
 // buying a listing can attach a Mass DM to the same order instead of buying it
-// separately. The message still goes through the EXISTING paid Mass DM
-// machinery: composed by the buyer, queued as pending_review by fulfilment,
-// approved by an admin in @dexvraadminbot, delivered by the main bot's sender.
-// Nothing here sends anything.
+// separately. It is ONE TAP on the pay card and there is nothing to write: the
+// message is the LISTING CARD itself ("kalo listing ya template listing itu"),
+// rendered by fulfilment from the same template the channel post uses and
+// delivered by the main bot's existing Mass DM sender. Nothing here sends
+// anything, and nothing here decides what it says.
 //
 // ⚠️ THE FEE IS MASS_DM_PRICE ITSELF, NOT A SECOND TABLE. "ikuti price mass dm"
 // — so the add-on charges exactly what the standalone product charges, read
@@ -25,7 +26,6 @@
 // paying for.
 const { MASS_DM_PRICE, MASS_DM_ENABLED } = require("./constants");
 const { payNativeOf } = require("./chains");
-const { addAmount } = require("../payments/units");
 
 /**
  * What the add-on costs for a token on `tokenChain`, in that order's own
@@ -54,35 +54,12 @@ function addonPrice(tokenChain) {
   return addonPriceForNative(payNativeOf(tokenChain));
 }
 
-/** Can a listing on this chain attach a broadcast at all? */
-const canAddBroadcast = (tokenChain) => addonPrice(tokenChain) != null;
+// ⚠️ THREE HELPERS WERE DELETED HERE, not left "in case". `canAddBroadcast`,
+// `pricesWithAddon` and `totalWithAddon` folded the fee into the price table
+// the NETWORK PICKER is built from — right while the button lived on the review
+// card, and wrong now that the add-on is attached after a rail is chosen. A
+// function that binds nothing is the row the engine ignores; one that binds the
+// wrong thing is worse, and `pricesWithAddon` would have quoted every buyer the
+// add-on price whether or not they wanted it.
 
-/**
- * The order's price table WITH the add-on folded in, keyed by currency exactly
- * as payOptionsFor() expects.
- *
- * ⚠️ A CURRENCY THE ADD-ON CANNOT PRICE IS DROPPED, never carried at its bare
- * base price. payOptionsFor() turns this table into the networks an order may
- * settle on, so leaving TRX in it would offer a Tron rail that charges for the
- * listing and delivers a broadcast for free. Dropping it is safe because the
- * button is only ever shown where the order's OWN currency survives.
- */
-function pricesWithAddon(basePrices, tokenChain) {
-  const fee = addonPrice(tokenChain);
-  if (fee == null) return { ...(basePrices || {}) };
-  const out = {};
-  for (const [native, base] of Object.entries(basePrices || {})) {
-    const each = Number(MASS_DM_PRICE[native]);
-    if (!(each > 0) || !(Number(base) > 0)) continue;
-    out[native] = addAmount(base, each);
-  }
-  return out;
-}
-
-/** The order's own total — base + fee in the currency it settles in. */
-function totalWithAddon(baseAmount, tokenChain) {
-  const fee = addonPrice(tokenChain);
-  return fee == null ? baseAmount : addAmount(baseAmount, fee);
-}
-
-module.exports = { addonPrice, addonPriceForNative, canAddBroadcast, pricesWithAddon, totalWithAddon };
+module.exports = { addonPrice, addonPriceForNative };

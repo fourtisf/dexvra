@@ -992,22 +992,22 @@ const DEFAULTS = {
     "⚠️ **We're on it.**\n\n" +
     "Your payment arrived (ref `{ref}`) but queuing the broadcast hit a snag. Your funds are safe — contact support with this ref and we'll push it through.",
   // ── Broadcast add-on on a listing order ──────────────────────────────────
-  broadcast_addon_prompt:
-    "📣 **Add a broadcast to this order**\n\n" +
-    "🔹 Your message is DM'd to **every Dexvra bot user**, after an admin approves it.\n"  +
-    "🔹 Fee: **{fee}**, added to this order — one payment, one network.\n\n" +
-    "Send it now — **text, or a photo with a caption** (formatting & emoji are kept), or /cancel to go back.",
-  broadcast_addon_attached:
-    "📣 **Broadcast attached** — **{fee}** added.\n\n" +
-    "🔹 It goes out after an admin approves it. Tap ✏️ Broadcast on the review card to rewrite it, or ❌ to drop it.",
+  // ⚠️ NO COMPOSE PROMPT ANY MORE, and no "attached" toast: the add-on is one
+  // tap and the card itself shows the state. The prompt/attached copy is gone
+  // rather than reworded — a template an operator can still edit for a step
+  // that no longer exists is the row the engine ignores.
+  broadcast_addon_sending:
+    "📣 **Your broadcast is going out now.**\n\n" +
+    "Ref `{ref}`. Every Dexvra bot user is being DM'd your listing card — the same one that just went to the channel. You'll get a receipt here when it's done.",
+  // Kept for an order armed BEFORE the add-on became one tap: it carries the
+  // buyer's own composed message and still goes through review, which is what
+  // they bought. recovery.js re-checks pending orders for a day.
   broadcast_addon_queued:
     "📣 **Your broadcast is in review.**\n\n" +
     "Ref `{ref}`. An admin will approve it shortly; delivery starts right after.",
   broadcast_addon_failed:
     "⚠️ **Your listing is live — the broadcast needs a hand.**\n\n" +
     "Queuing it hit a snag (ref `{ref}`). Nothing else about your order changed. Contact support with this ref and we'll push it through.",
-  broadcast_addon_unavailable:
-    "🔹 The broadcast add-on isn't available for **{chain}** — it is billed in that chain's own coin and we don't price it there yet.",
   massdm_test_queued:
     "🧪 **Test broadcast queued (FREE).**\n\n" +
     "It'll be delivered to the admins and you within a few seconds, with a delivery report — no review, no charge.",
@@ -1349,11 +1349,9 @@ const META = {
   massdm_received: { group: "Mass DM", label: "Mass DM: paid, in review", ph: ["ref"] },
   massdm_enqueue_failed: { group: "Mass DM", label: "Mass DM: enqueue failed", ph: ["ref"] },
   massdm_test_queued: { group: "Mass DM", label: "Mass DM: test queued", ph: [] },
-  broadcast_addon_prompt: { group: "Mass DM", label: "Broadcast add-on: compose prompt", ph: ["fee"] },
-  broadcast_addon_attached: { group: "Mass DM", label: "Broadcast add-on: attached", ph: ["fee"] },
-  broadcast_addon_queued: { group: "Mass DM", label: "Broadcast add-on: queued for review", ph: ["ref"] },
+  broadcast_addon_sending: { group: "Mass DM", label: "Broadcast add-on: sending now", ph: ["ref"] },
+  broadcast_addon_queued: { group: "Mass DM", label: "Broadcast add-on: queued for review (legacy order)", ph: ["ref"] },
   broadcast_addon_failed: { group: "Mass DM", label: "Broadcast add-on: enqueue failed", ph: ["ref"] },
-  broadcast_addon_unavailable: { group: "Mass DM", label: "Broadcast add-on: not on this chain", ph: ["chain"] },
   massdm_done: { group: "Mass DM", label: "Mass DM: delivered receipt", ph: ["ref", "reached"] },
   post_listing_xpress: { group: "Channel Posts", label: "Post: Xpress Listing", ph: ["name", "symbol", "logoEmoji", "coinUrl", "xUrl", "tradeUrl", "chainEmoji", "chain", "address", "liq", "mcap", "price", "twitter", "website", "telegram", "site", "listing", "trending", "announce", "xlisting"] },
   post_listing_tiered: { group: "Channel Posts", label: "Post: Listing & Trending", ph: ["name", "symbol", "logoEmoji", "tierEmoji", "tier", "coinUrl", "xUrl", "tradeUrl", "chainEmoji", "chain", "address", "liq", "mcap", "price", "twitter", "website", "telegram", "site", "listing", "trending", "announce", "xlisting"] },

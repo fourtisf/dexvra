@@ -4,7 +4,7 @@
 const test = require("node:test");
 const assert = require("node:assert");
 const post = require("../src/channels/post");
-const { _fitCaption } = post;
+const { fitCaption: _fitCaption } = post;
 
 test("sendMedia passes a Buffer to Telegram as {source} (regression: banner dropped to text)", async () => {
   let captured = null;

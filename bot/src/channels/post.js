@@ -229,5 +229,8 @@ async function sendMedia(channel, media, payload, { replyTo, pin } = {}) {
 // a send helper: the board refresh runs trendingPoster.runOnce(tg) in this
 // process on behalf of @dexvraadminbot, which has no Telegram of its own that
 // owns the board message.
-module.exports = { attach, sendText, sendPhoto, sendMedia, ensurePinned, mirrorToGroup, CHANNELS, GROUP_CHAT, isAttached: () => !!tg, telegram: () => tg };
-module.exports._fitCaption = fitCaption; // exposed for tests
+// fitCaption is exported under its own name: it has real callers outside this
+// module (the gainers preview, and the listing broadcast, which must cut a
+// caption exactly where a channel post does) and an underscore said "test only"
+// about a function two features already depend on.
+module.exports = { attach, sendText, sendPhoto, sendMedia, fitCaption, ensurePinned, mirrorToGroup, CHANNELS, GROUP_CHAT, isAttached: () => !!tg, telegram: () => tg };

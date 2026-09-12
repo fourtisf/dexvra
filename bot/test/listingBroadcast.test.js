@@ -6,14 +6,16 @@
 // mints a fresh keypair on every call, so re-arming the order would hand the
 // buyer a SECOND address — and a buyer who had already sent to the first would
 // have paid into a wallet this order no longer verifies against. The order is
-// edited in place instead: same address, higher total, and verifyPayment
-// compares the BALANCE there against the new amount, so what was already sent
-// still counts.
+// edited in place instead: same address, new total, and verifyPayment compares
+// the BALANCE there against it, so what was already sent still counts.
 //
-// The other two rules: the fee is MASS_DM_PRICE itself (one table, two
-// products), and it is charged in the order's OWN currency — which on this path
-// is `order.native`, because by the pay card a Robinhood buyer may have picked
-// either ETH rail.
+// "no need approve … intinya automatic broadcastnya dan kalo listing ya
+// template listing itu" — so it is ONE TAP (nothing to compose), the content is
+// the LISTING CARD, and it sends itself. The three rules that survive from the
+// first cut: the fee is MASS_DM_PRICE itself (one table, two products), it is
+// charged in the order's OWN currency (`order.native` — by the pay card a
+// Robinhood buyer may have picked either ETH rail), and a currency the add-on
+// cannot price is never offered the button.
 const path = require("node:path");
 const os = require("node:os");
 const fss = require("node:fs");
@@ -22,7 +24,7 @@ process.env.BOT_DATA_DIR = fss.mkdtempSync(path.join(os.tmpdir(), "dexvra-bcaddo
 const test = require("node:test");
 const assert = require("node:assert");
 
-const { addAmount, toSmallest } = require("../src/payments/units");
+const { addAmount, subAmount, toSmallest } = require("../src/payments/units");
 const addon = require("../src/config/broadcastAddon");
 const { TIER_MAP } = require("../src/config/packages");
 const { MASS_DM_PRICE } = require("../src/config/constants");
@@ -43,6 +45,18 @@ test("⚠️ two package prices add EXACTLY, not in float", () => {
   assert.strictEqual(addAmount(2.8, 0.15), 2.95);
   assert.strictEqual(addAmount(1, 2), 3);
   assert.strictEqual(addAmount(900, 0.15), 900.15);
+});
+
+// ⚠️ THE TOGGLE IS WHY THIS EXISTS. Removing the add-on has to land back on the
+// package's own listed price to the digit, and `1.3 - 0.15` is
+// 1.1500000000000001 — a number in no price table, on the card that takes the
+// money.
+test("⚠️ …and taking the add-on back off lands on the listed price EXACTLY", () => {
+  assert.strictEqual(1.3 - 0.15, 1.1500000000000001, "if this ever stops being true, delete subAmount");
+  assert.strictEqual(subAmount(1.3, 0.15), 1.15);
+  for (const [base, fee] of [[1.15, 0.15], [0.06, 0.1], [1, 2], [5, 2], [0.26, 0.1], [900, 0.15]]) {
+    assert.strictEqual(subAmount(addAmount(base, fee), fee), base, `${base} + ${fee} - ${fee}`);
+  }
 });
 
 // ⚠️ The SHIPPED DEFAULT, read out of the SOURCE rather than off the resolved
@@ -101,7 +115,7 @@ const mkCtx = () => {
 };
 const buttons = (ctx) => {
   const last = ctx.sent[ctx.sent.length - 1] || {};
-  const rows = ((last.extra.reply_markup || {}).inline_keyboard || []);
+  const rows = (last.extra.reply_markup || {}).inline_keyboard || [];
   return rows.flat().map((b) => b.text);
 };
 const lastText = (ctx) => (ctx.sent[ctx.sent.length - 1] || {}).text || "";
@@ -140,13 +154,17 @@ async function arm(o, { admin = false } = {}) {
     if (realAdmin == null) delete process.env.ADMIN_IDS;
     else process.env.ADMIN_IDS = realAdmin;
   }
-  return { ctx, walletsMade: () => wallets_made, restubWallet: () => {
-    wallets.generateWallet = async () => {
-      wallets_made += 1;
-      return { address: "SECOND_ADDRESS" };
-    };
-    return () => (wallets.generateWallet = realW);
-  } };
+  return {
+    ctx,
+    walletsMade: () => wallets_made,
+    restubWallet: () => {
+      wallets.generateWallet = async () => {
+        wallets_made += 1;
+        return { address: "SECOND_ADDRESS" };
+      };
+      return () => (wallets.generateWallet = realW);
+    },
+  };
 }
 
 test("the pay card offers the add-on, with its fee on the button", async () => {
@@ -156,6 +174,7 @@ test("the pay card offers the add-on, with its fee on the button", async () => {
   assert.ok(row.includes(`${MASS_DM_PRICE.SOL} SOL`), `the fee is on the button: ${row}`);
   assert.ok(buttons(ctx).some((t) => /Confirm/.test(t)), "…beside Confirm, not instead of it");
   assert.match(lastText(ctx), new RegExp(String(XPRESS.SOL)), "the card still quotes the listing price alone");
+  assert.ok(!/Includes a Mass DM Broadcast/.test(lastText(ctx)), "…and claims nothing it has not added");
 });
 
 test("⚠️ a Tron order's card carries NO such button", async () => {
@@ -169,9 +188,7 @@ test("⚠️ adding it does NOT change the deposit address", async () => {
   const before = ctx.session.pendingPayment.address;
   const undo = a.restubWallet(); // any re-arm from here would mint SECOND_ADDRESS
   try {
-    await pay.broadcastAsk(ctx);
-    assert.strictEqual(ctx.session.awaitingPayBroadcast, true);
-    await pay.broadcastCapture(ctx, { text: "gm", entities: [], mediaFileId: null });
+    await pay.broadcastToggle(ctx);
   } finally {
     undo();
   }
@@ -180,102 +197,189 @@ test("⚠️ adding it does NOT change the deposit address", async () => {
   assert.strictEqual(a.walletsMade(), 1, "exactly one wallet was ever minted for this order");
 });
 
-test("…and the total, the smallest-unit amount and the message all move together", async () => {
+test("…and the total, the smallest-unit amount and the card all move together", async () => {
   const { ctx } = await arm(order());
-  await pay.broadcastAsk(ctx);
-  await pay.broadcastCapture(ctx, { text: "  gm", entities: [{ type: "bold", offset: 2, length: 2 }], mediaFileId: null });
+  await pay.broadcastToggle(ctx);
   const o = ctx.session.pendingPayment.order;
   const total = addAmount(XPRESS.SOL, MASS_DM_PRICE.SOL);
   assert.strictEqual(o.humanAmount, total);
   assert.strictEqual(o.amountSmallest, toSmallest("solana", total).toString(), "what verifyPayment compares against");
-  assert.strictEqual(o.payload.broadcast.text, "  gm", "RAW — trimming shifts every entity offset");
-  assert.deepStrictEqual(o.payload.broadcast.entities, [{ type: "bold", offset: 2, length: 2 }]);
+  assert.strictEqual(o.payload.broadcast, true, "a marker — the CONTENT is built at fulfilment from the listing");
   assert.match(lastText(ctx), new RegExp(String(total)), "the redrawn card quotes the new total");
 });
 
-test("…and the button is gone once it is attached", async () => {
+// ⚠️ The buyer is about to send a number they did not pick off a price list. The
+// card has to say why it is bigger than the tier they chose — and `pay_card` is
+// editable in @dexvraadminbot, so it is appended rather than trusted.
+test("⚠️ the card SAYS the broadcast is in the price", async () => {
   const { ctx } = await arm(order());
-  await pay.broadcastAsk(ctx);
-  await pay.broadcastCapture(ctx, { text: "gm", entities: [], mediaFileId: null });
-  assert.ok(!buttons(ctx).some((t) => /Add Broadcast/.test(t)), "nothing may be charged for twice");
+  await pay.broadcastToggle(ctx);
+  assert.match(lastText(ctx), /Includes a Mass DM Broadcast to all users \(\+2 SOL\)/);
 });
 
-test("a photo with a caption can BE the broadcast", async () => {
-  const { ctx } = await arm(order());
-  await pay.broadcastAsk(ctx);
-  await pay.broadcastCapture(ctx, { text: "gm", entities: [], mediaFileId: "PHOTO1" });
-  assert.strictEqual(ctx.session.pendingPayment.order.payload.broadcast.mediaFileId, "PHOTO1");
+test("⚠️ …even over an operator's own saved card, which carries no such line", () => {
+  const saved = pay.ensureBroadcastLine({ text: "Pay me 3 SOL", entities: [] }, "2 SOL");
+  assert.match(saved.text, /Includes a Mass DM Broadcast to all users \(\+2 SOL\)/);
+  const bold = saved.entities.find((e) => e.type === "bold");
+  assert.ok(bold, "the line is bolded so it reads as part of the price");
+  assert.strictEqual(
+    saved.text.slice(bold.offset, bold.offset + bold.length),
+    "Includes a Mass DM Broadcast to all users (+2 SOL)",
+    "⚠️ an entity offset that lands off the words is markup on the wrong run",
+  );
+  assert.strictEqual(pay.ensureBroadcastLine({ text: "x", entities: [] }, null).text, "x", "nothing added when nothing is attached");
 });
 
-test("↩️ leaves the order exactly as it was", async () => {
+test("the button says it is attached, and offers the way back", async () => {
   const { ctx } = await arm(order());
-  await pay.broadcastAsk(ctx);
-  await pay.broadcastCancel(ctx);
+  await pay.broadcastToggle(ctx);
+  const row = buttons(ctx).find((t) => /Broadcast/.test(t));
+  assert.match(row, /tap to remove/, "the card has no other exit that leaves the order armed");
+  assert.ok(!/Add Broadcast/.test(row), "nothing may be charged for twice");
+});
+
+test("⚠️ a second tap takes it back off, exactly", async () => {
+  const a = await arm(order());
+  const { ctx } = a;
+  await pay.broadcastToggle(ctx);
+  const undo = a.restubWallet();
+  try {
+    await pay.broadcastToggle(ctx);
+  } finally {
+    undo();
+  }
   const o = ctx.session.pendingPayment.order;
-  assert.strictEqual(ctx.session.awaitingPayBroadcast, false);
-  assert.strictEqual(o.humanAmount, XPRESS.SOL, "nothing added");
-  assert.ok(!o.payload.broadcast);
-  assert.ok(buttons(ctx).some((t) => /Add Broadcast/.test(t)), "the card comes back with the offer intact");
+  assert.strictEqual(o.humanAmount, XPRESS.SOL, "back to the package's own listed price");
+  assert.strictEqual(o.amountSmallest, toSmallest("solana", XPRESS.SOL).toString());
+  assert.ok(!o.payload.broadcast, "and nothing is queued for it");
+  assert.strictEqual(ctx.session.pendingPayment.address, ADDR, "…still the same deposit address");
+  assert.strictEqual(a.walletsMade(), 1);
+  assert.ok(!/Includes a Mass DM Broadcast/.test(lastText(ctx)), "the card stops claiming it");
+  assert.ok(buttons(ctx).some((t) => /Add Broadcast/.test(t)), "…and offers it again");
 });
 
 test("⚠️ the tap is re-checked, not trusted to the card that offered it", async () => {
   // A pay card left open in the chat outlives a restart that turned the product
-  // off, or an add-on that has since been attached from another tap.
+  // off — and a fee that is gone must not be charged, or refunded, off a stale
+  // button.
   const { ctx } = await arm(order());
-  ctx.session.pendingPayment.order.payload.broadcast = { text: "already", entities: [], mediaFileId: null };
-  await pay.broadcastAsk(ctx);
-  assert.notStrictEqual(ctx.session.awaitingPayBroadcast, true, "it must not open a compose step it would refuse");
+  const real = addon.addonPriceForNative;
+  addon.addonPriceForNative = () => null;
+  try {
+    await pay.broadcastToggle(ctx);
+  } finally {
+    addon.addonPriceForNative = real;
+  }
+  const o = ctx.session.pendingPayment.order;
+  assert.strictEqual(o.humanAmount, XPRESS.SOL, "nothing added");
+  assert.ok(!o.payload.broadcast);
 });
 
 test("⚠️ with no pending payment it says so rather than doing nothing", async () => {
   const ctx = mkCtx();
-  await pay.broadcastAsk(ctx);
+  await pay.broadcastToggle(ctx);
   assert.ok(ctx.sent.length, "a tap that goes nowhere is a dead button");
 });
 
-// ── the routers ─────────────────────────────────────────────────────────────
-//
-// The pay card is shared by every package, so the compose step has no
-// session.type to dispatch on and must be caught ABOVE the flow routers.
-
-test("⚠️ the compose step is answered with NO session.type at all", async () => {
+// ⚠️ THE COMPOSE STEP IS GONE, and this is the behavioural proof rather than a
+// scan for its absence: the routers used to swallow the next message in the chat
+// while a pay card was open. A buyer typing anything at all must now reach the
+// ordinary handling instead.
+test("⚠️ an armed pay card no longer swallows the next message", async () => {
   const text = require("../src/handlers/text");
   const { ctx } = await arm(order());
-  await pay.broadcastAsk(ctx);
   assert.ok(!ctx.session.type, "an armed pay card carries no flow type of its own");
-  // ⚠️ LEADING WHITESPACE ON PURPOSE. The trim this guards against happens in
-  // the ROUTER, so a message with nothing to trim lets the mutant through — it
-  // did, on the first cut of this test. Telegram entity offsets are counted
-  // from the start of the message, so dropping those two spaces moves the bold
-  // run two characters left and the broadcast goes out mis-formatted.
-  ctx.message = { text: "  gm from the pay card", entities: [{ type: "bold", offset: 2, length: 2 }] };
+  ctx.message = { text: "gm", entities: [] };
   await text.textRouter(ctx);
-  const got = ctx.session.pendingPayment.order.payload.broadcast;
-  assert.strictEqual(got.text, "  gm from the pay card", "raw, exactly as Telegram sent it");
-  assert.strictEqual(got.text.slice(2, 4), "gm", "the bold run still covers what it did when it arrived");
-  assert.deepStrictEqual(got.entities, [{ type: "bold", offset: 2, length: 2 }]);
-});
-
-test("…and a photo reaches it the same way", async () => {
-  const text = require("../src/handlers/text");
-  const { ctx } = await arm(order());
-  await pay.broadcastAsk(ctx);
+  assert.ok(!ctx.session.pendingPayment.order.payload.broadcast, "nothing attaches itself from a chat message");
   ctx.message = { photo: [{ file_id: "P9" }], caption: "gm", caption_entities: [] };
   await text.mediaRouter(ctx);
-  assert.strictEqual(ctx.session.pendingPayment.order.payload.broadcast.mediaFileId, "P9");
+  assert.ok(!ctx.session.pendingPayment.order.payload.broadcast);
 });
 
+// ⚠️ `tpl.meta()` SYNTHESISES `{group:"Other"}` for any key at all, so it can
+// never answer this — the assertion it was first written with was vacuous in
+// BOTH directions. `keys()` is what the admin bot's template editor lists.
 test("templates render and are editable in the admin bot", () => {
-  for (const k of ["broadcast_addon_prompt", "broadcast_addon_attached", "broadcast_addon_queued", "broadcast_addon_failed"]) {
-    assert.ok(tpl.meta(k), `${k} must be listed in META or no admin can edit it`);
+  const listed = new Set(tpl.keys());
+  for (const k of ["broadcast_addon_sending", "broadcast_addon_queued", "broadcast_addon_failed"]) {
+    assert.ok(listed.has(k), `${k} must be a real template or no admin can edit it`);
+    assert.strictEqual(tpl.meta(k).group, "Mass DM", `${k} must be grouped, or it is unfindable in the editor`);
   }
-  assert.match(tpl.render("broadcast_addon_prompt", { fee: "0.3 BNB" }).text, /0\.3 BNB/);
+  assert.match(tpl.render("broadcast_addon_sending", { ref: "MD-7" }).text, /MD-7/);
+  // The compose step is gone; a template for a step that no longer exists is a
+  // row the engine ignores, still editable by an operator who will never see it.
+  for (const k of ["broadcast_addon_prompt", "broadcast_addon_attached", "broadcast_addon_unavailable"]) {
+    assert.ok(!listed.has(k), `${k} belongs to the compose step that was deleted`);
+  }
+});
+
+// ── the content: the listing card itself ────────────────────────────────────
+
+const fulfilment = require("../src/fulfillment");
+const fmt = require("../src/channels/format");
+
+const coin = () => ({
+  symbol: "ACAI",
+  name: "Acai",
+  chain: "solana",
+  address: "So11111111111111111111111111111111111111112",
+  price: 1,
+  mcap: 1000,
+  siteUrl: "https://dexvra.io/token/solana/So1111",
+});
+
+test("⚠️ the broadcast IS the listing post, not a second wording of it", () => {
+  const c = coin();
+  const b = fulfilment._listingBroadcast(c, null);
+  const { payloadArgs } = require("../src/helpers/message");
+  const { text } = payloadArgs(fmt.listingPost(c), false);
+  assert.strictEqual(b.text, text, "one owner of the wording — the listing template");
+  assert.ok(b.text.length, "…and it rendered something");
+});
+
+// ⚠️ Telegram caps a media caption at 1024 UTF-16 units and THROWS past it,
+// which would drop the whole DM rather than the picture.
+test("⚠️ …trimmed to a caption when it rides artwork, and only then", () => {
+  const c = { ...coin(), name: "A".repeat(1400) };
+  const withArt = fulfilment._listingBroadcast(c, { source: Buffer.from("x") });
+  const plain = fulfilment._listingBroadcast(c, null);
+  assert.ok(withArt.text.length <= 1024, `caption is ${withArt.text.length}`);
+  assert.ok(plain.text.length > 1024, "a text-only broadcast keeps the full 4096");
+  const post = require("../src/channels/post");
+  assert.strictEqual(typeof post.fitCaption, "function", "the one owner of that cut");
+});
+
+// ⚠️ postMedia returns a composited still, an admin GIF/MP4 clip, a bare file_id
+// or a URL — and a clip pushed through sendPhoto is an error, not a still.
+test("⚠️ the media TYPE travels with the media", () => {
+  const m = fulfilment._broadcastMedia;
+  assert.deepStrictEqual(m(null, "o1"), {});
+  assert.deepStrictEqual(m("AgACfileid", "o1"), { mediaFileId: "AgACfileid", mediaType: "photo" });
+  assert.deepStrictEqual(m({ source: "/tmp/clip.mp4", type: "animation" }, "o1"), {
+    mediaPath: "/tmp/clip.mp4",
+    mediaType: "animation",
+  });
+  assert.deepStrictEqual(m({ source: "/tmp/b.png" }, "o1"), { mediaPath: "/tmp/b.png", mediaType: "photo" });
+  const buf = m({ source: Buffer.from("PNGBYTES"), type: "photo" }, "o-buf");
+  assert.strictEqual(buf.mediaType, "photo");
+  assert.strictEqual(fss.readFileSync(buf.mediaPath, "utf8"), "PNGBYTES", "a Buffer is written out — the job is persisted");
+});
+
+test("⚠️ …and the sender picks the method from it", () => {
+  const sender = require("../src/massdm/sender");
+  assert.strictEqual(sender._sendMethod({ mediaType: "animation" }), "sendAnimation");
+  assert.strictEqual(sender._sendMethod({ mediaType: "video" }), "sendVideo");
+  assert.strictEqual(sender._sendMethod({ mediaType: "photo" }), "sendPhoto");
+  assert.strictEqual(sender._sendMethod({}), "sendPhoto", "every job before this one was a photo");
+  assert.strictEqual(sender._fileIdOf({ animation: { file_id: "A1" } }, "animation"), "A1");
+  assert.strictEqual(sender._fileIdOf({ video: { file_id: "V1" } }, "video"), "V1");
+  assert.strictEqual(sender._fileIdOf({ photo: [{ file_id: "P0" }, { file_id: "P1" }] }, "photo"), "P1");
 });
 
 // ── the queue, DRIVEN ───────────────────────────────────────────────────────
 
 const massStore = require("../src/massdm/store");
-const fulfilment = require("../src/fulfillment");
 
 function stubStore(onCreate) {
   const realCreate = massStore.createJob;
@@ -298,20 +402,56 @@ const queueCtx = () => ({
   reply: async () => ({ message_id: 1 }),
 });
 
-test("a composed broadcast becomes a pending_review job for the whole audience", async () => {
+test("a broadcast becomes a job for the whole audience", async () => {
   let seen = null;
   const restore = stubStore((j) => (seen = j));
   let r;
   try {
-    r = await fulfilment.queueBroadcast(queueCtx(), { id: "ord1", buyerId: 9 }, { text: "gm", entities: [{ type: "bold", offset: 0, length: 2 }], mediaFileId: null });
+    r = await fulfilment.queueBroadcast(
+      queueCtx(),
+      { id: "ord1", buyerId: 9 },
+      { text: "gm", entities: [{ type: "bold", offset: 0, length: 2 }], mediaFileId: null },
+    );
   } finally {
     restore();
   }
   assert.strictEqual(r.ok, true);
   assert.ok(r.ref, "the buyer is given a ref to quote");
   assert.strictEqual(seen.text, "gm");
-  assert.strictEqual(seen.test, false, "a PAID broadcast is queued for review, never sent straight out");
+  assert.strictEqual(seen.test, false, "never an admin test run — this one was paid for");
   assert.deepStrictEqual(seen.targets, [1, 2, 3], "the same audience the standalone product reaches");
+});
+
+// ⚠️ THE BOUNDARY. `autoSend` says the BOT wrote this, and nothing wider.
+test("⚠️ the standalone /massdm product still waits for a human", async () => {
+  let seen = null;
+  const restore = stubStore((j) => (seen = j));
+  try {
+    await fulfilment.fulfillMassDm(queueCtx(), { id: "ord2", buyerId: 9, payload: { text: "buy my coin", entities: [] } });
+  } finally {
+    restore();
+  }
+  assert.strictEqual(seen.autoSend, false, "free text a stranger typed, at 12,000 inboxes");
+  assert.strictEqual(massStore.createJob.length >= 0, true);
+});
+
+test("⚠️ …and the store really keeps it out of the sender until then", async () => {
+  // The sender polls in_progress and nothing else, so the STATUS is the gate.
+  const dir = fss.mkdtempSync(path.join(os.tmpdir(), "dexvra-mdstatus-"));
+  const real = massStore.saveJob;
+  massStore.saveJob = async () => {};
+  try {
+    const reviewed = await massStore.createJob({ text: "x", targets: [1] });
+    const auto = await massStore.createJob({ text: "x", targets: [1], autoSend: true });
+    const admin = await massStore.createJob({ text: "x", targets: [1], test: true });
+    assert.strictEqual(reviewed.status, "pending_review");
+    assert.strictEqual(auto.status, "in_progress");
+    assert.strictEqual(auto.test, false, "an auto job is NOT an admin test — it gets its receipt");
+    assert.strictEqual(admin.status, "in_progress");
+  } finally {
+    massStore.saveJob = real;
+    fss.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("⚠️ a queue that will not take it comes back ok:false — it never throws", async () => {
@@ -383,7 +523,13 @@ async function fulfilWith(broadcast) {
       native: "SOL",
       humanAmount: broadcast ? 3 : 1,
       payload: {
-        listingInput: { chain: "solana", address: "So11111111111111111111111111111111111111112", sym: "ACAI", name: "Acai", tier: "XPRESS" },
+        listingInput: {
+          chain: "solana",
+          address: "So11111111111111111111111111111111111111112",
+          sym: "ACAI",
+          name: "Acai",
+          tier: "XPRESS",
+        },
         logoFileId: null,
         trendHours: 0,
         broadcast: broadcast || null,
@@ -396,11 +542,22 @@ async function fulfilWith(broadcast) {
   return queued;
 }
 
-test("⚠️ a listing PAID for with a broadcast really queues one", async () => {
-  const q = await fulfilWith({ text: "gm from Acai", entities: [], mediaFileId: null });
+test("⚠️ a listing PAID for with a broadcast really queues one — and it SENDS", async () => {
+  const q = await fulfilWith(true);
   assert.ok(q, "the buyer paid for a broadcast — it has to reach the queue");
-  assert.strictEqual(q.text, "gm from Acai");
-  assert.strictEqual(q.test, false, "paid → pending_review, never sent straight out");
+  assert.match(q.text, /ACAI/, "the listing card, not a message anybody typed");
+  assert.strictEqual(q.autoSend, true, "the bot wrote it; the channel is already showing it");
+  assert.strictEqual(q.test, false, "…which is not the same thing as an admin test run");
+  assert.deepStrictEqual(q.targets, [1, 2, 3]);
+});
+
+// recovery.js re-checks pending orders for a day, so an order armed before the
+// add-on became one tap can still be paid across this deploy. It carries the
+// buyer's own words, and those go through the review it was sold under.
+test("⚠️ …but an order composed under the OLD flow keeps its review", async () => {
+  const q = await fulfilWith({ text: "gm from Acai", entities: [], mediaFileId: null });
+  assert.strictEqual(q.text, "gm from Acai", "what the buyer actually wrote");
+  assert.strictEqual(q.autoSend, false, "a stranger's free text never sends itself");
 });
 
 test("…and a listing without one queues nothing at all", async () => {

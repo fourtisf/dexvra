@@ -33,10 +33,26 @@ function jobExtra(job, forCaption) {
     : { parse_mode: "HTML", disable_web_page_preview: true };
 }
 
+// ⚠️ A CLIP SENT THROUGH sendPhoto IS AN ERROR, NOT A STILL. The listing
+// broadcast add-on carries the SAME artwork the channel post does, and on a box
+// with an admin banner clip configured that is a GIF/MP4 — so the method has to
+// follow the media, exactly as channels/post.sendMedia already does. Anything
+// unknown is a photo, which is what every job before this one was.
+const METHOD = { animation: "sendAnimation", video: "sendVideo" };
+const sendMethod = (job) => METHOD[job && job.mediaType] || "sendPhoto";
+/** The file_id Telegram hands back, under whichever key this media type uses. */
+function fileIdOf(msg, kind) {
+  if (!msg) return null;
+  if (kind === "animation") return msg.animation && msg.animation.file_id;
+  if (kind === "video") return msg.video && msg.video.file_id;
+  const photos = msg.photo;
+  return photos && photos.length ? photos[photos.length - 1].file_id : null;
+}
+
 async function sendOne(telegram, job, userId) {
   try {
     if (job.mediaFileId) {
-      await telegram.sendPhoto(userId, job.mediaFileId, job.text ? jobExtra(job, true) : {});
+      await telegram[sendMethod(job)](userId, job.mediaFileId, job.text ? jobExtra(job, true) : {});
     } else {
       await telegram.sendMessage(userId, job.text, jobExtra(job, false));
     }
@@ -56,9 +72,9 @@ async function primeMedia(telegram, job) {
   const first = job.targets[job.cursor];
   if (first == null) return;
   try {
-    const msg = await telegram.sendPhoto(first, { source: job.mediaPath }, job.text ? jobExtra(job, true) : {});
-    const photos = msg && msg.photo;
-    if (photos && photos.length) job.mediaFileId = photos[photos.length - 1].file_id;
+    const msg = await telegram[sendMethod(job)](first, { source: job.mediaPath }, job.text ? jobExtra(job, true) : {});
+    const id = fileIdOf(msg, job.mediaType);
+    if (id) job.mediaFileId = id;
     job.sent += 1;
     job.cursor += 1;
     await store.saveJob(job);
@@ -107,7 +123,9 @@ async function runJob(telegram, job) {
   job.status = "in_progress";
   job.startedAt = job.startedAt || Date.now();
   await store.saveJob(job);
-  log.info(`[massdm] running ${job.id} (${job.total} targets${job.test ? ", TEST" : ""})`);
+  log.info(
+    `[massdm] running ${job.id} (${job.total} targets${job.test ? ", TEST" : ""}${job.autoSend ? ", auto" : ""}, ${job.mediaFileId || job.mediaPath ? job.mediaType || "photo" : "text"})`,
+  );
 
   await primeMedia(telegram, job);
 
@@ -159,4 +177,4 @@ function start(telegram) {
   };
 }
 
-module.exports = { start, runJob };
+module.exports = { start, runJob, _sendMethod: sendMethod, _fileIdOf: fileIdOf };

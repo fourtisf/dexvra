@@ -10759,7 +10759,7 @@ trimming it changed nothing. A test that cannot reach the defect is a test about
 nothing; it carries two leading spaces and a bold run over them now.
 
 ```bash
-cd bot && node scripts/run-tests.js test/listingBroadcast.test.js   # 23 tests, no network
+cd bot && node scripts/run-tests.js test/listingBroadcast.test.js   # 28 tests, no network
 ```
 
 **Config a fix depends on:** nothing to ADD — but ⚠️ **a box that already set
@@ -10770,6 +10770,97 @@ is the check, and unsetting those lines is what picks the full price up.
 `MASS_DM_ENABLED=0` removes the button everywhere. ⚠️ Scoped to the LISTING
 flow deliberately: trending and banner orders do not offer it, and adding them
 is the same three lines in their own `goPay` if that is wanted.
+
+### "no need approve … kalo listing ya template listing itu"
+
+Reported with a screenshot of our own compose prompt — *"Your message is DM'd to
+every Dexvra bot user, **after an admin approves it**. Send it now — text, or a
+photo with a caption"* — beside fourtis's card, where the same tap simply
+answers `✅ Broadcast added (+2 SOL) — tap to remove` and the amount goes from
+`1.0` to `3.0 SOL`. **No compose step, no review, and the thing that goes out is
+the listing.** Three changes, and the first is the one that deletes the other
+two's problems.
+
+- **ONE TAP, and there is nothing to write.** The compose step asked the buyer
+  for a message the bot already had: *the listing card it is about to post to
+  the channel*. `listingBroadcast(coin, media)` renders it from
+  `fmt.listingPost(coin)` — the same admin-editable template the channel post
+  uses, so a broadcast can never drift from the post above it — and the whole
+  text path goes with it: the RAW-vs-trimmed entity offsets, a step that had to
+  run above every flow router because the pay card has no `session.type` of its
+  own, a `/cancel` with no card to return to.
+- ⚠️ **SO IT IS A TOGGLE, because the card has no other way back.** A one-way
+  add would leave a buyer who changed their mind with nothing to tap and an
+  order that cannot be re-armed (see the address rule above).
+  ⚠️ **And `1.3 − 0.15` is `1.1500000000000001`** — a number in no price table,
+  on the card that takes the money. `subAmount` is `addAmount`'s exact inverse
+  on the same integer scale; the toggle lands back on the package's own listed
+  price to the digit, `amountSmallest` included.
+- **`autoSend` is the boundary, and it is narrow.** It says *the bot wrote
+  this*: the add-on DMs the card `@dexvraio` is already showing, so there is
+  nothing for an admin to read that is not public. The standalone `/massdm`
+  product — free text a stranger typed, at 12,000 inboxes — still waits for a
+  human, which is what the store's own anti-spam header is about. A test drives
+  `fulfillMassDm` and asserts it.
+  ⚠️ `autoSend` is NOT `test`: an admin test run skips the receipt and is
+  labelled a test in the report, and a paid broadcast is neither.
+- ⚠️ **A CLIP SENT THROUGH `sendPhoto` IS AN ERROR, NOT A STILL.** The broadcast
+  carries the same artwork the channel post does, and on a box with an admin
+  banner clip configured that is a GIF/MP4 — so `mediaType` travels with the
+  media and the sender picks `sendPhoto`/`sendAnimation`/`sendVideo` the way
+  `channels/post.sendMedia` already does. Without it the DM would have arrived
+  as text with no artwork at all, which is the half of the listing card that
+  makes it worth sending.
+- ⚠️ **The caption is trimmed by `post.fitCaption`, the ONE owner of that cut.**
+  Telegram caps a media caption at 1024 UTF-16 units and THROWS past it, so an
+  untrimmed listing card would drop the whole DM rather than the picture. A
+  text-only broadcast keeps the full 4096. (`fitCaption` lost its `_` prefix
+  while doing this: it had two production callers already, and an underscore
+  saying "test only" about a function two features depend on is a comment that
+  is simply false.)
+- **The card SAYS the broadcast is in the price**, enforced at the call site
+  exactly as `{network}` is and for the same reason — `pay_card` is editable in
+  @dexvraadminbot and an operator's saved copy wins for ever. It cannot be a
+  placeholder either way: whether the add-on is attached is a fact about the
+  ORDER, not about the card, so appending is the mechanism rather than a
+  fallback. The buyer is about to send a number they did not pick off a price
+  list.
+- ⚠️ **An order armed BEFORE this deploy still carries the buyer's own composed
+  message, and it keeps the review it was sold under.** `recovery.js` re-checks
+  pending orders for a day, so one paid across the deploy is a real case rather
+  than a hypothetical: `p.broadcast` carrying text takes the old path, `true`
+  takes the listing card.
+- **Three dead helpers were DELETED, not left "in case".** `canAddBroadcast`,
+  `pricesWithAddon` and `totalWithAddon` folded the fee into the price table the
+  NETWORK PICKER is built from — right while the button lived on the review
+  card, and wrong now the add-on is attached after a rail is chosen. A function
+  that binds nothing is the row the engine ignores; `pricesWithAddon` binds the
+  wrong thing, which is worse.
+- ⚠️ **`tpl.meta()` SYNTHESISES `{group:"Other"}` for any key at all**, so the
+  "these templates are editable in the admin bot" assertion this section shipped
+  with was vacuous in BOTH directions — it could not have failed for a template
+  that does not exist. `tpl.keys()` is what the editor lists.
+
+```bash
+cd bot && node scripts/run-tests.js test/listingBroadcast.test.js   # 28 tests, no network
+pm2 logs dexvra-bot --lines 200 --nostream | grep -F '[massdm]'     # running … , auto, animation
+```
+
+Eighteen guarantees are MUTATION-TESTED rather than argued: the add-on not
+auto-sending, the standalone product auto-sending, the store ignoring
+`autoSend`, an auto job marked as an admin test, the content not being the
+listing card, the caption untrimmed, the media type dropped, the sender ignoring
+it, the removal subtracting in float, the toggle only ever adding, the removal
+leaving the marker or the smallest unit behind, the card never naming the
+add-on, its bold landing off the words, the fee not re-checked at the tap, the
+button never offering the way back, a listing with no add-on queueing one, and
+an old composed order overwritten by the listing card. Each fails between one
+and two tests.
+
+**Config a fix depends on:** nothing new. ⚠️ `MASS_DM_REVIEW_CHAT_ID` now also
+receives a *notice* (`📣 Listing broadcast going out now — ref …, N recipients`)
+rather than only a review request, because a paid DM reaching the whole audience
+with nothing anywhere recording it is the silence this repo keeps paying for.
 
 ## Conventions
 

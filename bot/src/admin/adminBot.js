@@ -131,7 +131,6 @@ const SAMPLE_VARS = {
   // The broadcast add-on's fee, always a full "<amount> <coin>" — it is charged
   // in the order's OWN currency, so an operator previewing the card must see a
   // coin beside the number rather than a bare figure.
-  fee: "1 SOL",
   emoji: "🟢🟢🟢", count: "3", buysWord: "buys", tokenAmt: "1.2M", bot: "https://t.me/dexvrabot", botName: "@dexvrabot",
   // Group buy alerts (verified path)
   tier: "Whale Buy", impact: "0.42%", change: "+18.4%",

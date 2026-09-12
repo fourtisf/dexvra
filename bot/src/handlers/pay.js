@@ -3,7 +3,7 @@
 // pay_card_admin); the picker is pay_pick.
 const { Markup } = require("telegraf");
 const { armPayment } = require("../payments/payment");
-const { addAmount, toSmallest } = require("../payments/units");
+const { addAmount, subAmount, toSmallest } = require("../payments/units");
 const orders = require("../payments/orders");
 const { sendCard, answer, toast } = require("../helpers/message");
 const { payOptionsFor, optionFor, networkLabel } = require("../config/payOptions");
@@ -112,12 +112,19 @@ async function startPayment(ctx, order) {
 // button belongs BESIDE Confirm Payment, not two screens earlier, which is also
 // where the bot this was compared against puts it.
 //
+// ⚠️ ONE TAP, AND THERE IS NOTHING TO COMPOSE. "kalo listing ya template listing
+// itu" — the broadcast IS the listing card, rendered by fulfilment from the same
+// template the channel post uses. So the tap attaches it and a second tap takes
+// it off; asking the buyer to write a message was a step that bought nothing and
+// a whole class of problems (entity offsets on a trimmed string, a text step
+// that has to run above every flow router, a /cancel with no card to return to).
+//
 // ⚠️ THE DEPOSIT ADDRESS MAY NEVER CHANGE. That is the whole design constraint
 // and it is why the order is EDITED IN PLACE rather than re-armed:
 // generateWallet() mints a fresh keypair every call, so re-arming would hand
 // the buyer a second address — and a buyer who had already sent to the first
 // one would have paid into a wallet this order no longer verifies against.
-// Editing keeps the address, raises the amount, and verifyPayment compares the
+// Editing keeps the address, moves the amount, and verifyPayment compares the
 // BALANCE at that address against the new total, so anything already sent still
 // counts toward it.
 const addon = require("../config/broadcastAddon");
@@ -127,6 +134,34 @@ const addonFee = (order) => addon.addonPriceForNative(order && order.native);
 
 const hasBroadcast = (order) => Boolean(order && order.payload && order.payload.broadcast);
 
+/**
+ * ⚠️ THE INCLUDED LINE IS ENFORCED HERE, NOT TRUSTED TO THE TEMPLATE — the same
+ * rule, and the same reason, as ensureNetwork above: `pay_card` is editable in
+ * @dexvraadminbot and an operator's saved copy wins for ever. It cannot carry a
+ * placeholder for this anyway, because whether the add-on is attached is a fact
+ * about the ORDER rather than about the card, so appending is the mechanism and
+ * not a fallback.
+ *
+ * The buyer is about to send a number they did not pick off a price list; the
+ * card has to say why it is bigger than the tier they chose.
+ */
+function ensureBroadcastLine(payload, feeLabel) {
+  if (!payload || typeof payload !== "object" || !feeLabel) return payload;
+  const said = `Includes a Mass DM Broadcast to all users (+${feeLabel})`;
+  if (payload.html != null) {
+    const html = String(payload.html);
+    return html.includes(said) ? payload : { ...payload, html: `${html}\n\n📣 <b>${said}</b>.` };
+  }
+  const text = String(payload.text || "");
+  if (text.includes(said)) return payload;
+  const boldFrom = text.length + "\n\n📣 ".length;
+  return {
+    ...payload,
+    text: `${text}\n\n📣 ${said}.`,
+    entities: [...(payload.entities || []), { type: "bold", offset: boldFrom, length: said.length }],
+  };
+}
+
 /** Render (or re-render) the pay card for an order that is already armed. */
 async function renderPayCard(ctx, order, address, adminFree, network) {
   const label = premium.sanitizeVar(order.label || order.kind);
@@ -135,16 +170,28 @@ async function renderPayCard(ctx, order, address, adminFree, network) {
     return;
   }
   const fee = addonFee(order);
+  const on = hasBroadcast(order);
+  const feeLabel = fee == null ? null : `${fee} ${order.native}`;
   const rows =
-    fee != null && !hasBroadcast(order)
-      ? [[Markup.button.callback(`➕ Add Broadcast to all users (+${fee} ${order.native})`, "bcpay")]]
-      : [];
+    fee == null
+      ? []
+      : [
+          [
+            Markup.button.callback(
+              on ? `✅ Broadcast added (+${feeLabel}) — tap to remove` : `➕ Add Broadcast to all users (+${feeLabel})`,
+              "bcpay",
+            ),
+          ],
+        ];
   // The address (and the exact amount) are tap-to-copy: enforced here rather
   // than trusted to the template's backticks, which a re-saved card loses.
   const text = premium.ensureCode(
-    ensureNetwork(
-      tpl.render("pay_card", { label, amount: order.humanAmount, native: order.native, address, network }),
-      network,
+    ensureBroadcastLine(
+      ensureNetwork(
+        tpl.render("pay_card", { label, amount: order.humanAmount, native: order.native, address, network }),
+        network,
+      ),
+      on ? feeLabel : null,
     ),
     address,
     order.humanAmount,
@@ -159,64 +206,37 @@ function redrawPending(ctx) {
   return renderPayCard(ctx, pp.order, pp.address, pp.adminFree, networkLabel(pp.order.chain));
 }
 
-/** ➕ tapped on the pay card — ask for the message. */
-async function broadcastAsk(ctx) {
+/**
+ * The add-on button — attach it, or take it back off, and redraw the card.
+ *
+ * Toggling rather than a one-way add is fourtis's own affordance ("tap to
+ * remove"), and it is the only way back: the card has no other exit that leaves
+ * the order armed, and re-arming to undo would mint a second deposit address.
+ */
+async function broadcastToggle(ctx) {
   await answer(ctx);
   const pp = ctx.session && ctx.session.pendingPayment;
   if (!pp) return toast(ctx, tpl.render("no_pending_payment"));
-  const fee = addonFee(pp.order);
-  // Re-checked at the TAP: a pay card left open in the chat outlives a restart
-  // that switched MASS_DM_ENABLED off under it.
-  if (fee == null || hasBroadcast(pp.order)) return redrawPending(ctx);
-  ctx.session.awaitingPayBroadcast = true;
-  await sendCard(
-    ctx,
-    tpl.render("broadcast_addon_prompt", { fee: `${fee} ${pp.order.native}` }),
-    menu.withHome([[Markup.button.callback("↩️ Back to payment", "bcpayx")]]),
-  );
-}
-
-/** ↩️ — drop the compose step, put the card back untouched. */
-async function broadcastCancel(ctx) {
-  await answer(ctx);
-  if (ctx.session) ctx.session.awaitingPayBroadcast = false;
-  return redrawPending(ctx);
-}
-
-/**
- * Attach a composed broadcast to the order that is already armed, and redraw.
- *
- * Returns true when it consumed the message — the routers ask this BEFORE any
- * flow handler, because the pay card is shared by every package and the compose
- * step must work with no `session.type` of its own.
- */
-async function broadcastCapture(ctx, content) {
-  const pp = ctx.session && ctx.session.pendingPayment;
-  ctx.session.awaitingPayBroadcast = false;
-  if (!pp) {
-    await toast(ctx, tpl.render("no_pending_payment"));
-    return true;
-  }
   const order = pp.order;
+  // Re-checked at the TAP: a pay card left open in the chat outlives a restart
+  // that switched MASS_DM_ENABLED off under it, and a fee that is gone must not
+  // be charged or refunded off a stale button.
   const fee = addonFee(order);
-  if (fee == null || hasBroadcast(order)) {
-    await redrawPending(ctx);
-    return true;
-  }
-  order.payload = { ...(order.payload || {}), broadcast: content };
-  order.humanAmount = addAmount(order.humanAmount, fee);
+  if (fee == null) return redrawPending(ctx);
+
+  const on = hasBroadcast(order);
+  const payload = { ...(order.payload || {}) };
+  if (on) delete payload.broadcast;
+  else payload.broadcast = true; // the CONTENT is the listing card, built at fulfilment
+  order.payload = payload;
+  order.humanAmount = on ? subAmount(order.humanAmount, fee) : addAmount(order.humanAmount, fee);
   // ⚠️ An admin test order is FREE and stays free: re-deriving the smallest
   // unit from the new total would put a real price on a card that says "no
   // payment needed", and confirmPayHandler would then verify against it.
   if (!pp.adminFree) order.amountSmallest = toSmallest(order.chain, order.humanAmount).toString();
   await orders.saveOrder(order).catch((e) => log.warn(`[pay] saveOrder (add-on): ${e.message}`));
-  await toast(ctx, tpl.render("broadcast_addon_attached", { fee: `${fee} ${order.native}` }));
-  await redrawPending(ctx);
-  return true;
+  return redrawPending(ctx);
 }
-
-/** Is the chat mid-compose for the pay-card add-on? */
-const awaitingBroadcast = (ctx) => Boolean(ctx.session && ctx.session.awaitingPayBroadcast);
 
 /** `paynet_<chain>` — the buyer picked a network. */
 async function netPick(ctx) {
@@ -235,9 +255,6 @@ async function netPick(ctx) {
 }
 
 module.exports = {
-  broadcastAsk,
-  broadcastCancel,
-  broadcastCapture,
-  awaitingBroadcast,
+  broadcastToggle,
   renderPayCard,
-  startPayment, netPick, ensureNetwork };
+  startPayment, netPick, ensureNetwork, ensureBroadcastLine };

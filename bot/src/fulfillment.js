@@ -699,9 +699,22 @@ async function fulfillListing(ctx, order) {
   // Same rule the free-listing report states one service over: it runs after
   // the row is live, and a throw there would turn a successful listing into a
   // failed one.
-  if (p.broadcast && (p.broadcast.text || p.broadcast.mediaFileId)) {
-    const b = await queueBroadcast(ctx, order, p.broadcast);
-    await dm(ctx, tpl.render(b.ok ? "broadcast_addon_queued" : "broadcast_addon_failed", { ref: b.ref })).catch(() => {});
+  //
+  // ⚠️ AND IT SENDS ITSELF. The content is the listing card this function just
+  // rendered and posted publicly, so there is nothing an admin could approve
+  // that @dexvraio is not already showing — `autoSend` is exactly that claim
+  // and nothing wider (the standalone /massdm product still waits for a human).
+  if (p.broadcast) {
+    // An order armed before the add-on became one tap carries the buyer's own
+    // composed message, and recovery.js re-checks pending orders for a day — so
+    // one that was paid across this deploy still sends what they wrote, under
+    // the review it was sold under. Everything new carries `true`.
+    const composed = p.broadcast.text || p.broadcast.mediaFileId ? p.broadcast : null;
+    const b = await queueBroadcast(ctx, order, composed || listingBroadcast(coin, listMedia), {
+      autoSend: !composed,
+    });
+    const key = !b.ok ? "broadcast_addon_failed" : composed ? "broadcast_addon_queued" : "broadcast_addon_sending";
+    await dm(ctx, tpl.render(key, { ref: b.ref })).catch(() => {});
     step("broadcast");
   }
   log.info(
@@ -967,58 +980,119 @@ function successBanner(run, links, xUrl, queued) {
   });
 }
 
+/** A file under our own mass-DM scratch dir, written and returned. */
+function massFile(orderId, ext, buf) {
+  const os = require("node:os");
+  const path = require("node:path");
+  const fs = require("node:fs");
+  const dir = path.join(os.tmpdir(), "dexvra-massdm");
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, `${orderId}.${ext}`);
+  fs.writeFileSync(file, buf);
+  return file;
+}
+
+/**
+ * A postMedia() value → the shape the Mass DM job store persists.
+ *
+ * ⚠️ THE TYPE TRAVELS WITH IT. postMedia returns a composited still, an admin
+ * GIF/MP4 clip, a bare file_id or a URL, and the sender has to pick
+ * sendPhoto/sendAnimation/sendVideo the same way channels/post.sendMedia does —
+ * a clip pushed through sendPhoto is an error, and the broadcast would arrive
+ * as text with no artwork at all.
+ *
+ * A Buffer is written out because the job is PERSISTED and may be picked up by
+ * the sender's next tick (or after a restart); a path is referenced as-is
+ * because it is already a file the banner pipeline wrote.
+ */
+function broadcastMedia(media, orderId) {
+  if (!media) return {};
+  if (typeof media === "string") return { mediaFileId: media, mediaType: "photo" }; // file_id / URL
+  const mediaType = media.type || "photo";
+  const src = media.source;
+  if (typeof src === "string") return { mediaPath: src, mediaType };
+  if (Buffer.isBuffer(src)) return { mediaPath: massFile(orderId, mediaType === "photo" ? "png" : "mp4", src), mediaType };
+  return {};
+}
+
+/**
+ * The listing card, as a broadcast — the SAME payload the channel post carries.
+ *
+ * "kalo listing ya template listing itu": the add-on does not ask the buyer to
+ * write anything, it DMs what the listing already says. Built from
+ * fmt.listingPost(coin), so the admin-editable listing template is the one
+ * owner of the wording and a broadcast can never drift from the post above it.
+ *
+ * ⚠️ TRIMMED TO A CAPTION when it rides artwork. Telegram caps a media caption
+ * at 1024 UTF-16 units and THROWS past it, which would drop the whole DM.
+ * post.fitCaption is the one owner of that cut (it drops the entities that fall
+ * past it too); a text-only broadcast keeps the full 4096.
+ */
+function listingBroadcast(coin, media) {
+  const { text, extra } = payloadArgs(fmt.listingPost(coin), false);
+  const body = media ? post.fitCaption({ text, entities: extra.entities || [] }) : { text, entities: extra.entities || [] };
+  return { text: body.text, entities: body.entities || [], media };
+}
+
 // ── Paid Mass DM ──────────────────────────────────────────────────────────
 // Funds are already swept before fulfilment, so this must NEVER throw: it only
-// PERSISTS a pending_review job and notifies the review chat. A failed enqueue
-// tells the buyer to contact support — it never bubbles up to abort the order.
+// PERSISTS a job and notifies the ops chat. A failed enqueue tells the buyer to
+// contact support — it never bubbles up to abort the order.
 //
 // ⚠️ TWO DOORS, ONE QUEUE. A Mass DM is bought on its own (/massdm) and as the
-// broadcast ADD-ON on a listing order, and both must produce the same
-// pending_review job with the same audience and the same review path — a second
-// enqueue would be a second idea of what a paid broadcast is, and the first
-// thing to drift would be whether an admin ever sees it. queueBroadcast() is
-// that one door; fulfillMassDm() is the standalone product wrapped around it.
+// broadcast ADD-ON on a listing order, and both must produce the same job with
+// the same audience through the same sender — a second enqueue would be a
+// second idea of what a paid broadcast is. queueBroadcast() is that one door;
+// fulfillMassDm() is the standalone product wrapped around it.
+//
+// ⚠️ AND ONLY ONE OF THEM WAITS FOR A HUMAN, which is the whole boundary:
+// `autoSend` says the BOT wrote this. The add-on DMs the listing card this
+// function has just rendered and posted to the public channel, so there is
+// nothing for an admin to read that the channel is not already showing; the
+// standalone product is free text a stranger typed at 12,000 inboxes, and that
+// still goes to review (the store's own anti-spam note).
 //
 // It returns {ok, ref, why} rather than throwing, because its two callers owe
 // the buyer different sentences: the standalone product IS the order, while the
 // add-on rides a listing that has already gone live and must not be reported as
 // failed because its broadcast could not be queued.
-async function queueBroadcast(ctx, order, content) {
+async function queueBroadcast(ctx, order, content, { autoSend = false } = {}) {
   const massStore = require("./massdm/store");
   const { MASS_DM_REVIEW_CHAT_ID } = require("./config/constants");
-  const p = content || {}; // { text, entities, mediaFileId }
+  const p = content || {}; // { text, entities, mediaFileId?, media? }
   const ref = require("./handlers/massdm").refFor();
   try {
-    let mediaPath = null;
+    let media = {};
     if (p.mediaFileId) {
       const buf = await downloadFile(ctx.telegram, p.mediaFileId);
-      if (buf) {
-        const os = require("node:os");
-        const path = require("node:path");
-        const fs = require("node:fs");
-        const dir = path.join(os.tmpdir(), "dexvra-massdm");
-        fs.mkdirSync(dir, { recursive: true });
-        mediaPath = path.join(dir, `${order.id}.jpg`);
-        fs.writeFileSync(mediaPath, buf);
-      }
+      if (buf) media = { mediaPath: massFile(order.id, "jpg", buf), mediaType: "photo" };
+    } else {
+      media = broadcastMedia(p.media, order.id);
     }
     const job = await massStore.createJob({
       text: p.text || "",
       entities: p.entities || [],
-      mediaPath,
+      ...media,
       createdBy: order.buyerId,
       createdByUsername: order.buyerUsername || null,
       targets: massStore.audience(),
-      test: false, // paid job → pending_review
+      test: false, // never an admin test run — this one was paid for
+      autoSend,
       reportChatId: MASS_DM_REVIEW_CHAT_ID || null,
       ref,
     });
-    log.info(`[fulfil] mass DM job ${job.id} queued for review (ref ${ref}, ${job.total} audience)`);
-    // Notify the review chat so an admin can approve.
+    log.info(
+      `[fulfil] mass DM job ${job.id} ${autoSend ? "SENDING now (bot-written, no review)" : "queued for review"} (ref ${ref}, ${job.total} audience)`,
+    );
     if (MASS_DM_REVIEW_CHAT_ID) {
-      await ctx.telegram
-        .sendMessage(MASS_DM_REVIEW_CHAT_ID, `🕵️ New paid Mass DM awaiting review — ref <code>${ref}</code>. Use /reviewmassdm in @dexvraadminbot.`, { parse_mode: "HTML" })
-        .catch(() => {});
+      // A notice for an auto job and a REQUEST for a reviewed one. Wording them
+      // the same would send an operator hunting for a /reviewmassdm queue that
+      // is already empty — and saying nothing at all would mean a paid DM went
+      // to the whole audience with nothing anywhere recording it.
+      const note = autoSend
+        ? `📣 Listing broadcast going out now — ref <code>${ref}</code>, ${job.total} recipients. Bot-written (the listing card), no review needed.`
+        : `🕵️ New paid Mass DM awaiting review — ref <code>${ref}</code>. Use /reviewmassdm in @dexvraadminbot.`;
+      await ctx.telegram.sendMessage(MASS_DM_REVIEW_CHAT_ID, note, { parse_mode: "HTML" }).catch(() => {});
     }
     return { ok: true, ref };
   } catch (e) {
@@ -1029,6 +1103,8 @@ async function queueBroadcast(ctx, order, content) {
 
 /** The standalone product: queue it, then tell the buyer either way. */
 async function fulfillMassDm(ctx, order) {
+  // ⚠️ NO autoSend HERE, deliberately. This is the door a stranger's own words
+  // come through, and that is what the review exists for.
   const r = await queueBroadcast(ctx, order, order.payload);
   const key = r.ok ? "massdm_received" : "massdm_enqueue_failed";
   await dm(ctx, tpl.render(key, { ref: r.ref }), menu.postPurchase()).catch(() => {});
@@ -1074,6 +1150,12 @@ module.exports = {
   // boxes — it measured a font stack that renderer did not draw with.
   _readPostMarket: readPostMarket,
   _adoptChainLogo: adoptChainLogo,
+  // The two halves of "the broadcast IS the listing card". Exported because a
+  // source scan cannot tell a listing post from a fabricated string, and
+  // because the media TYPE is the thing that decides whether 12,000 people get
+  // artwork or an error.
+  _listingBroadcast: listingBroadcast,
+  _broadcastMedia: broadcastMedia,
   // The ONE door a paid broadcast goes through — the standalone /massdm product
   // and the listing add-on both call it. Exported so a test can DRIVE it rather
   // than read it: a queue that silently refuses every message is a wiring that

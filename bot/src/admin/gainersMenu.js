@@ -273,7 +273,7 @@ async function sendPreview(ctx, template, { fresh = true, note = "" } = {}) {
   // way the real post will be (word boundary, no split surrogate, entities past
   // the cut dropped) instead of by a naive slice that could leave a dangling
   // entity and make Telegram refuse the message.
-  const shown = require("../channels/post")._fitCaption(caption);
+  const shown = require("../channels/post").fitCaption(caption);
   // Two messages on purpose: the CAPTION is what the channel will show (premium
   // emoji ride as entities), and the controls card below it is admin-only chrome.
   // Merging them would make the admin approve a caption they never saw clean.
