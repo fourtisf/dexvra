@@ -11606,6 +11606,71 @@ has ever edited **Mass DM: preview / pay** or either compose prompt in
 card either way, but the *"a photo is optional, you can add one later"* line on
 the compose prompt only appears after ♻️ Reset default.
 
+#### "recompase ganti edit dan semua template bot message harus bisa edit pakai emoji premium"
+
+Two asks, and the second named a defect **introduced by the section above**.
+
+**✏️ Recompose pointed at `ad_massdm`** — `entryMassDm`, which `freshSession`s
+and asks for the contract address again. So a buyer who wanted to change one
+word paid the chain detection over again (five candidate chains, bounded at
+`CA_RESOLVE_MS`), could land on a different answer, and lost any photo they had
+just attached. Renaming that button to **Edit** without moving the action would
+have made the label lie *harder*, which is this file's own
+label-contradicting-its-action shape — so `md_edit` re-opens the compose step
+with the token, the chain, the price and the media INTACT.
+
+- ⚠️ **A NEW MESSAGE CARRYING NO MEDIA NOW KEEPS WHAT IS ATTACHED.** On the
+  first compose there is nothing to keep, so it is a no-op there; on an edit it
+  is the difference between changing a word and silently deleting the photo
+  attached two taps ago — the same destruction the caption rule refuses one
+  step over. Removing it is 🗑 Remove photo, which says so, and the edit prompt
+  states the rule before they type.
+- **`ad_massdm` still exists** as the 📣 menu entry, which is the one place
+  "start over at the CA" is what the tap means.
+
+⚠️ **AND THE `{media}` PLACEHOLDER COULD NOT CARRY A PREMIUM EMOJI.** The
+attachment row was substituted into the preview card as MARKUP, read from
+`tpl.getRaw().text` — and an operator who PASTES a row is stored as
+`{text, entities}`, whose `custom_emoji` entities a markup substitution cannot
+carry. So a 💎 pasted into `massdm_media_on` flattened to its fallback glyph, on
+exactly the surface this file had just promised keeps it. The row is **rendered
+whole and appended** now (`ensureMediaLine`, one path), which is an ordinary
+template render, so the entities travel. A `{media}` typed into a saved card
+renders empty and the row is still appended — it degrades rather than losing
+the state it reports.
+
+- **The promise is measured for EVERY key now, not for the three an operator
+  named.** `premiumAnywhere` pastes a premium emoji into all 168 templates in
+  turn and asserts the `custom_emoji` survives the render. A shortlist is what
+  let a caller flatten one without any test noticing.
+- ⚠️ **THE REACHABILITY GUARD WRITTEN BESIDE IT COULD NOT FAIL, and a mutation
+  run said so.** It walked `tpl.groups()` for a template in no group — and
+  `tpl.meta()` SYNTHESISES `{group:"Other", label:key}` for any string at all,
+  so an orphan is impossible by construction. **This file records being caught
+  by that exact synthesis once before**, and the second cut repeated it. What
+  the synthesis cannot hide is the LABEL: `label === key` means no META entry,
+  which is a template filed under "Other" reading `flow_step_failed` on the one
+  screen an operator edits copy from. Two were — `listing_lookup_wait` and
+  `flow_step_failed`, both added by earlier fixes in this file — and they have
+  human labels now. The assertion carries its own vacuity check: it fails if the
+  synthesis it is written against ever goes away.
+
+```bash
+cd bot && node scripts/run-tests.js test/massdmMedia.test.js test/premiumAnywhere.test.js   # 24 + 11 tests, no network
+```
+
+Nine guarantees are MUTATION-TESTED rather than argued: an edit dropping the
+photo, Edit restarting at the CA, the preview reverting to ✏️ Recompose, the
+too-long card naming a button it does not offer, the attachment row dropped from
+the card, a pasted template rendering without its entities, a template shown as
+its raw key, the Edit prompt losing its META entry, and the reachability guard's
+own vacuity. Each fails between one and eight tests.
+
+**Config a fix depends on:** nothing. ⚠️ `bot/` only, so the **ecosystem
+restart** — and an operator who saved **Mass DM: preview / pay** yesterday keeps
+their copy: the attachment row is appended onto it either way, but the word
+"recompose" in their own text stays until ♻️ Reset default.
+
 ## Conventions
 
 - Tests live beside the code they cover, in `bot/test/`, `tradebot/*.test.js`

@@ -140,11 +140,9 @@ function mediaOf(ctx) {
 // Read from channels/post, the ONE owner of that number.
 const captionLimit = () => require("../channels/post").CAPTION_LIMIT;
 
-// THREE states, and ONE owner of which it is: the card renders the row through
-// {media} (as markup, so an operator can move it) and ensureMediaLine appends
-// it (as a rendered payload, for a saved card that has no placeholder). Two
-// copies of the state test is how those two come to say different things about
-// one broadcast.
+// THREE states, and ONE owner of which it is. Each is its own template, so an
+// operator can edit all three — premium emoji included, which is why the row is
+// RENDERED whole and appended rather than substituted in as markup.
 function mediaState(s) {
   const f = (s && s.massForm) || {};
   const key = !f.mediaFileId
@@ -218,21 +216,8 @@ async function showPreview(ctx) {
     // broadcast", and over nothing at all that is a claim about a broken thing.
     f.mediaShown = false;
   }
-  const line = mediaLine(s);
-  const card = tpl.render("massdm_preview", {
-    amount: `${f.pay.price} ${f.pay.native}`,
-    media: mediaMarkup(s),
-  });
-  await sendCard(ctx, ensureMediaLine(card, line), reviewKb(ctx));
-}
-
-/** The same row as MARKUP, for the {media} placeholder inside the card — so the
- *  outer render parses it once and its bold lands on the card's own entities. */
-function mediaMarkup(s) {
-  const { key, vars } = mediaState(s);
-  const raw = tpl.getRaw(key);
-  const src = raw && typeof raw === "object" ? raw.text || "" : String(raw == null ? "" : raw);
-  return tpl.substitute(src, vars);
+  const card = tpl.render("massdm_preview", { amount: `${f.pay.price} ${f.pay.native}` });
+  await sendCard(ctx, ensureMediaLine(card, mediaLine(s)), reviewKb(ctx));
 }
 
 const composing = (s) => !!(s && s.massForm && s.massForm.pay && s.massForm.text != null);
@@ -252,6 +237,24 @@ async function mediaBack(ctx) {
   const s = ctx.session;
   if (!composing(s)) return toast(ctx, tpl.render("session_expired"));
   return showPreview(ctx);
+}
+
+/**
+ * ✏️ Edit — re-open the compose step with the ORDER INTACT.
+ *
+ * ⚠️ It replaces ✏️ Recompose, which pointed at `ad_massdm` — entryMassDm, which
+ * freshSessions and asks for the contract address again. So a buyer who wanted
+ * to change a word paid the chain detection over again (five candidate chains,
+ * bounded at CA_RESOLVE_MS) and could land on a different answer. A button
+ * labelled Edit that restarts the flow is the label-contradicting-its-action
+ * defect this file keeps recording, so the action moved rather than the word.
+ */
+async function mdEdit(ctx) {
+  await answer(ctx);
+  const s = ctx.session;
+  if (!composing(s)) return toast(ctx, tpl.render("session_expired"));
+  s.awaitingField = "massdm_compose";
+  await sendCard(ctx, tpl.render("massdm_edit_prompt"), menu.withHome([]));
 }
 
 /** 🗑 Remove — the explicit skip, once something is attached. */
@@ -288,7 +291,7 @@ async function setMedia(ctx, { fileId, type, caption, captionEntities }) {
     // limit makes every sendPhoto THROW, so attaching here would fail all
     // 12,000 sends of a broadcast somebody paid for; trimming instead would
     // silently delete most of what they wrote. The numbers are on the card.
-    // ⚠️ …and the card carries the ✏️ Recompose it tells them to tap. An
+    // ⚠️ …and the card carries the ✏️ Edit it tells them to tap. An
     // instruction pointing at a button that is not on the screen is the
     // "📝 Templates → pilih templatenya" defect, on the one card whose whole job
     // is handing the buyer something they can act on.
@@ -314,7 +317,7 @@ async function setMedia(ctx, { fileId, type, caption, captionEntities }) {
 
 function mediaKb(s, { recompose = false } = {}) {
   const rows = [];
-  if (recompose) rows.push([Markup.button.callback("✏️ Recompose", "ad_massdm")]);
+  if (recompose) rows.push([Markup.button.callback("✏️ Edit", "md_edit")]);
   if (s && s.massForm && s.massForm.mediaFileId) {
     rows.push([
       Markup.button.callback("🗑 Remove the photo", "md_nomedia"),
@@ -330,12 +333,18 @@ function mediaKb(s, { recompose = false } = {}) {
 // Step 2 — capture the broadcast message, show the preview + pay/test controls.
 async function capture(ctx, { text, entities, mediaFileId, mediaType }) {
   const s = ctx.session;
+  const had = s.massForm || {};
+  // ⚠️ A MESSAGE CARRYING NO MEDIA KEEPS WHAT IS ATTACHED. On the first compose
+  // there is nothing to keep, so this is a no-op there; on ✏️ Edit it is the
+  // difference between changing a word and silently deleting the photo the
+  // buyer attached two taps ago. Removing it is 🗑 Remove photo, which says so.
+  const keep = !mediaFileId && had.mediaFileId;
   s.massForm = {
-    ...s.massForm,
+    ...had,
     text: text || "",
     entities: entities || [],
-    mediaFileId: mediaFileId || null,
-    mediaType: mediaFileId ? mediaType || "photo" : null,
+    mediaFileId: keep ? had.mediaFileId : mediaFileId || null,
+    mediaType: keep ? had.mediaType : mediaFileId ? mediaType || "photo" : null,
   };
   return showPreview(ctx);
 }
@@ -351,7 +360,7 @@ function reviewKb(ctx) {
       ? [Markup.button.callback("🖼 Change photo", "md_media"), Markup.button.callback("🗑 Remove photo", "md_nomedia")]
       : [Markup.button.callback("📎 Add a photo", "md_media")],
   );
-  rows.push([Markup.button.callback("✏️ Recompose", "ad_massdm"), Markup.button.callback("🏠 Home", "home")]);
+  rows.push([Markup.button.callback("✏️ Edit", "md_edit"), Markup.button.callback("🏠 Home", "home")]);
   return Markup.inlineKeyboard(rows);
 }
 
@@ -469,4 +478,4 @@ async function downloadMedia(ctx, fileId, mediaType) {
   return file;
 }
 
-module.exports = { entryMassDm, handleText, handlePhoto, payPick, testSend, refFor, downloadMedia, currencyOf, payFor, looksLikeCA, mediaAsk, mediaBack, mediaClear, mediaOf, ensureMediaLine, mediaLine };
+module.exports = { entryMassDm, handleText, handlePhoto, payPick, testSend, refFor, downloadMedia, currencyOf, payFor, looksLikeCA, mediaAsk, mediaBack, mediaClear, mdEdit, mediaOf, ensureMediaLine, mediaLine };

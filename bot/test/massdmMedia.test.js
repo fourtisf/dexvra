@@ -69,6 +69,44 @@ test("text-only preview SAYS no photo is attached, and offers one", async () => 
   assert.match(c.text, /text only/i, "it says what will actually go out");
   assert.ok(cbs(c).includes("md_media"), `no way to add one: ${cbs(c)}`);
   assert.ok(!cbs(c).includes("md_nomedia"), "nothing to remove, so no remove button");
+  // ✏️ Edit, never ad_massdm: that one restarts at "paste your CA".
+  assert.ok(cbs(c).includes("md_edit"), `no way to edit: ${cbs(c)}`);
+  assert.ok(!cbs(c).includes("ad_massdm"), "Edit must not restart the whole flow");
+  assert.match(labels(c), /Edit/, labels(c));
+  assert.doesNotMatch(labels(c), /Recompose/i, labels(c));
+});
+
+// ── ✏️ Edit keeps the order ─────────────────────────────────────────────────
+
+test("✏️ Edit re-opens compose with the token, the chain and the price intact", async () => {
+  const { ctx, sent } = ctxAt({ mediaFileId: "PH1", mediaType: "photo" });
+  await md.mdEdit(ctx);
+  assert.strictEqual(ctx.session.awaitingField, "massdm_compose");
+  assert.strictEqual(ctx.session.massForm.ca, "0xabc", "the CA was thrown away");
+  assert.strictEqual(ctx.session.massForm.chain, "ethereum", "the detected chain was thrown away");
+  assert.strictEqual(ctx.session.massForm.pay.price, 0.1);
+  assert.strictEqual(ctx.session.massForm.mediaFileId, "PH1", "the photo was thrown away");
+  assert.match(card(sent).text, /stays/i, card(sent).text);
+});
+
+test("a new message during an edit KEEPS the attached photo", async () => {
+  const { ctx, sent } = ctxAt({ mediaFileId: "PH1", mediaType: "animation" });
+  await md.mdEdit(ctx);
+  ctx.message = { text: "new words", entities: [] };
+  await md.handleText(ctx);
+  assert.strictEqual(ctx.session.massForm.text, "new words");
+  assert.strictEqual(ctx.session.massForm.mediaFileId, "PH1", "silently dropped the attachment");
+  assert.strictEqual(ctx.session.massForm.mediaType, "animation", "…and forgot it was a clip");
+  assert.match(card(sent).text, /GIF attached/i, card(sent).text);
+});
+
+test("a new PHOTO during an edit replaces the old one", async () => {
+  const { ctx } = ctxAt({ mediaFileId: "OLD", mediaType: "photo" });
+  await md.mdEdit(ctx);
+  ctx.message = { photo: [{ file_id: "NEW" }], caption: "cap", caption_entities: [] };
+  await md.handlePhoto(ctx);
+  assert.strictEqual(ctx.session.massForm.mediaFileId, "NEW");
+  assert.strictEqual(ctx.session.massForm.text, "cap");
 });
 
 test("the photo step puts the SKIP on screen as a button", async () => {
@@ -94,7 +132,7 @@ test("a photo at the photo step attaches it, KEEPS the text, and says which", as
   assert.strictEqual(media[0].how, "photo");
   const c = card(sent);
   assert.match(c.text, /Photo attached/i, c.text);
-  assert.deepStrictEqual(cbs(c).filter((x) => x.startsWith("md_")).sort(), ["md_media", "md_nomedia", "md_pay"]);
+  assert.deepStrictEqual(cbs(c).filter((x) => x.startsWith("md_")).sort(), ["md_edit", "md_media", "md_nomedia", "md_pay"]);
 });
 
 test("a caption sent with the photo REPLACES the text — and that is said too", async () => {
@@ -233,7 +271,7 @@ test("a text too long for a caption REFUSES the photo and changes nothing", asyn
   assert.match(c.text, new RegExp(String(long.length)), "it names their own length too");
   assert.match(c.text, /Nothing was changed/i);
   // The card carries the button its own sentence tells them to tap.
-  assert.ok(cbs(c).includes("ad_massdm"), `Recompose is named and not offered: ${cbs(c)}`);
+  assert.ok(cbs(c).includes("md_edit"), `✏️ Edit is named and not offered: ${cbs(c)}`);
   assert.ok(cbs(c).includes("md_back"), "…and text-only is still one tap away");
 });
 
@@ -261,39 +299,36 @@ test("a card that already carries the line is not given it twice", () => {
   assert.strictEqual(md.ensureMediaLine(already, line), already);
 });
 
-test("{media} puts the row where the OPERATOR put it, not at the end", async () => {
-  // ⚠️ This is what makes the placeholder load-bearing rather than belt-and-
-  // braces. ensureMediaLine appends, so with the placeholder ignored the row
-  // still reaches the card — at the bottom, under the price, instead of where
-  // an operator moved it. The two paths do different jobs and both are pinned.
-  const saved = "TOP LINE\n\n{media}\n\nPay **{amount}** now.";
-  await tpl.setTemplate("massdm_preview", saved);
+test("an operator's PREMIUM EMOJI in the attachment row survives onto the card", async () => {
+  // ⚠️ THE RULE THIS WHOLE PATH EXISTS FOR. A pasted template is stored as
+  // {text, entities}; substituting it into the card as MARKUP would keep the
+  // characters and drop the custom_emoji entities, so the 💎 would flatten on
+  // the one surface the admin bot promises can carry it. Rendered whole and
+  // appended, it is an ordinary template render and the entity travels.
+  const rich = {
+    text: "⚡ Photo attached — it goes out.",
+    entities: [{ type: "custom_emoji", offset: 0, length: 1, custom_emoji_id: "5771234567890123456" }],
+  };
+  await tpl.setTemplate("massdm_media_on", rich);
   try {
     const { ctx, sent } = ctxAt({ mediaFileId: "PH1", mediaType: "photo" });
     await md.mediaBack(ctx);
-    const body = card(sent).text;
-    const at = body.indexOf("Photo attached");
-    assert.ok(at > -1, body);
-    assert.ok(at < body.indexOf("Pay "), `the row was appended instead of substituted:\n${body}`);
+    const c = card(sent);
+    const ce = (c.extra.entities || []).find((e) => e.type === "custom_emoji");
+    assert.ok(ce, `the premium emoji was flattened:\n${JSON.stringify(c.extra.entities)}`);
+    assert.strictEqual(ce.custom_emoji_id, "5771234567890123456");
+    assert.strictEqual(c.text.slice(ce.offset, ce.offset + ce.length), "⚡", "the entity landed off its glyph");
   } finally {
-    await tpl.resetTemplate("massdm_preview");
+    await tpl.resetTemplate("massdm_media_on");
   }
 });
 
-test("the shipped card renders the line through {media}, not the fallback", async () => {
+test("the row is added exactly once", async () => {
   const { ctx, sent } = ctxAt({ mediaFileId: "PH1", mediaType: "photo" });
   await md.mediaBack(ctx);
   const c = card(sent);
   const hits = c.text.split("Photo attached").length - 1;
-  assert.strictEqual(hits, 1, `the enforced fallback doubled the line:\n${c.text}`);
-  // …and the shipped default carries {media} ABOVE the price, so the buyer reads
-  // what is attached before the number. Without it the fallback still gets the
-  // row onto the card — at the bottom, under "Pay below", which is the layout
-  // the placeholder exists to avoid.
-  assert.ok(
-    c.text.indexOf("Photo attached") < c.text.indexOf("0.1 ETH"),
-    `the row landed under the price:\n${c.text}`,
-  );
+  assert.strictEqual(hits, 1, `the row was added twice:\n${c.text}`);
 });
 
 // ── …all the way into the job somebody paid for ─────────────────────────────
@@ -339,7 +374,7 @@ test("the three media taps are registered", () => {
   );
   require("../src/handlers/registry").registerHandlers(bot);
   assert.ok(seen.has("md_pay"), `the registry did not run: ${seen.size} actions seen`);
-  for (const a of ["md_media", "md_back", "md_nomedia"]) assert.ok(seen.has(a), `${a} is not wired`);
+  for (const a of ["md_media", "md_back", "md_nomedia", "md_edit"]) assert.ok(seen.has(a), `${a} is not wired`);
 });
 
 test("every new template is editable in the admin bot", () => {
@@ -347,7 +382,7 @@ test("every new template is editable in the admin bot", () => {
   for (const k of [
     "massdm_media_none", "massdm_media_on", "massdm_media_unpreviewable", "massdm_media_prompt",
     "massdm_media_not_photo", "massdm_media_as_file", "massdm_media_too_long",
-    "massdm_media_set", "massdm_media_cleared",
+    "massdm_media_set", "massdm_media_cleared", "massdm_edit_prompt",
   ]) {
     assert.ok(keys.includes(k), `${k} is not listed for the template editor`);
   }

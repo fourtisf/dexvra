@@ -63,6 +63,49 @@ test("⚠️ a template SAVED with a premium emoji still carries it when the car
   }
 });
 
+test("⚠️ EVERY template does — not the three that were named", async () => {
+  // "semua template bot message harus bisa edit pakai emoji premium di
+  // dexvraadmin bot". The three above were the ones an operator asked about;
+  // this is the promise itself, over every key the editor lists.
+  //
+  // ⚠️ It is the guard a real defect walked past. The Mass DM preview used to
+  // substitute its attachment row in as a {media} MARKUP string, read from
+  // tpl.getRaw().text — which keeps the characters and drops the entities, so a
+  // pasted 💎 flattened on exactly the surface this file promises. The row is
+  // rendered whole and appended now; what stops the next one is measuring the
+  // promise for all of them rather than for a shortlist.
+  const keys = tpl.keys();
+  assert.ok(keys.length > 150, `only ${keys.length} templates scanned — this proves nothing`);
+  const flattened = [];
+  try {
+    for (const k of keys) {
+      await tpl.setTemplate(k, pasted("⚡ premium {amount} check"));
+      const out = tpl.render(k, { ...admin._preview.SAMPLE_VARS, amount: "1 SOL" });
+      const ents = (out && out.entities) || [];
+      if (!ents.some((e) => e.type === "custom_emoji")) flattened.push(k);
+    }
+  } finally {
+    await tpl.resetAllTemplates();
+  }
+  assert.deepStrictEqual(flattened, [], "these templates lose a pasted premium emoji");
+});
+
+test("⚠️ …and every one of them is NAMED in the editor, not shown as a raw key", () => {
+  // ⚠️ THE FIRST CUT OF THIS ASSERTION COULD NOT FAIL. It walked tpl.groups()
+  // looking for a template in no group — and tpl.meta() SYNTHESISES
+  // {group:"Other", label:key} for any string at all, so an orphan is
+  // impossible by construction and the mutation run said so. This file has
+  // been caught by that exact synthesis once before.
+  //
+  // What the synthesis cannot hide is the LABEL: a template with no META entry
+  // is filed under "Other" reading `flow_step_failed`, which is machine
+  // internals on the screen an operator edits copy from. Two were, until this.
+  const bare = tpl.keys().filter((k) => tpl.meta(k).label === k);
+  assert.deepStrictEqual(bare, [], "these have no META entry — the editor shows their raw key");
+  assert.strictEqual(tpl.meta("no_such_template_xyz").label, "no_such_template_xyz",
+    "the synthesis this is written against is gone — re-read the rule above");
+});
+
 test("…and the 😀 Swap emoji route exists on the ones the operator named", () => {
   for (const key of NAMED) {
     assert.ok(tpl.listEmojis(key).length > 0, `${key} has icons to swap: ${JSON.stringify(tpl.listEmojis(key))}`);

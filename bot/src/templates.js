@@ -1011,16 +1011,18 @@ const DEFAULTS = {
     "If that's the wrong network, tap 🏠 Home and start again.\n\n" +
     "Otherwise send your broadcast — **text, or a photo/GIF with a caption** (formatting & emoji are kept).\n" +
     "📎 A photo is **optional** — you can attach one, or leave it text-only, on the next screen.",
-  // ⚠️ {media} SAYS WHAT IS ATTACHED, because "a photo is attached" and "this
-  // is text-only" rendered identically here — the buyer taps Pay off this card.
-  // It is ENFORCED at the call site (ensureMediaLine) the way {network} is on
-  // the pay card: data/templates.json wins over this default for ever, so an
-  // operator who saved this card before the line existed would otherwise see no
-  // attachment state at all.
+  // ⚠️ THE ATTACHMENT ROW IS APPENDED, NEVER A PLACEHOLDER, and that is what
+  // makes it editable with PREMIUM EMOJI. A placeholder is substituted into
+  // this card as MARKUP, and an operator who PASTES a row carrying custom emoji
+  // has it stored as {text, entities} — whose entities a markup substitution
+  // cannot carry, so the 💎 would be silently flattened on exactly the surface
+  // this repo just promised would keep it. Rendered whole and appended
+  // (ensureMediaLine), the row is an ordinary template render and its entities
+  // survive. A {media} typed in here renders EMPTY and the row is still
+  // appended, so the card degrades rather than losing the state it reports.
   massdm_preview:
     "👆 **This is your broadcast.**\n\n" +
-    "{media}\n\n" +
-    "It goes to every Dexvra user as a DM once an admin approves — **{amount}**. Pay below, or recompose:",
+    "It goes to every Dexvra user as a DM once an admin approves — **{amount}**. Pay below, or edit it:",
   massdm_media_none: "📎 **No photo attached** — it will go out as text only. That is fine; tap 📎 Add a photo below if you want one.",
   massdm_media_on: "📎 **{kind} attached** — it goes out with your message. Tap 🖼 Change or 🗑 Remove below.",
   // ⚠️ The preview above the card is best-effort, and a preview that did not
@@ -1049,9 +1051,18 @@ const DEFAULTS = {
   massdm_media_too_long:
     "⚠️ **That photo can't go on this message.**\n\n" +
     "Your text is **{len}** characters and a photo caption holds at most **{limit}**. " +
-    "Nothing was changed — tap ✏️ Recompose to shorten it, or send the broadcast text-only.",
+    "Nothing was changed — tap ✏️ Edit to shorten it, or send the broadcast text-only.",
   massdm_media_set: "📎 **{kind} attached.** {caption}",
   massdm_media_cleared: "🗑 **Photo removed** — your broadcast goes out as text only.",
+  // ⚠️ ✏️ Edit KEEPS THE TOKEN, which is the whole difference from the button it
+  // replaced: ✏️ Recompose restarted the flow at "paste your CA", throwing away
+  // the chain detection that had just been paid for in latency — a label
+  // promising one thing over an action doing another. It also keeps any photo,
+  // so the prompt says so: a new message silently dropping the attachment is
+  // the same destruction the caption rule refuses one step over.
+  massdm_edit_prompt:
+    "✏️ **Send the new message** — text, or a photo/GIF with a caption.\n\n" +
+    "It replaces what you wrote. Any photo already attached **stays** unless you send a new one — use 🗑 Remove photo on the next screen to drop it.",
   massdm_received:
     "✅ **Payment received — your broadcast is in review.**\n\n" +
     "Ref `{ref}`. An admin will approve it shortly; delivery starts right after. You'll get a receipt here when it's done.",
@@ -1415,12 +1426,18 @@ const META = {
   raid_bad_post: { group: "Dexvra Raid", label: "Launch refused: bad post link", ph: [] },
   raid_no_goals: { group: "Dexvra Raid", label: "Launch refused: no goals set", ph: [] },
   raid_reposts_only: { group: "Dexvra Raid", label: "Launch refused: reposts need a paid key", ph: [] },
+  // ⚠️ These two had NO META entry, so the editor filed them under "Other" and
+  // labelled them with their raw key — reachable, and reading as machine
+  // internals on the one screen an operator edits copy from. Every template
+  // carries a human label now, and templatePremium pins it.
+  listing_lookup_wait: { group: "Bot Messages", label: "Listing: reading the token's profile", ph: [] },
+  flow_step_failed: { group: "Bot Messages", label: "Any flow: that step failed, send it again", ph: [] },
   massdm_disabled: { group: "Mass DM", label: "Mass DM: disabled", ph: [] },
   massdm_intro: { group: "Mass DM", label: "Mass DM: intro + price (ask CA)", ph: ["sol", "bnb", "eth"] },
   massdm_ca_invalid: { group: "Mass DM", label: "Mass DM: invalid CA", ph: [] },
   massdm_compose_prompt: { group: "Mass DM", label: "Mass DM: compose prompt", ph: ["chain", "amount"] },
   massdm_chain_unconfirmed: { group: "Mass DM", label: "Mass DM: chain unconfirmed (compose prompt)", ph: ["chain", "amount"] },
-  massdm_preview: { group: "Mass DM", label: "Mass DM: preview / pay", ph: ["amount", "media"] },
+  massdm_preview: { group: "Mass DM", label: "Mass DM: preview / pay", ph: ["amount"] },
   massdm_media_none: { group: "Mass DM", label: "Mass DM: preview — no photo attached", ph: [] },
   massdm_media_on: { group: "Mass DM", label: "Mass DM: preview — photo attached", ph: ["kind"] },
   massdm_media_unpreviewable: { group: "Mass DM", label: "Mass DM: preview — photo would not render", ph: ["kind"] },
@@ -1430,6 +1447,7 @@ const META = {
   massdm_media_too_long: { group: "Mass DM", label: "Mass DM: text too long for a caption", ph: ["len", "limit"] },
   massdm_media_set: { group: "Mass DM", label: "Mass DM: photo attached", ph: ["kind", "caption"] },
   massdm_media_cleared: { group: "Mass DM", label: "Mass DM: photo removed", ph: [] },
+  massdm_edit_prompt: { group: "Mass DM", label: "Mass DM: edit the message", ph: [] },
   massdm_received: { group: "Mass DM", label: "Mass DM: paid, in review", ph: ["ref"] },
   massdm_enqueue_failed: { group: "Mass DM", label: "Mass DM: enqueue failed", ph: ["ref"] },
   massdm_test_queued: { group: "Mass DM", label: "Mass DM: test queued", ph: [] },

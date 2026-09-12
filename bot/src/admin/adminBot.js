@@ -128,9 +128,6 @@ const SAMPLE_VARS = {
   site: "https://dexvra.io", listing: "https://t.me/dexvralisting",
   trending: "https://t.me/dexvratrending", announce: "https://t.me/dexvraio",
   sol: "1 SOL", bnb: "0.15 BNB", eth: "0.05 ETH", ref: "MDX-4821", reached: "8,214",
-  // The Mass DM preview's attachment row. Sampled ATTACHED — the non-empty form,
-  // the one that consumes layout — for the same reason {bonding} above is.
-  media: "📎 **Photo attached** — it goes out with your message. Tap 🖼 Change or 🗑 Remove below.",
   kind: "Photo", caption: "Your text is kept as its caption.", len: "1,842", limit: "1024",
   // The delivery receipt's two lines. Sampled as the HEALTHY run an admin is
   // editing for — massdm/sender.js owns the other two states ("Delivered to

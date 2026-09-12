@@ -95,6 +95,9 @@ function registerHandlers(bot) {
   bot.action("md_media", massdm.mediaAsk);
   bot.action("md_back", massdm.mediaBack);
   bot.action("md_nomedia", massdm.mediaClear);
+  // ✏️ Edit re-opens the compose step with the token, the chain and any photo
+  // intact — ad_massdm restarts at "paste your CA" and is the 📣 menu entry.
+  bot.action("md_edit", massdm.mdEdit);
   bot.action("buybot_help", start.buyBotHelp);
 
   // ── Payment ───────────────────────────────────────────────────────────────
