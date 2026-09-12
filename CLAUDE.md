@@ -11034,6 +11034,62 @@ recorded and told to nobody, the ordinary state logged too, the refusal fallback
 firing silently, and the fallback removed entirely. Each fails between one and
 four tests.
 
+## "@dexvraceo tambahkan username ini untuk admin agar pembayaran semuanya 0"
+
+`isAdminUser` is the one switch — `armPayment` reads it and arms the order at
+`0n` while every flow still runs end to end — and it matches a numeric id OR a
+case-insensitive `@username`. The ids have been baked into the code since they
+were added, for the reason stated there: **`.env` lives only on the server, so a
+name in the code is the only kind of fix a `git pull` carries.** The usernames
+had no such list, so `BUILTIN_ADMIN_USERNAMES` is that list and `dexvraceo` is
+its first entry.
+
+- ⚠️ **THIS IS NOT ONLY A PRICE.** `isAdminUser` also opens **@dexvraadminbot in
+  full** (`adminBot.js`'s guard), the free Mass DM test send and the raid panel.
+  One predicate, four doors — right, because they are all "is this Dexvra
+  staff", and worth saying out loud because the ask named payments only.
+- ⚠️ **A USERNAME IS NOT AS SAFE AS AN ID, and that is a trade-off rather than
+  an oversight.** A numeric id is permanent; a @username can be released — or
+  just changed — and claimed by a stranger, who would then pay 0 for every
+  package this bot sells and hold the admin bot. The id list stays the primary
+  route; when this account's numeric id is known it belongs in
+  `BUILTIN_ADMIN_IDS` and the username entry can go.
+- **`normAdminUsernames` is the ONE normaliser and it covers every source.**
+  `isAdminUser` compares against a trimmed, `@`-stripped, lowercased name, so a
+  built-in written as `@DexvraCEO` — the spelling this name was GIVEN in, and
+  the spelling an operator pastes — would match nobody, silently, and read
+  exactly like a name that was never added.
+- ⚠️ **AND IT IS TESTED BY BEING CALLED, because a mutation run said an
+  assertion could not do it.** Every entry shipped today is already spelled
+  correctly, so normalising one source and not the other changes no stored
+  value: the mutant survived an assertion on `ADMIN_USERNAMES` and dies only
+  against hostile spellings driven through the function. A guard a mutation run
+  cannot kill is not a guard — `logoWrite.ts`'s rule, one package over.
+- **The PRICE is untouched; only the charge is waived.** `humanAmount` still
+  carries the package's real figure, so the receipt, the ops report and the
+  wallet label say what the listing is worth. Zeroing it would make every one of
+  them claim the package is free.
+
+```bash
+cd bot && node scripts/run-tests.js test/adminFree.test.js   # 8 tests, no network
+```
+
+Ten guarantees are MUTATION-TESTED rather than argued: the name never added, the
+normaliser skipping the built-ins, the `@` not stripped, a pasted line's spaces
+kept, a blank entry surviving, the username leg of `isAdminUser` dropped, the
+incoming name not lowercased, the payment path not asking at all, and
+`adminFree` zeroing the price as well as the charge. Each fails between one and
+four tests. ⚠️ Two mutants SURVIVE and that is the feature: writing the built-in
+as `@dexvraceo` or `DexvraCEO` is behaviour-neutral, which is exactly what the
+normaliser is for.
+
+**Config a fix depends on:** nothing — the name is in the code, so `git pull` +
+the ecosystem restart carries it. `ADMIN_USERNAMES` in `bot/.env` still merges
+on top for anyone else. ⚠️ This is a `bot/` change, so the deploy is the
+**ecosystem restart** (both processes share `isAdminUser`), not `pm2 restart
+dexvra` — and the account must have `@dexvraceo` set as its **public Telegram
+username**, because that is the only thing an update carries.
+
 ## Conventions
 
 - Tests live beside the code they cover, in `bot/test/`, `tradebot/*.test.js`

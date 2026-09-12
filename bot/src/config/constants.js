@@ -70,7 +70,36 @@ const PK_CHANNEL = env.PK_CHANNEL || ""; // optional: temp-wallet private-key ba
 // .env. Any ADMIN_IDS from env are merged on top (deduped).
 const BUILTIN_ADMIN_IDS = ["1322401802", "7176469093"];
 const ADMIN_IDS = [...new Set([...BUILTIN_ADMIN_IDS, ...list(env.ADMIN_IDS)])];
-const ADMIN_USERNAMES = list(env.ADMIN_USERNAMES).map((u) => u.replace(/^@/, "").toLowerCase());
+// Built-in admin USERNAMES, for the same reason the ids are baked in: `.env`
+// lives only on the server, so a name added here is the only kind of fix a
+// `git pull` carries.
+//
+// ⚠️ A USERNAME IS NOT AS SAFE AS AN ID, and that is a trade-off rather than an
+// oversight. A numeric id is permanent; a @username can be released — or simply
+// changed — and claimed by a stranger, who would then pay 0 for every package
+// this bot sells. So the id list stays the primary route and this is the
+// convenience one; when @dexvraceo's numeric id is known it belongs in
+// BUILTIN_ADMIN_IDS and this entry can go.
+const BUILTIN_ADMIN_USERNAMES = ["dexvraceo"];
+// ⚠️ BOTH SOURCES GO THROUGH THE SAME NORMALISER, and that is the one rule here
+// worth a function. `isAdminUser` compares against a lowercased, @-stripped
+// name, so a built-in written as "@DexvraCEO" — the spelling an operator
+// actually pastes, and the spelling this name was GIVEN in — would match nobody,
+// silently, and read exactly like a name that was never added.
+//
+// It is exported and tested by being CALLED rather than asserted about, because
+// with every current entry already spelled correctly the placement of the
+// normaliser is behaviour-neutral: a mutation run says so, and a guard a
+// mutation run cannot kill is not a guard.
+const normAdminUsernames = (...sources) => [
+  ...new Set(
+    sources
+      .flat()
+      .map((u) => String(u == null ? "" : u).trim().replace(/^@+/, "").toLowerCase())
+      .filter(Boolean),
+  ),
+];
+const ADMIN_USERNAMES = normAdminUsernames(BUILTIN_ADMIN_USERNAMES, list(env.ADMIN_USERNAMES));
 
 // ── GramJS / MTProto (premium emoji channel posting) ─────────────────────────
 // A Telegram Premium USER account posts to the channels so premium custom emoji
@@ -466,6 +495,7 @@ module.exports = {
   PK_CHANNEL,
   ADMIN_IDS,
   ADMIN_USERNAMES,
+  normAdminUsernames,
   API_ID,
   API_HASH,
   GRAMJS_SESSION_FILE,
