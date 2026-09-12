@@ -55,6 +55,35 @@ const readNative = async (w, c) => {
   if (v == null) throw new Error('balance unreadable');
   return v;
 };
+/**
+ * Every wallet's native balance on ONE chain, in as few requests as the chain
+ * allows — the shape both screens that list wallets actually want.
+ *
+ * ⚠️ THE DASHBOARD WAS ASKING PER WALLET, AND ON SOLANA THAT IS WHAT BROKE IT.
+ * `readNative` is a single-cell read, so wallets × chains meant five separate
+ * `getBalance` calls hitting the public Solana endpoint at once — it rate-limits
+ * the burst, web3.js retries past the 2.5s bound, and all five cells came back
+ * null: `Couldn't reach Solana` on a screen where every EVM chain answered.
+ * `core.nativeBalances` is one `getMultipleAccounts` there and unchanged on EVM.
+ *
+ * ⚠️ THE TIMEOUT IS PER COLUMN, NOT PER CELL, and that is not a regression: the
+ * five Solana cells were always one concurrent wave sharing one wall clock, so
+ * the screen waited the same 2.5s for all of them. What changed is that they now
+ * share one REQUEST, which is the thing the endpoint was counting.
+ *
+ * `why` is the upstream's own sentence, kept so the screen can say WHICH silence
+ * this was — a 429, a refusal, or our own bound — instead of one shrug for all
+ * three.
+ */
+async function readNativeColumn(list, c, tmo = 2500) {
+  const addrs = list.map((w) => wAddr(w, c.key));
+  const r = await withTmo(
+    core.nativeBalances(c.key, addrs).catch((e) => ({ bals: addrs.map(() => null), why: String((e && e.message) || e).slice(0, 160) })),
+    tmo,
+    { bals: addrs.map(() => null), why: `no answer within ${tmo}ms` },
+  );
+  return r;
+}
 // Short-lived token price cache `${chain}:${caLower}` → { priceEth, at } so the wallet
 // screen can include TOKEN holdings in each wallet's total without re-pricing every render.
 const _priceCache = new Map();
@@ -712,12 +741,20 @@ async function walletScreen(chatId) {
   // for its full timeout on every open. A read that misses the window falls
   // back to the ≤10-min last-known cache below — exactly what that cache is
   // for — and a chain that is genuinely down reads "couldn't reach" either way.
-  const rawMatrixP = Promise.all(list.map((w) =>
-    Promise.all(allChains.map((c) => withTmo(readNative(w, c).catch(() => null), 2500, null)))));
+  // Read a COLUMN per chain, not a cell per wallet — see readNativeColumn. The
+  // wave is still every chain at once; what changed is that Solana's five cells
+  // are one request instead of five racing each other into a 429.
+  const colsP = Promise.all(allChains.map((c) => readNativeColumn(list, c)));
   // Token pricing needs nothing from the balance matrix; the two waves used to
   // run in SERIES, so every /wallet paid both latencies end to end.
   const tokenBagsP = walletTokenUsd(list, new Set(allChains.map((c) => c.key)));
-  const [rawMatrix, tokenBags] = await Promise.all([rawMatrixP, tokenBagsP]);
+  const [cols, tokenBags] = await Promise.all([colsP, tokenBagsP]);
+  const rawMatrix = list.map((_w, wi) => allChains.map((_c, ci) => cols[ci].bals[wi]));
+  // Why each chain went unread, by chain key. "Couldn't reach Solana" with no
+  // reason is what made this take a screenshot to diagnose: a 429, a refusal and
+  // our own 2.5s bound were one sentence.
+  const chainWhy = {};
+  allChains.forEach((c, ci) => { if (cols[ci].why) chainWhy[c.key] = cols[ci].why; });
   // Resolve each cell: a successful read (incl. a real 0) updates the last-known cache; a
   // FAILED read (null, e.g. RPC timeout) falls back to the last-known balance (≤10 min) so
   // the grand total stays stable and accurate instead of silently undercounting.
@@ -819,7 +856,18 @@ async function walletScreen(chatId) {
   chainBlock = activeChainLine + chainBlock;
   if ((tokenUsdArr[awIdx] || 0) > 0.05) chainBlock += `${T(chatId, 'wal.tokens_row')} — <b>${usdX(tokenUsdArr[awIdx])}</b>\n`;
   if (emptyChains.length) chainBlock += T(chatId, 'wal.empty_on', { chains: esc(emptyChains.join(' · ')) }) + '\n';
-  if (unreadChains.length) chainBlock += T(chatId, 'wal.unread_on', { chains: esc(unreadChains.join(' · ')) }) + '\n';
+  if (unreadChains.length) {
+    chainBlock += T(chatId, 'wal.unread_on', { chains: esc(unreadChains.join(' · ')) }) + '\n';
+    // ⚠️ AND WHY. A chain that could not be read has exactly one line on this
+    // screen, and until now it said nothing an operator could act on — a rate
+    // limit, a host refusing this server and our own 2.5s bound all rendered as
+    // "Couldn't reach Solana", which is why this was reported instead of fixed.
+    // De-duplicated: five chains behind one dead endpoint is one sentence.
+    const reasons = [...new Set(unreadChains
+      .map((n) => chainWhy[(allChains.find((c) => c.name === n) || {}).key])
+      .filter(Boolean))];
+    if (reasons.length) chainBlock += `<i>${esc(reasons.join(' · '))}</i>\n`;
+  }
   // One EVM key = one 0x address shared by every EVM chain; Solana has its own key.
   // Show BOTH addresses per wallet so it's obvious where to deposit each — but
   // the ACTIVE chain's goes first. Depositing is the reason someone reads this
@@ -1142,10 +1190,12 @@ async function wdSweepPickScreen(chatId, p) {
   const ch = core.chainOf(p.chain);
   const list = core.walletList(u);
   const picked = new Set(p.ids || []);
-  // Concurrent and bounded: ten serial reads against a throttled public RPC is
-  // the wallet-dashboard mistake, and this screen is tapped repeatedly.
-  const bals = await Promise.all(list.map((w) =>
-    withTmo(readNative(w, ch).catch(() => null), 2500, null)));
+  // ONE column read, bounded: this screen is tapped repeatedly and it is ten
+  // wallets on ONE chain — exactly the shape that put five concurrent
+  // `getBalance` calls on the public Solana endpoint and got every one of them
+  // rate-limited. `readNativeColumn` makes that one request there.
+  const col = await readNativeColumn(list, ch);
+  const bals = col.bals;
   const kbRows = [];
   let selTotal = 0, unread = 0, selRead = 0;
   list.forEach((w, i) => {
@@ -1165,7 +1215,7 @@ async function wdSweepPickScreen(chatId, p) {
   text += !picked.size ? `<i>Nothing selected yet.</i>`
     : selRead === 0 ? `Selected: <b>${picked.size}</b> · <i>balances couldn't be read just now</i>`
     : `Selected: <b>${picked.size}</b> · holding <b>${+selTotal.toFixed(5)} ${esc(ch.native)}</b>${selRead < picked.size ? ` <i>(${picked.size - selRead} unread)</i>` : ''}`;
-  if (unread) text += `\n\n⚠️ <code>?</code> means the balance couldn't be read just now — that's a node problem, not a zero. Those wallets can still be swept.`;
+  if (unread) text += `\n\n⚠️ <code>?</code> means the balance couldn't be read just now — that's a node problem, not a zero. Those wallets can still be swept.${col.why ? `\n<i>${esc(col.why)}</i>` : ''}`;
   return { text, kb: { inline_keyboard: kbRows } };
 }
 
@@ -5703,7 +5753,13 @@ async function start() {
   // reporting; which one it is, is a secret.
   if (core.chains.isSvm('solana') || core.chains.ENABLED.includes('solana')) {
     const prio = Number(core.CFG.solPriorityLamports) || 0;
+    // …and HOW MANY hosts, because one is what the balance reads ran out of.
+    // A count is safe where the urls are not, and "1 host" beside
+    // "PUBLIC default" is the whole diagnosis for a screen that says
+    // "Couldn't reach Solana": nowhere else to ask.
+    const solHosts = solana.rpcUrls(core.chainOf('solana') && core.chainOf('solana').rpc).length;
     console.log(`[boot] solana: rpc ${process.env.SOLANA_RPC ? 'custom' : 'PUBLIC default (rate-limited)'}`
+      + ` · ${solHosts} host${solHosts === 1 ? ' (no failover — SOLANA_RPC takes a comma list)' : 's, failover on'}`
       + ` · priority fee ${prio > 0 ? prio + ' lamports (~' + (prio / 1e9).toFixed(6) + ' SOL/trade)' : 'OFF — transactions queue behind every paying one'}`);
     // …AND THE THIRD KNOB, WHICH IS THE ONE FIVE WALLETS RAN OUT OF. The keyless
     // Jupiter tier is metered per IP, so a multi-wallet buy is a burst against a

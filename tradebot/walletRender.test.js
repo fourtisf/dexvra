@@ -32,6 +32,9 @@ let WALLETS = [];
 let BAL = [];
 let PRICE = {};
 let ACTIVE = 'robinhood';   // the chain the user picked with 🌐 Chain
+// What the RPC says when a cell is marked 'fail' — so a render test can assert
+// the screen PRINTS the reason rather than one shrug for every silence.
+let FAIL_WHY = {};
 
 const core = {
   CFG: { tgToken: 'test' },
@@ -49,6 +52,17 @@ const core = {
   // The screen reads balances through this now: 0n and "we could not read it"
   // are different facts, and on Solana `ethBalance` could not tell them apart.
   ethBalanceOrNull: async (a, k) => { try { return bal(a, k); } catch (_) { return null; } },
+  // The screens read a per-chain COLUMN now, because five separate Solana reads
+  // in one wave is what the public endpoint rate-limits. The fake answers the
+  // same per-cell `bal()`, so every assertion below still means what it meant —
+  // and a chain that fails carries its REASON, which the screen prints.
+  nativeBalances: async (k, addrs) => {
+    let why = null;
+    const bals = addrs.map((a) => {
+      try { return bal(a, k); } catch (e) { if (!why) why = String(e.message); return null; }
+    });
+    return { bals, why };
+  },
   tokenSnapshot: async (ca) => ({ priceEth: PRICE[ca] || 0 }),
 };
 function bal(addr, k) {
@@ -56,7 +70,7 @@ function bal(addr, k) {
   const wi = WALLETS.findIndex((x) => x.address === addr || x.sol === addr);
   const row = BAL[wi] || [];
   const v = row[idx(k)];
-  if (v === 'fail') throw new Error('RPC down');
+  if (v === 'fail') throw new Error(FAIL_WHY[k] || 'RPC down');
   return v == null ? 0n : v;
 }
 
@@ -77,7 +91,7 @@ const W = (id, name) => { const u = id + '_' + (++_uid); return { id: u, name: n
   address: '0x' + u.padEnd(40, '0'), sol: 'So' + u.padEnd(42, '1') }; };
 const plain = (s) => s.replace(/<[^>]+>/g, '');
 
-test.beforeEach(() => { WALLETS = []; BAL = []; PRICE = {}; ACTIVE = 'robinhood'; });
+test.beforeEach(() => { WALLETS = []; BAL = []; PRICE = {}; ACTIVE = 'robinhood'; FAIL_WHY = {}; });
 
 // ── The path the source tests could not see ──────────────────────────────────
 
@@ -385,4 +399,33 @@ test('"nothing on this chain" does not read as "you hold nothing"', async () => 
   assert.match(plain(r.text), /one chain at a time/);
   assert.ok(JSON.stringify(r.kb).includes('toks'), 'no route to the screen that covers every chain');
   delete core.portfolioAll;
+});
+
+// ── "mengapa tidak baca saldo solana" — the reason has to reach the screen ────
+
+test("⚠️ an unread chain SAYS why, on the screen, not only in a variable", async () => {
+  // The reported render: `Couldn't reach Solana — those are not counted above`
+  // and nothing else. A 429, a host refusing this server and our own 2.5s bound
+  // were one sentence, which is why this had to be diagnosed from a screenshot.
+  WALLETS = [W('w1')];
+  BAL = [[E(1), 0n, 0n, 'fail']];
+  FAIL_WHY = { solana: 'the Solana RPC is rate-limiting this server (429)' };
+  const txt = plain((await t.walletScreen(1)).text);
+  assert.match(txt, /Couldn't reach Solana/);
+  assert.match(txt, /rate-limiting this server \(429\)/, 'the reason never reached the reader');
+});
+
+test("…and two chains behind one dead host are ONE sentence", async () => {
+  WALLETS = [W('w1')];
+  BAL = [[E(1), 'fail', 'fail', 0n]];
+  FAIL_WHY = { ethereum: 'node is down', bsc: 'node is down' };
+  const txt = plain((await t.walletScreen(1)).text);
+  assert.strictEqual(txt.split('node is down').length - 1, 1, 'a repeated reason is a wall, not an answer');
+});
+
+test('a chain that answered says nothing about a reason', async () => {
+  WALLETS = [W('w1')];
+  BAL = [[E(1), 0n, 0n, E(0)]];
+  const txt = plain((await t.walletScreen(1)).text);
+  assert.doesNotMatch(txt, /Couldn't reach/);
 });

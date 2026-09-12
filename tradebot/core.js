@@ -736,8 +736,11 @@ async function _balanceResilient(chainKey, addr, tries = 3, timeoutMs = 6000) {
       // could ever detect on Solana was the 6s TIMEOUT — a node that answered
       // with an error came back as `{ok:true, bal:0}` and the removal guard
       // read a funded wallet as empty. The retry above was decorative there.
+      // Through the one owner on svm — the host list and the 429 retry-off live
+      // there, and this loop's 6s try is the one web3.js's own 7.5s ladder used
+      // to eat whole. EVM keeps the direct read: this loop IS its retry.
       const read = isSvm(chainKey)
-        ? solana.solBalanceOrNull(providerFor(chainKey), addr)
+        ? nativeBalances(chainKey, [addr]).then((r) => r.bals[0])
         : providerFor(chainKey).getBalance(addr);
       const bal = await Promise.race([
         read,
@@ -1794,8 +1797,49 @@ async function ethBalance(addr, chainKey) {
  * read. Same contract as `tokenBalanceOrNull` two functions down.
  */
 async function ethBalanceOrNull(addr, chainKey) {
-  if (isSvm(chainKey)) return solana.solBalanceOrNull(providerFor(chainKey), addr);
+  // ⚠️ THROUGH nativeBalances, not a private read of its own. That is where the
+  // Solana host list and web3.js's 7.5s-on-a-429 retry are switched off, and a
+  // second door onto the same chain would keep the old behaviour on whichever
+  // screen happened to use it — which is exactly how the removal guard and the
+  // dashboard came to disagree about a wallet holding 2.15 SOL.
+  if (isSvm(chainKey)) return (await nativeBalances(chainKey, [addr])).bals[0];
   try { return await providerFor(chainKey).getBalance(addr); } catch (_) { return null; }
+}
+/**
+ * The native balance of MANY addresses on one chain — the one owner of a
+ * per-chain COLUMN, which is the shape every screen that lists wallets reads.
+ *
+ * ⚠️ ON SOLANA THIS IS ONE REQUEST, AND THAT IS THE WHOLE POINT. The wallet
+ * dashboard reads wallets × chains concurrently, so five wallets used to put
+ * five separate `getBalance` calls on the public Solana endpoint in the same
+ * millisecond — and it answers a burst with 429s, which web3.js retries past
+ * the screen's 2.5s bound. Every wallet then rendered "Couldn't reach Solana"
+ * while every EVM chain answered: `getSignatureStatuses`' lesson
+ * ("five wallets were throttling each other"), never applied to the balance.
+ *
+ * EVM keeps one request per address — that is what the JSON-RPC offers, those
+ * endpoints are not the ones refusing us, and ethers already batches on the
+ * chains where `batchMaxCount` allows it.
+ *
+ * Returns `{ bals, why }`: a null cell is "we could not read THIS one", and
+ * `why` is the upstream's own reason rather than another silent null. "Never
+ * discard the reason", on the read that had been discarding it longest.
+ */
+async function nativeBalances(chainKey, addrs) {
+  const list = Array.isArray(addrs) ? addrs : [addrs];
+  if (isSvm(chainKey)) {
+    const r = await solana.solBalancesX(providerFor(chainKey), list, {
+      conns: solana.readConnections(chains.chainOf(chainKey) && chains.chainOf(chainKey).rpc),
+    });
+    return { bals: r.bals, why: r.ok ? null : r.why };
+  }
+  const p = providerFor(chainKey);
+  let why = null;
+  const bals = await Promise.all(list.map(async (a) => {
+    try { return await p.getBalance(a); }
+    catch (e) { if (!why) why = String((e && e.message) || e).slice(0, 160); return null; }
+  }));
+  return { bals, why };
 }
 // Raw token balance (BigInt) held by `addr`. On Solana `ca` is an SPL mint and `addr`
 // the owner; splBalance sums the owner's token accounts. Raw units — decimals differ
@@ -5298,7 +5342,7 @@ module.exports = {
   // require above, that seam would be dead and the failure silent.
   curveTrade, curvePrice, tokenDecimalsOrNull, tokenSupplyRaw, approveExact,
   walletFunds, solWithdrawPlan, evmWithdrawPlan, exportMnemonic,
-  ethBalanceOrNull,
+  ethBalanceOrNull, nativeBalances,
   buy, sell, withdraw, withdrawMany, withdrawToken, portfolio, portfolioAll, tokenPnl, tokenLogoUrl, DB,
   // Test-only seams — see the notes at each definition.
   _deps,

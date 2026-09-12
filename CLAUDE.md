@@ -11742,6 +11742,111 @@ tests.
 restart** and no web rebuild — and the two new lines are NEW keys, so no
 operator has a saved copy of them and ♻️ Reset default is not needed anywhere.
 
+## "mengapa tidak baca saldo solana" — five wallets asked five times and were refused
+
+Reported with a `/wallet` screenshot: `Couldn't reach Solana — those are not
+counted above` on the active wallet and `⚠️ 1 chain(s) unread` on all four
+others, while **every EVM chain answered on every wallet**. A chain that fails
+on five wallets at once while five other chains succeed is not flakiness. It is
+arithmetic, and three of this file's own rules were broken to produce it.
+
+**1. ⚠️ FIVE WALLETS ASKED FIVE SEPARATE QUESTIONS, IN THE SAME MILLISECOND.**
+The dashboard reads wallets × chains concurrently, and `readNative` is a
+per-CELL read — so five `getBalance` calls landed on
+`api.mainnet-beta.solana.com` together, the endpoint these notes already call
+*"aggressively rate-limited"*. **And this exact lesson is written down one
+method over**: `getSignatureStatuses` takes an ARRAY and was batched for this
+very reason — *"five wallets were throttling each other"* — while
+`getMultipleAccounts` takes one too and the balance read never learnt it. A
+lesson applied to one of two siblings, for the ninth time in this file.
+
+**2. ⚠️ AND WEB3.JS SPENDS 7.5 SECONDS ON A 429 BEFORE IT ANSWERS AT ALL.**
+Measured in `node_modules`, not assumed: its RPC client retries a 429 five
+times at 500ms → 1s → 2s → 4s. The wallet screen waits **2500ms**. So one 429
+means that read can NEVER finish inside the window — deterministic, which is
+why all five cells missed rather than some — and the retries keep hitting the
+endpoint for five seconds after the screen has given up. *"A client that
+hammers through its own 429"*, this repo's own defect, inside a dependency.
+
+**3. ⚠️ AND THE REASON WAS DISCARDED AT THREE LAYERS.** `solBalanceOrNull`'s
+`catch (_) { return null; }`, `_balanceResilient`'s bare `catch`, and the
+screen's `.catch(() => null)`. So a 429, a host refusing this box, DNS and our
+own 2.5s bound were ONE sentence — which is why this had to be reported from a
+screenshot instead of read off the screen that was already showing it.
+
+- **`solBalancesX` reads every wallet in ONE `getMultipleAccounts`**, and
+  `core.nativeBalances(chain, addrs)` is the one owner of a per-chain COLUMN —
+  the shape both screens that list wallets actually want. `readNativeColumn`
+  serves the dashboard matrix and the sweep picker; EVM is unchanged, because
+  those endpoints are not the ones refusing us and ethers already batches where
+  `batchMaxCount` allows.
+- ⚠️ **THE TIMEOUT IS PER COLUMN NOW, and that is not a regression**: the five
+  Solana cells were always one concurrent wave sharing one wall clock. What
+  changed is that they share one REQUEST, which is the thing the endpoint counts.
+- ⚠️ **A NULL ACCOUNT IS A REAL ZERO.** Solana answers `null` for an address
+  nobody has funded — which is what a fresh wallet is — so reading that as "could
+  not ask" would park every new wallet in the unread column for ever.
+- **The READ connections set `disableRetryOnRateLimit`; the SIGNING one does
+  not.** A refusal comes straight back so our own failover and reason can act on
+  it; a confirmation that waits out a 429 is doing its job. ⚠️ They must be
+  **separate objects** — alias the caches and the option is decided by whichever
+  call constructed the url first, which no source scan can see and which is
+  therefore driven.
+- **`SOLANA_RPC` is a LIST** — *"never one hardcoded host"*, finally applied to
+  the one upstream in this repo that never had it. ⚠️ There is deliberately **no
+  invented second default**: a guessed endpoint on the chain that signs trades is
+  what this repo refuses outright, so the failover is inert until an operator
+  adds a host — a comma in `.env`, not a deploy. It fails over on a REFUSAL as
+  well as a transport error, which the standing base rule forbids and which is
+  the 429's documented exception: a rate limit is a fact about the bucket on THAT
+  host. The reported reason is the FIRST host's — a later host's dead socket must
+  not bury the rate limit that started it.
+- **`ethBalanceOrNull` and the removal survey go through the same door.** Two
+  private reads is how the dashboard and the removal guard came to disagree about
+  a wallet holding 2.15 SOL in the first place.
+- **The screen SAYS which silence it was**, de-duplicated (five chains behind one
+  dead host is one sentence), and the boot line prints the HOST COUNT — never the
+  urls, for the reason the RPC url is never printed. `1 host (no failover)` beside
+  `Couldn't reach Solana` is the whole diagnosis: nowhere else to ask.
+
+⚠️ **AND THE OLD GUARD FOR THIS PINNED A SPELLING.** `walletWithdraw.test.js`
+matched the literal `solana.solBalanceOrNull(providerFor(chainKey), addr)`, so it
+went RED over code that keeps its rule on MORE screens through one owner — and
+would have passed on a reader that answered `0n`. This repo's own recurring
+defect (the four-way pool TTL, the `{ ok: true,` build stamp, the in-flight stall
+warning). It asserts the RULE now.
+
+⚠️ **And one source assertion could not see its own mutant.** *"The screen says
+why"* was a scan for `chainWhy[` — which `if (false) chainBlock += ''` leaves
+in place. A source scan cannot tell a line that fires from one that is merely
+written down; `walletRender.test.js` DRIVES the render with Solana refusing and
+asserts the sentence reaches the reader.
+
+```bash
+cd tradebot && node --test solBalanceBatch.test.js walletRender.test.js walletWithdraw.test.js   # 14 + 30 + 63 tests, no network
+pm2 logs dexvra-tradebot --lines 50 --nostream | grep -F '[boot] solana'
+```
+
+Nineteen guarantees are MUTATION-TESTED rather than argued: the batch back to
+one `getBalance` per wallet, a null account read as unread, the reason
+discarded, the LAST host's reason winning, no failover, an unparseable address
+marking the whole column unread, `SOLANA_RPC` no longer a list, a blank override
+leaving no host, core no longer batching, each of the two screens back to a
+per-wallet read, the screen not saying why, the reason not de-duplicated, the
+reason never captured, web3.js's retry back on the read path, the read cache
+aliased to the signing one, and each of the two core doors growing its own read
+back. Each fails between one and eight tests.
+
+**Config a fix depends on:** nothing — the batch, the retry-off and the reason
+all ship on and need no `.env`. ⚠️ But the CEILING is still the ceiling: one
+public endpoint shared by every wallet, the snipe loop and the confirmations.
+`SOLANA_RPC` in **`tradebot/.env`** (`/opt/dexvra/tradebot/.env` — the trade bot
+reads its OWN `.env`, and that mistake has been made) is the only thing that
+raises it rather than dividing it, and it now takes a **comma-separated list**
+so a refused host is parked and the next takes the same calls. ⚠️ This is a
+`tradebot/` change, so the deploy is `pm2 restart dexvra-tradebot --update-env`
+— not the ecosystem file, and no web rebuild.
+
 ## Conventions
 
 - Tests live beside the code they cover, in `bot/test/`, `tradebot/*.test.js`

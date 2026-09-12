@@ -268,9 +268,54 @@ function feeLamports(notionalLamports, feeBps) {
 
 const _conns = {};
 function getConnection(rpc) {
-  const url = rpc || (process.env.SOLANA_RPC || 'https://api.mainnet-beta.solana.com');
+  const url = rpcUrls(rpc)[0];
   if (!_conns[url]) _conns[url] = new Connection(url, { commitment: 'confirmed' });
   return _conns[url];
+}
+/**
+ * SOLANA_RPC is a LIST — "never one hardcoded host", finally applied here.
+ *
+ * Every other upstream in this repo carries one (JUP_BASES, the launchpad bases,
+ * IPFS_GATEWAYS) and the Solana RPC never did: one url, and when it refused, the
+ * wallet screen said "Couldn't reach Solana" with nowhere else to ask. The
+ * shipped default is unchanged and there is deliberately no INVENTED second
+ * host — a guessed endpoint on the chain that signs trades is what this repo
+ * refuses — so the failover is inert until an operator adds one, which is a
+ * comma in `.env` rather than a deploy.
+ *
+ * ⚠️ THE LIST IS FOR READS. getConnection still answers the FIRST url and
+ * nothing about signing, broadcasting or confirming moves: a swap is built,
+ * signed and confirmed against one node's view of the chain, and re-asking a
+ * different host mid-flight is a different problem with its own failure modes.
+ */
+function rpcUrls(rpc) {
+  const raw = String(rpc || process.env.SOLANA_RPC || 'https://api.mainnet-beta.solana.com');
+  const list = raw.split(',').map((u) => u.trim()).filter(Boolean);
+  return list.length ? list : ['https://api.mainnet-beta.solana.com'];
+}
+/**
+ * A Connection per configured host, in order — for READS only.
+ *
+ * ⚠️ `disableRetryOnRateLimit`, AND THAT IS THE HALF THAT MEASURES. web3.js
+ * answers a 429 by retrying five times with 500ms → 1s → 2s → 4s of backoff —
+ * **7.5 SECONDS of sleeping before it returns an error at all** (read off
+ * `node_modules/@solana/web3.js`, not assumed). The wallet screen waits 2500ms.
+ * So a single 429 means that read can NEVER finish inside the window: not bad
+ * luck, arithmetic, which is why every wallet reported the same silence. Worse,
+ * the retries keep landing on the endpoint long after the screen has given up —
+ * "a client that hammers through its own 429", this repo's own defect, inside a
+ * dependency.
+ *
+ * Off, the refusal comes straight back, our own failover picks the next host and
+ * the reason reaches the reader. The SIGNING connection keeps web3.js's retry:
+ * getConnection is untouched, and a confirmation that waits is doing its job.
+ */
+const _readConns = {};
+function readConnections(rpc) {
+  return rpcUrls(rpc).map((u) => {
+    if (!_readConns[u]) _readConns[u] = new Connection(u, { commitment: 'confirmed', disableRetryOnRateLimit: true });
+    return _readConns[u];
+  });
 }
 async function solBalance(conn, address) {
   const v = await solBalanceOrNull(conn, address);
@@ -287,7 +332,93 @@ async function solBalance(conn, address) {
  * `splBalanceOrNull` one function down.
  */
 async function solBalanceOrNull(conn, address) {
-  try { return BigInt(await conn.getBalance(new PublicKey(address), 'confirmed')); } catch (_) { return null; }
+  const r = await solBalancesX(conn, [address]);
+  return r.bals[0];
+}
+
+/**
+ * EVERY wallet's SOL balance in ONE request, with the reason kept.
+ *
+ * ⚠️ "liat ini skrg trading bot mengapa tidak baca saldo solana" — /wallet
+ * reporting `Couldn't reach Solana` on all five wallets while every EVM chain
+ * answered. Not flakiness: arithmetic. The dashboard fires wallets × chains
+ * reads at once, so five separate `getBalance` calls landed on
+ * `api.mainnet-beta.solana.com` in the same millisecond — the endpoint this
+ * repo's own notes call "aggressively rate-limited" — and web3.js answers a 429
+ * by retrying with backoff, which blows straight past the screen's 2.5s bound.
+ * Five wallets throttling each other.
+ *
+ * ⚠️ AND THIS EXACT LESSON IS ALREADY WRITTEN DOWN ONE METHOD OVER.
+ * `getSignatureStatuses` takes an ARRAY and was batched for this very reason
+ * ("five wallets were throttling each other", `SOL_STATUS_BATCH_MS`). So does
+ * `getMultipleAccounts` — and the balance read never learnt it. A lesson
+ * applied to one of two siblings is a fix half-made.
+ *
+ * ⚠️ A NULL ACCOUNT IS A REAL ZERO, NOT A FAILURE. Solana returns `null` for an
+ * address that has never been funded, which is exactly what a fresh wallet is —
+ * reading that as "could not ask" would put every new wallet permanently in the
+ * unread column. The REQUEST failing is what produces null balances here, and
+ * `why` says which host said what.
+ *
+ * ⚠️ IT FAILS OVER ON A REFUSAL AS WELL AS A TRANSPORT ERROR, which the standing
+ * base rule forbids — deliberately, and for the 429's documented reason: a rate
+ * limit is a fact about the bucket on THAT HOST, and another host has its own.
+ * The same exception `jupiterQuota` and the IPFS gateway list already carry.
+ */
+const SOL_ACCOUNTS_PER_CALL = 100;   // getMultipleAccounts' own cap
+async function solBalancesX(conn, addresses, opts) {
+  const list = Array.isArray(addresses) ? addresses : [addresses];
+  const out = new Array(list.length).fill(null);
+  if (!list.length) return { bals: out, ok: true, why: null };
+
+  // Anything unparseable is this address's own answer, never the host's.
+  const keys = [];
+  for (let i = 0; i < list.length; i++) {
+    try { keys.push({ i, pk: new PublicKey(list[i]) }); } catch (_) { /* stays null */ }
+  }
+  if (!keys.length) return { bals: out, ok: true, why: null };
+
+  const conns = (opts && opts.conns) || [conn];
+  let why = null;
+  for (const c of conns) {
+    let failed = false;
+    for (let off = 0; off < keys.length; off += SOL_ACCOUNTS_PER_CALL) {
+      const slice = keys.slice(off, off + SOL_ACCOUNTS_PER_CALL);
+      try {
+        const res = await c.getMultipleAccountsInfo(slice.map((k) => k.pk), 'confirmed');
+        slice.forEach((k, n) => {
+          const acc = (res || [])[n];
+          // null account = never funded = a genuine zero.
+          out[k.i] = BigInt((acc && acc.lamports) || 0);
+        });
+      } catch (e) {
+        failed = true;
+        if (!why) why = solRpcWhy(e);   // the FIRST host's reason, never the last
+        break;
+      }
+    }
+    if (!failed) return { bals: out, ok: true, why: null };
+  }
+  return { bals: out, ok: false, why: why || 'the Solana RPC did not answer' };
+}
+/** The batch read for one connection — the shape every caller outside the
+ *  dashboard wants, with the reason still attached. */
+async function solBalancesOrNull(conn, addresses) {
+  return solBalancesX(conn, addresses);
+}
+/**
+ * ⚠️ NEVER DISCARD THE REASON — this file's first rule about upstreams, and the
+ * balance read has been breaking it since it was written (`catch (_) { return
+ * null; }`). A 429, a 403, DNS and our own timeout were ONE observation on the
+ * screen, which is why this had to be reported rather than diagnosed.
+ */
+function solRpcWhy(e) {
+  const msg = String((e && (e.message || e)) || '').slice(0, 160);
+  if (/429|too many requests|rate.?limit/i.test(msg)) return 'the Solana RPC is rate-limiting this server (429)';
+  if (/\b40[13]\b|forbidden|unauthorized/i.test(msg)) return 'the Solana RPC refused this server (403)';
+  if (/timeout|timed out|abort/i.test(msg)) return 'the Solana RPC did not answer in time';
+  if (/ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|fetch failed|socket/i.test(msg)) return `could not reach the Solana RPC (${msg})`;
+  return msg || 'the Solana RPC did not answer';
 }
 // SPL balance of `mint` held by `owner`. Sums all token accounts (usually one ATA).
 async function splBalance(conn, owner, mint) {
@@ -1167,7 +1298,7 @@ module.exports = {
   solToLamports, lamportsToSol, fmtUnits, toRaw,
   quoteUrl, quotePath, swapBody, parseQuote, feeLamports, netErr,
   jupBase: () => _jupBase,   // which host actually answered — for the preflight
-  getConnection, solBalance, solBalanceOrNull, splDecimalsOrNull, splBalance, splBalanceOrNull, sendJupiterSwap, sendSplToken, confirmSignature,
+  getConnection, rpcUrls, readConnections, solBalance, solBalanceOrNull, solBalancesOrNull, solBalancesX, solRpcWhy, splDecimalsOrNull, splBalance, splBalanceOrNull, sendJupiterSwap, sendSplToken, confirmSignature,
   rentExemptMin, transferFee,
   getQuote, getSwapTx, swap, sendSol, splDecimals, jupTokenMeta, splMeta, dexScreener, pumpfunNew,
   jupErr, jupKeyed: () => !!JUP_API_KEY, jupHeaders, jupStats,

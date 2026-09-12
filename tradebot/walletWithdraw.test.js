@@ -739,14 +739,23 @@ test("an unreadable SOLANA balance is not a zero — on any screen", { skip: !co
   assert.equal(typeof solanaMod.solBalanceOrNull, "function");
   const c = code("core.js");
   const fn = c.slice(c.indexOf("async function _balanceResilient("), c.indexOf("async function walletFunds("));
-  assert.match(fn, /solana\.solBalanceOrNull\(providerFor\(chainKey\), addr\)/);
+  // ⚠️ ASSERT THE RULE, NOT THE SPELLING. This used to pin the literal
+  // `solana.solBalanceOrNull(providerFor(chainKey), addr)`, so it went RED the
+  // day both reads moved behind core.nativeBalances — code that keeps this
+  // rule on MORE screens — and would have passed on a reader that answered 0n.
+  // The rule is: the survey must not use the SWALLOWING read, and a null must
+  // mean retry-then-report rather than "empty".
+  assert.match(fn, /nativeBalances\(chainKey, \[addr\]\)/, 'through the one owner, where the host list and the 429 retry-off live');
   assert.match(fn, /if \(bal == null\) continue;/);
   assert.doesNotMatch(fn, /solana\.solBalance\(/, "the swallowing read is gone from the survey");
   // …and the screens read it through CORE, not by reaching into the solana
   // module: every other chain read on that screen goes through core, and going
   // around it is how a stubbed render test ends up bypassing its own stub.
   assert.match(c, /async function ethBalanceOrNull\(addr, chainKey\)/);
-  assert.match(c, /if \(isSvm\(chainKey\)\) return solana\.solBalanceOrNull\(providerFor\(chainKey\), addr\);/);
+  const eb = c.slice(c.indexOf('async function ethBalanceOrNull(addr, chainKey)'));
+  const ebFn = eb.slice(0, eb.indexOf('\n}') + 2);
+  assert.match(ebFn, /nativeBalances\(chainKey, \[addr\]\)/, 'one door onto the chain, not a private read per screen');
+  assert.doesNotMatch(ebFn, /solana\.solBalance\(/, 'never the read that answers 0n for a dead RPC');
   const t = code("telegram.js");
   const rnStart = t.indexOf("const readNative = async (w, c) =>");
   const rn = t.slice(rnStart, t.indexOf("\n};", rnStart));   // the function ONLY — tg() below legitimately uses solana.netErr
