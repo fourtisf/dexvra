@@ -73,10 +73,18 @@ const esc = (t) => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replac
 // of this sender, and reading it as a general fact is how a broadcast was
 // reported as unable to do something it can do.
 //
+// ⚠️ AND THE GRAMJS PREMIUM ACCOUNT CANNOT COVER THIS ONE. "dexvra bot sudah
+// pakai emoji premium di konekan ke userbot yang punya premium" is true of the
+// CHANNEL — src/gramjs.js exposes sendToChannel and nothing else, because a
+// user account may not DM twelve thousand strangers who /start-ed a BOT. So the
+// userbot's Premium is what animates @dexvraio; the BotFather OWNER's Premium
+// is what animates these DMs, and they are two different accounts to check.
+//
 // So this module sends the entities untouched and lets Telegram decide. Two
 // rules follow, because "it worked" and "it was silently downgraded" are
 // otherwise the same observation — the defect the 🔄 Refresh board button was
-// built to end one surface over.
+// built to end one surface over. Both report to pm2 rather than to the delivery
+// report; see reportText.
 const EMOJI_REFUSED = /custom[_ ]?emoji|EMOJI_INVALID/i;
 const customCount = (ents) => (ents || []).filter((e) => e.type === "custom_emoji").length;
 
@@ -92,15 +100,23 @@ const customCount = (ents) => (ents || []).filter((e) => e.type === "custom_emoj
  *
  * Recorded from the FIRST send only — the answer is a property of the bot, not
  * of the recipient, so 12,000 identical readings are the same reading.
+ *
+ * ⚠️ THE WARN IS THE READER, now that the delivery report no longer carries the
+ * verdict. A value nobody can read is the same as no value, so a downgrade that
+ * recorded silently would be this repo's own defect committed by the change
+ * that removed the line. Only the NEGATIVE is logged: "the emoji went out" is
+ * the ordinary state of a healthy box and a line per broadcast saying so is the
+ * noise the removal was asked for.
  */
 function notePremium(job, msg) {
   if (job.premiumOut != null || !msg) return;
   const want = customCount(job.entities);
-  if (!want) return; // nothing premium in this job — the report says nothing
+  if (!want) return; // nothing premium in this job — there is no verdict to take
   job.premiumOut = customCount(msg.entities || msg.caption_entities) >= want;
   job.premiumWhy = job.premiumOut
     ? null
-    : "Telegram stripped them — the bot's OWNER needs Telegram Premium (or the bot a Fragment username)";
+    : "Telegram STRIPPED the custom emoji — they went out plain. The bot's OWNER account needs Telegram Premium (the GramJS userbot's Premium covers the channel, not a DM)";
+  if (!job.premiumOut) log.warn(`[massdm] ${job.id}: ${job.premiumWhy}`);
 }
 
 /**
@@ -219,17 +235,14 @@ function reportText(job) {
       : `\n🚫 <b>Couldn't reach:</b> ${job.failed} — ${gone} blocked/inactive, ` +
         `<b>${other} for another reason</b>${job.otherWhy ? ` (${esc(job.otherWhy)})` : ""}`;
 
-  // ⚠️ A PLAIN SEND MUST NEVER RENDER AS A ✅ — the rule the trending board's
-  // 🔄 Refresh had to learn: to anyone without Telegram Premium the two are
-  // identical, so "it worked" and "it was downgraded" reach the operator as
-  // one observation unless the line says which. Absent when the job carried
-  // no custom emoji at all: a verdict on nothing is noise.
-  const prem =
-    job.premiumOut == null
-      ? ""
-      : job.premiumOut
-        ? `\n✨ <b>Premium emoji:</b> ${customCount(job.entities)} went out animated`
-        : `\n✨ <b>Premium emoji:</b> ⚠️ PLAIN — ${job.premiumWhy}`;
+  // ⚠️ THE PREMIUM-EMOJI VERDICT IS NOT ON THIS REPORT — and it is not gone.
+  // It was removed on the operator's call ("hapus teks premium emoji"): they
+  // read the state on every report and it never changes, because whether this
+  // BOT may use custom emoji is a property of the bot, not of the run. So it
+  // moved to a pm2 WARN in notePremium/stripCustomEmoji — the transition rule
+  // upstreams.js states, applied to a line that was repeating a settled fact on
+  // every broadcast. A plain send still never renders as a ✅ here: with the
+  // line gone this report makes no claim about the emoji at all.
 
   // What paid for it — the add-on rides a listing order, the standalone product
   // IS the order, and an admin test is free. Three different things an operator
@@ -240,7 +253,7 @@ function reportText(job) {
     `📣 <b>Broadcast delivered</b>\n` +
     `<b>Ref:</b> <code>${esc(job.ref || job.id)}</code>\n` +
     `<b>Paid:</b> ${esc(paid)}\n` +
-    `${reach}${fail}${prem}`
+    `${reach}${fail}`
   );
 }
 

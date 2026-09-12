@@ -10993,6 +10993,47 @@ failure overwriting the first reason, an admin test reading as a paid
 broadcast, and failures never classified at all. Each fails between one and
 three tests.
 
+###### "hapus teks premium emoji" — a fact that never changes is not a report line
+
+Asked over the report above, and it is the right call: whether this bot may use
+custom emoji is a property of the **bot**, not of the run, so
+`✨ Premium emoji: 2 went out animated` printed the same settled sentence on
+every broadcast for ever. That is the flood rule `upstreams.js` states — *"an
+alert every cycle is a channel nobody reads by the second hour"* — landing on a
+line that is not even an alert.
+
+- ⚠️ **THE VERDICT DID NOT GO WITH THE TEXT.** Removing the line would have left
+  `notePremium` recording `premiumOut` for nobody, which is this file's own
+  *"a value nobody can read is the same as no value"* committed by the change
+  that removed it — and a plain send and an animated one are **identical** to
+  anyone without Telegram Premium, so with no reader at all a downgrade becomes
+  invisible again. It is a **pm2 WARN** now, and only on the NEGATIVE: the
+  ordinary state is not worth a line per broadcast, which is what was asked to
+  go.
+- **`stripCustomEmoji` is untouched.** It is the fail-safe that keeps a refused
+  entity from failing all 12,000 sends — it changes DELIVERY, not reporting —
+  and it already warned. What changed is only where the verdict is read.
+- ⚠️ **"dexvra bot sudah pakai emoji premium di konekan ke userbot yang punya
+  premium" IS TRUE OF THE CHANNEL AND NOT OF THIS.** `src/gramjs.js` exposes
+  `sendToChannel` and nothing else, because a user account may not DM twelve
+  thousand strangers who `/start`-ed a **bot**. So the userbot's Premium is what
+  animates @dexvraio and the **BotFather owner's** Premium is what animates
+  these DMs — two different accounts to check, and the warn names which.
+- **A removal has to be PINNED**, or it comes back the first time somebody
+  reaches for the verdict the job still carries: one test asserts the report
+  mentions the emoji in NONE of the three states, and the driven tests read the
+  rule off pm2 instead.
+
+```bash
+cd bot && node scripts/run-tests.js test/massdmPremium.test.js   # 17 tests, no network
+pm2 logs dexvra-bot --lines 200 --nostream | grep -F 'STRIPPED the custom emoji'
+```
+
+Five guarantees are MUTATION-TESTED: the report line coming back, the downgrade
+recorded and told to nobody, the ordinary state logged too, the refusal fallback
+firing silently, and the fallback removed entirely. Each fails between one and
+four tests.
+
 ## Conventions
 
 - Tests live beside the code they cover, in `bot/test/`, `tradebot/*.test.js`

@@ -86,42 +86,57 @@ function tg(mode) {
   };
 }
 
+// The premium verdict's ONE reader is a pm2 WARN now that the delivery report
+// no longer carries it, so every driven test captures the log as well as the
+// report — a rule whose only surface is a log line is a rule a test must read
+// from that line.
+const log = require("../src/helpers/logger");
+
 async function run(mode, over) {
   const j = job(over);
   const t = tg(mode);
   const real = store.saveJob;
+  const realWarn = log.warn;
+  const warns = [];
   store.saveJob = async () => {};
+  log.warn = (m) => warns.push(String(m));
   try {
     await sender.runJob(t, j);
   } finally {
     store.saveJob = real;
+    log.warn = realWarn;
   }
-  return { job: j, tg: t, report: t.reports.join("\n") };
+  return { job: j, tg: t, report: t.reports.join("\n"), warns: warns.join("\n") };
 }
 
 // ── the verdict is Telegram's, and it is recorded ───────────────────────────
 
-test("⚠️ a bot whose owner HAS Premium: the emoji go out and the report says so", async () => {
-  const { job: j, tg: t, report } = await run("premium");
+test("⚠️ a bot whose owner HAS Premium: the emoji go out untouched", async () => {
+  const { job: j, tg: t, report, warns } = await run("premium");
   assert.strictEqual(j.sent, 3, "everyone was reached");
   assert.strictEqual(j.failed, 0);
   const wire = t.sent[0].extra;
   assert.strictEqual(wire.parse_mode, undefined, "entities are sent as entities, never re-parsed");
   assert.strictEqual(sender._customCount(wire.entities), 2, "both custom emoji reached the wire");
   assert.strictEqual(j.premiumOut, true);
-  assert.match(report, /Premium emoji:<\/b> 2 went out animated/);
+  assert.ok(!/premium|emoji/i.test(warns), "the ordinary state is not worth a line per broadcast");
+  assert.ok(!/[Ee]moji/.test(report), "the operator asked for this text gone");
 });
 
-// ⚠️ A PLAIN SEND MAY NEVER RENDER AS A ✅ — to anyone without Telegram Premium
-// the two are identical, so the report is the only thing that can tell them
-// apart. The trending board's 🔄 Refresh had to learn exactly this.
-test("⚠️ a bot whose owner does NOT: Telegram strips them, and that is NOT a ✅", async () => {
-  const { job: j, report } = await run("stripped");
+// ⚠️ A DOWNGRADE MAY NOT BE SILENT — to anyone without Telegram Premium a plain
+// send and an animated one are identical, which is the whole reason something
+// has to say which. With the report line removed on the operator's call, pm2 is
+// that something: recording the verdict and publishing it NOWHERE would be "a
+// value nobody can read is the same as no value", committed by the change that
+// removed the line.
+test("⚠️ a bot whose owner does NOT: Telegram strips them, and pm2 says so", async () => {
+  const { job: j, report, warns } = await run("stripped");
   assert.strictEqual(j.sent, 3, "the message still goes out — a downgrade, not a failure");
   assert.strictEqual(j.premiumOut, false);
-  assert.match(report, /Premium emoji:<\/b> ⚠️ PLAIN/);
-  assert.match(report, /OWNER needs Telegram Premium/, "the report names what is missing");
-  assert.ok(!/✅/.test(report.split("Premium emoji")[1] || ""), "never a tick over a plain send");
+  assert.match(warns, /STRIPPED the custom emoji/);
+  assert.match(warns, /OWNER account needs Telegram Premium/, "the line names what is missing");
+  assert.match(warns, /userbot's Premium covers the channel, not a DM/, "…and which account it is NOT");
+  assert.ok(!/[Ee]moji/.test(report), "the delivery report stays out of it");
 });
 
 // ⚠️ The one that costs money: 12,000 sends failing identically over an entity.
@@ -130,7 +145,7 @@ test("⚠️ a REFUSAL never costs the broadcast — it is resent plain", async 
   // the first are what prove the strip was JOB-WIDE rather than per-recipient.
   const { BROADCAST_CONCURRENCY: CONC } = require("../src/config/constants");
   const targets = Array.from({ length: CONC * 3 }, (_, i) => i + 1);
-  const { job: j, tg: t, report } = await run("refused", { targets, total: targets.length });
+  const { job: j, tg: t, report, warns } = await run("refused", { targets, total: targets.length });
   assert.strictEqual(j.sent, targets.length, "everyone was still reached");
   assert.strictEqual(j.failed, 0, "a paid broadcast may not reach nobody over an emoji");
   assert.strictEqual(sender._customCount(j.entities), 0, "stripped job-wide, not per recipient");
@@ -139,7 +154,8 @@ test("⚠️ a REFUSAL never costs the broadcast — it is resent plain", async 
     "⚠️ ONLY the custom emoji go — the bold runs and links are not collateral",
   );
   assert.strictEqual(j.premiumOut, false);
-  assert.match(report, /REFUSED/);
+  assert.match(warns, /REFUSED the custom emoji/, "a fallback that fires silently reads as one that never fires");
+  assert.ok(!/[Ee]moji/.test(report), "…and it still does not reach the delivery report");
   // The FIRST batch is already in flight when the first refusal lands, so up to
   // CONC of them pay a wasted attempt. Every batch after it costs nothing —
   // which is the whole difference between a job-wide strip and a per-send one.
@@ -149,10 +165,10 @@ test("⚠️ a REFUSAL never costs the broadcast — it is resent plain", async 
   );
 });
 
-test("…and a job with no custom emoji says nothing about them at all", async () => {
-  const { job: j, report } = await run("premium", { entities: [{ type: "bold", offset: 0, length: 2 }] });
+test("…and a job with no custom emoji takes no verdict at all", async () => {
+  const { job: j, report, warns } = await run("premium", { entities: [{ type: "bold", offset: 0, length: 2 }] });
   assert.strictEqual(j.premiumOut, undefined, "a verdict on nothing is noise");
-  assert.ok(!/Premium emoji/.test(report));
+  assert.ok(!/[Ee]moji/.test(warns + report));
 });
 
 test("the verdict is read once, from the FIRST send", async () => {
@@ -176,10 +192,10 @@ test("⚠️ the media path records it too — a photo job's first send is prime
   // primeMedia's own call changes nothing — a mutation run said exactly that.
   // A single-recipient media job (an admin test run reaches one inbox) is the
   // shape where that call is the ONLY one, so it is the shape that proves it.
-  const { job: j, report } = await run("stripped", { mediaPath: "/tmp/x.png", targets: [7], total: 1 });
+  const { job: j, warns } = await run("stripped", { mediaPath: "/tmp/x.png", targets: [7], total: 1 });
   assert.strictEqual(j.sent, 1, "primeMedia is the only send this job makes");
   assert.strictEqual(j.premiumOut, false, "the caption's entities are judged the same way");
-  assert.match(report, /PLAIN/);
+  assert.match(warns, /STRIPPED the custom emoji/);
 });
 
 // ── the delivery report ─────────────────────────────────────────────────────
@@ -198,6 +214,21 @@ test("the report reads like the reference bot's", () => {
   assert.match(t, /<b>Paid:<\/b> included with listing package/);
   assert.match(t, /📬 <b>Sent to all users<\/b>/);
   assert.match(t, /🚫 <b>Couldn't reach \(blocked\/inactive\):<\/b> 418/);
+});
+
+// ⚠️ "hapus teks premium emoji" — and a removal has to be pinned, or it comes
+// back the first time somebody reaches for the verdict the job still carries.
+// The report may say NOTHING about the emoji in ANY of the three states: it
+// never changes between runs (it is a property of the bot), so a line repeating
+// it on every broadcast is the noise this was asked to end. Where it DOES have
+// to be said is pm2, and the driven tests above read it from there.
+test("⚠️ the delivery report says nothing about premium emoji, in any state", () => {
+  for (const over of [{ premiumOut: true }, { premiumOut: false, premiumWhy: "Telegram STRIPPED them" }, {}]) {
+    const t = rpt(over);
+    assert.ok(!/[Ee]moji/.test(t), `the report may not mention them (${JSON.stringify(over)})`);
+    assert.ok(!/PLAIN|animated/.test(t));
+    assert.match(t, /📬 <b>Sent to all users<\/b>/, "…and the rest of the report is untouched");
+  }
 });
 
 // ⚠️ "Sent to all users" is a CLAIM. These two states are the ones where
