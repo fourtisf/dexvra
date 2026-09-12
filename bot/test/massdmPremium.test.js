@@ -59,28 +59,41 @@ const job = (over = {}) => ({
 function tg(mode) {
   const sent = [];
   const reports = [];
-  const reply = (extra) => {
+  const receipts = [];
+  const reply = (extra, chat) => {
     const ents = extra.entities || extra.caption_entities || [];
     const custom = ents.filter((e) => e.type === "custom_emoji");
     if (custom.length && mode === "refused") throw new Error("400: Bad Request: CUSTOM_EMOJI_INVALID");
-    if (mode === "blocked") throw new Error("403: Forbidden: bot was blocked by the user");
+    // "mixed" is the ordinary shape of a real broadcast and the one the report
+    // was modelled on: most land, one recipient has blocked the bot.
+    if (mode === "blocked" || (mode === "mixed" && chat === 1)) {
+      throw new Error("403: Forbidden: bot was blocked by the user");
+    }
     if (mode === "broken") throw new Error("400: Bad Request: message caption is too long");
     return { message_id: sent.length, entities: mode === "stripped" ? ents.filter((e) => e.type !== "custom_emoji") : ents };
   };
   return {
     sent,
     reports,
+    receipts,
     sendMessage: async (chat, text, extra = {}) => {
       if (chat === 99) {
         reports.push(text);
         return { message_id: 0 };
       }
+      // The BUYER's own confirmation, captured apart from the audience — it is
+      // a different message with different rules, and a job whose recipients
+      // all fail must still be able to deliver it.
+      if (chat === 77) {
+        receipts.push(text);
+        return { message_id: 0 };
+      }
       sent.push({ chat, extra });
-      return reply(extra);
+      return reply(extra, chat);
     },
     sendPhoto: async (chat, media, extra = {}) => {
       sent.push({ chat, extra, photo: true });
-      const m = reply(extra);
+      const m = reply(extra, chat);
       return { ...m, photo: [{ file_id: "F1" }] };
     },
   };
@@ -106,7 +119,7 @@ async function run(mode, over) {
     store.saveJob = real;
     log.warn = realWarn;
   }
-  return { job: j, tg: t, report: t.reports.join("\n"), warns: warns.join("\n") };
+  return { job: j, tg: t, report: t.reports.join("\n"), receipt: t.receipts.join("\n"), warns: warns.join("\n") };
 }
 
 // ── the verdict is Telegram's, and it is recorded ───────────────────────────
@@ -196,6 +209,92 @@ test("⚠️ the media path records it too — a photo job's first send is prime
   assert.strictEqual(j.sent, 1, "primeMedia is the only send this job makes");
   assert.strictEqual(j.premiumOut, false, "the caption's entities are judged the same way");
   assert.match(warns, /STRIPPED the custom emoji/);
+});
+
+// ── the BUYER's receipt ─────────────────────────────────────────────────────
+//
+// "this work tapi jgn sebut number, blg aja to all user dexvra dan berapa
+// banyak yang gagal kaya fourtis" — the receipt used to read
+// `Ref … · reached 263 users`, three words of arithmetic the buyer did not ask
+// for and one number that says nothing about whether the run was healthy. It
+// carries the same two lines the ops report does now, because they answer the
+// same question; what differs is the noun and the emphasis, not the rule.
+
+const BUYER = { createdBy: 77 };
+
+test("⚠️ the receipt says it went to all Dexvra users, and never a reached count", async () => {
+  const { job: j, receipt } = await run("mixed", BUYER);
+  assert.strictEqual(j.sent, 2, "the fixture must really have one blocked recipient");
+  assert.strictEqual(j.failed, 1);
+  assert.ok(receipt, "the buyer is told at all");
+  assert.match(receipt, /📬 Sent to all Dexvra users/);
+  assert.match(receipt, /🚫 Couldn't reach \(blocked\/inactive\): 1/);
+  assert.ok(!/reached/i.test(receipt), `the count the ask was about: ${JSON.stringify(receipt)}`);
+  assert.ok(!/\b2\b/.test(receipt), "…and not by another spelling either");
+});
+
+// ⚠️ The receipt is the MARKUP surface, not HTML — `parse_mode: HTML` belongs to
+// the ops report alone. An `<b>` handed to a template var reaches the buyer as
+// literal text, which is what a single shared bold wrapper would have done.
+test("⚠️ …and no HTML tag ever reaches it", async () => {
+  const { receipt } = await run("mixed", BUYER);
+  assert.ok(!/<\/?[a-z]/i.test(receipt), receipt);
+  assert.ok(!/\*\*/.test(receipt), "the markup is parsed into entities, never shown");
+});
+
+// ⚠️ The CLAIM rule is the one owner's whole reason for existing, and this is
+// where a second copy would show: a receipt with its own "Sent to all Dexvra
+// users" line would congratulate a buyer whose broadcast reached nobody.
+test("⚠️ a run that reached NOBODY says so to the buyer too", async () => {
+  const { job: j, receipt, report } = await run("blocked", BUYER);
+  assert.strictEqual(j.sent, 0);
+  assert.ok(!/Sent to all/.test(receipt), "the tick over a broken thing");
+  assert.match(receipt, /📭 Delivered to nobody/);
+  assert.match(report, /📭 <b>Delivered to nobody<\/b>/, "…the two surfaces agree, because they share the line");
+});
+
+test("a clean run tells the buyer nothing about failures", async () => {
+  const { receipt } = await run("premium", BUYER);
+  assert.match(receipt, /📬 Sent to all Dexvra users/);
+  assert.ok(!/Couldn't reach/.test(receipt), "a line saying 0 is noise");
+});
+
+// ⚠️ WHICH upstream call failed is an OPERATOR's question. It is also the one
+// value on these lines that is not a number, so it is the one that would have
+// to be escaped — and the two surfaces escape differently.
+test("⚠️ the upstream error text is ops-only", async () => {
+  const { report, receipt } = await run("broken", BUYER);
+  assert.match(report, /caption is too long/, "the operator is told what to act on");
+  assert.ok(!/caption is too long/.test(receipt), "the buyer is not");
+});
+
+// ⚠️ `data/templates.json` WINS OVER THE CODE DEFAULT FOR EVER, so an operator
+// who has edited this card keeps their own `reached **{reached}** users` line —
+// and `substitute()` renders an unknown placeholder as EMPTY, so dropping the
+// var would turn it into "reached **** users": worse than the number the ask
+// was about. They get the new shape by tapping ♻️ Reset default.
+test("⚠️ an operator's SAVED copy still resolves its old count", async (t) => {
+  const tpl = require("../src/templates");
+  const OLD = "Ref `{ref}` · reached **{reached}** users.";
+  const orig = tpl.render;
+  t.after(() => (tpl.render = orig));
+  // substitute()'s own rule: a placeholder with no var becomes "".
+  tpl.render = (key, vars) => ({
+    text: OLD.replace(/\{(\w+)\}/g, (m, k) => (vars && vars[k] != null ? String(vars[k]) : "")),
+  });
+  const { receipt } = await run("mixed", BUYER);
+  assert.match(receipt, /reached \*\*2\*\* users/, `a blank here is a card that lost its number: ${receipt}`);
+});
+
+// The state no completed run can reach, so it is asserted on the owner itself:
+// `runJob` always walks to the end of its targets, and a job that stops short
+// is a crashed process resumed later.
+test("⚠️ …nor over a run that stopped short, on either surface", () => {
+  const short = { id: "j", total: 12528, sent: 40, failed: 2, unreachable: 2 };
+  const buyer = sender._reachLine(short, { who: "Dexvra users" });
+  assert.ok(!/Sent to all/.test(buyer));
+  assert.match(buyer, /Sent to 40 of 12528 — the run did not finish/);
+  assert.ok(!/Sent to all/.test(sender._reportText(short)));
 });
 
 // ── the delivery report ─────────────────────────────────────────────────────

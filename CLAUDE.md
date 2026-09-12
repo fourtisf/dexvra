@@ -11167,6 +11167,69 @@ fails between one and six tests.
 button everywhere, free card included. ⚠️ This is a `bot/` change, so the deploy
 is the **ecosystem restart** and there is no web rebuild.
 
+#### "jgn sebut number, blg aja to all user dexvra dan berapa banyak yang gagal"
+
+Sent with our receipt beside the reference bot's. Ours read
+
+```
+✅ Your Dexvra broadcast is delivered.
+Ref MD-Y2ZAHL · reached 263 users. Thanks for using Dexvra.
+```
+
+— a raw count the buyer never asked for, and one that answers nothing about
+whether the run was healthy. **That is the same defect the ops report was fixed
+for one round earlier** (*"three bare numbers make the reader do the arithmetic
+and still say nothing about the only question that matters"*), left standing on
+the other surface: a lesson applied to one of two messages.
+
+- **`reachLine` / `failLine` are the ONE OWNER, for BOTH surfaces.** The report
+  and the receipt make the same claim to two audiences, and a second copy is how
+  one of them ends up congratulating a buyer whose broadcast reached nobody. The
+  CALLER supplies the only two things that differ: the noun (`Dexvra users` /
+  `users`) and the **emphasis**, because the report is `parse_mode: HTML` while
+  the receipt is the markup the template system parses — one shared bold wrapper
+  would have sent the buyer a literal `<b>`.
+- **The CLAIM rule comes with it.** "Sent to all Dexvra users" is grotesque over
+  a run that reached nobody and false of one that stopped short, so those two
+  states keep their own sentence — and their numbers, because *"the run did not
+  finish"* with no scale is unactionable. The count that was asked to go is the
+  one on the healthy path.
+- ⚠️ **The upstream error text is OPS-ONLY.** It is the one value on these lines
+  that is not a number, so it is the one needing escaping — and the two surfaces
+  escape differently. It is also not the buyer's question: which upstream call
+  failed is an operator's.
+- ⚠️ **`reached` IS STILL PASSED, and that is the point of it.**
+  `data/templates.json` wins over the code default for ever, and `substitute()`
+  renders an unknown placeholder as **EMPTY** — so dropping the var would turn
+  an operator's saved `reached **{reached}** users` into `reached **** users`,
+  which is worse than the number this is about. Pinned by a test that stubs a
+  saved copy and asserts its number still lands.
+- **The harness gained a BUYER chat**, captured apart from the audience: a job
+  whose every recipient is blocked must still deliver the receipt, so it cannot
+  share the path that throws.
+- ⚠️ **AND `templatePreview.test.js` CAUGHT THE HALF I HAD FORGOTTEN**, which is
+  the guard doing its job on its author: every placeholder a template offers
+  needs a sample in `SAMPLE_VARS`, or an admin opening 📝 Templates previews the
+  card with blanks exactly where the two new lines go — and edits it believing
+  that is what a buyer sees. Sampled as the HEALTHY run, because the other two
+  states are cards nobody is trying to write.
+
+```bash
+cd bot && node scripts/run-tests.js test/massdmPremium.test.js   # 24 tests, no network
+```
+
+Eight guarantees are MUTATION-TESTED rather than argued: the reached count
+coming back, the receipt growing its own "all users" line, the failure count
+dropped, the HTML bold handed to the markup surface, the upstream error leaking
+to the buyer, each of the two non-claim states collapsing into the claim, and
+`reached` dropped from the vars. Each fails between one and four tests.
+
+**Config a fix depends on:** nothing — ⚠️ **but an operator who has ever edited
+the `Mass DM: delivered receipt` template in @dexvraadminbot keeps their own
+copy and will still see `reached N users`.** ♻️ Reset default on that template is
+what picks the new shape up; this is the standing rule for every copy change
+here, and it is the one thing a `git pull` cannot do.
+
 ## Conventions
 
 - Tests live beside the code they cover, in `bot/test/`, `tradebot/*.test.js`

@@ -218,22 +218,56 @@ async function primeMedia(telegram, job) {
  * short and grotesque over a run that reached nobody — so it is printed only
  * when it is true, and the other two states have their own sentence.
  */
-function reportText(job) {
-  const reach =
-    job.sent === 0 && job.total > 0
-      ? "📭 <b>Delivered to nobody</b> — every send failed"
-      : job.sent + job.failed >= job.total
-        ? "📬 <b>Sent to all users</b>"
-        : `📬 <b>Sent to ${job.sent} of ${job.total}</b> — the run did not finish`;
 
+/**
+ * "Did it go out" — the ONE OWNER of that claim, for BOTH surfaces.
+ *
+ * "jgn sebut number, blg aja to all user dexvra dan berapa banyak yang gagal
+ * kaya fourtis": the ops REPORT and the buyer's RECEIPT now say the same thing
+ * to two audiences, and a second copy is how one of them ends up claiming
+ * "sent to all users" over a run that stopped short. Only two things differ and
+ * the CALLER supplies both: the noun (the buyer is told "Dexvra users", the ops
+ * channel just "users") and the emphasis, because the report is `parse_mode:
+ * HTML` while the receipt is the markup the template system parses — an `<b>`
+ * in a template var reaches the buyer as literal text.
+ *
+ * ⚠️ THE NUMBERS IN THE OTHER TWO STATES STAY, and that is not the count the
+ * ask was about. "Sent to all users" is a CLAIM — grotesque over a run that
+ * reached nobody, false of one that stopped short — so those states have their
+ * own sentence, and "the run did not finish" with no scale is unactionable.
+ */
+function reachLine(job, { who = "users", b = (t) => t } = {}) {
+  if (job.sent === 0 && job.total > 0) return `📭 ${b("Delivered to nobody")} — every send failed`;
+  if (job.sent + job.failed >= job.total) return `📬 ${b(`Sent to all ${who}`)}`;
+  return `📬 ${b(`Sent to ${job.sent} of ${job.total}`)} — the run did not finish`;
+}
+
+/**
+ * What could not be reached, and whether that is ordinary.
+ *
+ * ⚠️ `why` is OPS-ONLY, and it is what keeps this one function safe on two
+ * surfaces: Telegram's own error text is escaped for HTML here, and the buyer's
+ * receipt is parsed as markup where an escaped `&lt;` would reach them
+ * verbatim. It is also not theirs to read — which upstream call failed is an
+ * operator's question, and the buyer's half is numbers only.
+ */
+function failLine(job, { b = (t) => t, why = false } = {}) {
+  if (!job.failed) return ""; // a line saying 0 is noise
   const gone = job.unreachable || 0;
   const other = job.otherFails || 0;
-  const fail = !job.failed
-    ? ""
-    : other === 0
-      ? `\n🚫 <b>Couldn't reach (blocked/inactive):</b> ${job.failed}`
-      : `\n🚫 <b>Couldn't reach:</b> ${job.failed} — ${gone} blocked/inactive, ` +
-        `<b>${other} for another reason</b>${job.otherWhy ? ` (${esc(job.otherWhy)})` : ""}`;
+  if (other === 0) return `\n🚫 ${b("Couldn't reach (blocked/inactive):")} ${job.failed}`;
+  return (
+    `\n🚫 ${b("Couldn't reach:")} ${job.failed} — ${gone} blocked/inactive, ` +
+    `${b(`${other} for another reason`)}${why && job.otherWhy ? ` (${esc(job.otherWhy)})` : ""}`
+  );
+}
+
+const htmlB = (t) => `<b>${t}</b>`;
+const mdB = (t) => `**${t}**`;
+
+function reportText(job) {
+  const reach = reachLine(job, { b: htmlB });
+  const fail = failLine(job, { b: htmlB, why: true });
 
   // ⚠️ THE PREMIUM-EMOJI VERDICT IS NOT ON THIS REPORT — and it is not gone.
   // It was removed on the operator's call ("hapus teks premium emoji"): they
@@ -266,12 +300,25 @@ async function report(telegram, job) {
   }
 }
 
+/**
+ * The buyer's own confirmation.
+ *
+ * ⚠️ `reached` IS STILL PASSED even though the shipped copy no longer uses it.
+ * `data/templates.json` wins over the code default for ever, so an operator who
+ * has edited this card keeps their `reached **{reached}** users` line — and
+ * dropping the var would render it as "reached **** users", which is worse than
+ * the number the ask was about. They pick the new shape up with ♻️ Reset
+ * default on **Mass DM: delivered receipt**.
+ */
 async function receipt(telegram, job) {
-  // counts-only receipt to the buyer (never a raw number of recipients in copy;
-  // this is a private confirmation, so the delivered count is fine here).
   if (job.test || !job.createdBy) return;
   try {
-    const payload = tpl.render("massdm_done", { ref: job.ref || job.id, reached: job.sent });
+    const payload = tpl.render("massdm_done", {
+      ref: job.ref || job.id,
+      reach: reachLine(job, { who: "Dexvra users", b: mdB }),
+      fail: failLine(job, { b: mdB }),
+      reached: job.sent,
+    });
     const { text, extra } = payloadArgs(payload, false);
     await telegram.sendMessage(job.createdBy, text, extra);
   } catch (e) {
@@ -337,4 +384,4 @@ function start(telegram) {
   };
 }
 
-module.exports = { start, runJob, _sendMethod: sendMethod, _fileIdOf: fileIdOf, _notePremium: notePremium, _stripCustomEmoji: stripCustomEmoji, _customCount: customCount, _reportText: reportText, _noteFailure: noteFailure };
+module.exports = { start, runJob, _sendMethod: sendMethod, _fileIdOf: fileIdOf, _notePremium: notePremium, _stripCustomEmoji: stripCustomEmoji, _customCount: customCount, _reportText: reportText, _noteFailure: noteFailure, _reachLine: reachLine, _failLine: failLine };

@@ -1011,9 +1011,15 @@ const DEFAULTS = {
   massdm_test_queued:
     "🧪 **Test broadcast queued (FREE).**\n\n" +
     "It'll be delivered to the admins and you within a few seconds, with a delivery report — no review, no charge.",
+  // ⚠️ NO RAW REACHED COUNT. "jgn sebut number, blg aja to all user dexvra dan
+  // berapa banyak yang gagal" — the buyer is told it went out and what could
+  // not be reached, the shape the reference bot uses. Both lines come from ONE
+  // owner shared with the ops report (massdm/sender.js reachLine/failLine), so
+  // the two surfaces can never disagree about whether it reached everybody.
+  // {reached} still resolves, for an operator whose saved copy carries it.
   massdm_done:
     "✅ **Your Dexvra broadcast is delivered.**\n\n" +
-    "Ref `{ref}` · reached **{reached}** users. Thanks for using Dexvra.",
+    "**Ref:** `{ref}`\n{reach}{fail}\n\nThanks for using Dexvra.",
   upsell_expiry:
     "⏰ **Your Trending slot is ending**\n\n" +
     "🔹 **{symbol}**'s featured placement on the Dexvra Trending board ends in about **{hours}h**.\n\n" +
@@ -1352,7 +1358,7 @@ const META = {
   broadcast_addon_sending: { group: "Mass DM", label: "Broadcast add-on: sending now", ph: ["ref"] },
   broadcast_addon_queued: { group: "Mass DM", label: "Broadcast add-on: queued for review (legacy order)", ph: ["ref"] },
   broadcast_addon_failed: { group: "Mass DM", label: "Broadcast add-on: enqueue failed", ph: ["ref"] },
-  massdm_done: { group: "Mass DM", label: "Mass DM: delivered receipt", ph: ["ref", "reached"] },
+  massdm_done: { group: "Mass DM", label: "Mass DM: delivered receipt", ph: ["ref", "reach", "fail"] },
   post_listing_xpress: { group: "Channel Posts", label: "Post: Xpress Listing", ph: ["name", "symbol", "logoEmoji", "coinUrl", "xUrl", "tradeUrl", "chainEmoji", "chain", "address", "liq", "mcap", "price", "twitter", "website", "telegram", "site", "listing", "trending", "announce", "xlisting"] },
   post_listing_tiered: { group: "Channel Posts", label: "Post: Listing & Trending", ph: ["name", "symbol", "logoEmoji", "tierEmoji", "tier", "coinUrl", "xUrl", "tradeUrl", "chainEmoji", "chain", "address", "liq", "mcap", "price", "twitter", "website", "telegram", "site", "listing", "trending", "announce", "xlisting"] },
   post_trending: { group: "Channel Posts", label: "Post: Trending", ph: ["name", "symbol", "logoEmoji", "coinUrl", "xUrl", "tradeUrl", "chainEmoji", "chain", "address", "liq", "mcap", "price", "twitter", "website", "telegram", "site", "listing", "trending", "announce", "xlisting"] },

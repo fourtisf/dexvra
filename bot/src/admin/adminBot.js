@@ -128,6 +128,12 @@ const SAMPLE_VARS = {
   site: "https://dexvra.io", listing: "https://t.me/dexvralisting",
   trending: "https://t.me/dexvratrending", announce: "https://t.me/dexvraio",
   sol: "1 SOL", bnb: "0.15 BNB", eth: "0.05 ETH", ref: "MDX-4821", reached: "8,214",
+  // The delivery receipt's two lines. Sampled as the HEALTHY run an admin is
+  // editing for — massdm/sender.js owns the other two states ("Delivered to
+  // nobody", "the run did not finish") and a preview of one of those would show
+  // a card nobody is trying to write.
+  reach: "📬 **Sent to all Dexvra users**",
+  fail: "\n🚫 **Couldn't reach (blocked/inactive):** 418",
   // The broadcast add-on's fee, always a full "<amount> <coin>" — it is charged
   // in the order's OWN currency, so an operator previewing the card must see a
   // coin beside the number rather than a bare figure.
@@ -2741,7 +2747,9 @@ const PH_HELP = {
   network: "which network to send on (Ethereum / Robinhood Chain)",
   hours: "number of hours",
   discount: "renewal discount %",
-  reached: "number of users reached",
+  reached: "number of users reached (the old receipt's line — the shipped copy no longer uses it)",
+  reach: "whether it went out — filled by the bot, never typed",
+  fail: "what could not be reached — filled by the bot, blank on a clean run",
   ref: "reference id",
   slot: "banner slot name",
   linkUrl: "advertiser link",
