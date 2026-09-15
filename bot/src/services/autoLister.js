@@ -379,6 +379,11 @@ async function resetState(now = Date.now()) {
     pkgTurn: 0,
     cool: {},
     scan: prev._ok ? prev.scan : null,
+    // ⚠️ AND SO DOES THE ⚡ Run now REPORT, for the same reason and by the same
+    // hazard: this writes a WHOLE FRESH OBJECT, so a field missing from it is a
+    // field deleted. 🧹 Clear history is about TOKENS; silently wiping the last
+    // manual run's verdict would blank the panel the operator is reading.
+    forcedScan: prev._ok ? prev.forcedScan : null,
     blocked: prev._ok ? prev.blocked : 0,
     lastListAt: null,
     paceRoll: 0,
@@ -427,6 +432,10 @@ const loadState = () => {
     // The last scan's report, and how many scans in a row have been BLOCKED.
     // Both exist so "nothing was listed" is answerable — see scanReport().
     scan: s.scan && typeof s.scan === "object" ? s.scan : null,
+    // ⚠️ THE LAST ⚡ Run now, KEPT APART FROM `scan`. Whitelisted here because
+    // this reader is also the shape every save writes back — a field missing
+    // from it is a field deleted on the next scan.
+    forcedScan: s.forcedScan && typeof s.forcedScan === "object" ? s.forcedScan : null,
     blocked: Number(s.blocked) || 0,
     // ── The pacing clock ────────────────────────────────────────────────────
     // When the last free listing went out, and the roll that decides how long
@@ -469,6 +478,19 @@ const loadState = () => {
 // row pages the ops channel instead of waiting for someone to notice.
 const blank = (now) => ({
   at: now,
+  // ⚠️ A MANUAL ⚡ Run now, not the scheduled loop. `alScanLine` reads a fresh
+  // scan report as the proof the loop is alive, so the two must be told apart
+  // or a tap would vouch for a dead loop — see the note in `fileReport`.
+  forced: false,
+  // What was listed, not merely how many. ⚡ Run now reports back into a chat
+  // where the operator cannot see the site, and "1 listed" does not tell them
+  // WHICH — the same reason the forced auto-trend run names its symbols.
+  // Bounded by `maxPerRun`, so at most a handful.
+  picked: [],
+  // The wait a forced run overrode, for the verdict. Never `paced`, which is
+  // what `scanLine` renders as "paced — next listing due in…": this scan did
+  // not stop for the pace, it ignored it.
+  skippedPace: null,
   candidates: 0,
   priced: 0,
   listed: 0,
@@ -522,6 +544,10 @@ function noteRefusal(report, why) {
 /** The last scan's report, or null before the first one. */
 const lastScan = () => loadState().scan;
 
+/** The last ⚡ Run now, or null. Deliberately NOT merged into `lastScan()`: the
+ *  panel reads that one's age as proof the scheduled loop is alive. */
+const lastForcedScan = () => loadState().forcedScan;
+
 /** Rejection reasons carry live figures ("thin liquidity ($1,204)"), which would
  *  make every rejection its own bucket. Strip them for the tally. */
 const reasonBucket = (why) => String(why).replace(/\s*\([^)]*\)/g, "").trim();
@@ -570,8 +596,23 @@ async function fileReport(report, state = loadState()) {
     }
   }
   const wasBlocked = state.blocked;
-  state.scan = report;
-  state.blocked = report.blocker ? wasBlocked + 1 : 0;
+  // ⚠️ A MANUAL RUN MAY NOT WRITE `state.scan`.
+  //
+  // `alScanLine` states the rule in its own words: "a scan report is the only
+  // proof the loop is alive, so its absence or its age is what gets reported
+  // here." A ⚡ Run now writing there would refresh that timestamp from an
+  // ADMIN'S TAP — so a loop dead since yesterday reads as healthy for two more
+  // gaps, and the panel stops being able to say the one thing it exists to say.
+  // The button added to diagnose the symptom would have hidden it.
+  //
+  // The blocked-scan counter is left alone for the same reason: BLOCKED_ALERTS_AT
+  // counts consecutive SCHEDULED scans that could not run, and letting taps
+  // drive it would page the ops channel over three impatient presses.
+  if (report.forced) state.forcedScan = report;
+  else {
+    state.scan = report;
+    state.blocked = report.blocker ? wasBlocked + 1 : 0;
+  }
 
   // ── The SYMPTOM watch ─────────────────────────────────────────────────────
   // Everything above answers "could this scan run". `listingWatch` answers the
@@ -582,24 +623,31 @@ async function fileReport(report, state = loadState()) {
   // the listing path instead would freeze the watch on exactly the installs
   // that stay broken longest.
   let watchAlerts = [];
-  try {
-    const w = listingWatch.evaluate(
-      { enabled: get().enabled, lastListAt: state.lastListAt, scan: report },
-      state.watch,
-      { now: report.at },
-    );
-    state.watch = w.state;
-    watchAlerts = w.alerts;
-  } catch (e) {
-    // A watch that throws must never cost the scan its report.
-    log.debug(`[autolist] watch: ${e.message}`);
+  // ⚠️ AND A FORCED RUN DOES NOT DRIVE THE WATCH. `listingWatch` answers "are
+  // free listings actually going out" — a promise about the SERVICE, not about
+  // the operator. Letting a tap clear a quiet-service alert would mean a dead
+  // loop could be silenced by hand, one press at a time. A forced listing still
+  // stamps `lastListAt`, so the next scheduled scan reports the recovery itself.
+  if (!report.forced) {
+    try {
+      const w = listingWatch.evaluate(
+        { enabled: get().enabled, lastListAt: state.lastListAt, scan: report },
+        state.watch,
+        { now: report.at },
+      );
+      state.watch = w.state;
+      watchAlerts = w.alerts;
+    } catch (e) {
+      // A watch that throws must never cost the scan its report.
+      log.debug(`[autolist] watch: ${e.message}`);
+    }
   }
 
   await saveJSON(STATE_FILE, state).catch((e) => log.error(`[autolist] could not persist ${STATE_FILE}: ${e.message} — this scan's bookkeeping is lost`));
   for (const a of watchAlerts) log.alert(a.text);
 
   if (report.blocker) {
-    if (state.blocked === BLOCKED_ALERTS_AT) {
+    if (!report.forced && state.blocked === BLOCKED_ALERTS_AT) {
       log.alert(
         `🚨 <b>Auto-Listing has stopped working</b>\n\n` +
           `${BLOCKED_ALERTS_AT} scans in a row could not run:\n<code>${String(report.blocker).slice(0, 300)}</code>\n\n` +
@@ -609,7 +657,7 @@ async function fileReport(report, state = loadState()) {
     }
     return report;
   }
-  if (wasBlocked >= BLOCKED_ALERTS_AT) {
+  if (!report.forced && wasBlocked >= BLOCKED_ALERTS_AT) {
     log.alert(`✅ <b>Auto-Listing is scanning again</b> — ${report.candidates} candidates, ${report.priced} priced.`);
   }
   return report;
@@ -1078,9 +1126,68 @@ function seams(deps = {}) {
   return { discoverX, priceX };
 }
 
-async function runOnce({ tg, now = Date.now(), deps = {}, rng = Math.random } = {}) {
+// ⚠️ ONE SCAN AT A TIME, IN THIS PROCESS.
+//
+// The scheduled loop and ⚡ Run now both live in `dexvra-bot` — the admin bot
+// queues a JOB rather than scanning itself, for the reason forcepost/store.js
+// gives — so a module-level flag really is enough, and it is needed: a scan is a
+// read-modify-write over the state file spanning up to forty serial lookups.
+// Two overlapping scans each hold a snapshot taken before the other's listings,
+// so the later write drops the earlier one's `day` count and `listed` map, and
+// the same token can be listed twice. `fileReport` merges `everListed` already,
+// but that merge is for a DIFFERENT writer (`fulfillment.js` mid-scan) and it
+// does not cover the day count, the pace clock or the package turn.
+let scanning = false;
+
+async function runOnce(opts = {}) {
+  if (scanning) {
+    // Not a blocker, and not a fault: the scan already in flight is doing this
+    // one's job. Debug, because on the shipped 25–90 min gap it cannot happen
+    // on its own — only a tap racing the loop gets here.
+    log.debug("[autolist] a scan is already in flight — skipping this tick");
+    return 0;
+  }
+  scanning = true;
+  try {
+    return await scanOnce(opts);
+  } finally {
+    scanning = false;
+  }
+}
+
+/**
+ * ⚡ Run now — scan immediately, list whatever qualifies, ignore only the WAIT.
+ *
+ * Returns `{busy, listed, report}`. `report` comes back even on the halt path,
+ * which deliberately files no report at all, because a caller that has nothing
+ * to render is the button reading as dead.
+ */
+async function forceRun({ tg, now = Date.now(), deps = {}, rng = Math.random } = {}) {
+  // Said, never silent: a tap that lands while the scheduled scan is running
+  // must not look like a tap that did nothing.
+  if (scanning) return { busy: true, listed: 0, report: null };
+  let report = null;
+  const listed = await runOnce({ tg, now, deps, rng, force: true, onReport: (r) => (report = r) });
+  return { busy: false, listed, report };
+}
+
+/**
+ * @param force  Skip the PACE WAIT, and nothing else. The switch, the daily cap,
+ *   the chain scope, the never-relist ledger and every quality floor bind
+ *   exactly as they do on a scheduled scan, and the burst size is still
+ *   `maxPerRun` (1 while pacing is on). ⚡ Run now means "do the next scan now",
+ *   never "list something anyway" — a floor with a one-tap bypass is not a
+ *   floor, which is the rule ⚡ Run now already follows on the trending panel,
+ *   and this button publishes on a public site.
+ * @param onReport  Handed the live report at the top of the scan. Every exit
+ *   mutates that same object in place, `halt()` included, so the caller can read
+ *   the verdict whatever happened.
+ */
+async function scanOnce({ tg, now = Date.now(), deps = {}, rng = Math.random, force = false, onReport = null } = {}) {
   const cfg = get();
   const report = blank(now);
+  report.forced = !!force;
+  if (onReport) onReport(report);
   const rd = configOk();
   if (!rd.ok) {
     // Not the OFF branch: this service has NOT been switched off, we simply
@@ -1207,7 +1314,12 @@ async function runOnce({ tg, now = Date.now(), deps = {}, rng = Math.random } = 
   // 1.5–4.5 hours. Everything past this point costs a DexScreener lookup per
   // candidate, and a scan that may not list has no use for one.
   const p = pace(cfg, state, now);
-  if (!p.due) {
+  // ⚠️ THE ONLY GATE ⚡ Run now STEPS OVER — and it steps over the WAIT, not the
+  // spacing: the listing below still stamps `lastListAt` and rolls a fresh gap,
+  // so a forced listing is not a free one on top of the schedule. It is the
+  // next listing, taken early.
+  if (!p.due && force) report.skippedPace = { waitMs: p.waitMs, gapMs: p.gapMs };
+  if (!p.due && !force) {
     report.paced = { waitMs: p.waitMs, nextAt: p.nextAt, gapMs: p.gapMs };
     await fileReport(report, state);
     // At INFO, not debug: with a 2–3h pace this is what most scans do, and
@@ -1340,6 +1452,7 @@ async function runOnce({ tg, now = Date.now(), deps = {}, rng = Math.random } = 
     state.pkgTurn += 1;
     today += 1;
     listedNow += 1;
+    report.picked.push({ sym: input.sym, chain: c.chain, mcap: Number(info.mcap) || 0, trigger, pkg: pkgKey });
     state.day = { key: dayKey(now), n: today };
     // The clock starts at the listing, and the wait that follows it is rolled
     // HERE — once, for this listing — never by the scans that come after. See
@@ -1410,7 +1523,7 @@ async function runOnce({ tg, now = Date.now(), deps = {}, rng = Math.random } = 
   // One line per scan at INFO, so pm2 logs alone answer "is it running and what
   // is it finding" without DEBUG. Previously the only INFO line was a successful
   // listing, so a service finding nothing logged nothing at all.
-  log.info(`[autolist] scan: ${scanLine(report)}`);
+  log.info(`[autolist] ${report.forced ? "⚡ forced scan" : "scan"}: ${scanLine(report)}`);
   return listedNow;
 }
 
@@ -1860,8 +1973,10 @@ module.exports = {
   createFromInfo,
   start,
   runOnce,
+  forceRun,
   dryRun,
   lastScan,
+  lastForcedScan,
   lastHalt,
   configOk,
   scanLine,

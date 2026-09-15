@@ -2713,6 +2713,91 @@ making a gate stricter inside a change whose whole purpose is to get listings
 flowing is the wrong direction to be wrong in. Recorded so it is not
 rediscovered as an oversight.
 
+### ⚡ Run now — "pencet run now bot cari projectnya dan langsung free listing"
+
+🔎 Test scan answers *"would anything qualify"*. Nothing acted on that answer:
+the only way to make a listing happen was to wait out the 2h–4h pace and hope.
+⚡ Run now is that button, and the whole design is in what it does NOT bypass.
+
+| | |
+| --- | --- |
+| **skipped** | the pace WAIT, and only the wait |
+| **binds** | the switch · the daily cap · the chain scope · the never-relist ledger · every quality floor (trigger / liquidity / volume / age / ceiling) |
+
+- ⚠️ **IT IS A JOB, NOT A CALL — and that is not tidiness.** The panel runs in
+  `dexvra-adminbot`; the scan belongs to `dexvra-bot`, which owns the channel
+  transport (a free listing announces when 📣 is on, and every one is reported
+  to the visitor channel) and is where the scheduled loop already holds the scan
+  lock. Scanning in the admin process would put a SECOND scanner on the same
+  state file with nothing between the two — each holding a snapshot taken before
+  the other's listings, so the later write drops the earlier one's day count and
+  ledger entries and the same token gets listed twice. It rides the existing
+  `forcepost/store` + `forcePostRunner` channel (`free_listing_run`, `noRow`),
+  the way 🔄 Refresh board already does, and is **hidden from the Force-post
+  menu** — whose every other entry publishes something new, and whose confirm
+  screen would be false about a SCAN.
+- ⚠️ **A FORCED REPORT IS NOT THE LOOP'S PROOF OF LIFE.** `alScanLine` says it in
+  its own words — *"a scan report is the only proof the loop is alive, so its
+  absence or its age is what gets reported here"* — so a ⚡ tap writing
+  `state.scan` would refresh that timestamp from the OPERATOR'S HAND, and a loop
+  dead since yesterday would read as healthy for two more gaps. **The button
+  added to diagnose the symptom would have been the thing that hid it.** Its own
+  field (`forcedScan`), and the blocked-scan counter is left alone too:
+  `BLOCKED_ALERTS_AT` counts consecutive SCHEDULED scans, and letting taps drive
+  it would page the ops channel over three impatient presses. The symptom watch
+  is skipped for the same reason — a dead loop must not be silenceable by hand.
+- ⚠️ **`resetState` WRITES A WHOLE FRESH OBJECT, so a field missing from it is a
+  field deleted.** `forcedScan` had to be named there or 🧹 Clear history —
+  which is about TOKENS — would silently blank the verdict the operator is
+  reading. Third time in this file: `resetAnnounceState` dropped the probe
+  rotation and the watch clock exactly this way.
+- **A forced listing STAMPS the pace clock.** It is the next listing taken
+  early, never a free extra on top of the schedule — otherwise a forced listing
+  plus an immediately-due automatic one is the burst the pace exists to prevent,
+  and the next operator taps ⚡ ten times to fill the board. The verdict says the
+  wait was *deferred*, with the number.
+- **THE SWITCH BINDS, and that is a judgement.** `autoTrend.forceChain` does not
+  check it; this does, because auto-trend promotes an already-listed token to a
+  board while this CREATES a public listing and can post to a channel. A service
+  reading 🔴 OFF that publishes anyway is the "buy ngasal" shape — an action
+  nobody can trace to a visible switch. The refusal names ▶️ Enable, which is on
+  the same screen.
+- **The burst size is unchanged** (`maxPerRun`, i.e. 1 while pacing is on): force
+  changes the WAIT, never how many. A per-scan number the panel stopped printing
+  is a row the engine ignores, and this file already names what those cost.
+- ⚠️ **A CALLBACK ANSWER EXPIRES; A MESSAGE EDIT DOES NOT.** A real scan prices up
+  to `maxLookupsPerRun` candidates serially at an 8s timeout each — minutes, far
+  past Telegram's ~15s deadline. The ANSWER carries the acknowledgement and the
+  RESULT goes on the panel. `atrun` paid for this lesson already
+  (*"di klik fiturnya not work"*, about a button whose work had succeeded), and a
+  run that outlives even the 120s wait is not lost: 🔄 Check result reads the job
+  back.
+- **The verdict NAMES THE GATE, never a bare "nothing was listed"** — blocked ·
+  OFF · capped · nothing qualified · listed, with the tokens and their triggers.
+  Six faults render as "0 listed"; that is the entire reason this panel has a
+  scan line, and a button whose answer is "nothing happened" would reproduce the
+  report it was built to end.
+- The tests DRIVE the registered handler through real Telegraf updates and pin
+  the ORDER — a source scan sees the answer and the work and reads as fine. The
+  engine tests are POSITIVE (a wiring that does nothing refuses beautifully —
+  the `curveBuyPath` scar).
+
+Eleven guarantees are MUTATION-TESTED rather than argued: the forced report
+writing `state.scan`, `resetState` dropping `forcedScan`, the pace not being
+skipped at all, the scan lock removed, ⚡ bypassing the floors / the switch / the
+daily cap, a forced listing not stamping the clock, the report not naming what
+it listed, the callback answered after the work, and the handler scanning
+in-process instead of queueing. Each fails between one and two tests.
+
+```bash
+cd bot && node scripts/run-tests.js test/autoListerRunNow.test.js test/autoListerRunNowPanel.test.js   # 17 tests, no network
+```
+
+**Config a fix depends on:** nothing. ⚠️ But ⚡ Run now is bound by the same
+`listing:check` six: if the panel answers *"nothing qualified"*, the market is
+the answer and 🎯 From is the lever; if it answers with a blocker, that blocker
+is why the scheduled loop is publishing nothing either.
+
 ## A Top 3 that was not the top of the Top 5
 
 Two banners, one minute apart, from the same admin panel:

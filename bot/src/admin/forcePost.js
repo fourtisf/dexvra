@@ -225,6 +225,41 @@ KINDS.board_refresh = {
   },
 };
 
+// ⚡ Run now, from the 🆓 Auto Listing panel. A JOB, not a post — for exactly the
+// reason board_refresh is one, and it matters more here.
+//
+// The SCAN belongs to the main bot: it needs the channel transport (a free
+// listing announces when 📣 Post to channel is on, and every one of them is
+// reported to the visitor channel), and running it inside @dexvraadminbot would
+// put a SECOND scanner on the same state file — racing the scheduled loop across
+// two processes, where a module-level lock cannot reach. Two scans each holding
+// a snapshot taken before the other's listings is how the same token gets listed
+// twice and a day's count goes backwards.
+//
+// Hidden from the Force-post menu, whose every other entry publishes something
+// new: its confirm screen reads "Real, public post — subscribers will see it",
+// which is not what this is. It may well end up publishing — that is what a free
+// listing does — but what the operator asked for is a SCAN, and the result is
+// reported on the Auto Listing panel rather than as a post receipt.
+KINDS.free_listing_run = {
+  label: "⚡ Free listing — run a scan now",
+  hidden: true,
+  noRow: true,
+  channels: () => ["dexvra.io"],
+  async send() {
+    const autoLister = require("../services/autoLister");
+    const tg = post.telegram();
+    // Without it a listing would be created and then silently not announced.
+    if (!tg) throw new Error("the main bot has no Telegram attached yet — is dexvra-bot running?");
+    const run = await autoLister.forceRun({ tg });
+    // `ok` means THE SCAN RAN, never "it listed something": a scan that priced
+    // forty tokens and liked none of them is the service working correctly in a
+    // quiet market, and reporting that as a failure is how a monitor gets muted.
+    // A blocker is the real failure, and so is a tap that never got to run.
+    return [{ channel: "dexvra.io", ok: !run.busy && !(run.report && run.report.blocker), run }];
+  },
+};
+
 /** The kinds the Force-post menu offers. `hidden` ones are still runnable by id
  *  — they are jobs this table carries, not posts an operator browses to. */
 const kindIds = () => Object.keys(KINDS).filter((k) => !KINDS[k].hidden);

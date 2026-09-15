@@ -2026,6 +2026,8 @@ function alchKb() {
 
 // One test scan at a time — see the alscan handler.
 let alScanBusy = false;
+// One ⚡ Run now at a time — a real scan outlives its own callback answer.
+let alRunBusy = false;
 // ⚡ Run now is slow enough to outlive the callback it answers — see the handler.
 let atRunBusy = false;
 
@@ -2089,6 +2091,74 @@ function alScanLine(scan, cfg) {
   }
   return `🔍 <b>Last scan</b> (${when}): ${escapeHtml(autoLister.scanLine(scan))}\n\n`;
 }
+/**
+ * The verdict of a ⚡ Run now, for the panel.
+ *
+ * ⚠️ IT NAMES THE GATE THAT STOPPED IT, never a bare "nothing was listed". Six
+ * different faults render as "0 listed" — that is the entire reason this panel
+ * has a scan line — so a button whose answer is "nothing happened" would
+ * reproduce the report it was built to end.
+ */
+function alRunText(job) {
+  if (!job) {
+    return (
+      `⚠️ <b>That run is gone</b>\n\nThe request expired before <code>dexvra-bot</code> picked it up — ` +
+      `that is the process which scans. Check <code>pm2 ls</code>.`
+    );
+  }
+  if (job.status === "expired") {
+    return (
+      `⚠️ <b>The run expired</b>\n\n<code>dexvra-bot</code> never picked it up. The admin bot queues the scan; ` +
+      `the main bot runs it. Check <code>pm2 ls</code> — both must be <code>online</code>.`
+    );
+  }
+  if (job.error) return `⚠️ <b>The run failed</b>\n<code>${escapeHtml(String(job.error).slice(0, 300))}</code>`;
+  const run = ((job.results || [])[0] || {}).run || {};
+  if (run.busy) {
+    return (
+      `⏳ <b>A scan was already running</b>\n\nThe scheduled one started first, so this tap did nothing rather than ` +
+      `scan twice over the same state. Nothing was lost — try again in a moment.`
+    );
+  }
+  const r = run.report;
+  if (!r) return `⚠️ <b>The run reported nothing back</b>\n\nCheck <code>pm2 logs dexvra-bot</code> for <code>[autolist]</code>.`;
+  // Same order the scan itself asks them in, because the first NO is the answer.
+  if (r.blocker) {
+    return (
+      `⛔ <b>The scan could not run</b>\n<code>${escapeHtml(String(r.blocker).slice(0, 300))}</code>\n\n` +
+      `<i>This is why nothing is being listed, and nothing will be until it clears.</i>`
+    );
+  }
+  if (r.off) {
+    return (
+      `🔴 <b>The service is OFF</b>\n\n⚡ Run now skips the <b>waiting</b>, not your switch — it publishes on a public ` +
+      `site, so a service you switched off must not list because of one tap. Tap <b>▶️ Enable</b> first.`
+    );
+  }
+  if (r.capped) {
+    return (
+      `🚦 <b>Today's cap is reached</b> (<b>${escapeHtml(String(r.capped))}</b>)\n\nThat is your own <b>📅 Max/day</b> ` +
+      `setting doing exactly what you set it to do. Raise it, or wait for tomorrow.`
+    );
+  }
+  const line = escapeHtml(autoLister.scanLine(r));
+  if (!r.listed) {
+    return (
+      `⚡ <b>Ran — nothing qualified</b>\n${line}\n\n<i>The scan itself worked: no candidate is past its own trigger ` +
+      `with enough liquidity and volume. Lower <b>🎯 From</b> to widen it.</i>`
+    );
+  }
+  const rows = (r.picked || [])
+    .map((q) => `• <b>${escapeHtml(String(q.sym))}</b> on ${escapeHtml(String(q.chain))} — ${usd(q.mcap)} <i>(its trigger was ${usd(q.trigger)})</i>`)
+    .join("\n");
+  // ⚠️ SAY THE PACE WAS ONLY DEFERRED, not spent. Otherwise a forced listing
+  // reads as a free extra on top of the schedule, and the next operator taps it
+  // ten times to fill the board.
+  const next = r.skippedPace
+    ? `\n<i>It skipped a ${escapeHtml(autoLister.fmtGap(r.skippedPace.waitMs / 60000))} pace wait — the next one is rolled fresh from now.</i>`
+    : "";
+  return `⚡ <b>Listed ${r.listed}</b> — live on the site now\n${rows}\n\n${line}${next}`;
+}
 function alKb() {
   const cb = Markup.button.callback;
   const c = autoLister.get();
@@ -2141,6 +2211,7 @@ function alKb() {
     // Read-only, and the answer to "why has nothing been listed?" — without it
     // the only way to find out is to wait out a 25–90 min gap and still have
     // nothing to read.
+    [cb("⚡ Run now — scan & list", "alrun")],
     [cb("🔎 Test scan", "alscan"), cb("🔄 Refresh", "al")],
     [cb("↩️ Reset", "alrst"), cb("🧹 Clear history", "alclr"), cb("⬅ Back", "home")],
   ]);
@@ -4260,6 +4331,76 @@ function build() {
     // thing the operator tapped for. Keep the verdict, trim the panel.
     const body = `${alText()}\n${verdict}`;
     await edit(ctx, body.length > 4000 ? `${body.slice(0, 4000 - verdict.length - 2)}\n${verdict}` : body, alKb());
+  });
+  // ── ⚡ Run now ────────────────────────────────────────────────────────────
+  //
+  // "kalo kita pencet run now bot cari projectnya dan langsung free listing."
+  // 🔎 Test scan answers "would anything qualify"; this one acts on the answer.
+  //
+  // ⚠️ IT IS A JOB, NOT A CALL. The scan belongs to `dexvra-bot` — see the note
+  // on KINDS.free_listing_run — so this queues it the way 🔄 Refresh board does
+  // and reports what came back.
+  async function alRunResult(ctx, job) {
+    const verdict = alRunText(job);
+    // Telegram rejects an edit over 4096 chars and the panel is already long. A
+    // rejected edit loses the verdict entirely — the one thing the operator
+    // tapped for — so keep the verdict and trim the panel. Same rule as alscan.
+    const body = `${alText()}\n${verdict}`;
+    return edit(ctx, body.length > 4000 ? `${body.slice(0, 4000 - verdict.length - 2)}\n${verdict}` : body, alKb());
+  }
+  const alRunWaitKb = (id) =>
+    Markup.inlineKeyboard([[Markup.button.callback("🔄 Check result", `alrunst:${id}`), Markup.button.callback("⬅ Back", "al")]]);
+
+  bot.action("alrun", async (ctx) => {
+    if (!guard(ctx)) return;
+    // ⚠️ A CALLBACK ANSWER EXPIRES; A MESSAGE EDIT DOES NOT.
+    //
+    // A real scan prices up to `maxLookupsPerRun` candidates SERIALLY at an 8s
+    // timeout each — minutes, far past Telegram's ~15s callback deadline. So the
+    // ANSWER carries the acknowledgement, which is bounded, and the RESULT goes
+    // on the panel, which has none. `atrun` on the trending panel paid for this
+    // exact lesson: "di klik fiturnya not work", about a button whose work had
+    // already succeeded.
+    if (alRunBusy) {
+      ctx.answerCbQuery("⚡ A run is already going — hold on").catch(() => {});
+      return;
+    }
+    alRunBusy = true;
+    ctx.answerCbQuery("⚡ Scanning — this can take a minute. The panel below will say what happened.").catch(() => {});
+    const who = ctx.from.username ? `@${ctx.from.username}` : String(ctx.from.id);
+    let job;
+    try {
+      job = await fpStore.request("free_listing_run", { by: who });
+    } catch (e) {
+      alRunBusy = false;
+      log.warn(`[adminbot] ⚡ free listing run by ${who}: ${e.message}`);
+      return edit(ctx, `${alText()}\n⚠️ <b>Couldn't queue it</b>\n<code>${escapeHtml(e.message)}</code>`, alKb());
+    }
+    log.info(`[adminbot] ⚡ free listing run queued by ${who} (${job.id})`);
+    await edit(ctx, "⏳ Asking the main bot to scan and list…", Markup.inlineKeyboard([])).catch(() => {});
+    // Far longer than the force-post default: that one waits on a single post,
+    // this one on a whole scan. A run that outlives even this is not lost — it
+    // finishes in the main bot regardless, and 🔄 Check result reads it back.
+    const done = await waitForJob(job.id, { tries: 80, gapMs: 1500 });
+    alRunBusy = false;
+    if (!done || done.status === "pending" || done.status === "running") {
+      return edit(
+        ctx,
+        `⏳ <b>Still scanning…</b>\n\nIt is running in <code>dexvra-bot</code> and will finish on its own — ` +
+          `this screen just stopped waiting.`,
+        alRunWaitKb(job.id),
+      );
+    }
+    await alRunResult(ctx, done);
+  });
+  bot.action(/^alrunst:([\w-]+)$/, async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    const job = fpStore.get(ctx.match[1]);
+    if (job && (job.status === "pending" || job.status === "running")) {
+      return edit(ctx, `⏳ <b>Still scanning…</b>\n\nStatus: <code>${escapeHtml(job.status)}</code>.`, alRunWaitKb(job.id));
+    }
+    await alRunResult(ctx, job);
   });
   bot.action("alrst", async (ctx) => {
     if (!guard(ctx)) return;
