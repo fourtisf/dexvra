@@ -1897,7 +1897,12 @@ function alPaceLine(c) {
   // reword it, for the same reason.
   const today = autoLister.stats().today;
   const scan = autoLister.lastScan();
-  const loopDead = autoLister.lastHalt() || !scan || Date.now() - scan.at > 2 * c.maxGapMin * 60_000 + 600_000;
+  // ⚠️ THE SAME QUESTION `alScanLine` ASKS, and it used to be computed a second
+  // time right here — the stale bound spelled out again, with `lastHalt()` read
+  // as dead even once a later scan had cleared it. One owner: two copies of
+  // "has the scanner gone quiet" in one file drift, and the health monitor in
+  // the OTHER process now pages on the same answer.
+  const loopDead = autoLister.loopHealth({ cfg: c, scan }).state !== "ok";
   let next;
   // The CERTAIN facts first — a switch the operator set and a cap they set are
   // known, where "the scanner has not reported" is an inference.
@@ -2052,37 +2057,38 @@ function alScanLine(scan, cfg) {
   // failed to start behind a swallowed require error, and nothing in this panel
   // could tell the difference. A scan report is the only proof the loop is
   // alive, so its absence or its age is what gets reported here.
-  const stale = 2 * cfg.maxGapMin * 60_000 + 600_000; // two full gaps, plus slack
-  // ⚠️ A HALT CANNOT REACH THE SCAN REPORT — that is what makes it a halt: the
-  // scan refuses to write the very file the report lives in. Without this the
-  // stale-report branch below would accuse a perfectly healthy loop of having
-  // died and send the operator to pm2 to hunt a process that is running fine,
-  // while the actual cause (one unreadable file, a one-line fix) is named
-  // nowhere they will look.
-  const halt = autoLister.lastHalt();
-  if (halt && (!scan || halt.at >= scan.at)) {
+  // ⚠️ ONE OWNER. `autoLister.loopHealth` decides halted / never / stale, because
+  // the health monitor PAGES on the same question in the other process — and two
+  // copies of "has the scanner gone quiet" drift, which is what the last copied
+  // predicate cost `trending:check`.
+  const h = autoLister.loopHealth({ cfg, scan });
+  // A HALT CANNOT REACH THE SCAN REPORT — that is what makes it a halt: the scan
+  // refuses to write the very file the report lives in. Without telling it apart
+  // the stale branch would accuse a perfectly healthy loop of having died and
+  // send the operator to pm2 to hunt a running process, while the actual cause
+  // (one unreadable file, a one-line fix) is named nowhere they will look.
+  if (h.state === "halted") {
     return (
-      `⛔ <b>Auto-Listing is halted</b> (${ago(Date.now() - halt.at)})\n` +
-      `<code>${escapeHtml(String(halt.why).slice(0, 300))}</code>\n` +
+      `⛔ <b>Auto-Listing is halted</b> (${ago(h.ageMs)})\n` +
+      `<code>${escapeHtml(String(h.why).slice(0, 300))}</code>\n` +
       `<i>The loop IS running — it is refusing to write rather than lose data.</i>\n\n`
     );
   }
-  if (!scan) {
+  if (h.state === "never") {
     return (
       `⚠️ <b>The scanner has never reported</b> — if the bot has been up more than ` +
       `~${cfg.maxGapMin} min, it is NOT running.\n` +
       `<i>Check the [monitoring] lines in pm2 logs for a service that failed to start.</i>\n\n`
     );
   }
-  const age = Date.now() - scan.at;
-  const when = ago(age);
-  if (age > stale) {
+  if (h.state === "stale") {
     return (
-      `⚠️ <b>The scanner has gone quiet</b> — last report ${when}, and it should run every ` +
+      `⚠️ <b>The scanner has gone quiet</b> — last report ${ago(h.ageMs)}, and it should run every ` +
       `${cfg.minGapMin}–${cfg.maxGapMin} min.\n` +
       `<i>The loop has stopped. Check the [monitoring] lines in pm2 logs.</i>\n\n`
     );
   }
+  const when = ago(Date.now() - scan.at);
   if (scan.blocker) {
     return (
       `⛔ <b>Last scan (${when}) could not run</b>\n<code>${escapeHtml(String(scan.blocker).slice(0, 200))}</code>\n` +

@@ -23,6 +23,7 @@
 const { CHANNELS } = require("../config/constants");
 const { loadJSONSync, saveJSON } = require("../helpers/persist");
 const orders = require("../payments/orders");
+const autoLister = require("./autoLister");
 const mongo = require("../db/mongo");
 const log = require("../helpers/logger");
 
@@ -36,6 +37,9 @@ const TELEGRAM_GRACE_MS = 3 * 60 * 1000; // a route flap to Telegram clears in s
 const MONGO_GRACE_MS = 3 * 60 * 1000; // a reaped idle socket reconnects in seconds
 const STUCK_ORDER_MS = 15 * 60 * 1000; // fulfilment posts + tweets, then recovery retries
 const CRASH_LOOP_BOOTS = 5; // a deploy is 2-3 restarts; five is a loop
+// `staleAfterMs` already tolerates two full scan gaps, so this grace is only
+// there to stop a single slow pass paging — not to add a second tolerance.
+const AUTOLIST_GRACE_MS = 10 * 60 * 1000;
 const CRASH_LOOP_WINDOW_MS = 10 * 60 * 1000;
 const BOOTS_KEPT = 20;
 
@@ -155,6 +159,57 @@ function checkStuckOrders(now) {
   }
 }
 
+/**
+ * Has the free-listing scan loop stopped?
+ *
+ * ⚠️ THE ONE FAULT NOTHING COULD REPORT. `listingWatch` answers "are free
+ * listings actually going out", and it is folded into `fileReport` — i.e. it
+ * runs INSIDE the scan. So a loop that has stopped evaluates nothing, alerts
+ * nothing, and free listings end in silence with the panel still reading 🟢 ON.
+ * `alScanLine` can see it, but only when somebody opens the panel — which is
+ * the operator being the detector, for the fifth time in this file's history.
+ *
+ * This is the same question, asked from a timer that is NOT the loop's own, in
+ * the process that is watching anyway. `autoLister.loopHealth` is the one owner
+ * of the answer; all this adds is the grace, the page and the ✅.
+ */
+function checkAutoLister(now) {
+  let h;
+  let cfg;
+  try {
+    cfg = autoLister.get();
+    // `upMs`, because `lastScan()` is persisted and survives a restart: a box
+    // that was down for a day comes back holding a day-old report and a loop
+    // that is perfectly healthy, it just has not reached its first scan yet.
+    h = autoLister.loopHealth({ now, cfg, upMs: now - startedAt });
+  } catch (e) {
+    // A monitor that can crash the bot it watches is a liability, not a guard.
+    log.debug(`[health] autolist: ${e && e.message}`);
+    return;
+  }
+  // "booting" and "halted" are not this check's to report: the first is a
+  // restart that has not scanned yet, and the second already pages on its own —
+  // one fault, one alert, and blaming the loop for a halt sends the operator to
+  // the wrong layer entirely.
+  const dead = h.enabled && (h.state === "stale" || h.state === "never");
+  if (!dead) {
+    const down = faultOk("autolist", now);
+    // Silent when the operator simply switched it OFF — they did that on
+    // purpose, and "scanning again" would be false about a service that is not.
+    if (down != null && h.enabled) log.alert(`✅ <b>Auto-Listing is reporting again</b> — after ~${mins(down)} min of silence.`);
+    return;
+  }
+  if (!faultBad("autolist", AUTOLIST_GRACE_MS, now)) return;
+  log.alert(
+    `🚨 <b>Auto-Listing has gone quiet</b>\n\n` +
+      (h.state === "never"
+        ? `The scanner has not filed a single report since this process started.`
+        : `Its last scan was ~${mins(h.ageMs)} min ago, and it should run every ${cfg.minGapMin}–${cfg.maxGapMin} min.`) +
+      `\n\n<i>The switch still reads 🟢 ON, so no screen would say this by itself. Check the [monitoring] ` +
+      `lines in pm2 logs for a service that failed to start, then run <code>npm run listing:check</code>.</i>`,
+  );
+}
+
 /** A process that dies and is restarted, repeatedly, looks perfectly healthy to
  *  every check above — each new boot passes them all. Only the boot history
  *  shows it. */
@@ -201,6 +256,7 @@ async function runOnce(tg, now = Date.now()) {
     await checkMongo(now);
     checkStuckOrders(now);
     checkCrashLoop(now);
+    checkAutoLister(now);
     await heartbeat(now);
   } catch (e) {
     log.warn(`[health] check failed: ${e && e.message}`);
@@ -230,5 +286,5 @@ function start(tg) {
 
 module.exports = {
   start,
-  _test: { runOnce, faultBad, faultOk, faults, load, setState: (s) => (state = s), getState: () => state, setStartedAt: (t) => (startedAt = t) },
+  _test: { runOnce, checkAutoLister, faultBad, faultOk, faults, load, setState: (s) => (state = s), getState: () => state, setStartedAt: (t) => (startedAt = t) },
 };

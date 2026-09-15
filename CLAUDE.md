@@ -2798,6 +2798,87 @@ cd bot && node scripts/run-tests.js test/autoListerRunNow.test.js test/autoListe
 the answer and 🎯 From is the lever; if it answers with a blocker, that blocker
 is why the scheduled loop is publishing nothing either.
 
+#### "bagaimana agar free listing selalu bekerja" — the watch could not see the loop stop
+
+Asked after ⚡ Run now landed, and the honest answer was that a watch for exactly
+this ALREADY EXISTED and had a hole in the middle of it.
+
+`listingWatch` watches the PROMISE — *"are free listings actually going out"* —
+and it is folded into `fileReport`, which is to say **it runs inside the scan**.
+So the one state it can never reach is the scan not happening at all: a loop
+that has stopped files no report, evaluates no watch, and free listings end in
+total silence with the panel still reading 🟢 ON. That is the nine-hour
+`autoTrend` outage, on the other service, and the lesson it left is the one that
+had not been applied here:
+
+⚠️ **A guard written inside the thing it guards cannot see the thing not being
+called.**
+
+The only thing that could see it was `alScanLine`, which requires a human to
+open the panel — the operator as the detector, for the fifth time in this file.
+
+- **`autoLister.loopHealth()` is the ONE OWNER of "is the loop alive"**, and it
+  had to be, because the answer is needed in two processes: the panel renders it
+  in `dexvra-adminbot` and `healthMonitor` pages on it in `dexvra-bot`.
+  ⚠️ **Writing it found a second copy already there** — `alPaceLine`'s `loopDead`
+  spelled the stale bound out again and read `lastHalt()` as dead even after a
+  later scan had cleared it. Two copies of this predicate in ONE file, which is
+  what the last copied predicate cost `trending:check`. A source scan fails the
+  build if either comes back, and it strips comments first, because the note
+  beside the fix quotes the rule it forbids.
+- **The pager lives in `healthMonitor`**, on a timer that is not the loop's own,
+  in the process that is watching anyway. Grace, page-once and ✅-on-clear come
+  free — that machinery was already there for Telegram, Mongo and stuck orders.
+- ⚠️ **A RESTART IS NOT A DEAD LOOP.** `lastScan()` is persisted, so a box that
+  was down for a day comes back holding a day-old report and a perfectly healthy
+  loop that has simply not reached its first scan yet — the boot delay is
+  30–150s and the first gap is up to `maxGapMin`. Judging then accuses the
+  restart of being the fault. `upMs` gates it, and the panel passes none (it
+  runs in the other process and cannot know), so it judges on staleness alone
+  exactly as it always has.
+- ⚠️ **A HALT IS NOT A DEAD LOOP EITHER** — it is the loop RUNNING and refusing
+  to write, which is precisely why no report reaches the file. It already pages
+  on its own. One fault, one alert; blaming the loop for a halt sends the
+  operator to hunt a process that is running perfectly.
+- ⚠️ **THE SWITCH IS REPORTED, NEVER A STATE.** An OFF service still files a
+  report every scan — deliberately, because a stale report has to mean the LOOP
+  stopped and it can only mean that if every other reason files one — so a stale
+  report while OFF still means the loop is dead and the panel must say so. What
+  the switch decides is whether that is worth PAGING for, which is the caller's
+  call. The first cut returned `off` as a state and swallowed the loop's
+  condition with it.
+- **Switching it OFF clears a standing page SILENTLY.** *"✅ Auto-Listing is
+  reporting again"* is false about a service the operator has just turned off,
+  and a fault left uncleared would mean a later re-enable never pages.
+- **A `loopHealth` that throws must never take the monitor down with it** — a
+  monitor that can crash the bot it watches is a liability, not a safeguard.
+
+So the layers, and each closes a hole the others cannot:
+
+| layer | stops |
+| --- | --- |
+| the blocker ladder + `refused`/`unpriced` counters | a fault rendered as a quiet market |
+| `listingWatch` in the scan | listings silently stopping while the loop runs |
+| **`loopHealth` + `healthMonitor`** | **the loop stopping, which the watch above cannot see** |
+| `setupMonitoring`'s start-up page | a service that never started at all |
+| ⚡ Run now | *"is it the market or the machine?"*, answered in a minute |
+| `npm run listing:check` + the build stamp | which of the six it is, on the box |
+
+Nine guarantees are MUTATION-TESTED rather than argued: a halt reported as a
+dead loop, the boot window removed, the switch swallowing the loop state, the
+grace removed, no ✅ on recovery, the ✅ lie after a switch-off, a halt or a
+restart paging, the check never wired into the monitor's pass, and the panel
+growing its own copy back. Each fails exactly one test.
+
+```bash
+cd bot && node scripts/run-tests.js test/listingLoopWatch.test.js   # 12 tests, no network
+```
+
+**Config a fix depends on:** nothing. The alert goes to the ops channel the
+health monitor already uses. `LISTING_QUIET_GRACE_MS` / `LISTING_QUIET_REPEAT_MS`
+still govern the PROMISE watch; this one is bounded by `maxGapMin`, because the
+question it asks is "should a scan have happened by now".
+
 ## A Top 3 that was not the top of the Top 5
 
 Two banners, one minute apart, from the same admin panel:

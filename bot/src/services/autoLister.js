@@ -548,6 +548,56 @@ const lastScan = () => loadState().scan;
  *  panel reads that one's age as proof the scheduled loop is alive. */
 const lastForcedScan = () => loadState().forcedScan;
 
+// ── Is the scan LOOP alive? ─────────────────────────────────────────────────
+//
+// ⚠️ THE ONE QUESTION `listingWatch` STRUCTURALLY CANNOT ANSWER. That watch is
+// folded into `fileReport` — it runs INSIDE the scan — so a loop that has
+// STOPPED files no report, the watch never evaluates, and free listings end in
+// total silence. `autoTrend` paid nine hours for exactly this shape and put its
+// heartbeat in the scheduled `tick` rather than in `runOnce`, for the reason
+// stated there: **a guard written inside the thing it guards cannot see the
+// thing not being called.**
+//
+// ONE OWNER, because the answer is needed in two processes — `alScanLine`
+// renders it on the panel in dexvra-adminbot, and `healthMonitor` pages on it in
+// dexvra-bot. Two copies of "has the scanner gone quiet" would drift, and this
+// file already records what the last copied predicate cost `trending:check`.
+//
+// A ⚡ Run now is deliberately NOT proof of life: `lastScan()` excludes it.
+
+/** Two full scan gaps, plus slack. A loop that missed one gap is not dead. */
+const staleAfterMs = (cfg = get()) => 2 * cfg.maxGapMin * 60_000 + 600_000;
+
+/**
+ * @param upMs  how long THIS process has been up. ⚠️ `lastScan()` is persisted
+ *   and survives a restart, so a box that was down for a day comes back holding
+ *   a day-old report and a perfectly healthy loop that simply has not reached
+ *   its first scan yet — the boot delay is 30–150s and the first gap is up to
+ *   `maxGapMin`. Judging before this process could have filed one accuses the
+ *   restart of being the fault. The panel passes nothing (it runs in the OTHER
+ *   process and cannot know), so it judges on staleness alone, exactly as it
+ *   always has.
+ */
+function loopHealth({ now = Date.now(), upMs = Infinity, cfg = get(), scan = lastScan(), halt = lastHalt() } = {}) {
+  const staleMs = staleAfterMs(cfg);
+  // ⚠️ THE SWITCH IS REPORTED, NEVER A STATE. An OFF service still files a
+  // report every scan (that is deliberate — a stale report has to mean the LOOP
+  // stopped, and it can only mean that if every other reason files one), so a
+  // stale report while OFF still means the loop is dead and the panel must say
+  // so. What the switch decides is whether that is worth PAGING for, and that
+  // is the caller's call, not this function's.
+  const out = (state, ageMs = null, why = null) => ({ state, enabled: !!cfg.enabled, staleMs, ageMs, why });
+  // ⚠️ A HALT IS NOT A DEAD LOOP. It is the loop RUNNING and refusing to write,
+  // which is precisely why no report reaches the file. It pages on its own, and
+  // reporting it here too would send the operator to hunt a process that is
+  // running perfectly — one fault, one alert.
+  if (halt && (!scan || halt.at >= scan.at)) return out("halted", now - halt.at, halt.why);
+  const fresh = scan && now - scan.at <= staleMs;
+  if (!fresh && upMs < cfg.maxGapMin * 60_000 + 5 * 60_000) return out("booting", scan ? now - scan.at : null);
+  if (!scan) return out("never");
+  return out(now - scan.at > staleMs ? "stale" : "ok", now - scan.at);
+}
+
 /** Rejection reasons carry live figures ("thin liquidity ($1,204)"), which would
  *  make every rejection its own bucket. Strip them for the tally. */
 const reasonBucket = (why) => String(why).replace(/\s*\([^)]*\)/g, "").trim();
@@ -1977,6 +2027,8 @@ module.exports = {
   dryRun,
   lastScan,
   lastForcedScan,
+  loopHealth,
+  staleAfterMs,
   lastHalt,
   configOk,
   scanLine,
