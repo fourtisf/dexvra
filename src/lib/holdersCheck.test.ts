@@ -53,7 +53,7 @@ test("⚠️ no source answering anything exits non-zero", async () => {
   } finally { s.close(); }
 });
 
-test("a GeckoTerminal-starved chain names the two keys that fix it — described, not a line with a blank", async () => {
+test("a GeckoTerminal-starved chain names the two keys that fix IT, on its own row — described, not a line with a blank", async () => {
   const s = await stub(() => ({ count: null, source: null, via: null, why: "geckoterminal: over this process's GeckoTerminal budget (5/min)" }));
   try {
     const r = await run(s.base, ["bsc", "0x444045b0ee1ee319a660a5e3d604ca0ffa35acaa"]);
@@ -61,4 +61,28 @@ test("a GeckoTerminal-starved chain names the two keys that fix it — described
     assert.match(r.out, /MORALIS_API_KEY/);
     assert.doesNotMatch(r.out, /<[a-z-]+>/i);
   } finally { s.close(); }
+});
+
+test("⚠️ each failing row names ITS OWN fix: Tron → TRONSCAN_API_KEY, and Moralis only where it covers the chain", async () => {
+  const s = await stub((c) => (c === "robinhood"
+    ? { count: null, source: null, via: null, why: "geckoterminal: rate limited — cooling down for 113s" }
+    : { count: null, source: null, via: null, why: "tronscan: apilist.tronscanapi.com 429; geckoterminal: over this process's GeckoTerminal budget" }));
+  try {
+    const tron = await run(s.base, ["tron", "TUPM7K8REVzD2UdV4R5fe5M8XbnR2DdoJ6"]);
+    assert.match(tron.out, /fix: TRONSCAN_API_KEY/);
+    assert.doesNotMatch(tron.out, /MORALIS_API_KEY/, "Moralis does not count Tron holders — naming it is a key that fixes nothing");
+    const rh = await run(s.base, ["robinhood", "0x0a574aae41da077713ba32aa05ca151c8759e2f6"]);
+    assert.match(rh.out, /fix: GECKOTERMINAL_API_KEY/);
+    assert.doesNotMatch(rh.out, /MORALIS_API_KEY/);
+  } finally { s.close(); }
+});
+
+test("the script's Moralis chain list is a PORT of the provider's and stays equal to it", async () => {
+  const { readFileSync } = await import("node:fs");
+  const script = readFileSync(SCRIPT, "utf8");
+  const port = JSON.parse(script.match(/const MORALIS_CHAINS = (\[[^\]]*\])/)![1]);
+  const prov = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "providers/holders.ts"), "utf8");
+  const block = prov.match(/const MORALIS_CHAIN: Record<string, string> = \{([^}]*)\}/)![1];
+  const keys = [...block.matchAll(/(\w+):/g)].map((m) => m[1]);
+  assert.deepEqual([...port].sort(), [...keys, "solana"].sort());
 });

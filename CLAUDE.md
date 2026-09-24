@@ -10765,6 +10765,45 @@ Twelve more guarantees are MUTATION-TESTED:
 `GECKOTERMINAL_API_KEY` in the **repo-root** `.env`, then a restart of the web
 app. Everything else ships on.
 
+#### The second run: 5/8, and the three left are each a KEY, not a defect
+
+```
+✓ $CUPCAKE robinhood   6,250 holders · blockscout via robinhoodchain.blockscout.com   ← the browser retry
+✓ $LGNS    polygon     2,039,733 · polygon.blockscout.com
+✓ $OP      optimism    1,378,779 · optimism.blockscout.com
+✗ $BTW  bsc    — dexscreener 403; geckoterminal: rate limited — cooling down
+✗ $BONK solana — the same
+✗ $HTX  tron   — tronscan 429; dexscreener 403; geckoterminal: rate limited
+```
+
+The browser-header retry settled Robinhood, and both new hosted Blockscouts
+answered. What is left has no free source this box can reach, which the
+section above already records. What was still wrong was the CHECK: it printed
+one generic footer about BSC and Solana under three red rows, and said nothing
+at all about Tron's 429. That is *"a diagnosis with no hands attached"* again.
+
+- **Every failing row carries its OWN `fix:` line**, read off the route's own
+  reason. A Tronscan refusal names `TRONSCAN_API_KEY`. A GeckoTerminal budget
+  or cooldown names `GECKOTERMINAL_API_KEY`, and `MORALIS_API_KEY` only on a
+  chain Moralis actually counts.
+- ⚠️ **Naming Moralis for Tron would be a key that fixes nothing.** So the
+  script carries a PORT of the provider's `MORALIS_CHAIN` list (it cannot import
+  TS on the production Node), and a test pins the two equal.
+- Keys are DESCRIBED, never printed as a line with a blank in it. This file's
+  first rule, and the pasteable-commands guard scans the script for it.
+
+Four guarantees are MUTATION-TESTED:
+- the Tron hint dropped
+- Moralis offered for every chain
+- the port drifting from the provider
+- the per-row line removed
+
+Each fails between one and two tests.
+
+**Config a fix depends on:** `TRONSCAN_API_KEY` for Tron. For BSC and Solana,
+`GECKOTERMINAL_API_KEY` or `MORALIS_API_KEY`. All go in the **repo-root**
+`.env`, followed by `npm run deploy:all`.
+
 ## "perbaiki tampilan chartnya di mobile" — two rows of timeframe buttons, one of them dead
 
 The same screenshot, one panel down: our chart header — `$HACHIKO`, `LIN LOG`,
