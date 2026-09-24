@@ -112,10 +112,13 @@ const LISTING_BODY =
   `${em("💲", E.dollar)} [{name}]({coinUrl}) ({symbol})\n\n` +
   `{chainEmoji} **Network:** {chain}\n` +
   `📄 **Contract address:**\n{address}\n\n` +
-  // Market cap and Price ONLY, SIDE-BY-SIDE on one line (operator preference) —
-  // no liquidity row, and never stacked. ({liq} stays an available placeholder
-  // for any custom template that still wants it.)
-  `${em("🏦", E.dollar)} **Market cap:** {mcap} · ${em("📊", E.chart)} **Price:** {price}\n\n` +
+  // Market cap, LIQUIDITY and Price, SIDE-BY-SIDE on one line — never stacked
+  // (operator preference). Liquidity was left off this line once, on request;
+  // "setiap token listing harus ada mc cap dan liquidity" put it back, and a
+  // saved copy without it gets the segment inserted at render time
+  // (LIQ_SEGMENT / ensureAfter, channels/format.js) — a saved template wins
+  // over this default for ever, so a default alone could never deliver it.
+  `${em("🏦", E.dollar)} **Market cap:** {mcap} · 💧 **Liquidity:** {liq} · ${em("📊", E.chart)} **Price:** {price}\n\n` +
   // Single one-tap CTA. {tradeUrl} = https://t.me/<tradebot>?start=ca_<address>
   // — the deep link carries the token's CA so the trade bot opens straight on
   // this token (no "Trade it now" header line above it).
@@ -1260,7 +1263,7 @@ const DEFAULTS = {
     "{name} ( ${tag} ){mention}\n" +
     "{url}\n\n" +
     "CA: {address}\n\n" +
-    "Price: {price}  |  MC: {mcap}\n\n" +
+    "Price: {price}  |  MC: {mcap}  |  Liq: {liq}\n\n" +
     "#Dexvra #NewListing #Altcoin #DYOR",
   x_listing_tiered:
     "⚡ New Listing on Dexvra\n\n" +
@@ -1268,7 +1271,7 @@ const DEFAULTS = {
     "{name} ( ${tag} ){mention}\n" +
     "{url}\n\n" +
     "CA: {address}\n\n" +
-    "Price: {price}  |  MC: {mcap}\n\n" +
+    "Price: {price}  |  MC: {mcap}  |  Liq: {liq}\n\n" +
     "#Dexvra #NewListing #Altcoin #DYOR",
   x_trending:
     "🔥 {symbol} is now Trending on Dexvra!\n\n" +
@@ -1493,8 +1496,8 @@ const META = {
   post_gainers: { group: "Channel Posts", label: "Post: Top Gainers banner", ph: ["date", "list", "count", "xUrl", "site", "listing", "trending", "announce", "xlisting"] },
   tier_emojis: { group: "Channel Posts", label: "Tier badges (Diamond → Bronze)", ph: [] },
   chain_emojis: { group: "Channel Posts", label: "Chain emoji (per network — channel posts + buy alerts)", ph: [] },
-  x_listing: { group: "X Posts", label: "X post: Xpress listing", ph: ["name", "tag", "mention", "url", "address", "price", "mcap", "chain", "handle"] },
-  x_listing_tiered: { group: "X Posts", label: "X post: Listing & Trending", ph: ["tierEmoji", "tier", "name", "tag", "mention", "url", "address", "price", "mcap", "chain", "handle"] },
+  x_listing: { group: "X Posts", label: "X post: Xpress listing", ph: ["name", "tag", "mention", "url", "address", "price", "mcap", "liq", "chain", "handle"] },
+  x_listing_tiered: { group: "X Posts", label: "X post: Listing & Trending", ph: ["tierEmoji", "tier", "name", "tag", "mention", "url", "address", "price", "mcap", "liq", "chain", "handle"] },
   x_trending: { group: "X Posts", label: "X post: trending", ph: ["symbol", "name", "chain", "url", "tag", "mention", "handle"] },
   x_pump: { group: "X Posts", label: "X post: pump alert", ph: ["tag", "name", "mention", "percent", "firstMc", "lastMc", "url", "handle"] },
   x_rankup: { group: "X Posts", label: "X post: rank-up alert", ph: ["tag", "name", "mention", "rank", "gain", "chain", "url", "handle"] },
@@ -1577,6 +1580,56 @@ function loadAll() {
   lastLoad = now;
   return cache;
 }
+
+/**
+ * Make a template VALUE carry `{has}` — by inserting a segment right after the
+ * first `{after}` when it does not. Returns the value unchanged when it already
+ * carries `{has}` or has no `{after}` to anchor to.
+ *
+ * ⚠️ WHY THIS EXISTS: `data/templates.json` wins over DEFAULTS for ever, so a
+ * field added to a shipped template never reaches an operator who once saved
+ * their own copy — and the one who asks for it is exactly the one who has. The
+ * `{network}` line on the pay card is enforced at its call site for the same
+ * reason. The anchor is a PLACEHOLDER, never a word, because the words are the
+ * operator's (and in two languages).
+ *
+ * Both stored shapes: a markup string takes `markup`; an admin-pasted
+ * {text, entities} value takes `plain` and every entity at or after the
+ * insertion point moves by its length (UTF-16 units, which is what JS string
+ * length and Telegram offsets both count). An entity that SPANS the point grows
+ * with it; one that ENDS there does not. `bold`, when given, is a substring of
+ * `plain` that gets a bold entity, so the label reads like the operator's own.
+ */
+function ensureAfter(val, { has, after, markup, plain, bold }) {
+  const isEntity = val && typeof val === "object" && val.text != null;
+  const text = isEntity ? String(val.text) : String(val == null ? "" : val);
+  if (text.includes(`{${has}}`)) return val;
+  const anchor = `{${after}}`;
+  const at = text.indexOf(anchor);
+  if (at < 0) return val;
+  const pos = at + anchor.length;
+  if (!isEntity) return text.slice(0, pos) + markup + text.slice(pos);
+  const ins = String(plain);
+  const entities = (val.entities || []).map((e) => {
+    const end = e.offset + e.length;
+    if (e.offset >= pos) return { ...e, offset: e.offset + ins.length };
+    if (end > pos) return { ...e, length: e.length + ins.length };
+    return { ...e };
+  });
+  if (bold) {
+    const i = ins.indexOf(bold);
+    if (i >= 0) entities.push({ type: "bold", offset: pos + i, length: bold.length });
+  }
+  entities.sort((a, b) => a.offset - b.offset);
+  return { ...val, text: text.slice(0, pos) + ins + text.slice(pos), entities };
+}
+
+/** The liquidity segment `ensureAfter` inserts beside the market cap on a
+ *  listing/trending card that was saved without one. */
+/** …and its plain-text twin for the X listing tweet, which is laid out as
+ *  "Price: … | MC: …" and has no bold to give it. */
+const X_LIQ_SEGMENT = { has: "liq", after: "mcap", markup: "  |  Liq: {liq}", plain: "  |  Liq: {liq}" };
+const LIQ_SEGMENT = { has: "liq", after: "mcap", markup: " · 💧 **Liquidity:** {liq}", plain: " · 💧 Liquidity: {liq}", bold: "Liquidity:" };
 
 function substitute(tpl, vars) {
   return String(tpl).replace(/\{(\w+)\}/g, (m, k) => (vars && vars[k] != null ? String(vars[k]) : ""));
@@ -2215,6 +2268,9 @@ module.exports = {
   meta,
   groups,
   substitute,
+  ensureAfter,
+  LIQ_SEGMENT,
+  X_LIQ_SEGMENT,
   dropEmptyLines,
   DEFAULTS,
   BANNER_PATH,

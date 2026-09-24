@@ -6,7 +6,7 @@ import test from "node:test";
 import assert from "node:assert";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { HOME_BOARD_ROWS, HOME_CHAIN_LIMIT, HOME_TRENDING_MAX, SANE_CHANGE_PCT, byChange, changeRank, changeReading, expander, capped, chainCounts, freshness, inChain, movers, resolveChain, splitChains, topCoins, tradedEnough, figureReading } from "./home.ts";
+import { HOME_BOARD_ROWS, HOME_CHAIN_LIMIT, HOME_TRENDING_MAX, SANE_CHANGE_PCT, byChange, changeRank, changeReading, expander, capped, chainCounts, freshness, inChain, movers, resolveChain, splitChains, topCoins, tradedEnough, figureReading, capturedFigure } from "./home.ts";
 import { CHAINS, CHAIN_IDS } from "../config/chains.ts";
 import type { BoardToken, PeriodKey } from "./types.ts";
 
@@ -757,6 +757,23 @@ test("a zero from a row nobody priced is a dash, a LIVE zero is a fact", () => {
   assert.equal(figureReading({ source: "seed" }, 157_700), 157_700, "a captured nonzero figure still prints — the demo board is built from those");
   assert.equal(figureReading({ source: "live" }, NaN), null);
   assert.equal(figureReading({ source: "live" }, null), null);
+});
+
+test("a LIVE row's missing cap or depth falls back only to a figure somebody MEASURED", () => {
+  // The store defaults every figure to 0, and `m.liq ?? t.liq` handed that 0
+  // to a row about to be marked live — where figureReading prints a zero as a
+  // measurement. So a provider that priced a token but published no depth put
+  // "$0" liquidity (the rug reading) on the board over a number nobody took.
+  assert.equal(capturedFigure(0), null, "an unmeasured zero must not become a live $0");
+  assert.equal(capturedFigure(null), null);
+  assert.equal(capturedFigure(undefined), null);
+  assert.equal(capturedFigure(NaN), null);
+  assert.equal(capturedFigure(-5), null);
+  assert.equal(capturedFigure(85_012), 85_012, "the figure the listing post published still fills the hole");
+  const src = readFileSync(join(import.meta.dirname, "providers", "index.ts"), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  assert.match(src, /mcap: m\.mcap \?\? capturedFigure\(t\.mcap\)/, "the live row's cap reads the raw captured field again");
+  assert.match(src, /liq: m\.liq \?\? capturedFigure\(t\.liq\)/, "the live row's depth reads the raw captured field again");
 });
 
 test("every money cell on the board goes through figureReading", () => {

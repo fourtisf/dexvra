@@ -14,7 +14,9 @@ const menu = require("./handlers/menu");
 const { SITE_URL, DEXVRA_API_BASE, CHANNELS, X_POST_TIMEOUT_MS,
   EMOJI_BUDGET_MS,
   CLIP_BUDGET_MS,
-  MARKET_BUDGET_MS, X_TRENDING_ENABLED } = require("./config/constants");
+  MARKET_BUDGET_MS, X_TRENDING_ENABLED,
+  POST_MARKET_TRIES, POST_MARKET_PAUSE_MS, POST_SNAPSHOT_MAX_AGE_MS } = require("./config/constants");
+const figures = require("./marketFigures");
 const { tierAnnounces, tierLabel } = require("./config/packages");
 const { fmtPrice, formatNumber } = require("./helpers/format");
 const { isValidTicker, sanitizeTicker } = require("./helpers/ticker");
@@ -104,7 +106,80 @@ function adoptChainLogo(input, live) {
   return true;
 }
 
-async function readPostMarket(chain, address, label) {
+/**
+ * The post's market read — ASKED AGAIN while a figure is a hole, then topped up
+ * from the listing form's own reading.
+ *
+ * ⚠️ $SFX (Safix, Robinhood, Uniswap v4) WENT OUT AS "Market cap: TBA · Price:
+ * TBA" to 12,445 subscribers while DexScreener carried it at a $1.0M cap on $85K
+ * of liquidity and dexvra.io priced it in the same minute. Every source was up;
+ * the post simply had ONE bounded attempt, and a single refused request (this
+ * box's DexScreener budget is shared with the pump checker, the trending
+ * promoter and the buy bot) or a GeckoTerminal queue that did not clear inside
+ * MARKET_BUDGET_MS was the entire announcement. A paid post is not a timer job:
+ * it happens once, and a hole in it is permanent.
+ *
+ *   1. Re-asked up to POST_MARKET_TRIES times, POST_MARKET_PAUSE_MS apart, ONLY
+ *      while `marketFigures.needsAnotherRead` says a figure is still missing —
+ *      a healthy token pays exactly one read, as before. Each attempt keeps its
+ *      own MARKET_BUDGET_MS bound, and a later attempt only ever FILLS holes.
+ *   2. Whatever is still missing is taken from `snapshot` — the figures the
+ *      listing FORM read when the contract was pasted, minutes earlier — while
+ *      it is younger than POST_SNAPSHOT_MAX_AGE_MS. It is a real reading of the
+ *      same token, and it was being thrown away.
+ *   3. Only then does a hole publish as TBA / —.
+ *
+ * The WHY is the FIRST reason, never the last — a later attempt answering "the
+ * reader is parked" must not bury the 503 that parked it (the rule `solana.js`
+ * states for its host list). And a read that ended PRICED carries none: a stale
+ * sentence beside a real number is the two-cells-disagreeing defect.
+ */
+async function readPostMarket(chain, address, label, opts = {}) {
+  const tries = Number.isFinite(opts.tries) ? Math.max(1, Math.round(opts.tries)) : POST_MARKET_TRIES;
+  const pauseMs = Number.isFinite(opts.pauseMs) ? Math.max(0, opts.pauseMs) : POST_MARKET_PAUSE_MS;
+  let live = null;
+  let why = null;
+  let attempts = 0;
+  while (attempts < tries) {
+    // ⚠️ NOT unref'd: the order is waiting on this pause, and an unref'd timer
+    // does not hold the event loop open — the `bounded` rule, one line over.
+    if (attempts) await new Promise((r) => setTimeout(r, pauseMs));
+    attempts++;
+    const r = await readMarketOnce(chain, address, label);
+    live = figures.mergeFigures(live, r.live);
+    if (!why && r.why) why = r.why;
+    if (!figures.needsAnotherRead(live)) break;
+  }
+  if (attempts > 1) {
+    const still = figures.holes(live);
+    log.info(
+      `[fulfil] ${label} ${chain}/${address}: market read took ${attempts} attempt(s)` +
+        (still.length ? ` — still missing ${still.join(", ")}` : " — every figure in hand"),
+    );
+  }
+  let from = null;
+  const snap = figures.usableSnapshot(opts.snapshot, Date.now(), POST_SNAPSHOT_MAX_AGE_MS);
+  if (snap) {
+    const before = figures.holes(live);
+    const filled = before.filter((k) => snap[k] > 0);
+    if (filled.length) {
+      live = figures.mergeFigures(live, snap);
+      from = "form";
+      // WARN, not info: every live attempt failed on these, and an operator
+      // reading the post should be able to learn which figure is minutes old.
+      log.warn(
+        `[fulfil] ${label} ${chain}/${address}: live read missing ${filled.join(", ")} after ${attempts} attempt(s)` +
+          ` — published the listing form's reading from ${Math.round((Date.now() - snap.at) / 60_000)} min ago` +
+          (why ? ` (live: ${why})` : ""),
+      );
+    }
+  }
+  if (live && Number(live.priceUsd) > 0) why = null;
+  return { live, why, attempts, from };
+}
+
+/** ONE bounded attempt — `readPostMarket` is the caller that retries it. */
+async function readMarketOnce(chain, address, label) {
   let why = null;
   const live = await bounded(
     market.fetchMarket(chain, address, POST_MARKET).catch((e) => {
@@ -530,7 +605,9 @@ async function fulfillListing(ctx, order) {
   // could. The market record carries `logoUrl` from the same chain read that
   // carries the price (marketdata.mergeCurve), so the row is born with it and
   // the post's own logo step then fetches and PINS it like any other.
-  const marketP = readPostMarket(input.chain, input.address, "listing");
+  // `snapshot` is what the listing FORM read at paste time — the fallback for
+  // any figure every live attempt missed (see readPostMarket).
+  const marketP = readPostMarket(input.chain, input.address, "listing", { snapshot: p.market });
 
   // 1. Logo (best-effort): upload the Telegram photo to dexvra media.
   let logoBuffer = null;
@@ -562,6 +639,13 @@ async function fulfillListing(ctx, order) {
   if (adoptChainLogo(input, live)) {
     log.info(`[fulfil] logo adopted from the chain record for ${input.chain}/${input.address}: ${input.logoUrl}`);
   }
+
+  // The row is born with the figures the post is about to publish. dexvra.io
+  // renders a row's captured figures whenever no provider has priced it yet
+  // (`figureReading`), so the site and the channel card cannot open on two
+  // different answers — and a hole is left OUT, never written as 0, so a
+  // re-list can never erase a figure it did not carry (lib/relist.ts).
+  Object.assign(input, figures.rowFigures(live));
 
   // 3. Create the approved listing (hard step).
   step("logo");
@@ -1165,6 +1249,7 @@ module.exports = {
   // asking the indexers its own way. A check with a second copy of the question
   // is how `fonts:check` printed nine green ticks over a banner publishing
   // boxes — it measured a font stack that renderer did not draw with.
+  readPostMarket,
   _readPostMarket: readPostMarket,
   _adoptChainLogo: adoptChainLogo,
   // The two halves of "the broadcast IS the listing card". Exported because a

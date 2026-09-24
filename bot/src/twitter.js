@@ -364,6 +364,10 @@ async function send(account, text, media, fallback, quoteTweetId, _retriedWithou
 
 const chainLabel = (c) => (chainOf(c) ? chainOf(c).label : String(c || ""));
 const mcOf = (m) => (m && m > 0 ? "$" + formatNumber(m) : "TBA");
+// Liquidity on the listing tweet, spelled like the channel card's (`liqStr`):
+// a dash when nobody has a reading, because a bonding curve has no pool depth
+// and "$0" there reads as a rug.
+const liqOf = (n) => (n && Number(n) > 0 ? "$" + formatNumber(n) : "—");
 
 // Tier badge for the tweet — the SAME admin setting the channel post uses,
 // flattened to its plain character because X has no custom emoji. A second
@@ -391,13 +395,26 @@ function listingText(coin) {
     address: coin.address,
     price: coin.price ? fmtPrice(coin.price) : "TBA",
     mcap: mcOf(coin.mcap),
+    liq: liqOf(coin.liq),
     chain: chainLabel(coin.chain),
     handle: `@${X_LISTING_HANDLE}`,
   };
   if (tier && tier !== "XPRESS") {
-    return tpl.t("x_listing_tiered", { ...vars, tier, tierEmoji: xTierEmoji(tier) });
+    return xText("x_listing_tiered", { ...vars, tier, tierEmoji: xTierEmoji(tier) });
   }
-  return tpl.t("x_listing", vars);
+  return xText("x_listing", vars);
+}
+
+/**
+ * A listing tweet's text — with liquidity beside the market cap even on an
+ * operator's SAVED copy that predates it. `tpl.t` renders the stored value as
+ * is, and a saved template wins over the shipped default for ever, so the
+ * default gaining `{liq}` would reach nobody who had ever edited the tweet.
+ * Plain text in the end, like `tpl.t`: X has no markup.
+ */
+function xText(key, vars) {
+  const r = tpl.renderValue(tpl.ensureAfter(tpl.getRawValue(key), tpl.X_LIQ_SEGMENT), vars);
+  return r.html != null ? r.html : r.text;
 }
 
 function trendingText(coin) {

@@ -333,6 +333,25 @@ const CLIP_BUDGET_MS = Math.max(2000, int(env.CLIP_BUDGET_MS, 60000));
 // existing `.catch(() => null)` produces exactly the same value.
 const MARKET_BUDGET_MS = Math.max(1000, int(env.MARKET_BUDGET_MS, 8000));
 
+// ⚠️ ONE READ WAS THE WHOLE POST. $SFX (Robinhood, Uniswap v4) published
+// "Market cap: TBA · Price: TBA" while DexScreener carried it at $1.0M and
+// dexvra.io priced it in the same minute: a single refused or queued request
+// had no second chance. A read that comes back with a hole is ASKED AGAIN, up to
+// POST_MARKET_TRIES times, POST_MARKET_PAUSE_MS apart — only while a figure is
+// still missing, so a healthy token pays exactly what it always did. See
+// src/marketFigures.js for which holes count.
+//
+// Blank is ABSENT, never 0 — `Number('')` is 0, and 0 tries would mean no read
+// at all (the fourth falsy-but-valid number this repo has been bitten by).
+const blankOr = (v, d) => (v == null || String(v).trim() === "" || !Number.isFinite(Number(v)) ? d : Number(v));
+const POST_MARKET_TRIES = Math.min(5, Math.max(1, Math.round(blankOr(env.POST_MARKET_TRIES, 3))));
+const POST_MARKET_PAUSE_MS = Math.min(15000, Math.max(0, blankOr(env.POST_MARKET_PAUSE_MS, 2500)));
+// The listing FORM reads the market when the contract is pasted; a post whose
+// live read still has a hole takes the form's figure — only while it is younger
+// than this. Payment usually lands within minutes; `recovery.js` can fulfil an
+// order up to a day later, and a day-old market cap is not a claim to publish.
+const POST_SNAPSHOT_MAX_AGE_MS = Math.max(0, blankOr(env.POST_SNAPSHOT_MAX_AGE_MS, 60 * 60_000));
+
 // ── Rate limiting (telegraf-ratelimit) ───────────────────────────────────────
 const RATE_WINDOW = int(env.RATE_WINDOW, 3000);
 const RATE_LIMIT = int(env.RATE_LIMIT, 20);
@@ -533,6 +552,9 @@ module.exports = {
   EMOJI_BUDGET_MS,
   CLIP_BUDGET_MS,
   MARKET_BUDGET_MS,
+  POST_MARKET_TRIES,
+  POST_MARKET_PAUSE_MS,
+  POST_SNAPSHOT_MAX_AGE_MS,
   RATE_WINDOW,
   RATE_LIMIT,
   TRENDING_POST_MS,

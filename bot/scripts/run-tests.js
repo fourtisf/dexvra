@@ -39,6 +39,10 @@ const res = spawnSync(process.execPath, ["--test", ...files], {
     // default it makes the suite wait 2.4s per stubbed request. Raised, not
     // disabled, so the queue and the priority ordering are still exercised.
     GT_MAX_RPM: process.env.GT_MAX_RPM || "100000",
+    // The post's market read pauses between attempts to let a refusing or
+    // queued upstream clear — against a REAL upstream. Every test stubs fetch,
+    // so the pause is pure wall-clock; 0 still runs every attempt.
+    POST_MARKET_PAUSE_MS: process.env.POST_MARKET_PAUSE_MS || "0",
   },
 });
 try {

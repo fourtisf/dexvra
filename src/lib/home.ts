@@ -293,6 +293,17 @@ export function expander(total: number, base: number, max: number) {
  * zero stays a zero (a measured quiet day is a fact); a zero from a row whose
  * source never measured anything is a dash.
  */
+/**
+ * A row's CAPTURED figure as a fallback for a live row, or null when it was
+ * never measured. The listings store defaults every figure to 0, so a bare
+ * `live ?? captured` turned "the provider published no liquidity" into a LIVE
+ * "$0" — which `figureReading` then prints, because on a live row a zero is a
+ * reading. Only a captured value above zero is one somebody took.
+ */
+export function capturedFigure(v: number | null | undefined): number | null {
+  return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : null;
+}
+
 export function figureReading(t: Pick<BoardToken, "source">, v: number | null): number | null {
   if (v == null || !Number.isFinite(v)) return null;
   if (v === 0 && t.source !== "live") return null;

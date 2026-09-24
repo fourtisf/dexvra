@@ -162,9 +162,12 @@ test("xpress listing post matches the operator's reference layout", () => {
   assert.ok(!text.includes("dexvra.io/token/"), "no raw dexvra token URL printed");
   assert.ok(text.includes("Network: Solana"), "network line");
   assert.ok(text.includes("📄 Contract address:\n4rABHLfm7BDkkjrkyPYtRadg2BZTEZVoEy3MzrFQpump"), "contract block");
-  // Market cap and Price share ONE line, side by side — no liquidity row.
-  assert.ok(text.includes("🏦 Market cap: $84.4K · 📊 Price: $0.0000842"), "market cap · price on one line");
-  assert.ok(!text.includes("Liquidity:"), "no liquidity row");
+  // Market cap, liquidity and price share ONE line, side by side — never
+  // stacked. Liquidity was left off once on request; "setiap token listing
+  // harus ada mc cap dan liquidity" put it back, so the rule this line pins is
+  // now the opposite of what it pinned before.
+  assert.ok(text.includes("🏦 Market cap: $84.4K · 💧 Liquidity: $22.3K · 📊 Price: $0.0000842"), "market cap · liquidity · price on one line");
+  assert.strictEqual((text.match(/Liquidity:/g) || []).length, 1, "exactly one liquidity segment, never a second row");
   assert.ok(text.includes("🔗 $WHALE social links\n❌ X · 🌐 Website · ✈️ Telegram"), "socials side-by-side row");
   assert.ok(text.includes("📎 Dexvra\n💎 Dexvra.io · 🚨 Listings · 🔥 Trending · 📢 Announcements"), "footer block");
 });

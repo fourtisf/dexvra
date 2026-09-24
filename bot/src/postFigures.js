@@ -58,6 +58,19 @@ const FIGURES = [
 const KEY_FIGURES = new Set(["price", "market cap"]);
 
 /**
+ * …EXCEPT WHEN THE READING NAMES A POOL. Then the token HAS depth and the post
+ * published a dash over a number we failed to read — the operator's rule is
+ * now "every listing carries its market cap and its liquidity", and a pool is
+ * exactly the case where that is achievable. The curve case above is unchanged:
+ * no pool, no depth, no page. Same predicate `marketFigures.needsAnotherRead`
+ * retries on, so the watch and the retry cannot disagree about which hole is a
+ * fault.
+ */
+function keyMissingOf(live) {
+  return missingFigures(live).filter((f) => KEY_FIGURES.has(f) || (f === "liquidity" && !!(live && live.poolAddress)));
+}
+
+/**
  * Did the post draw the token's OWN artwork, or the fallback mark?
  *
  * ⚠️ "THE PROJECT GAVE US NO LOGO" AND "WE COULD NOT FETCH THE ONE THEY GAVE
@@ -165,7 +178,8 @@ function figureAlert({ kind, chain, address, sym, name, tier, live, why, siteUrl
   const unreadArt = artworkUnread(art);
   // Either half of the promise is enough to page. A missing LIQUIDITY still is
   // not — see KEY_FIGURES — but it is named below whenever something else fires.
-  if (!missing.some((f) => KEY_FIGURES.has(f)) && !lostArt && !unreadArt) return null;
+  const keyMissing = keyMissingOf(live);
+  if (!keyMissing.length && !lostArt && !unreadArt) return null;
   const holes = lostArt || unreadArt ? [...missing, "its own artwork"] : missing;
 
   // ⚠️ "WE COULD NOT ASK" AND "NOTHING IS THERE" ARE DIFFERENT FACTS, and only
@@ -173,7 +187,6 @@ function figureAlert({ kind, chain, address, sym, name, tier, live, why, siteUrl
   // can act on differently: one is a budget or an outage, the other is a token
   // no indexer covers yet, and sending them the same sentence is how three
   // rounds of this went to the wrong setting.
-  const keyMissing = missing.filter((f) => KEY_FIGURES.has(f));
   const cause = why
     ? esc(why)
     : live
@@ -244,4 +257,4 @@ function reportFigures(args) {
   }
 }
 
-module.exports = { missingFigures, artworkLost, artworkUnread, artFailure, artRemedy, figureAlert, reportFigures, KEY_FIGURES };
+module.exports = { missingFigures, keyMissingOf, artworkLost, artworkUnread, artFailure, artRemedy, figureAlert, reportFigures, KEY_FIGURES };

@@ -11,7 +11,7 @@ import {
 import { approvedRows } from "@/lib/store";
 import { dexvraScore } from "@/lib/score";
 import { syntheticTrend, visualFor } from "@/lib/visual";
-import { SANE_CHANGE_PCT, tradedEnough } from "@/lib/home";
+import { SANE_CHANGE_PCT, capturedFigure, tradedEnough } from "@/lib/home";
 import type {
   BoardToken,
   ChainHeat,
@@ -279,8 +279,14 @@ async function loadListedTokens(): Promise<BoardToken[]> {
       ...t,
       logoUrl: logo.url,
       priceUsd: m.priceUsd,
-      mcap: m.mcap ?? t.mcap,
-      liq: m.liq ?? t.liq,
+      // ⚠️ A CAPTURED 0 IS "NOBODY MEASURED", AND THIS ROW IS ABOUT TO BE
+      // MARKED LIVE — where `figureReading` prints a zero as a measurement. So a
+      // provider that answered the price but not the cap or the depth published
+      // "$0" liquidity, the rug reading, over a number nobody took. The row's
+      // captured figure still fills the hole when there IS one (the bot stores
+      // what the listing post published — bot/src/marketFigures.rowFigures).
+      mcap: m.mcap ?? capturedFigure(t.mcap),
+      liq: m.liq ?? capturedFigure(t.liq),
       chg: m.chg,
       vol: m.vol,
       txns: m.txns,

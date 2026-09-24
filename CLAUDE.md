@@ -10382,6 +10382,117 @@ silence going unannounced. Each fails between one and three tests.
 
 **Config a fix depends on:** nothing.
 
+## "setiap token listing harus ada mc cap dan liquidity bukan TBA" — one read was the whole post
+
+Reported with three screenshots of **$SFX** (Safix, Robinhood, Uniswap v4 —
+its DexScreener pair id is a 32-byte pool hash, not an address): the Xpress
+Listing card to 12,445 subscribers reading `Market cap: TBA · Price: TBA` with
+no liquidity line at all, dexvra.io's token page pricing it at a **$1.10M** cap
+on $21.0K of liquidity, and DexScreener carrying it at **$1.0M on $85K** — in
+the same minute. Nothing about the token was missing. Two defects:
+
+**1. ⚠️ A PAID POST HAD EXACTLY ONE BOUNDED READ.** `readPostMarket` asked once
+(DexScreener first, then the GeckoTerminal slice, the pads, the curve), and
+whatever that one attempt produced WAS the announcement. On this box
+DexScreener's per-IP budget is shared with the pump checker (every approved
+listing every 3 min), the trending promoter and the buy bot, and `fetchDS`
+reads a 429 as `null`; GT's queue has no deadline of its own. So one refused
+request or one queue that did not clear inside `MARKET_BUDGET_MS` published TBA,
+permanently — a paid post happens once. **And the listing FORM had read the
+very same figures minutes earlier and thrown them away.**
+
+- **`bot/src/marketFigures.js` is the ONE owner** of which figures a post
+  renders and which holes are worth another read. PURE, so the rules are tested
+  by being called.
+- **The read is ASKED AGAIN while a figure is a hole** — `POST_MARKET_TRIES`
+  (3), `POST_MARKET_PAUSE_MS` (2.5s) apart, each attempt keeping its own
+  `MARKET_BUDGET_MS` bound, and a later attempt only ever FILLS holes. A healthy
+  token pays exactly one read, as before; a test pins that.
+- ⚠️ **LIQUIDITY IS RETRIED ONLY WHEN THE READING NAMES A POOL.** A bonding
+  curve has no pool depth at all (`launchpads.js` returns `liquidityUsd: null`
+  deliberately), and re-asking would cost every pre-migration listing the whole
+  window for a number that does not exist. A reading that DOES name a pool is a
+  pool whose depth we failed to read — the $SFX shape.
+- **The form KEEPS what it read** (`form.market`, dated) and the order carries
+  it to fulfilment; a figure every live attempt missed is taken from it while it
+  is younger than `POST_SNAPSHOT_MAX_AGE_MS` (1h). A WARN names which figure and
+  how old. ⚠️ A stamp in the FUTURE or no stamp is refused — a reading of
+  unknown age is not a claim to publish — and a live figure is never replaced
+  by the snapshot's. `recovery.js` can fulfil a day later, which is what the
+  bound is for.
+- **The why is the FIRST reason**, and a read that ended priced carries none.
+- ⚠️ **Blank env is ABSENT, never 0** (`blankOr` in constants.js) — 0 tries
+  would be no read at all. Fifth falsy-but-valid number in this repo.
+- **The admin force-post reads through the same function.** It had an unbounded
+  GT-first read of its own, i.e. showed the operator a different stack from the
+  one a real post uses.
+
+**2. ⚠️ THE CARD HAD NO LIQUIDITY SEGMENT, AND A SAVED TEMPLATE WINS FOR EVER.**
+The shipped layout said "Market cap and Price ONLY — no liquidity row"
+(an earlier operator preference). The default now reads
+`Market cap: {mcap} · 💧 Liquidity: {liq} · Price: {price}` on one line — never
+stacked — and so does the X listing tweet (`MC: {mcap}  |  Liq: {liq}`).
+
+- ⚠️ **`tpl.ensureAfter` inserts the segment into an operator's SAVED copy**
+  right after `{mcap}` when it has no `{liq}`, at render time — the `{network}`
+  rule on the pay card, for the same reason: the operator who asks for a new
+  field is exactly the one who has saved a copy, and changing the default alone
+  reaches nobody who ever edited the card. Anchored on a PLACEHOLDER, never on
+  a word (the words are the operator's, in two languages); a template with no
+  `{mcap}` is left alone rather than guessed at. Both stored shapes: an
+  admin-pasted `{text, entities}` value has every entity after the point moved
+  by the inserted length (UTF-16), and "Liquidity:" gets a bold entity — a
+  premium emoji after the insertion is pinned to stay on its glyph.
+- `format.test.js` pinned "no liquidity row". It pins the opposite now, and says
+  why, rather than being deleted.
+- **The figure watch pages on a missing liquidity where a pool exists** —
+  the same predicate the retry uses, so they cannot disagree about which hole is
+  a fault. A curve's missing depth still pages nobody.
+
+**3. THE WEBSITE.** dexvra.io already priced $SFX. Two things so it cannot open
+on a different answer from the post, or on a fabricated one:
+
+- **The row is BORN with the figures the post published** (`rowFigures` →
+  `createListing`), so a token no provider has priced yet renders the listing's
+  own reading (`figureReading` prints a captured non-zero) instead of `—`. A
+  hole is left OUT, never written as 0, so a re-list can never erase a figure
+  it did not carry (`lib/relist.ts`).
+- ⚠️ **`m.liq ?? t.liq` PUBLISHED A LIVE "$0".** The store defaults every figure
+  to 0, and a provider that priced a token but published no depth handed that 0
+  to a row about to be marked `live` — where a zero is a measurement. The rug
+  reading, over a number nobody took. `home.capturedFigure` is the fallback now,
+  for the cap and the depth.
+
+```bash
+cd bot && node scripts/run-tests.js test/listingFigures.test.js test/format.test.js   # the retry, the snapshot, the card, the tweet, driven
+npm test                                                                              # home — capturedFigure
+cd /opt/dexvra/bot && npm run post:check                                              # the newest listings, assembled as a post assembles them
+```
+
+Nineteen guarantees are MUTATION-TESTED rather than argued: the retry removed,
+liquidity never retried, the snapshot never applied, a future-dated snapshot
+accepted, a snapshot smuggling non-figures, the merge replacing an answer, the
+LAST reason winning, a priced read keeping its why, the row born without its
+figures, the card's and the tweet's enforcement dropped, the entity shift
+dropped, the tweet's `{liq}` var dropped, the default losing `{liq}`, the form
+forgetting its reading, the order not carrying it, the watch never paging on a
+pool's missing depth, and on the site a live row reading the raw captured
+figure or accepting a captured zero. Each fails between one and two tests.
+⚠️ Four SURVIVED their first run, and all four were test gaps: the default
+losing `{liq}` is behaviour-neutral on the POST (the render-time insertion puts
+it back) and is pinned on the editor's view instead; the snapshot's
+sanitising and the priced-read rule had no fixture that reached them; and the
+chain's 503 reason already carries the park on its FIRST attempt, so "the
+first reason wins" is pinned with a source whose reason actually changes.
+
+**Config a fix depends on:** nothing — every knob has a working default.
+`POST_MARKET_TRIES` / `POST_MARKET_PAUSE_MS` / `POST_SNAPSHOT_MAX_AGE_MS` in
+`bot/.env` tune it. ⚠️ This touches `bot/` AND `src/`, so `npm run deploy`
+restarts both bots and rebuilds the site. ⚠️ And a listing ALREADY posted with
+TBA stays as posted — this changes what the next post publishes. The worst case
+is now a post up to ~30s later than before (three attempts), and only for a
+token whose figures were missing.
+
 ## "perbaiki tampilan chartnya di mobile" — two rows of timeframe buttons, one of them dead
 
 The same screenshot, one panel down: our chart header — `$HACHIKO`, `LIN LOG`,

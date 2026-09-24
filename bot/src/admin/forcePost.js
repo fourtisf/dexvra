@@ -16,11 +16,10 @@
 const { CHANNELS, SITE_URL } = require("../config/constants");
 const api = require("../api/dexvra");
 const { chainOf } = require("../config/chains");
-const { fetchMarket } = require("../marketdata");
 const fmt = require("../channels/format");
 const post = require("../channels/post");
 const tokenEmoji = require("../tokenEmoji");
-const { postMedia } = require("../fulfillment");
+const { postMedia, readPostMarket } = require("../fulfillment");
 const log = require("../helpers/logger");
 
 const tmeLink = (channel, msgId) => `https://t.me/${String(channel).replace(/^@/, "")}/${msgId}`;
@@ -57,7 +56,10 @@ async function sampleRow({ preferFeatured = false } = {}) {
 /** Row → the coin shape every fmt.* formatter expects, with live market data
  *  when it's available (a forced post shows real numbers, not placeholders). */
 async function coinOf(row) {
-  const m = await fetchMarket(row.chain, row.address).catch(() => null);
+  // THE POST'S OWN READ — bounded, DexScreener-first, re-asked while a figure
+  // is a hole. A forced post exists to show the operator what a real one looks
+  // like; an unbounded GT-first read of its own showed them a different stack.
+  const { live: m } = await readPostMarket(row.chain, row.address, "forcepost").catch(() => ({ live: null }));
   return {
     name: row.name,
     symbol: row.sym || row.symbol,

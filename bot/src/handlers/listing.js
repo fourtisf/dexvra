@@ -5,6 +5,7 @@ const { answer, toast, sendCard, sendPhotoCard, getMediaFileId } = require("../h
 const { chainOf, isValidAddress, payChainOf, payNativeOf } = require("../config/chains");
 const { RANKED_TIERS, tierPrice, tierMeta, tierLabel, tierEmoji, tierTrendingHours } = require("../config/packages");
 const { fetchMarket, fetchTokenDescription } = require("../marketdata");
+const figures = require("../marketFigures");
 // Autofill asks every source that indexes the chain, not just DexScreener —
 // on Robinhood Chain, which DexScreener does not index, pools.trade is the only
 // one that knows the token at all. See discovery.js.
@@ -75,6 +76,9 @@ function emptyForm() {
     // Set from the launchpad autofill when the token has not migrated; null
     // otherwise. Declared here so the form has one shape, not two.
     bonding: null,
+    // The market figures the autofill read at paste time, dated — the post's
+    // fallback for any figure its own live read misses (marketFigures.js).
+    market: null,
   };
 }
 
@@ -178,6 +182,13 @@ async function handleText(ctx) {
       const symbol = (ds && ds.symbol) || (gt && gt.symbol);
       const logoUrl = (ds && ds.logoUrl) || (gt && gt.logoUrl);
       if (desc && !f.overview) f.overview = cleanOverview(desc);
+      // ⚠️ KEPT, not thrown away. These two lookups already carry the price,
+      // the market cap and the liquidity — and $SFX's paid post published
+      // "Market cap: TBA · Price: TBA" minutes later because the only thing the
+      // post had was ONE fresh read of its own. The market read (GT-first, with
+      // DexScreener filling its holes and pickTrusted refusing a poisoned pool)
+      // leads; the DexScreener profile fills what it left.
+      f.market = figures.snapshotOf([gt, ds], Date.now());
       // Only when a launchpad SAID the token is on a curve. `onCurve` is
       // three-valued — true, false, or null for "no pad knows" — and treating
       // the null as true would put a bonding notice on every token nothing
@@ -378,6 +389,8 @@ async function goPay(ctx, tier) {
     payload: {
       listingInput: buildListingInput(f, tier),
       logoFileId: f.logoFileId || null,
+      // Dated, so fulfilment can refuse it once it is too old to publish.
+      market: f.market || null,
       trendHours: tierTrendingHours(tier),
     },
   });
