@@ -36,7 +36,8 @@
     "comment_logos_check": "Which listed tokens would draw a monogram, and WHICH of the three causes it is: the row lost its logo, the uploaded file is gone, or our own proxy refuses a working url. Drives the running server and pulls each logo through the same /api/logo the browser uses \u2014 whether a CDN answers is a property of this box's egress today. Non-zero when any row would draw a monogram.",
     "logos:check": "node scripts/logo-check.mjs",
     "comment_market_check": "Three failures render identically as a chain of $0 rows: GT has nothing for the tokens, GT is refusing this box, or the site pipeline is broken. This drives the RUNNING server's /api/tokens AND GeckoTerminal directly with the site's own request shape, and says which one broke. Measured on the box because whether GT answers is a property of this server's egress today.",
-    "market:check": "node scripts/market-check.mjs"
+    "market:check": "node scripts/market-check.mjs",
+    "holders:check": "node scripts/holders-check.mjs"
   },
   "dependencies": {
     "mongodb": "^6.21.0",

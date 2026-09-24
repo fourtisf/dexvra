@@ -361,7 +361,7 @@ interface Fetched {
  * `|`, and REPLACES the set — an operator who has found a combination that
  * works must not have it silently outvoted by a default.
  */
-function chartHeaders(): Record<string, string> {
+export function chartHeaders(): Record<string, string> {
   const raw = String(process.env.DS_CHART_HEADERS ?? "").trim();
   if (raw) {
     const out: Record<string, string> = {};

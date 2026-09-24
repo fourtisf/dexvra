@@ -22,3 +22,16 @@ export function holdersCell(feed: { count: number | null } | null, stored: numbe
   if (n >= 1e6) return (n / 1e6).toFixed(2) + "M";
   return Math.round(n).toLocaleString("en-US");
 }
+
+/**
+ * The Holders cell's tooltip: where a count came from, or WHY there is none.
+ * "—" on its own cannot say whether the explorer is down, DexScreener is
+ * refusing this server or the token is simply not indexed yet — and the first
+ * round of this fix shipped exactly that: a dash nobody could diagnose without
+ * a curl on the box. Undefined while the page has not asked yet.
+ */
+export function holdersTitle(feed: { count: number | null; source?: string | null; via?: string | null; why?: string | null } | null): string | undefined {
+  if (!feed) return undefined;
+  if (feed.count != null) return `Measured by ${feed.via || feed.source || "an explorer"}`;
+  return feed.why ? `No holder count: ${feed.why}` : undefined;
+}

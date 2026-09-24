@@ -43,6 +43,13 @@ export interface ChainConfig {
    * or renders "—". `BLOCKSCOUT_<CHAIN>` in the root .env overrides it.
    */
   blockscout?: string;
+  /**
+   * More Blockscout hosts for the same chain, asked in order after `blockscout`
+   * when it cannot give a holder count. "Never one hardcoded host": a chain can
+   * run two explorers (Robinhood has its own and a blockscout.com one), and
+   * which one answers THIS box is a property of its egress today.
+   */
+  blockscoutAlt?: string[];
   /** Address explorer URL for a token address */
   explorer: (address: string) => string;
   /** Buy deeplink — we never swap on-site, only deep-link out */
@@ -122,6 +129,9 @@ export const CHAINS: Record<string, ChainConfig> = {
     // go stale or move. Bottom of the priority list — see fetchChainMarket.
     launchpad: "pons-v2",
     blockscout: "https://robinhoodchain.blockscout.com",
+    // The chain's own explorer — the host tradebot/chains.js already reads
+    // verified ABIs from. Blockscout-v2 shaped (abiSource asks it that way).
+    blockscoutAlt: ["https://explorer.mainnet.chain.robinhood.com"],
     explorer: (a) => `https://robinhoodchain.blockscout.com/token/${a}`,
     buyUrl: (a) => `https://www.geckoterminal.com/robinhood/tokens/${a}`,
     addressPattern: /^0x[a-fA-F0-9]{40}$/,

@@ -13,7 +13,7 @@ import { TierTag, TrendingBadge } from "@/components/TierTag";
 import { CHAINS } from "@/config/chains";
 import { fmtAge, fmtCap, fmtNum, fmtPrice } from "@/lib/format";
 import { scoreTier } from "@/lib/score";
-import { holdersCell } from "@/lib/holderCell";
+import { holdersCell, holdersTitle } from "@/lib/holderCell";
 
 export default function TokenPage() {
   const params = useParams<{ chain: string; address: string }>();
@@ -59,13 +59,16 @@ export default function TokenPage() {
     toast("Contract address copied 📋");
   };
 
-  const stats: [string, string, string?][] = [
+  const stats: [string, string, string?, string?][] = [
     ["Price", fmtPrice(t.priceUsd)],
     ["24h", `${up ? "+" : ""}${t.chg["24h"].toFixed(1)}%`, up ? "up" : "dn"],
     ["MCAP", fmtCap(t.mcap)],
     ["Liquidity", fmtCap(t.liq)],
     ["Vol · 24h", fmtCap(t.vol["24h"])],
-    ["Holders", holdersCell(holders, t.holders)],
+    // The REASON rides the cell as a tooltip: "—" alone cannot say whether the
+    // explorer is down or the token is not indexed, and every round of this
+    // report began with nobody able to tell.
+    ["Holders", holdersCell(holders, t.holders), undefined, holdersTitle(holders)],
     ["Tax", t.taxPct != null ? `${t.taxPct}%` : "—"],
     ["Txns · 24h", fmtNum(t.txns["24h"].buys + t.txns["24h"].sells)],
   ];
@@ -148,8 +151,8 @@ export default function TokenPage() {
             </div>
           </div>
           <div className="tp-stats">
-            {stats.map(([k, v, cls]) => (
-              <div className="ds" key={k}>
+            {stats.map(([k, v, cls, title]) => (
+              <div className="ds" key={k} title={title}>
                 <div className="k">{k}</div>
                 <div className={`v ${cls === "up" ? "tp-up" : cls === "dn" ? "tp-dn" : ""}`}>{v}</div>
               </div>
@@ -165,23 +168,37 @@ export default function TokenPage() {
 
 interface HolderFeed {
   count: number | null;
-  source: "blockscout" | "geckoterminal" | null;
+  source: "blockscout" | "dexscreener" | "geckoterminal" | null;
+  via?: string | null;
   why: string | null;
 }
 
 /** One request per token page, never polled: a holder count moves over hours
- *  and the route caches it for fifteen minutes anyway. */
+ *  and the route caches it for fifteen minutes anyway. A MISS is asked once
+ *  more, after the route's own miss memo has lapsed — a reader who opened the
+ *  page during a one-minute explorer blip must not keep "—" for the whole
+ *  visit, and asking any sooner would only read the memo back. */
+const HOLDERS_RETRY_MS = 100_000;
 function useHolderCount(chain: string, address: string): HolderFeed | null {
   const [feed, setFeed] = useState<HolderFeed | null>(null);
   useEffect(() => {
     if (!chain || !address) return;
     const ac = new AbortController();
+    let retry: ReturnType<typeof setTimeout> | undefined;
     setFeed(null);
-    fetch(`/api/holders?${new URLSearchParams({ chain, address })}`, { signal: ac.signal })
-      .then((r) => r.json())
-      .then((j: HolderFeed) => setFeed(j))
-      .catch(() => {});
-    return () => ac.abort();
+    const ask = (again: boolean) =>
+      fetch(`/api/holders?${new URLSearchParams({ chain, address })}`, { signal: ac.signal })
+        .then((r) => r.json())
+        .then((j: HolderFeed) => {
+          setFeed(j);
+          if (j.count == null && again) retry = setTimeout(() => void ask(false), HOLDERS_RETRY_MS);
+        })
+        .catch(() => {});
+    void ask(true);
+    return () => {
+      ac.abort();
+      if (retry) clearTimeout(retry);
+    };
   }, [chain, address]);
   return feed;
 }

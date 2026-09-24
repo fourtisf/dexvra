@@ -10631,6 +10631,79 @@ answers FROM THE BOX is a property of its egress today. This sandbox reaches no
 host at all. The `curl` above is the measurement: `"source":"blockscout"` means
 it answered, and `"count":null` comes with every source's reason.
 
+### "holder masih broken … cari sumber dexscreener atau apapun" — one explorer and a dash nobody could read
+
+Deployed, and the page read `HOLDERS —`. That was the fix working as designed (a
+miss is a dash, never a 0) and still not an answer, for three reasons, each one
+of this file's own rules broken in the round that fixed the zero:
+
+- ⚠️ **ONE HARDCODED HOST.** Robinhood has TWO explorers: `robinhoodchain.blockscout.com`
+  (what the site links to) and the chain's own `explorer.mainnet.chain.robinhood.com`
+  (what `tradebot/chains.js` reads verified ABIs from). The provider asked the
+  first only. `blockscoutAlt` makes it a LIST, asked in order;
+  `BLOCKSCOUT_<CHAIN>` takes a comma list and REPLACES it (a pin must not
+  answer from a host the operator did not choose). A host we cannot REACH is
+  not asked its second path — the same silence twice at a full timeout each.
+- ⚠️ **A ZERO ENDED THE LOOKUP.** A Blockscout that has not indexed a token
+  answers `holders_count: "0"`, and that returned ahead of a source with the
+  real number. A listed token has a supply and somebody holds it, so 0 from any
+  source is "not indexed yet". Each host is also asked `/counters`
+  (`token_holders_count`), which an instance whose token record lags still answers.
+- **DEXSCREENER IS A SOURCE NOW, and it is a guess.** Its documented API publishes
+  NO holders. The number on its Holders tab comes from the pair details its own
+  site loads off `io.dexscreener.com`, internal and behind Cloudflare. So:
+  - the pair is resolved through the documented `token-pairs` endpoint (`dsTopPair`);
+  - the internal host is asked with the chart client's browser headers (`chartHeaders`,
+    exported rather than copied);
+  - the path is a LIST tried on a 404/400 only (`DS_HOLDERS_PATH` replaces it, a
+    placeholder is refused, `DS_HOLDERS=0` kills it);
+  - a 401/403/429 arms the chart client's ONE bench (`dsArmCooldown`), so a refusal
+    is asked once, not once per path and again per chart.
+
+  Order: Blockscout (exact, free) → DexScreener (two requests) → GeckoTerminal
+  (free slot only, the scarcest budget).
+- ⚠️ **THE DASH SAID NOTHING.** The route always returned every source's reason, and
+  nothing showed it. The Holders cell carries it as a tooltip (`holdersTitle`:
+  *"No holder count: …"*, or *"Measured by <host>"*), the response names the host
+  that answered (`via`), and a miss is asked ONCE more after the route's 90s miss
+  memo lapses (asking sooner reads the memo back — the test compares the two numbers).
+
+```bash
+npm test                                          # holders (14) · holderCell (7) · holdersCheck (2)
+cd /opt/dexvra && npm run holders:check           # the biggest listings: count + host, or every reason
+```
+
+`holders:check` drives the RUNNING server's `/api/holders`, the exact request the
+page makes. With no argument it takes real listings from `/api/tokens`, one per
+chain first, never a command with a blank in it. It exits non-zero only when NO
+token got a count.
+
+Fifteen guarantees are MUTATION-TESTED rather than argued:
+- the alt host dropped
+- a zero accepted as a count
+- `/counters` never asked
+- an unreachable host asked twice
+- a DS refusal not benched
+- any status advancing the path
+- DS asked without browser headers
+- a pin merged instead of replacing
+- DS never asked
+- the path pin ignored
+- the tooltip dropping the reason
+- the tooltip never rendered
+- the retry never firing
+- the check always exiting 0
+
+Each fails between one and five tests.
+
+**Config a fix depends on:** nothing. ⚠️ Which of the four hosts answers FROM THE
+BOX cannot be learned from this sandbox, which has no egress at all. That is what
+`holders:check` is for. If every explorer is unreachable and DexScreener refuses
+the box, there is no free source left for Robinhood holders. GoPlus does not
+cover chain 4663, and an on-chain count off Transfer logs is a full-history walk
+this node's range cap makes a non-starter. The dash then is the truth, and the
+tooltip says which host refused.
+
 ## "perbaiki tampilan chartnya di mobile" — two rows of timeframe buttons, one of them dead
 
 The same screenshot, one panel down: our chart header — `$HACHIKO`, `LIN LOG`,
