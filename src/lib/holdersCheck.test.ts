@@ -52,3 +52,13 @@ test("⚠️ no source answering anything exits non-zero", async () => {
     assert.match(r.out, /unreachable \(ENOTFOUND\)/);
   } finally { s.close(); }
 });
+
+test("a GeckoTerminal-starved chain names the two keys that fix it — described, not a line with a blank", async () => {
+  const s = await stub(() => ({ count: null, source: null, via: null, why: "geckoterminal: over this process's GeckoTerminal budget (5/min)" }));
+  try {
+    const r = await run(s.base, ["bsc", "0x444045b0ee1ee319a660a5e3d604ca0ffa35acaa"]);
+    assert.match(r.out, /GECKOTERMINAL_API_KEY/);
+    assert.match(r.out, /MORALIS_API_KEY/);
+    assert.doesNotMatch(r.out, /<[a-z-]+>/i);
+  } finally { s.close(); }
+});

@@ -43,7 +43,7 @@ import { CHAINS } from "../../config/chains.ts";
 import { gtGet as realGtGet, type GtResult } from "./gt.ts";
 import { chartHeaders, dsArmCooldown, dsCooldownWhy, dsInCooldown, dsTopPair, type DsPair } from "./dsChart.ts";
 
-export type HolderSource = "blockscout" | "dexscreener" | "geckoterminal";
+export type HolderSource = "blockscout" | "tronscan" | "moralis" | "dexscreener" | "geckoterminal";
 
 export interface HolderCount {
   count: number | null;
@@ -106,7 +106,24 @@ export const blockscoutFor = (chain: string): string | null => blockscoutHosts(c
 
 type Got = { count: number | null; why: string | null };
 
-async function getJson(url: string, deps: HolderDeps, headers: Record<string, string> = { accept: "application/json" }): Promise<{ ok: boolean; status: number; body: unknown; why: string | null }> {
+/** Hosts that refused a bare request and answered a browser-shaped one. */
+const asBrowser = new Set<string>();
+export const _holdersReset = (): void => asBrowser.clear();
+
+function browserHeaders(host: string): Record<string, string> {
+  return {
+    accept: "application/json, text/plain, */*",
+    "accept-language": "en-US,en;q=0.9",
+    // Identifiable, and browser-shaped — the compromise /api/logo and the
+    // DexScreener chart client already make.
+    "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36 DexvraHolders/1.0",
+    referer: `${host}/`,
+  };
+}
+
+type Fetched = { ok: boolean; status: number; body: unknown; why: string | null };
+
+async function getJson(url: string, deps: HolderDeps, headers: Record<string, string> = { accept: "application/json" }): Promise<Fetched> {
   const f = deps.fetch ?? fetch;
   const host = hostOf(url);
   try {
@@ -115,10 +132,19 @@ async function getJson(url: string, deps: HolderDeps, headers: Record<string, st
       try { await r.body?.cancel(); } catch { /* nothing to release */ }
       return { ok: false, status: r.status, body: null, why: `${host} ${r.status}` };
     }
-    return { ok: true, status: r.status, body: await r.json(), why: null };
+    const text = await r.text();
+    try {
+      return { ok: true, status: r.status, body: JSON.parse(text), why: null };
+    } catch {
+      // ⚠️ "Answered with a web page" is not "unreachable": the host is up and
+      // this is not its API (explorer.mainnet.chain.robinhood.com served HTML at
+      // /api/v2 on the box). Status -1 so no caller mistakes it for a transport
+      // failure — and so its second path is not asked for the same page.
+      return { ok: false, status: -1, body: null, why: `${host} answered a web page, not its API` };
+    }
   } catch (e) {
     const cause = (e as { cause?: { code?: string } })?.cause?.code;
-    const what = cause ? ` (${cause})` : (e as Error)?.name === "TimeoutError" ? " (timeout)" : (e as Error)?.name === "SyntaxError" ? " (not JSON)" : "";
+    const what = cause ? ` (${cause})` : (e as Error)?.name === "TimeoutError" ? " (timeout)" : "";
     return { ok: false, status: 0, body: null, why: `${host} unreachable${what}` };
   }
 }
@@ -126,7 +152,21 @@ async function getJson(url: string, deps: HolderDeps, headers: Record<string, st
 /** One Blockscout host, asked the two ways it publishes a holder count. */
 async function fromBlockscoutHost(host: string, address: string, deps: HolderDeps): Promise<Got> {
   const why: string[] = [];
-  const t = await getJson(`${host}/api/v2/tokens/${address}`, deps);
+  let headers: Record<string, string> | undefined = asBrowser.has(host) ? browserHeaders(host) : undefined;
+  let t = await getJson(`${host}/api/v2/tokens/${address}`, deps, headers);
+  // ⚠️ A 401/403 from a hosted explorer is usually its bot filter refusing a
+  // request that does not look like a browser — robinhoodchain.blockscout.com
+  // answered 403 to the bare request on the box while eth.blockscout.com
+  // answered it fine. Asked ONCE more as a browser; every later request to
+  // this host is sent that way (`asBrowser`), so the refusal is not paid twice
+  // per token.
+  if (!headers && (t.status === 401 || t.status === 403)) {
+    headers = browserHeaders(host);
+    const again = await getJson(`${host}/api/v2/tokens/${address}`, deps, headers);
+    if (again.status !== 401 && again.status !== 403) asBrowser.add(host);
+    else again.why = `${again.why} (also as a browser)`;
+    t = again;
+  }
   if (t.ok) {
     const j = (t.body ?? {}) as Record<string, unknown>;
     // Newer Blockscout spells it `holders_count`; older builds `holders`.
@@ -135,17 +175,64 @@ async function fromBlockscoutHost(host: string, address: string, deps: HolderDep
     why.push(c === 0 ? `${hostOf(host)} counts 0 (not indexed yet)` : `${hostOf(host)} published no holder count`);
   } else {
     why.push(t.why ?? `${hostOf(host)} failed`);
-    // A host we cannot REACH will not answer the second path either — asking
-    // it again is the same silence twice at a full timeout each.
-    if (t.status === 0) return { count: null, why: why.join(", ") };
+    // A host we cannot REACH, or one refusing US, will not answer the second
+    // path either — asking it again is the same answer twice.
+    if ([-1, 0, 401, 403, 429].includes(t.status)) return { count: null, why: why.join(", ") };
   }
-  const k = await getJson(`${host}/api/v2/tokens/${address}/counters`, deps);
+  const k = await getJson(`${host}/api/v2/tokens/${address}/counters`, deps, headers);
   if (k.ok) {
     const c = countOf((k.body as Record<string, unknown> | null)?.token_holders_count);
     if (reading(c)) return { count: c, why: null };
     why.push(`counters ${c === 0 ? "0" : "empty"}`);
   } else why.push(`counters ${k.why ?? "failed"}`);
   return { count: null, why: why.join(", ") };
+}
+
+// ─── Tronscan ────────────────────────────────────────────────────────────────
+
+/** Tron's own explorer publishes `holders_count` on its TRC-20 record. Keyless
+ *  (rate-limited); `TRONSCAN_API_KEY` is sent as TRON-PRO-API-KEY when set. */
+async function fromTronscan(address: string, deps: HolderDeps): Promise<Got> {
+  const key = (process.env.TRONSCAN_API_KEY ?? "").trim();
+  const headers: Record<string, string> = { accept: "application/json", ...(key ? { "TRON-PRO-API-KEY": key } : {}) };
+  const r = await getJson(`https://apilist.tronscanapi.com/api/token_trc20?contract=${encodeURIComponent(address)}&showAll=1&start=0&limit=1`, deps, headers);
+  if (!r.ok) return { count: null, why: `tronscan: ${r.why}` };
+  const row = ((r.body as { trc20_tokens?: unknown[] } | null)?.trc20_tokens ?? [])[0] as Record<string, unknown> | undefined;
+  const c = countOf(row?.holders_count);
+  if (reading(c)) return { count: c, why: null };
+  return { count: null, why: row ? "tronscan published no holder count" : "tronscan has no record of this token" };
+}
+
+// ─── Moralis (optional, keyed) ───────────────────────────────────────────────
+
+/** Moralis' chain ids for the EVM chains it counts holders on. Solana is a
+ *  different host. A chain not here is not asked. */
+const MORALIS_CHAIN: Record<string, string> = {
+  ethereum: "eth", bsc: "bsc", base: "base", polygon: "polygon", arbitrum: "arbitrum",
+  optimism: "optimism", avalanche: "avalanche",
+};
+
+/**
+ * ⚠️ OFF UNLESS `MORALIS_API_KEY` IS SET — the one source here that needs an
+ * account. It is here because BSC has no free holder count at all (no hosted
+ * Blockscout, BscScan's count is a paid endpoint) and Solana has none either,
+ * and on this box the free fallback for both — GeckoTerminal — never has a
+ * slot. A free Moralis key covers both. Response field `totalHolders`.
+ */
+async function fromMoralis(chain: string, address: string, deps: HolderDeps): Promise<Got> {
+  const key = (process.env.MORALIS_API_KEY ?? "").trim();
+  if (!key) return { count: null, why: null };
+  const url = chain === "solana"
+    ? `https://solana-gateway.moralis.io/token/mainnet/holders/${encodeURIComponent(address)}`
+    : MORALIS_CHAIN[chain]
+      ? `https://deep-index.moralis.io/api/v2.2/erc20/${encodeURIComponent(address)}/holders?chain=${MORALIS_CHAIN[chain]}`
+      : null;
+  if (!url) return { count: null, why: null };
+  const r = await getJson(url, deps, { accept: "application/json", "X-API-Key": key });
+  if (!r.ok) return { count: null, why: `moralis: ${r.why}` };
+  const c = countOf((r.body as Record<string, unknown> | null)?.totalHolders);
+  if (reading(c)) return { count: c, why: null };
+  return { count: null, why: "moralis published no holder count" };
 }
 
 // ─── DexScreener ─────────────────────────────────────────────────────────────
@@ -220,6 +307,14 @@ export async function readHolders(chain: string, address: string, deps: HolderDe
     if (reading(b.count)) return { count: b.count, source: "blockscout", via: hostOf(host), why: null };
     if (b.why) why.push(b.why);
   }
+  if (chain === "tron") {
+    const tr = await fromTronscan(address, deps);
+    if (reading(tr.count)) return { count: tr.count, source: "tronscan", via: "apilist.tronscanapi.com", why: null };
+    if (tr.why) why.push(tr.why);
+  }
+  const m = await fromMoralis(chain, address, deps);
+  if (reading(m.count)) return { count: m.count, source: "moralis", via: chain === "solana" ? "solana-gateway.moralis.io" : "deep-index.moralis.io", why: null };
+  if (m.why) why.push(m.why);
   const d = await fromDexScreener(chain, address, deps);
   if (reading(d.count)) return { count: d.count, source: "dexscreener", via: d.via ?? null, why: null };
   if (d.why) why.push(d.why);

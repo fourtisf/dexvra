@@ -68,7 +68,7 @@ export default function TokenPage() {
     // The REASON rides the cell as a tooltip: "—" alone cannot say whether the
     // explorer is down or the token is not indexed, and every round of this
     // report began with nobody able to tell.
-    ["Holders", holdersCell(holders, t.holders), undefined, holdersTitle(holders)],
+    ["Holders", holdersCell(holders, t.holders), undefined, holdersTitle(holders, t.holders)],
     ["Tax", t.taxPct != null ? `${t.taxPct}%` : "—"],
     ["Txns · 24h", fmtNum(t.txns["24h"].buys + t.txns["24h"].sells)],
   ];

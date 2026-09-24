@@ -36,7 +36,7 @@ test("the token page asks /api/holders and renders through holdersCell", () => {
   assert.match(page, /\/api\/holders\?/);
   // The PROPERTY, not a spelling: the Holders row renders through the one
   // owner, carries the reason as its tooltip, and the tooltip reaches the DOM.
-  assert.match(page, /\["Holders",\s*holdersCell\(holders, t\.holders\)[^\]]*holdersTitle\(holders\)\]/);
+  assert.match(page, /\["Holders",\s*holdersCell\(holders, t\.holders\)[^\]]*holdersTitle\(holders, t\.holders\)\]/);
   assert.match(page, /title=\{title\}/, "the tooltip is rendered, not merely computed");
   // A miss is asked ONCE more, and only after the route's miss memo lapses —
   // any sooner and the retry just reads the memo back.
@@ -62,4 +62,9 @@ test("⚠️ the tooltip says WHY there is no count — a bare '—' cannot be d
     "No holder count: robinhoodchain.blockscout.com 404; dexscreener: io.dexscreener.com 403");
   assert.equal(holdersTitle({ count: 1570, source: "blockscout", via: "explorer.mainnet.chain.robinhood.com", why: null }),
     "Measured by explorer.mainnet.chain.robinhood.com");
+});
+
+test("⚠️ a cell showing the STORED count does not claim there is none", () => {
+  assert.match(holdersTitle({ count: null, why: "x 403" }, 1570) ?? "", /^Last measured count — no source answered just now: x 403$/);
+  assert.equal(holdersCell({ count: null }, 1570), "1,570");
 });

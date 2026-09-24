@@ -3,6 +3,7 @@ import { cache, cached } from "@/lib/cache";
 import { CHAINS } from "@/config/chains";
 import { safeAddress } from "@/lib/providers/gtPool";
 import { readHolders, type HolderCount } from "@/lib/providers/holders";
+import { setHolderCount } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
 
@@ -48,6 +49,12 @@ export async function GET(req: NextRequest) {
     const r = await cached<HolderCount>(key, TTL_MS, async () => {
       const got = await readHolders(chain, addr);
       if (got.count == null) throw new NoCount(got.why ?? "no count");
+      // KEEP it: the sources this box can reach come and go, so a count one of
+      // them gave us is written onto the listing, where the board, the score
+      // and this page already read `holders` — a source refusing us tomorrow
+      // then costs a slightly old number, not a "—". Never awaited (the reader
+      // is waiting) and never allowed to fail the answer.
+      void setHolderCount(chain, addr, got.count).catch((e) => console.warn(`[holders] could not store ${chain}/${addr}: ${(e as Error)?.message ?? e}`));
       return got;
     });
     return NextResponse.json({ build: BUILD, ...r });

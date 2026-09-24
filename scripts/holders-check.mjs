@@ -65,6 +65,7 @@ if (args.length >= 2) {
 
 console.log(`\nholders:check — ${BASE} · board build ${build}\n`);
 let got = 0;
+let budgetStarved = false;
 for (const t of targets) {
   const j = await getJson(`/api/holders?${new URLSearchParams({ chain: t.chain, address: t.address })}`);
   if (build === "?" && j.build) build = j.build;
@@ -74,9 +75,19 @@ for (const t of targets) {
     console.log(`${G("✓")} ${name}\n    ${Number(j.count).toLocaleString("en-US")} holders · ${j.source} via ${j.via || "?"}`);
   } else {
     console.log(`${R("✗")} ${name}\n    no count — ${j.why || "no reason given"}`);
+    if (/GeckoTerminal budget|cooling down/.test(j.why || "")) budgetStarved = true;
   }
 }
 console.log("");
+if (budgetStarved) {
+  // A chain with no explorer we can read (BSC, Solana) falls to GeckoTerminal,
+  // which on the free tier almost never has a slot. The only fixes are a key —
+  // described, never printed as a line with a blank in it (CLAUDE.md's first rule).
+  console.log(Y("Chains with no readable explorer (BSC, Solana) fall back to GeckoTerminal, which has no free slot on this box."));
+  console.log(Y("Either free key fixes them: GECKOTERMINAL_API_KEY (a CoinGecko Demo key) or MORALIS_API_KEY (moralis.com),"));
+  console.log(Y("each as one line in /opt/dexvra/.env, then npm run deploy:all. A count that is measured once is kept on the listing."));
+  console.log("");
+}
 if (got === targets.length) console.log(G("Every token asked has a measured holder count."));
 else if (got) console.log(Y(`${got}/${targets.length} counted. The reasons above name the host that could not answer — a host that is unreachable from this box is its egress, "not indexed yet" is the token.`));
 else {

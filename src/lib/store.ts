@@ -15,6 +15,7 @@ function fillSeedSocials(r: { sym: string; website?: string; twitter?: string; t
 }
 import { kvGet, kvSet, mongoConfigured } from "./mongo";
 import { applyLostUpload, applyPinnedLogo, applyResolvedLogo, healUploadUrls } from "./logoWrite";
+import { applyHolderCount } from "./holderWrite";
 import { keepStatus, mergeRelist } from "./relist";
 
 // Mongo mirror key for this store (doc _id in the `web` collection).
@@ -255,6 +256,17 @@ export async function pinLogo(chain: string, address: string, fromUrl: string, t
   let wrote = false;
   await mutate((rows) => {
     const out = applyPinnedLogo(rows, chain, address, fromUrl, toUrl);
+    wrote = out.wrote;
+    return out.rows as StoredListing[];
+  });
+  return wrote;
+}
+
+/** Remember a MEASURED holder count on the row (lib/holderWrite has the rule). */
+export async function setHolderCount(chain: string, address: string, count: number): Promise<boolean> {
+  let wrote = false;
+  await mutate((rows) => {
+    const out = applyHolderCount(rows, chain, address, count);
     wrote = out.wrote;
     return out.rows as StoredListing[];
   });

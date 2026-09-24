@@ -30,8 +30,14 @@ export function holdersCell(feed: { count: number | null } | null, stored: numbe
  * round of this fix shipped exactly that: a dash nobody could diagnose without
  * a curl on the box. Undefined while the page has not asked yet.
  */
-export function holdersTitle(feed: { count: number | null; source?: string | null; via?: string | null; why?: string | null } | null): string | undefined {
+export function holdersTitle(
+  feed: { count: number | null; source?: string | null; via?: string | null; why?: string | null } | null,
+  stored?: number | null,
+): string | undefined {
   if (!feed) return undefined;
   if (feed.count != null) return `Measured by ${feed.via || feed.source || "an explorer"}`;
+  // The cell is showing the LAST count a source gave us (stored on the row);
+  // the tooltip must not claim there is none.
+  if (stored != null && stored > 0) return `Last measured count — no source answered just now${feed.why ? `: ${feed.why}` : ""}`;
   return feed.why ? `No holder count: ${feed.why}` : undefined;
 }
