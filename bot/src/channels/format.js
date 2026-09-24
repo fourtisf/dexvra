@@ -107,6 +107,31 @@ const tierBadge = (key) => {
  *  post and left the tweet and the buy button behind. */
 const tierBadgeChar = (key) => premium.parse(String(tierBadge(key) || "")).text;
 
+/**
+ * The icon beside "Liquidity:" on every listing & trending card — ONE setting
+ * (`liq_emoji`, Channel Posts → Liquidity emoji) instead of a 💧 swapped
+ * template by template. A pasted premium emoji is stored as {text, entities};
+ * it is rebuilt as markup here so it survives into the post, the rule
+ * emojiMapTemplate follows for the chain and tier maps.
+ * Only the first line counts and it is bounded: this sits mid-sentence on a
+ * public card, and a paragraph pasted by mistake must not become the line.
+ */
+function liqEmoji() {
+  const val = tpl.getRawValue("liq_emoji");
+  const isEntity = val && typeof val === "object" && val.text != null;
+  let text = isEntity ? String(val.text) : String(val || "");
+  if (isEntity) {
+    const ents = (val.entities || [])
+      .filter((e) => e.type === "custom_emoji" && e.custom_emoji_id)
+      .sort((x, y) => y.offset - x.offset);
+    for (const e of ents) {
+      text = text.slice(0, e.offset) + `[${text.slice(e.offset, e.offset + e.length)}](emoji/${e.custom_emoji_id})` + text.slice(e.offset + e.length);
+    }
+  }
+  const line = text.split("\n").map((l) => l.trim()).find(Boolean) || "";
+  return line && line.length <= 64 ? line : "💧";
+}
+
 const liqStr = (n) => (n && Number(n) > 0 ? "$" + formatNumber(n) : "—");
 
 // ── WYSIWYG template stripping ───────────────────────────────────────────────
@@ -636,6 +661,7 @@ function coinVars(coin) {
     price: priceStr(coin.price),
     mcap: mcStr(coin.mcap),
     liq: liqStr(coin.liq),
+    liqEmoji: liqEmoji(),
     coinUrl: coinUrl(coin),
     coinUrlLabel: coinUrlLabel(coin),
     twitter: links.twitter ? cleanUrl(links.twitter) : "",
@@ -782,4 +808,4 @@ function rankupPost(coin, rank, change24h) {
 // row on /ca reads `social_emojis` the same way, and re-implementing the entity
 // arithmetic in a second file is how a premium emoji ends up sliding onto the
 // wrong character on one card and not the other.
-module.exports = { tierBadge, tierBadgeChar, listingPost, trendingPost, pumpPost, bannerPost, rankupPost, coinUrl, sym, chainName, chainEmoji, emojiMapTemplate, channelLinks };
+module.exports = { liqEmoji, tierBadge, tierBadgeChar, listingPost, trendingPost, pumpPost, bannerPost, rankupPost, coinUrl, sym, chainName, chainEmoji, emojiMapTemplate, channelLinks };

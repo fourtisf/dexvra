@@ -10548,10 +10548,30 @@ and from `loadAll` (the swap never reaching the post) each fail a test.
 cd bot && node scripts/run-tests.js test/listingFigures.test.js   # 23 tests, no network
 ```
 
+#### "buatkan template khusus emoji liquidity agar saya ga ulangin 1/1"
+
+Swappable per card was still three swaps for one icon. **`liq_emoji`**
+(Channel Posts → *Liquidity emoji (all listing & trending posts)*) is the ONE
+setting now: the three cards and the enforced segment carry `{liqEmoji}`, and
+`format.liqEmoji()` reads the template — the chain/tier-badge pattern, one icon
+instead of a map.
+
+- **A pasted premium emoji is rebuilt as markup** so it survives into the post
+  (`emojiMapTemplate`'s rule for the chain and tier maps).
+- ⚠️ **First line only, bounded at 64 chars, blank falls back to 💧.** It sits
+  mid-sentence on a public card: a paragraph pasted by mistake must not become
+  the line, and a hole is the fabricated-blank this file refuses elsewhere.
+- The three cards no longer carry a 💧 of their own to swap — a test says so,
+  or the one-setting promise quietly becomes four.
+
+Mutation-tested: `{liqEmoji}` hardcoded, the premium rebuild dropped, the
+enforced segment back to a literal 💧, and the bound removed each fail a test.
+
 **Config a fix depends on:** nothing. In @dexvraadminbot: **Channel Posts →
-Post: Xpress Listing** (and **Post: Listing & Trending**, **Post: Trending**)
-→ **😀 Swap emoji** → pick the 💧 → send the premium emoji. ⚠️ A channel post
-animates only through the GramJS premium account (💎 Premium status).
+Liquidity emoji** → **😀 Swap emoji** (or ✏️ Edit and send the premium emoji).
+⚠️ An operator who saved one of the three cards with their OWN `{liq}` line
+keeps their own icon there — only `{liqEmoji}` follows the setting. A channel
+post animates only through the GramJS premium account (💎 Premium status).
 
 ## "holder dan chart still broken" — a zero nobody measured, and a chart that ate the page's scroll
 

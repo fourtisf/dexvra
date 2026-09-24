@@ -204,7 +204,7 @@ const SAMPLE_VARS = {
   //
   // A test pins this list against every meta.ph in templates.js, so a new
   // placeholder cannot go blank in the preview unnoticed.
-  nameRow: "📃 **The Bull Cat** $BULLCAT", chainEmoji: "🟣", logoEmoji: "🐶", tierEmoji: "💎",
+  nameRow: "📃 **The Bull Cat** $BULLCAT", chainEmoji: "🟣", liqEmoji: "💧", logoEmoji: "🐶", tierEmoji: "💎",
   intro: "🚨 **NEW BUY ALERT** ", introWhale: "🐋 **WHALE ALERT** ",
   poweredBy: " | Powered by @dexvralisting", listingChannel: "@dexvralisting",
   bar: "▰▰▰▰▰▰▱▱▱▱", buyer: "0x1f4b…9ac2", txn: " · [Txn](https://solscan.io/tx/5xTx)",
@@ -2863,6 +2863,7 @@ const PH_HELP = {
   // auto-filled links & blocks (leave them where they are)
   logoEmoji: "the token’s logo emoji",
   chainEmoji: "the network’s emoji (from the Chain emoji template)",
+  liqEmoji: "the Liquidity icon (from the Liquidity emoji template)",
   twitter: "the token’s X link",
   website: "the token’s Website link",
   telegram: "the token’s Telegram link",

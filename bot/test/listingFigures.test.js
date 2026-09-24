@@ -275,7 +275,7 @@ test("⚠️ …and the pasted {text, entities} form keeps every entity on its o
     ],
   };
   const v = tpl.ensureAfter(saved, tpl.LIQ_SEGMENT);
-  assert.match(v.text, /\{mcap\} · 💧 Liquidity: \{liq\} · Price/);
+  assert.match(v.text, /\{mcap\} · \{liqEmoji\} Liquidity: \{liq\} · Price/);
   const moved = v.entities.find((e) => e.type === "custom_emoji");
   assert.strictEqual(v.text.slice(moved.offset, moved.offset + moved.length), "🔥", "the premium emoji stayed on its glyph");
   const bolds = v.entities.filter((e) => e.type === "bold").map((e) => v.text.slice(e.offset, e.offset + e.length));
@@ -402,34 +402,64 @@ test("⚠️ the listing FORM keeps the figures it read, and hands them to the o
   }
 });
 
-// "dimana cara edit template air yang di samping liquidity, saya ingin emoji
-// template premiumnya ada di dexvra adminbot" — the 💧 was inserted just before
-// sending, so 😀 Swap emoji (which lists the template's own icons) never showed
-// it. It is enforced at the SOURCE now, so it is a slot like any other.
-test("⚠️ the 💧 beside Liquidity is a swappable slot even on a card saved WITHOUT {liq}", async () => {
-  const saved = "💲 {name} ({symbol})\n\n📊 **Market cap:** {mcap} · **Price:** {price}\n\n📄 {address}";
-  await tpl.setTemplate("post_listing_xpress", saved);
+// "dimana cara edit template air yang di samping liquidity" → "buatkan template
+// khusus emoji liquidity agar saya ga ulangin template semuanya 1/1". The
+// icon is ONE setting, `liq_emoji`, read by all three cards through
+// {liqEmoji} — including a saved card that predates {liq}, which gets the
+// segment enforced at the source.
+const PREMIUM = "5368324170671202286";
+const liqCe = (out) => (out.entities || []).find((e) => e.type === "custom_emoji" && e.custom_emoji_id === PREMIUM);
+const allCards = () => [fmt.listingPost({ ...COIN, tier: "XPRESS" }), fmt.listingPost({ ...COIN, tier: "GOLD" }), fmt.trendingPost(COIN)];
+
+test("⚠️ ONE swap on Liquidity emoji reaches all three cards", async () => {
+  const i = tpl.listEmojis("liq_emoji").findIndex((e) => e.char === "💧");
+  assert.strictEqual(i, 0, "the Liquidity emoji template holds the 💧");
+  await tpl.replaceEmojiAt("liq_emoji", i, `[💧](emoji/${PREMIUM})`);
   try {
-    const list = tpl.listEmojis("post_listing_xpress");
-    const i = list.findIndex((e) => e.char === "💧");
-    assert.ok(i >= 0, "the enforced 💧 is listed in 😀 Swap emoji");
-    await tpl.replaceEmojiAt("post_listing_xpress", i, "[💧](emoji/5368324170671202286)");
-    assert.strictEqual(tpl.listEmojis("post_listing_xpress")[i].id, "5368324170671202286");
-    const out = fmt.listingPost(COIN);
-    const ce = (out.entities || []).find((e) => e.type === "custom_emoji" && e.custom_emoji_id === "5368324170671202286");
-    assert.ok(ce, "the premium 💧 reaches the channel post");
-    assert.strictEqual(out.text.slice(ce.offset, ce.offset + ce.length), "💧");
-    assert.match(out.text.slice(ce.offset), /^💧 Liquidity: \$85(\.\d+)?K/);
+    for (const out of allCards()) {
+      const ce = liqCe(out);
+      assert.ok(ce, "the premium 💧 reaches the card");
+      assert.match(out.text.slice(ce.offset), /^💧 Liquidity: \$85(\.\d+)?K/);
+    }
+  } finally {
+    await tpl.resetTemplate("liq_emoji");
+  }
+});
+
+test("⚠️ …a pasted premium emoji works too, and so does a saved card WITHOUT {liq}", async () => {
+  await tpl.setTemplate("liq_emoji", { text: "💦", entities: [{ type: "custom_emoji", offset: 0, length: 2, custom_emoji_id: PREMIUM }] });
+  await tpl.setTemplate("post_listing_xpress", "💲 {name} ({symbol})\n\n📊 **Market cap:** {mcap} · **Price:** {price}\n\n📄 {address}");
+  try {
+    const out = fmt.listingPost({ ...COIN, tier: "XPRESS" });
+    const ce = liqCe(out);
+    assert.ok(ce, "the enforced segment carries the operator's icon");
+    assert.match(out.text.slice(ce.offset), /^💦 Liquidity:/);
   } finally {
     await tpl.resetTemplate("post_listing_xpress");
+    await tpl.resetTemplate("liq_emoji");
   }
+});
+
+test("the cards no longer each carry their own 💧 to swap — it is {liqEmoji}", () => {
+  for (const k of ["post_listing_xpress", "post_listing_tiered", "post_trending"]) {
+    assert.ok(!tpl.listEmojis(k).some((e) => e.char === "💧"), `${k} still has its own 💧`);
+    assert.ok(tpl.meta(k).ph.includes("liqEmoji"), `${k} does not offer {liqEmoji}`);
+  }
+  assert.strictEqual(tpl.meta("liq_emoji").group, "Channel Posts");
+  assert.notStrictEqual(tpl.meta("liq_emoji").label, "liq_emoji", "the template has a human label in the editor");
+});
+
+test("a blank or runaway Liquidity emoji falls back to 💧, never a hole or a paragraph", async () => {
+  await tpl.setTemplate("liq_emoji", "   ");
+  try { assert.strictEqual(fmt.liqEmoji(), "💧"); } finally { await tpl.resetTemplate("liq_emoji"); }
+  await tpl.setTemplate("liq_emoji", "x".repeat(200));
+  try { assert.strictEqual(fmt.liqEmoji(), "💧"); } finally { await tpl.resetTemplate("liq_emoji"); }
 });
 
 test("a card that already has its own {liq} line gets no second 💧", async () => {
   await tpl.setTemplate("post_listing_xpress", "Cap {mcap} — Depth {liq} — {price}");
   try {
-    assert.strictEqual(tpl.listEmojis("post_listing_xpress").length, 0);
-    assert.doesNotMatch(fmt.listingPost(COIN).text, /💧/);
+    assert.doesNotMatch(fmt.listingPost({ ...COIN, tier: "XPRESS" }).text, /💧/);
   } finally {
     await tpl.resetTemplate("post_listing_xpress");
   }

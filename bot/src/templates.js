@@ -118,7 +118,7 @@ const LISTING_BODY =
   // saved copy without it gets the segment inserted at render time
   // (LIQ_SEGMENT / ensureAfter, channels/format.js) — a saved template wins
   // over this default for ever, so a default alone could never deliver it.
-  `${em("🏦", E.dollar)} **Market cap:** {mcap} · 💧 **Liquidity:** {liq} · ${em("📊", E.chart)} **Price:** {price}\n\n` +
+  `${em("🏦", E.dollar)} **Market cap:** {mcap} · {liqEmoji} **Liquidity:** {liq} · ${em("📊", E.chart)} **Price:** {price}\n\n` +
   // Single one-tap CTA. {tradeUrl} = https://t.me/<tradebot>?start=ca_<address>
   // — the deep link carries the token's CA so the trade bot opens straight on
   // this token (no "Trade it now" header line above it).
@@ -1225,6 +1225,12 @@ const DEFAULTS = {
   // per line. Send a PREMIUM emoji here and the badge animates in the channel —
   // that is the whole point of it being a template rather than code.
   // A tier missing from this list falls back to the emoji in config/packages.js.
+  // ONE icon for the Liquidity line on every listing & trending card, so an
+  // operator sets a premium 💧 once instead of swapping it in three templates
+  // ("saya ingin anda buatkan template khusus emoji liquidity agar saya ga
+  // ulangin template semuanya 1/1"). The cards carry {liqEmoji}; the value is
+  // read by channels/format.js liqEmoji(), which keeps a pasted premium emoji.
+  liq_emoji: "💧",
   tier_emojis:
     "diamond = 💎\n" +
     "gold = 🥇\n" +
@@ -1487,14 +1493,15 @@ const META = {
   broadcast_addon_queued: { group: "Mass DM", label: "Broadcast add-on: queued for review (legacy order)", ph: ["ref"] },
   broadcast_addon_failed: { group: "Mass DM", label: "Broadcast add-on: enqueue failed", ph: ["ref"] },
   massdm_done: { group: "Mass DM", label: "Mass DM: delivered receipt", ph: ["ref", "reach", "fail"] },
-  post_listing_xpress: { group: "Channel Posts", label: "Post: Xpress Listing", ph: ["name", "symbol", "logoEmoji", "coinUrl", "xUrl", "tradeUrl", "chainEmoji", "chain", "address", "liq", "mcap", "price", "twitter", "website", "telegram", "site", "listing", "trending", "announce", "xlisting"] },
-  post_listing_tiered: { group: "Channel Posts", label: "Post: Listing & Trending", ph: ["name", "symbol", "logoEmoji", "tierEmoji", "tier", "coinUrl", "xUrl", "tradeUrl", "chainEmoji", "chain", "address", "liq", "mcap", "price", "twitter", "website", "telegram", "site", "listing", "trending", "announce", "xlisting"] },
-  post_trending: { group: "Channel Posts", label: "Post: Trending", ph: ["name", "symbol", "logoEmoji", "coinUrl", "xUrl", "tradeUrl", "chainEmoji", "chain", "address", "liq", "mcap", "price", "twitter", "website", "telegram", "site", "listing", "trending", "announce", "xlisting"] },
+  post_listing_xpress: { group: "Channel Posts", label: "Post: Xpress Listing", ph: ["name", "symbol", "logoEmoji", "coinUrl", "xUrl", "tradeUrl", "chainEmoji", "chain", "address", "liq", "liqEmoji", "mcap", "price", "twitter", "website", "telegram", "site", "listing", "trending", "announce", "xlisting"] },
+  post_listing_tiered: { group: "Channel Posts", label: "Post: Listing & Trending", ph: ["name", "symbol", "logoEmoji", "tierEmoji", "tier", "coinUrl", "xUrl", "tradeUrl", "chainEmoji", "chain", "address", "liq", "liqEmoji", "mcap", "price", "twitter", "website", "telegram", "site", "listing", "trending", "announce", "xlisting"] },
+  post_trending: { group: "Channel Posts", label: "Post: Trending", ph: ["name", "symbol", "logoEmoji", "coinUrl", "xUrl", "tradeUrl", "chainEmoji", "chain", "address", "liq", "liqEmoji", "mcap", "price", "twitter", "website", "telegram", "site", "listing", "trending", "announce", "xlisting"] },
   post_banner: { group: "Channel Posts", label: "Post: Banner ad", ph: ["title", "slot", "linkUrl", "description", "address", "twitter", "website", "telegram", "xUrl", "site", "listing", "trending", "announce", "xlisting"] },
   post_rankup: { group: "Channel Posts", label: "Post: Rank-up alert", ph: ["chainEmoji", "symbol", "name", "rank", "gain", "change", "address", "coinUrl", "coinUrlLabel", "xUrl", "twitter", "website", "telegram", "site", "listing", "trending", "announce", "xlisting"] },
   post_pump: { group: "Channel Posts", label: "Post: Pump alert", ph: ["chainEmoji", "symbol", "name", "percent", "multiple", "firstMc", "lastMc", "chain", "address", "coinUrl", "coinUrlLabel", "xUrl", "twitter", "website", "telegram", "site", "listing", "trending", "announce", "xlisting"] },
   post_gainers: { group: "Channel Posts", label: "Post: Top Gainers banner", ph: ["date", "list", "count", "xUrl", "site", "listing", "trending", "announce", "xlisting"] },
   tier_emojis: { group: "Channel Posts", label: "Tier badges (Diamond → Bronze)", ph: [] },
+  liq_emoji: { group: "Channel Posts", label: "Liquidity emoji (all listing & trending posts)", ph: [] },
   chain_emojis: { group: "Channel Posts", label: "Chain emoji (per network — channel posts + buy alerts)", ph: [] },
   x_listing: { group: "X Posts", label: "X post: Xpress listing", ph: ["name", "tag", "mention", "url", "address", "price", "mcap", "liq", "chain", "handle"] },
   x_listing_tiered: { group: "X Posts", label: "X post: Listing & Trending", ph: ["tierEmoji", "tier", "name", "tag", "mention", "url", "address", "price", "mcap", "liq", "chain", "handle"] },
@@ -1651,7 +1658,7 @@ function ensureAfter(val, { has, after, markup, plain, bold }) {
 /** …and its plain-text twin for the X listing tweet, which is laid out as
  *  "Price: … | MC: …" and has no bold to give it. */
 const X_LIQ_SEGMENT = { has: "liq", after: "mcap", markup: "  |  Liq: {liq}", plain: "  |  Liq: {liq}" };
-const LIQ_SEGMENT = { has: "liq", after: "mcap", markup: " · 💧 **Liquidity:** {liq}", plain: " · 💧 Liquidity: {liq}", bold: "Liquidity:" };
+const LIQ_SEGMENT = { has: "liq", after: "mcap", markup: " · {liqEmoji} **Liquidity:** {liq}", plain: " · {liqEmoji} Liquidity: {liq}", bold: "Liquidity:" };
 
 function substitute(tpl, vars) {
   return String(tpl).replace(/\{(\w+)\}/g, (m, k) => (vars && vars[k] != null ? String(vars[k]) : ""));
