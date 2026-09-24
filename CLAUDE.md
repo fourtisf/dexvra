@@ -10523,6 +10523,36 @@ TBA stays as posted — this changes what the next post publishes. The worst cas
 is now a post up to ~30s later than before (three attempts), and only for a
 token whose figures were missing.
 
+### "dimana cara edit template air yang di samping liquidity" — the 💧 no screen could see
+
+Asked over a live Xpress post: the operator wanted the 💧 beside **Liquidity**
+as a premium emoji, and could not find it in @dexvraadminbot. It was not
+there to find. The segment was inserted by `stripForCoin` in
+`channels/format.js` **just before sending**, into a saved card that predates
+`{liq}`, so the post carried a 💧 that no template held and 😀 Swap emoji
+(which lists `baseValue(key)`) never showed.
+
+- **The segment is enforced AT THE SOURCE now** (`templates.js` `enforced`,
+  `LIQ_CARDS` moved there as the one owner): `baseValue` and `loadAll` both
+  carry it, so the editor lists the 💧, a swap resolves against it, and the
+  preview shows what is posted. The call in `format.js` stays as a no-op
+  belt-and-braces.
+- ⚠️ **Before the overlay, in `loadAll`**, or a swap made on the enforced 💧
+  finds no slot to land on and the post quietly keeps the plain glyph.
+- A card whose operator wrote their own `{liq}` line gets no second 💧.
+
+Mutation-tested: dropping the enforcement from `baseValue` (the 💧 unlisted)
+and from `loadAll` (the swap never reaching the post) each fail a test.
+
+```bash
+cd bot && node scripts/run-tests.js test/listingFigures.test.js   # 23 tests, no network
+```
+
+**Config a fix depends on:** nothing. In @dexvraadminbot: **Channel Posts →
+Post: Xpress Listing** (and **Post: Listing & Trending**, **Post: Trending**)
+→ **😀 Swap emoji** → pick the 💧 → send the premium emoji. ⚠️ A channel post
+animates only through the GramJS premium account (💎 Premium status).
+
 ## "holder dan chart still broken" — a zero nobody measured, and a chart that ate the page's scroll
 
 Reported with the $SFX token page straight after the TBA fix deployed green:

@@ -283,11 +283,12 @@ function cutRanges(valOrText, ranges, isEntity) {
 /** The template for `key`, with the lines the token can't fill stripped out —
  *  social links it lacks, the "Announce On X" line when no tweet was made, the
  *  tier badge line on an untiered listing — ready for tpl.renderValue(). */
-// The coin cards that publish a token's market. Every one of them carries
-// liquidity beside the market cap — inserted into an operator's saved copy that
-// predates it (tpl.ensureAfter), because a saved template wins for ever and the
-// operator who asked for liquidity is exactly the one who has saved a copy.
-const LIQ_CARDS = new Set(["post_listing_xpress", "post_listing_tiered", "post_trending"]);
+// The coin cards that publish a token's market carry liquidity beside the
+// market cap. The segment is enforced AT THE SOURCE now (templates.js
+// `enforced`), so it is a swappable part of the template the admin bot shows;
+// this call is the belt-and-braces for a value read around loadAll, and a no-op
+// on any value that already carries {liq}.
+const LIQ_CARDS = tpl.LIQ_CARDS;
 
 function stripForCoin(key, coin, { noTier } = {}) {
   const links = (coin && coin.links) || {};

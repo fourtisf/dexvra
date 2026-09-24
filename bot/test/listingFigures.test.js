@@ -401,3 +401,36 @@ test("⚠️ the listing FORM keeps the figures it read, and hands them to the o
     pay.startPayment = realPay;
   }
 });
+
+// "dimana cara edit template air yang di samping liquidity, saya ingin emoji
+// template premiumnya ada di dexvra adminbot" — the 💧 was inserted just before
+// sending, so 😀 Swap emoji (which lists the template's own icons) never showed
+// it. It is enforced at the SOURCE now, so it is a slot like any other.
+test("⚠️ the 💧 beside Liquidity is a swappable slot even on a card saved WITHOUT {liq}", async () => {
+  const saved = "💲 {name} ({symbol})\n\n📊 **Market cap:** {mcap} · **Price:** {price}\n\n📄 {address}";
+  await tpl.setTemplate("post_listing_xpress", saved);
+  try {
+    const list = tpl.listEmojis("post_listing_xpress");
+    const i = list.findIndex((e) => e.char === "💧");
+    assert.ok(i >= 0, "the enforced 💧 is listed in 😀 Swap emoji");
+    await tpl.replaceEmojiAt("post_listing_xpress", i, "[💧](emoji/5368324170671202286)");
+    assert.strictEqual(tpl.listEmojis("post_listing_xpress")[i].id, "5368324170671202286");
+    const out = fmt.listingPost(COIN);
+    const ce = (out.entities || []).find((e) => e.type === "custom_emoji" && e.custom_emoji_id === "5368324170671202286");
+    assert.ok(ce, "the premium 💧 reaches the channel post");
+    assert.strictEqual(out.text.slice(ce.offset, ce.offset + ce.length), "💧");
+    assert.match(out.text.slice(ce.offset), /^💧 Liquidity: \$85(\.\d+)?K/);
+  } finally {
+    await tpl.resetTemplate("post_listing_xpress");
+  }
+});
+
+test("a card that already has its own {liq} line gets no second 💧", async () => {
+  await tpl.setTemplate("post_listing_xpress", "Cap {mcap} — Depth {liq} — {price}");
+  try {
+    assert.strictEqual(tpl.listEmojis("post_listing_xpress").length, 0);
+    assert.doesNotMatch(fmt.listingPost(COIN).text, /💧/);
+  } finally {
+    await tpl.resetTemplate("post_listing_xpress");
+  }
+});

@@ -1515,7 +1515,27 @@ let emojiLoad = 0;
  *  emoji overlay applied. This is what an overlay entry is recorded against. */
 function baseValue(key) {
   const saved = loadJSONSync(FILE, {});
-  return saved[key] != null ? saved[key] : DEFAULTS[key] || "";
+  return enforced(key, saved[key] != null ? saved[key] : DEFAULTS[key] || "");
+}
+
+/**
+ * The coin cards that publish a token's market carry liquidity beside the
+ * market cap — inserted into an operator's saved copy that predates it
+ * (ensureAfter, LIQ_SEGMENT).
+ *
+ * ⚠️ IT IS INSERTED HERE, AT THE SOURCE, NOT AT RENDER TIME. It used to be
+ * added in channels/format.js just before sending, which put a 💧 on every
+ * listing post that no admin screen could see: 😀 Swap emoji lists the icons
+ * of baseValue(), and the 💧 was not in it — "dimana cara edit template air
+ * yang di samping liquidity" was asked over a post showing exactly that icon.
+ * Enforced here, the segment is part of the template the editor lists, the
+ * overlay resolves a swap against it, and the preview shows what is posted.
+ * Only a value that LACKS {liq} gets it, so an operator who wrote their own
+ * liquidity line keeps theirs.
+ */
+const LIQ_CARDS = new Set(["post_listing_xpress", "post_listing_tiered", "post_trending"]);
+function enforced(key, val) {
+  return LIQ_CARDS.has(key) ? ensureAfter(val, LIQ_SEGMENT) : val;
 }
 
 function loadEmojiOverlay() {
@@ -1572,6 +1592,8 @@ function loadAll() {
   if (cache && now - lastLoad < REFRESH_MS) return cache;
   const saved = loadJSONSync(FILE, {});
   const merged = { ...DEFAULTS, ...saved };
+  // Before the overlay, or a swap made on the enforced 💧 finds no slot to land on.
+  for (const key of LIQ_CARDS) if (merged[key] != null) merged[key] = enforced(key, merged[key]);
   const overlay = loadEmojiOverlay();
   for (const key of Object.keys(overlay)) {
     if (merged[key] != null) merged[key] = applyEmojiOverlay(key, merged[key]);
@@ -2270,6 +2292,7 @@ module.exports = {
   substitute,
   ensureAfter,
   LIQ_SEGMENT,
+  LIQ_CARDS,
   X_LIQ_SEGMENT,
   dropEmptyLines,
   DEFAULTS,
