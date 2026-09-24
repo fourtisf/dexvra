@@ -10704,6 +10704,67 @@ cover chain 4663, and an on-chain count off Transfer logs is a full-history walk
 this node's range cap makes a non-starter. The dash then is the truth, and the
 tooltip says which host refused.
 
+#### The first `holders:check` on the box: 2/8, and every miss named its host
+
+```
+✓ $SHIB   ethereum  1,843,865 holders · blockscout via eth.blockscout.com
+✓ $AERO   base        833,554 holders · blockscout via base.blockscout.com
+✗ $CUPCAKE robinhood — robinhoodchain.blockscout.com 403 · explorer.mainnet.chain.robinhood.com unreachable (not JSON)
+✗ polygon · bsc · solana · tron · optimism — io.dexscreener.com 403 · geckoterminal: over this process's budget
+```
+
+The check did its job, and it showed four separate gaps:
+
+- ⚠️ **A 403 FROM ONE BLOCKSCOUT WHILE ANOTHER ANSWERS IS A BOT FILTER, not an
+  outage.** eth.blockscout.com and base.blockscout.com both answered the same bare
+  request. The refused request is now asked ONCE more with browser headers. A
+  host that then answers is remembered (`asBrowser`), so the next token pays one
+  request, not two. A host still refusing says `(also as a browser)` and is not
+  asked `/counters` for the same refusal.
+- ⚠️ **"NOT JSON" WAS REPORTED AS "UNREACHABLE".** The chain's own explorer is up
+  and served a web page at `/api/v2`. It is not a Blockscout API at that path, which
+  is a different fact from a dead socket. It now reads *"answered a web page, not
+  its API"*, status `-1`, and its second path is not asked.
+- **Polygon, Arbitrum and Optimism have hosted Blockscouts** (`*.blockscout.com`),
+  and **Tron has Tronscan** (`token_trc20` → `holders_count`, keyless;
+  `TRONSCAN_API_KEY` is sent when set).
+- ⚠️ **BSC AND SOLANA HAVE NO FREE HOLDER COUNT THIS BOX CAN REACH.** BSC has no
+  hosted Blockscout, and BscScan's count is a paid endpoint. Solana's explorers all
+  need a key. Their free fallback, GeckoTerminal, almost never has a slot: 5/min
+  against ~19 board chunks.
+  - **`MORALIS_API_KEY`** is an OPTIONAL source, off without a key and never
+    blamed while off. A free Moralis key covers both BSC and Solana.
+  - A GeckoTerminal key does the same through the fallback.
+  - `holders:check` names both keys when it sees the budget reason. They are
+    described in words, never printed as a line with a blank in it.
+  - This is the one gap no code can close.
+- **A MEASURED COUNT IS KEPT ON THE LISTING.** The route writes it through
+  `store.setHolderCount`, whose pure rule lives in `lib/holderWrite.ts`:
+  - positive only, because a zero is the defect;
+  - a move under 1% does not rewrite the store and its Mongo mirror;
+  - never awaited, and never allowed to fail the answer.
+
+  The board, the score and the page already read `holders`. So a source that
+  refuses us tomorrow costs a slightly old number, not a "—". Then the tooltip
+  says *"Last measured count — no source answered just now"* rather than
+  claiming there is none.
+
+Twelve more guarantees are MUTATION-TESTED:
+- the browser retry removed, or never remembered
+- a refused or web-page host asked its second path
+- a web page reported as unreachable
+- Tron skipped
+- Moralis asked without a key, or sent the key under the wrong header
+- a zero stored
+- every tick rewriting the store
+- the chain ignored on the write (⚠️ survived its first run: the fixture put the matching row first)
+- the stored-count tooltip claiming none
+- the check not naming the keys
+
+**Config a fix depends on:** for BSC and Solana, one of `MORALIS_API_KEY` or
+`GECKOTERMINAL_API_KEY` in the **repo-root** `.env`, then a restart of the web
+app. Everything else ships on.
+
 ## "perbaiki tampilan chartnya di mobile" — two rows of timeframe buttons, one of them dead
 
 The same screenshot, one panel down: our chart header — `$HACHIKO`, `LIN LOG`,
