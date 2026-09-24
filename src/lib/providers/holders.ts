@@ -22,6 +22,10 @@
  *      undocumented, and behind Cloudflare; the documented API publishes no
  *      holders at all. So it is env-overridable end to end and shares the
  *      chart client's refusal bench.
+ *   2b. KEYLESS, for the chains no explorer covers for us: JUPITER's token
+ *      registry (Solana, `holderCount`) and GOPLUS's security record
+ *      (`holder_count` — BSC, Tron, Solana and the EVM chains it scans). Both
+ *      spend their own budgets, not the per-IP GeckoTerminal one.
  *   3. GeckoTerminal's token info, which publishes `holders.count` for the
  *      networks it tracks. ⚠️ ASKED ONLY FOR A FREE SLOT (`waitMs: 0`): GT is
  *      the scarce per-IP budget the board and every chart share, and a count
@@ -43,7 +47,7 @@ import { CHAINS } from "../../config/chains.ts";
 import { gtGet as realGtGet, type GtResult } from "./gt.ts";
 import { chartHeaders, dsArmCooldown, dsCooldownWhy, dsInCooldown, dsTopPair, type DsPair } from "./dsChart.ts";
 
-export type HolderSource = "blockscout" | "tronscan" | "moralis" | "dexscreener" | "geckoterminal";
+export type HolderSource = "blockscout" | "tronscan" | "jupiter" | "goplus" | "moralis" | "dexscreener" | "geckoterminal";
 
 export interface HolderCount {
   count: number | null;
@@ -108,7 +112,7 @@ type Got = { count: number | null; why: string | null };
 
 /** Hosts that refused a bare request and answered a browser-shaped one. */
 const asBrowser = new Set<string>();
-export const _holdersReset = (): void => asBrowser.clear();
+export const _holdersReset = (): void => { asBrowser.clear(); goPlusBenchUntil = 0; goPlusBenchWhy = ""; };
 
 function browserHeaders(host: string): Record<string, string> {
   return {
@@ -201,6 +205,94 @@ async function fromTronscan(address: string, deps: HolderDeps): Promise<Got> {
   const c = countOf(row?.holders_count);
   if (reading(c)) return { count: c, why: null };
   return { count: null, why: row ? "tronscan published no holder count" : "tronscan has no record of this token" };
+}
+
+// ─── Jupiter (Solana, keyless) ───────────────────────────────────────────────
+
+/**
+ * Jupiter's token registry publishes `holderCount` for every Solana mint it
+ * has seen — keyless on the lite host, its own budget (not the per-IP
+ * GeckoTerminal one this box is always out of), and it is the registry the
+ * trade bot already prices through. `JUP_API_KEY`, when the web app's .env
+ * carries one, asks the keyed host first; a refusal there still falls back
+ * to the free one, so a bad key costs a request, never the count.
+ *
+ * ⚠️ `search` matches on names and symbols too, so the answer is only taken
+ * from the entry whose `id` IS this mint — the first hit for a short query can
+ * be somebody else's token, and a stranger's holder count under our ticker is
+ * a wrong number rather than a missing one.
+ */
+async function fromJupiter(address: string, deps: HolderDeps): Promise<Got & { via?: string }> {
+  if ((process.env.JUP_HOLDERS ?? "").trim() === "0") return { count: null, why: "jupiter switched off (JUP_HOLDERS=0)" };
+  const key = (process.env.JUP_API_KEY ?? "").trim();
+  const bases: { base: string; headers: Record<string, string> }[] = [
+    ...(key ? [{ base: "https://api.jup.ag", headers: { accept: "application/json", "x-api-key": key } }] : []),
+    { base: "https://lite-api.jup.ag", headers: { accept: "application/json" } },
+  ];
+  const why: string[] = [];
+  for (const { base, headers } of bases) {
+    const r = await getJson(`${base}/tokens/v2/search?query=${encodeURIComponent(address)}`, deps, headers);
+    if (!r.ok) { why.push(r.why ?? `${hostOf(base)} failed`); continue; }
+    const list = Array.isArray(r.body) ? (r.body as Record<string, unknown>[]) : [];
+    const mine = list.find((t) => t && t.id === address);
+    if (!mine) return { count: null, why: `jupiter: ${hostOf(base)} has no record of this mint` };
+    const c = countOf(mine.holderCount);
+    if (reading(c)) return { count: c, why: null, via: hostOf(base) };
+    return { count: null, why: `jupiter: ${hostOf(base)} ${c === 0 ? "counts 0 (not indexed yet)" : "published no holder count"}` };
+  }
+  return { count: null, why: `jupiter: ${why.join(", ")}` };
+}
+
+// ─── GoPlus (keyless) ────────────────────────────────────────────────────────
+
+/** GoPlus's chain id: the registry's `goPlusChainId` for the EVM chains, and
+ *  `tron` for Tron. Deliberately NOT written into chains.ts — the safety
+ *  scanner reads that field and would start asking Tron about 0x addresses. */
+function goPlusChain(chain: string): string | null {
+  if (chain === "tron") return "tron";
+  return CHAINS[chain]?.goPlusChainId ?? null;
+}
+
+// ⚠️ A refusal is benched: GoPlus's free tier is per IP, and every open token
+// page asks — proving the same 429 once per page is the CoinGecko-sweep defect.
+let goPlusBenchUntil = 0;
+let goPlusBenchWhy = "";
+const GOPLUS_BENCH_MS = 60_000;
+
+/**
+ * GoPlus's token-security record carries `holder_count` — keyless, and the
+ * one free source this repo reaches that covers BSC at all (it has no hosted
+ * Blockscout and BscScan's count is paid). Solana is a different endpoint and
+ * is keyed by the case-sensitive mint; the EVM record is keyed lowercase.
+ * GoPlus answers HTTP 200 with its own `code` (1 = ok, 2 = partial) — a
+ * different code is a refusal or an unsupported chain, never a zero.
+ */
+async function fromGoPlus(chain: string, address: string, deps: HolderDeps): Promise<Got> {
+  if ((process.env.GOPLUS_HOLDERS ?? "").trim() === "0") return { count: null, why: "goplus switched off (GOPLUS_HOLDERS=0)" };
+  const id = chain === "solana" ? "solana" : goPlusChain(chain);
+  if (!id) return { count: null, why: null }; // not a source for this chain
+  if (Date.now() < goPlusBenchUntil) return { count: null, why: `goplus: ${goPlusBenchWhy}` };
+  const url = id === "solana"
+    ? `https://api.gopluslabs.io/api/v1/solana/token_security?contract_addresses=${encodeURIComponent(address)}`
+    : `https://api.gopluslabs.io/api/v1/token_security/${id}?contract_addresses=${encodeURIComponent(address)}`;
+  const r = await getJson(url, deps);
+  const bench = (what: string) => { goPlusBenchUntil = Date.now() + GOPLUS_BENCH_MS; goPlusBenchWhy = `${what} (benched ${GOPLUS_BENCH_MS / 1000}s)`; };
+  if (!r.ok) {
+    if ([401, 403, 429].includes(r.status)) bench(r.why ?? `api.gopluslabs.io ${r.status}`);
+    return { count: null, why: `goplus: ${r.why}` };
+  }
+  const body = (r.body ?? {}) as { code?: unknown; message?: unknown; result?: Record<string, Record<string, unknown>> };
+  const code = Number(body.code);
+  if (code !== 1 && code !== 2) {
+    const msg = `api.gopluslabs.io code ${String(body.code)}${body.message ? ` (${String(body.message).slice(0, 60)})` : ""}`;
+    if (code === 4029) bench(msg); // GoPlus spells "rate limited" as a 200 with code 4029
+    return { count: null, why: `goplus: ${msg}` };
+  }
+  const rec = body.result?.[address] ?? body.result?.[address.toLowerCase()];
+  if (!rec || typeof rec !== "object" || !Object.keys(rec).length) return { count: null, why: "goplus has no record of this token" };
+  const c = countOf(rec.holder_count ?? rec.holders_count);
+  if (reading(c)) return { count: c, why: null };
+  return { count: null, why: c === 0 ? "goplus counts 0 (not indexed yet)" : "goplus published no holder count" };
 }
 
 // ─── Moralis (optional, keyed) ───────────────────────────────────────────────
@@ -312,6 +404,17 @@ export async function readHolders(chain: string, address: string, deps: HolderDe
     if (reading(tr.count)) return { count: tr.count, source: "tronscan", via: "apilist.tronscanapi.com", why: null };
     if (tr.why) why.push(tr.why);
   }
+  // The two keyless sources that reach the chains no explorer covers for us —
+  // BSC and Solana have no free Blockscout, and Tron's own explorer rate-limits
+  // this box. Asked before the keyed and the metered ones: free first.
+  if (chain === "solana") {
+    const j = await fromJupiter(address, deps);
+    if (reading(j.count)) return { count: j.count, source: "jupiter", via: j.via ?? null, why: null };
+    if (j.why) why.push(j.why);
+  }
+  const gp = await fromGoPlus(chain, address, deps);
+  if (reading(gp.count)) return { count: gp.count, source: "goplus", via: "api.gopluslabs.io", why: null };
+  if (gp.why) why.push(gp.why);
   const m = await fromMoralis(chain, address, deps);
   if (reading(m.count)) return { count: m.count, source: "moralis", via: chain === "solana" ? "solana-gateway.moralis.io" : "deep-index.moralis.io", why: null };
   if (m.why) why.push(m.why);

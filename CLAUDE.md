@@ -10765,6 +10765,51 @@ Twelve more guarantees are MUTATION-TESTED:
 `GECKOTERMINAL_API_KEY` in the **repo-root** `.env`, then a restart of the web
 app. Everything else ships on.
 
+#### "coba cri cara lain" — two keyless sources for the three chains still red
+
+The keys above are a REQUEST, and "apt-get install is not a fix, it is a
+request" is this file's own rule. So before asking for a key, the chains still
+red (BSC, Solana, Tron) got two sources that need none:
+
+- **GoPlus's token-security record carries `holder_count`**, keyless, on its own
+  budget. It covers BSC (the one chain with no free count at all), Tron (as
+  `tron`), Solana (its own `/solana/token_security` endpoint, keyed by the
+  case-sensitive mint) and every EVM chain in `goPlusChainId`. The repo already
+  scans tokens through it; it had never been asked for the count.
+  - ⚠️ `tron` is deliberately NOT written into `chains.ts`: the safety scanner
+    reads `goPlusChainId` and would start asking Tron about 0x addresses.
+  - ⚠️ GoPlus answers **HTTP 200 with its own `code`** — 1 ok, 2 partial,
+    anything else a refusal or an unsupported chain, never a zero. `4029` is its
+    spelling of "rate limited", and it and an HTTP 401/403/429 BENCH it for 60s:
+    every open token page asks, and proving the same refusal once per page is
+    the CoinGecko-sweep defect. A 5xx does not bench.
+- **Jupiter's token registry publishes `holderCount` for Solana mints**,
+  keyless on `lite-api.jup.ag`, asked FIRST for Solana. `JUP_API_KEY` in the
+  web app's `.env` asks `api.jup.ag` first, and a refused key still falls back
+  to the free host.
+  - ⚠️ `search` also matches names and symbols, so only the entry whose `id` IS
+    this mint counts. A stranger's holder count under our ticker is a wrong
+    number, which is worse than a missing one.
+- Order: Blockscout → Tronscan → Jupiter (Solana) → GoPlus → Moralis →
+  DexScreener → GeckoTerminal. Free sources first, then keyed, then metered.
+  `GOPLUS_HOLDERS=0` / `JUP_HOLDERS=0` switch each off.
+
+Eleven guarantees are MUTATION-TESTED: either source unwired, Jupiter taking
+the first search hit, the 4029 bench dropped, a 5xx benching, the bench ignored,
+Tron not asked, a zero accepted, GoPlus's `code` ignored, the keyed Jupiter host
+not falling back, and Solana sent to the EVM endpoint. Each fails between one
+and six tests.
+
+```bash
+npm test                                         # holders — 29 tests, no network
+cd /opt/dexvra && npm run holders:check          # which source answers FROM THE BOX
+```
+
+**Config a fix depends on:** nothing. ⚠️ Whether GoPlus and Jupiter answer
+THIS box is a property of its egress (this sandbox reaches neither), and
+`holders:check` is the measurement. The keys above are still the fallback if
+both refuse it.
+
 #### The second run: 5/8, and the three left are each a KEY, not a defect
 
 ```

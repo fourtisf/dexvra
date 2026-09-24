@@ -146,7 +146,7 @@ test("a chain with no explorer we read skips Blockscout (Solana)", async () => {
     dsPair: noPair,
     gtGet: async () => ({ ok: true, status: 200, reason: null, body: { data: { attributes: { holders: { count: "812,000" } } } } }),
   });
-  assert.equal(calls.length, 0, "no explorer request for a chain with no Blockscout");
+  assert.equal(calls.filter((c) => /blockscout|\/api\/v2\/tokens/.test(c.url)).length, 0, "no explorer request for a chain with no Blockscout");
   assert.equal(r.count, 812000);
   assert.equal(r.source, "geckoterminal");
 });
@@ -270,12 +270,13 @@ test("Moralis with a key: BSC through the EVM host, Solana through its own, the 
     const f = fakeFetch(() => json({ totalHolders: 4242 }), calls);
     const b = await readHolders("bsc", "0x444045b0ee1ee319a660a5e3d604ca0ffa35acaa", { fetch: f, dsPair: noPair });
     assert.deepEqual(b, { count: 4242, source: "moralis", via: "deep-index.moralis.io", why: null });
-    assert.match(calls[0].url, /deep-index\.moralis\.io\/api\/v2\.2\/erc20\/0x444045b0ee1ee319a660a5e3d604ca0ffa35acaa\/holders\?chain=bsc/);
-    assert.equal(calls[0].headers["X-API-Key"], "k-test");
+    const mb = calls.find((c) => c.url.includes("moralis"))!;
+    assert.match(mb.url, /deep-index\.moralis\.io\/api\/v2\.2\/erc20\/0x444045b0ee1ee319a660a5e3d604ca0ffa35acaa\/holders\?chain=bsc/);
+    assert.equal(mb.headers["X-API-Key"], "k-test");
     calls.length = 0;
     const sol = await readHolders("solana", "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", { fetch: f, dsPair: noPair });
     assert.equal(sol.source, "moralis");
-    assert.match(calls[0].url, /solana-gateway\.moralis\.io\/token\/mainnet\/holders\/DezXAZ8/);
+    assert.match(calls.find((c) => c.url.includes("moralis"))!.url, /solana-gateway\.moralis\.io\/token\/mainnet\/holders\/DezXAZ8/);
   } finally {
     if (was === undefined) delete process.env.MORALIS_API_KEY;
     else process.env.MORALIS_API_KEY = was;
@@ -286,4 +287,118 @@ test("Polygon, Arbitrum and Optimism have a hosted Blockscout", () => {
   assert.deepEqual(blockscoutHosts("polygon"), ["https://polygon.blockscout.com"]);
   assert.deepEqual(blockscoutHosts("arbitrum"), ["https://arbitrum.blockscout.com"]);
   assert.deepEqual(blockscoutHosts("optimism"), ["https://optimism.blockscout.com"]);
+});
+
+// ─── The keyless sources for the chains no explorer covers ──────────────────
+
+const BONK = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263";
+const CAKE = "0x0E09FaBB73Bd3Ade0a17ECC321fD13a19e81cE82";
+const JST = "TCFLL5dx5ZJdKnWuesXxi1VPwjLVmWZZy9";
+const gtThrows = async () => { throw new Error("GT must not be asked when a free source answered"); };
+
+test("⚠️ BSC: GoPlus's security record carries the holder count — keyless, keyed lowercase", async () => {
+  const calls: Call[] = [];
+  const r = await readHolders("bsc", CAKE, {
+    fetch: fakeFetch((u) => (u.includes("gopluslabs") ? json({ code: 1, message: "OK", result: { [CAKE.toLowerCase()]: { holder_count: "1789012" } } }) : json({}, 404)), calls),
+    dsPair: async () => { throw new Error("DexScreener must not be asked when GoPlus answered"); },
+    gtGet: gtThrows,
+  });
+  assert.deepEqual(r, { count: 1789012, source: "goplus", via: "api.gopluslabs.io", why: null });
+  assert.match(calls.find((c) => c.url.includes("gopluslabs"))!.url, /\/api\/v1\/token_security\/56\?contract_addresses=/);
+});
+
+test("Tron asks GoPlus as `tron` when Tronscan rate-limits the box", async () => {
+  const calls: Call[] = [];
+  const r = await readHolders("tron", JST, {
+    fetch: fakeFetch((u) => (u.includes("tronscan") ? json({}, 429) : json({ code: 1, result: { [JST]: { holder_count: "310000" } } })), calls),
+    gtGet: gtThrows,
+  });
+  assert.equal(r.count, 310000);
+  assert.equal(r.source, "goplus");
+  assert.match(calls.find((c) => c.url.includes("gopluslabs"))!.url, /token_security\/tron\?/);
+});
+
+test("⚠️ Solana: Jupiter's registry first, and ONLY the entry whose id IS this mint", async () => {
+  const calls: Call[] = [];
+  const r = await readHolders("solana", BONK, {
+    fetch: fakeFetch((u) => (u.includes("jup.ag")
+      ? json([{ id: "So11111111111111111111111111111111111111112", holderCount: 9_999_999 }, { id: BONK, holderCount: 987654 }])
+      : json({}, 404)), calls),
+    dsPair: noPair,
+    gtGet: gtThrows,
+  });
+  assert.deepEqual(r, { count: 987654, source: "jupiter", via: "lite-api.jup.ag", why: null });
+  assert.equal(calls.filter((c) => c.url.includes("gopluslabs")).length, 0, "GoPlus is not asked when Jupiter answered");
+});
+
+test("Jupiter with no entry for the mint is not a count — Solana falls through to GoPlus's own endpoint", async () => {
+  const calls: Call[] = [];
+  const r = await readHolders("solana", BONK, {
+    fetch: fakeFetch((u) => (u.includes("jup.ag")
+      ? json([{ id: "Other1111111111111111111111111111111111111", holderCount: 5 }])
+      : u.includes("gopluslabs") ? json({ code: 1, result: { [BONK]: { holder_count: "800000" } } }) : json({}, 404)), calls),
+    dsPair: noPair,
+    gtGet: gtThrows,
+  });
+  assert.equal(r.count, 800000);
+  assert.equal(r.source, "goplus");
+  assert.match(calls.find((c) => c.url.includes("gopluslabs"))!.url, /\/api\/v1\/solana\/token_security\?contract_addresses=DezXAZ8/);
+});
+
+test("a JUP_API_KEY asks the keyed host first; a refused key still falls back to the free one", async () => {
+  const was = process.env.JUP_API_KEY;
+  process.env.JUP_API_KEY = "jk-test";
+  try {
+    const calls: Call[] = [];
+    const r = await readHolders("solana", BONK, {
+      fetch: fakeFetch((u) => (u.startsWith("https://api.jup.ag") ? json({}, 401) : u.includes("lite-api.jup.ag") ? json([{ id: BONK, holderCount: 42 }]) : json({}, 404)), calls),
+      dsPair: noPair,
+      gtGet: gtThrows,
+    });
+    assert.equal(r.count, 42);
+    assert.equal(r.via, "lite-api.jup.ag");
+    assert.equal(calls[0].url.startsWith("https://api.jup.ag/tokens/v2/search"), true);
+    assert.equal(calls[0].headers["x-api-key"], "jk-test");
+  } finally {
+    if (was === undefined) delete process.env.JUP_API_KEY;
+    else process.env.JUP_API_KEY = was;
+  }
+});
+
+test("⚠️ GoPlus's own error code is a refusal, never a zero — and a rate limit is benched, not re-asked", async () => {
+  const calls: Call[] = [];
+  const f = fakeFetch((u) => (u.includes("gopluslabs") ? json({ code: 4029, message: "too many requests", result: {} }) : json({}, 404)), calls);
+  const a = await readHolders("bsc", CAKE, { fetch: f, dsPair: noPair, gtGet: gtNone });
+  assert.equal(a.count, null);
+  assert.match(a.why!, /goplus: api\.gopluslabs\.io code 4029/);
+  const b = await readHolders("bsc", CAKE, { fetch: f, dsPair: noPair, gtGet: gtNone });
+  assert.equal(calls.filter((c) => c.url.includes("gopluslabs")).length, 1, "the second page must not re-prove the same refusal");
+  assert.match(b.why!, /benched/);
+});
+
+test("an HTTP 429 from GoPlus benches it too; a 500 does not", async () => {
+  const calls: Call[] = [];
+  let status = 500;
+  const f = fakeFetch((u) => (u.includes("gopluslabs") ? json({}, status) : json({}, 404)), calls);
+  await readHolders("bsc", CAKE, { fetch: f, dsPair: noPair, gtGet: gtNone });
+  await readHolders("bsc", CAKE, { fetch: f, dsPair: noPair, gtGet: gtNone });
+  assert.equal(calls.filter((c) => c.url.includes("gopluslabs")).length, 2, "a 5xx says nothing about the quota");
+  status = 429;
+  await readHolders("bsc", CAKE, { fetch: f, dsPair: noPair, gtGet: gtNone });
+  await readHolders("bsc", CAKE, { fetch: f, dsPair: noPair, gtGet: gtNone });
+  assert.equal(calls.filter((c) => c.url.includes("gopluslabs")).length, 3);
+});
+
+test("a GoPlus holder_count of 0 is 'not indexed', and a chain it does not cover is not asked", async () => {
+  const calls: Call[] = [];
+  const r = await readHolders("bsc", CAKE, {
+    fetch: fakeFetch((u) => (u.includes("gopluslabs") ? json({ code: 1, result: { [CAKE.toLowerCase()]: { holder_count: "0" } } }) : json({}, 404)), calls),
+    dsPair: noPair,
+    gtGet: gtNone,
+  });
+  assert.equal(r.count, null);
+  assert.match(r.why!, /goplus counts 0 \(not indexed yet\)/);
+  calls.length = 0;
+  await readHolders("robinhood", SFX, { fetch: fakeFetch(() => json({}, 404), calls), dsPair: noPair, gtGet: gtNone });
+  assert.equal(calls.filter((c) => c.url.includes("gopluslabs")).length, 0, "GoPlus does not cover Robinhood (4663)");
 });
