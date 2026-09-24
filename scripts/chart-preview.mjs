@@ -133,6 +133,10 @@ const stub = async (page, mode) => {
   await page.route("**/api/feargreed", (r) =>
     r.fulfill({ json: { value: 55, label: "Neutral", updatedMinutesAgo: 3, source: "live" } }));
   await page.route("**/api/trades**", (r) => r.fulfill({ json: { trades: [], live: false } }));
+  // The row's stored holders is 0 (TOKEN above) — the value that printed
+  // "HOLDERS 0" on every listing. What the page shows must be what this says.
+  await page.route("**/api/holders**", (r) =>
+    r.fulfill({ json: holdersReply() }));
   // ⚠️ THE EMBED IS A THIRD-PARTY IFRAME, and this script's contract is that
   // it runs on a box with no egress and does not depend on what dexscreener.com
   // did this afternoon. Stubbed, so what is measured is OUR panel — is the
@@ -167,6 +171,11 @@ const stub = async (page, mode) => {
   });
 };
 
+/** What /api/holders answers — swapped between loads to see both states. */
+let holdersReply = () => ({ count: 1570, source: "blockscout", why: null });
+const holdersCell = (page) =>
+  page.evaluate(() => [...document.querySelectorAll(".ds")].find((d) => d.querySelector(".k")?.textContent === "Holders")?.querySelector(".v")?.textContent ?? "");
+
 let browser;
 let failed = false;
 try {
@@ -189,6 +198,19 @@ try {
   check("candles are drawn", drawn > 20, `${drawn} candles`);
   check("volume bars match the candles", (await page.locator(".ck-vol").count()) === drawn);
   check("the window change is labelled with the span it covers", /over \d+[hdmo]/.test(await page.locator(".ck-chg").innerText()));
+
+  // ── holders: a measured count, or "—" — never the row's unmeasured 0 ─────
+  await page.waitForFunction(() => [...document.querySelectorAll(".ds .v")].some((v) => v.textContent === "1,570"), null, { timeout: 8000 }).catch(() => {});
+  check("Holders shows the MEASURED count, grouped", (await holdersCell(page)) === "1,570", await holdersCell(page));
+  await section("holders with no source", async () => {
+    holdersReply = () => ({ count: null, source: null, why: "blockscout 503; geckoterminal: over budget" });
+    await page.reload({ waitUntil: "networkidle" });
+    await page.waitForSelector(".ck-svg", { timeout: 20000 });
+    check("…and '—' when nobody could count — never the stored 0", (await holdersCell(page)) === "—", await holdersCell(page));
+    holdersReply = () => ({ count: 1570, source: "blockscout", why: null });
+    await page.reload({ waitUntil: "networkidle" });
+    await page.waitForSelector(".ck-svg", { timeout: 20000 });
+  });
   await page.screenshot({ path: `${SHOT_DIR}/token-page.png` });
   await page.locator(".tp-chart-wrap").screenshot({ path: `${SHOT_DIR}/chart.png` });
 
@@ -372,21 +394,42 @@ try {
   const nCandles = () => page.locator(".ck-c").count();
   const before0 = await nCandles();
 
-  // Wheel = zoom the time axis, anchored at the pointer. Zoomed in hard on
-  // purpose: with the whole fetched history already on screen there is nowhere
-  // to travel TO, and a pan check would pass or fail on the clamp instead of on
-  // the pan. (The first cut compared a stamp taken BEFORE this zoom, and the
-  // window had been clamped back to the same first candle — it reported the
-  // drag as broken when the drag was fine.)
+  // ⚠️ A PLAIN WHEEL IS THE PAGE'S. "holder dan chart still broken": the wheel
+  // used to zoom unconditionally with preventDefault, so a reader scrolling
+  // down the token page stopped dead at the chart and zoomed it instead — this
+  // very check used to ASSERT that ("…and the page did not scroll away
+  // underneath it"), i.e. it pinned the scroll trap as a feature.
   await page.mouse.move(plot.x + plot.width * 0.5, plot.y + plot.height * 0.5);
+  const y0 = await page.evaluate(() => window.scrollY);
+  for (let i = 0; i < 3; i++) {
+    await page.mouse.wheel(0, 200);
+    await page.waitForTimeout(120);
+  }
+  const y1 = await page.evaluate(() => window.scrollY);
+  check("a plain wheel over the chart scrolls the PAGE", y1 > y0, `scrollY ${y0} → ${y1}`);
+  check("…leaves the chart's window alone", (await nCandles()) === before0 && (await page.locator(".ck-auto").count()) === 0);
+  check("…and says how to zoom", (await page.locator(".ck-hint").count()) === 1, "Ctrl/⌘ + scroll hint");
+  await page.evaluate((y) => window.scrollTo(0, y), y0);
+  await page.waitForTimeout(250);
+
+  // Ctrl + wheel = zoom the time axis, anchored at the pointer (a trackpad
+  // pinch arrives the same way). Zoomed in hard on purpose: with the whole
+  // fetched history already on screen there is nowhere to travel TO, and a pan
+  // check would pass or fail on the clamp instead of on the pan. (The first cut
+  // compared a stamp taken BEFORE this zoom, and the window had been clamped
+  // back to the same first candle — it reported the drag as broken when the
+  // drag was fine.)
+  await page.mouse.move(plot.x + plot.width * 0.5, plot.y + plot.height * 0.5);
+  await page.keyboard.down("Control");
   for (let i = 0; i < 4; i++) {
     await page.mouse.wheel(0, -300);
     await page.waitForTimeout(120);
   }
+  await page.keyboard.up("Control");
   await page.waitForTimeout(300);
   const zoomed = await nCandles();
-  check("the wheel zooms the time axis", zoomed > 0 && zoomed < before0 * 0.75, `${before0} → ${zoomed} candles`);
-  check("…and the page did not scroll away underneath it", (await page.evaluate(() => window.scrollY)) === 0);
+  check("Ctrl + wheel zooms the time axis", zoomed > 0 && zoomed < before0 * 0.75, `${before0} → ${zoomed} candles`);
+  check("…and the page did not scroll while zooming", (await page.evaluate(() => window.scrollY)) === y0);
 
   // Drag sideways = travel. Right = back in time.
   const t0 = await firstStamp();

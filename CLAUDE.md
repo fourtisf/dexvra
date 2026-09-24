@@ -10523,6 +10523,114 @@ TBA stays as posted — this changes what the next post publishes. The worst cas
 is now a post up to ~30s later than before (three attempts), and only for a
 token whose figures were missing.
 
+## "holder dan chart still broken" — a zero nobody measured, and a chart that ate the page's scroll
+
+Reported with the $SFX token page straight after the TBA fix deployed green:
+`HOLDERS 0` beside DexScreener's own Holders tab counting **1,570**, and a chart
+showing "⤢ Auto" on a panel the reader said they had never touched.
+
+### The chart was a SCROLL TRAP
+
+**Measured in a real browser before a line changed:** five wheel notches with the
+pointer over the plot left `scrollY` at **0** and turned "⤢ Auto" on. The wheel
+listener zoomed the time axis and called `preventDefault` on **every** event, so a
+reader scrolling down the token page toward the trades, the score and the holders
+hit a 620px panel and stopped. Every further notch zoomed the chart instead of
+moving the page. That is the screenshot exactly: page stuck at the chart,
+`⤢ Auto` lit, candles squeezed.
+
+⚠️ **`chart:preview` PINNED THE TRAP AS A FEATURE.** Its wheel check asserted
+*"…and the page did not scroll away underneath it"*, so the one guard that looked
+at the gesture enforced the defect.
+
+- **`wheelIntent()` in `lib/chartScale.ts` is the one owner**, and it is pure, so
+  it is tested by being called. TradingView and DexScreener capture the wheel
+  because the chart IS their page. Here the chart is one panel on a page people
+  scroll, so the grammar is the one every embedded map uses:
+  - **Ctrl / ⌘ + wheel** zooms. A trackpad **pinch** arrives as a wheel event with
+    `ctrlKey` set, so pinch-to-zoom works with no code of its own.
+  - **A sideways wheel** (a trackpad swipe, or Shift + wheel in any engine)
+    travels through time. The page has no horizontal scroll to lose, and taking it
+    also stops the browser's swipe-to-go-back firing over the chart.
+  - **Anything else is the PAGE's**, and is never `preventDefault`-ed.
+- **The chart SAYS how to zoom** (`Ctrl + scroll to zoom · drag to move`), briefly,
+  while the reader scrolls past. A gesture that silently stopped doing something
+  reads as a feature that was removed.
+- `chart:preview` now asserts the page scrolls, the chart's window is untouched,
+  the hint appears, and Ctrl + wheel still zooms without moving the page: 55/55.
+
+⚠️ **What this does NOT explain is the 09:37 screenshot, where the panel was
+completely empty.** Every state the component renders prints something
+(`Loading candles…`, an apology, the embed or the chart), and nothing here
+reproduces a panel with none of them. The likeliest reading is a long
+`Loading candles…`: `/api/ohlcv` walks GeckoTerminal and then DexScreener, and on a
+rate-limited minute that takes a while. `GECKOTERMINAL_API_KEY` is still the lever
+that shortens it. Recorded so it is not mistaken for something this change fixed.
+
+### HOLDERS 0 was never a reading
+
+`holders` is a field on the listing ROW. It defaults to 0, and **no market provider
+has ever filled it**. So every listed token on the site printed a confident
+`HOLDERS 0`, and the Dexvra Score's holder-base term (15%) treated that as a token
+nobody owns. That second effect is worse than the display: the score is a public
+number, and a fabricated 0 was pulling it down on every listing.
+
+- **A stored 0 is UNKNOWN** (`rowToBoardToken` → `null`). The page prints "—" and the
+  score takes its neutral 0.5. A count the row really carries (admin-typed, the demo
+  seed) is kept.
+- **`/api/holders` asks for a real count, only when a token page opens**, never in the
+  board cycle: about 200 listings times one explorer request a minute is a budget
+  nobody has, spent on a count nobody is looking at. The sources, in order:
+  1. **The chain's Blockscout** (`CHAINS[chain].blockscout`). It is keyless and
+     spends its own budget. Robinhood Chain's explorer is Blockscout, the same host
+     the site already links every Robinhood token to. Ethereum and Base are set too.
+     `BLOCKSCOUT_<CHAIN>` overrides the host, `=0` turns it off, blank means absent,
+     and a placeholder is REFUSED (this file's first rule).
+  2. **GeckoTerminal's token info** `holders.count`, ⚠️ **for a free slot only**
+     (`waitMs: 0`). GT is the scarce per-IP budget every chart on the site shares,
+     and a holder count is not worth one candle.
+- ⚠️ **"We could not ask" is never rendered as a number.** A miss THROWS out of the
+  cached loader, so it is never written where the count lives. That means a count
+  measured an hour ago keeps being served through an explorer outage
+  (stale-while-revalidate) instead of being replaced by "—". The miss is remembered
+  for 90s under its own key, with every source's reason, so "—" can be diagnosed.
+- **Grouped, not abbreviated**: `1,570`, never `1.6K`. How many wallets hold a token
+  is the number the reader came for, and the trades panel already follows this rule
+  for counts.
+
+```bash
+npm test                                   # holders (7) · holderCell (6) · chartScale · chartRoute
+npm run build && npm start &
+npm run chart:preview                      # 55 checks — the wheel, and Holders both ways
+curl -s "http://127.0.0.1:3005/api/holders?chain=robinhood&address=0x0a574aae41da077713ba32aa05ca151c8759e2f6"
+```
+
+Seventeen guarantees are MUTATION-TESTED rather than argued:
+- the page's wheel taken again
+- Ctrl ignored
+- a plain wheel zooming
+- sideways ignored
+- the pan direction inverted
+- GT queued for a slot
+- GT asked after Blockscout answered
+- a miss rendered as 0
+- the new `holders_count` spelling unread
+- a blank read as 0
+- an `http://` or placeholder override accepted
+- `=0` not switching it off
+- a stored 0 rendered
+- a count abbreviated
+- the row outranking the measurement
+- the raw stored field reaching the board
+- a miss cached where the count lives
+
+Each fails between one and two tests.
+
+**Config a fix depends on:** nothing. ⚠️ Whether `robinhoodchain.blockscout.com`
+answers FROM THE BOX is a property of its egress today. This sandbox reaches no
+host at all. The `curl` above is the measurement: `"source":"blockscout"` means
+it answered, and `"count":null` comes with every source's reason.
+
 ## "perbaiki tampilan chartnya di mobile" — two rows of timeframe buttons, one of them dead
 
 The same screenshot, one panel down: our chart header — `$HACHIKO`, `LIN LOG`,

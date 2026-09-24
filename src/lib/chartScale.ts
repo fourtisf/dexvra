@@ -320,4 +320,48 @@ export function zoomTimeAt(tv: TimeView, factor: number, frac: number, total: nu
   return timeWindow(total, fit, { count, endOffset: total - (start + count) }).view;
 }
 
+/**
+ * What a wheel event over the plot is FOR: zoom the chart, travel through
+ * time, or scroll the PAGE.
+ *
+ * ⚠️ "HOLDER DAN CHART STILL BROKEN" — AND THE CHART WAS A SCROLL TRAP. The
+ * wheel used to zoom the time axis unconditionally, with `preventDefault`, so a
+ * reader scrolling DOWN the token page — towards the trades, the score, the
+ * holders — reached a 620px panel and stopped: every further notch of the
+ * wheel zoomed the chart instead of moving the page, and "⤢ Auto" appeared on a
+ * chart they had never touched. Measured in a real browser, not reasoned about:
+ * five notches over the plot left `scrollY` at 0. That is exactly the reported
+ * screenshot — page stuck at the chart, `⤢ Auto` lit, candles squeezed.
+ *
+ * TradingView and DexScreener capture the wheel because the chart IS their
+ * page. Here it is one panel on a page people scroll, so the grammar is the
+ * one every embedded map uses:
+ *   - Ctrl / ⌘ + wheel → zoom. A trackpad PINCH arrives as a wheel event with
+ *     `ctrlKey` set, so pinch-to-zoom works with no code of its own.
+ *   - a SIDEWAYS wheel (a trackpad swipe, or Shift + wheel) → travel through
+ *     time. The page has no horizontal scroll to lose, and taking it also stops
+ *     the browser's swipe-to-go-back firing over the chart.
+ *   - anything else → the PAGE. Not ours, never `preventDefault`ed.
+ */
+export type WheelIntent = "zoom" | "pan" | "page";
+export function wheelIntent(e: { deltaX: number; deltaY: number; ctrlKey?: boolean; metaKey?: boolean; shiftKey?: boolean }): WheelIntent {
+  if (e.ctrlKey || e.metaKey) return "zoom";
+  const dx = Math.abs(e.deltaX || 0);
+  const dy = Math.abs(e.deltaY || 0);
+  if (dx > dy) return "pan";
+  // Shift + wheel is sideways scrolling by convention. Chromium on Windows
+  // already rewrites it to deltaX (caught above); other engines leave it on
+  // deltaY with shiftKey set, and those must mean the same thing.
+  if (e.shiftKey && dy > 0) return "pan";
+  return "page";
+}
+
+/** The sideways travel a wheel event asks for, in the DRAG's sign convention
+ *  (`panTimeByDrag`: positive = further into history). Scrolling RIGHT moves
+ *  towards the newest candle, which is dragging the chart LEFT. */
+export function wheelPanPx(e: { deltaX: number; deltaY: number }): number {
+  const d = Math.abs(e.deltaX || 0) >= Math.abs(e.deltaY || 0) ? e.deltaX || 0 : e.deltaY || 0;
+  return -d;
+}
+
 export const _MIN_VISIBLE = MIN_VISIBLE;

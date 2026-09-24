@@ -1,7 +1,7 @@
 "use client";
 
 import { useParams, useRouter } from "next/navigation";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useApp } from "@/components/AppState";
 import { CandleChart } from "@/components/CandleChart";
 import { Coin } from "@/components/Coin";
@@ -13,6 +13,7 @@ import { TierTag, TrendingBadge } from "@/components/TierTag";
 import { CHAINS } from "@/config/chains";
 import { fmtAge, fmtCap, fmtNum, fmtPrice } from "@/lib/format";
 import { scoreTier } from "@/lib/score";
+import { holdersCell } from "@/lib/holderCell";
 
 export default function TokenPage() {
   const params = useParams<{ chain: string; address: string }>();
@@ -28,6 +29,12 @@ export default function TokenPage() {
       ),
     [data, chain, address],
   );
+
+  // ⚠️ HOLDERS ARE ASKED FOR, NEVER ASSUMED. The row's `holders` is a stored
+  // default nobody measured — "HOLDERS 0" on $SFX, 1,570 on DexScreener — so a
+  // real count comes from /api/holders (the chain's explorer, else GT's token
+  // info), and until one arrives the cell says "—", never a number.
+  const holders = useHolderCount(chain, address);
 
   if (!data) {
     return (
@@ -58,7 +65,7 @@ export default function TokenPage() {
     ["MCAP", fmtCap(t.mcap)],
     ["Liquidity", fmtCap(t.liq)],
     ["Vol · 24h", fmtCap(t.vol["24h"])],
-    ["Holders", fmtNum(t.holders)],
+    ["Holders", holdersCell(holders, t.holders)],
     ["Tax", t.taxPct != null ? `${t.taxPct}%` : "—"],
     ["Txns · 24h", fmtNum(t.txns["24h"].buys + t.txns["24h"].sells)],
   ];
@@ -154,4 +161,27 @@ export default function TokenPage() {
       <TokenTrades t={t} />
     </section>
   );
+}
+
+interface HolderFeed {
+  count: number | null;
+  source: "blockscout" | "geckoterminal" | null;
+  why: string | null;
+}
+
+/** One request per token page, never polled: a holder count moves over hours
+ *  and the route caches it for fifteen minutes anyway. */
+function useHolderCount(chain: string, address: string): HolderFeed | null {
+  const [feed, setFeed] = useState<HolderFeed | null>(null);
+  useEffect(() => {
+    if (!chain || !address) return;
+    const ac = new AbortController();
+    setFeed(null);
+    fetch(`/api/holders?${new URLSearchParams({ chain, address })}`, { signal: ac.signal })
+      .then((r) => r.json())
+      .then((j: HolderFeed) => setFeed(j))
+      .catch(() => {});
+    return () => ac.abort();
+  }, [chain, address]);
+  return feed;
 }

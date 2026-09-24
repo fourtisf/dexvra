@@ -136,7 +136,13 @@ export function rowToBoardToken(r: ListingRow): BoardToken {
   });
   const chg = perPeriod(r.chg24h);
   const vol = perPeriod(r.vol24h);
-  const score = dexvraScore({ chg, liq: r.liq, taxPct: r.tax, txns, holders: r.holders });
+  // ⚠️ A STORED 0 IS "NOBODY COUNTED", NOT "NOBODY HOLDS IT". The row defaults
+  // `holders` to 0 and no market provider fills it, so every listing rendered
+  // "HOLDERS 0" — $SFX with 1,570 holders on DexScreener among them — and the
+  // score's holder-base term (15%) read that as a token nobody owns. Unknown
+  // is null: the page prints "—", the score takes its neutral 0.5.
+  const holders = r.holders > 0 ? r.holders : null;
+  const score = dexvraScore({ chg, liq: r.liq, taxPct: r.tax, txns, holders });
   return {
     key: `${r.chain}:${r.address}`,
     chain: r.chain,
@@ -152,7 +158,7 @@ export function rowToBoardToken(r: ListingRow): BoardToken {
     chg,
     vol,
     txns,
-    holders: r.holders,
+    holders,
     taxPct: r.tax,
     ageMinutes: null,
     trend: syntheticTrend(r.sym, r.chg24h),

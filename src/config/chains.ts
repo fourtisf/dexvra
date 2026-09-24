@@ -36,6 +36,13 @@ export interface ChainConfig {
    * and by the scanner — never as a priority over an indexed pool.
    */
   launchpad?: "pons-v2";
+  /**
+   * The chain's BLOCKSCOUT explorer host, when it has one — the keyless source
+   * of a token's holder count (lib/providers/holders.ts). Optional: absent
+   * means "no explorer we read", and the count falls through to GeckoTerminal
+   * or renders "—". `BLOCKSCOUT_<CHAIN>` in the root .env overrides it.
+   */
+  blockscout?: string;
   /** Address explorer URL for a token address */
   explorer: (address: string) => string;
   /** Buy deeplink — we never swap on-site, only deep-link out */
@@ -79,6 +86,7 @@ export const CHAINS: Record<string, ChainConfig> = {
     dexscreener: "ethereum",
     coingecko: "ethereum",
     goPlusChainId: "1",
+    blockscout: "https://eth.blockscout.com",
     explorer: (a) => `https://etherscan.io/token/${a}`,
     buyUrl: (a) => `https://app.uniswap.org/swap?chain=mainnet&outputCurrency=${a}`,
     addressPattern: /^0x[a-fA-F0-9]{40}$/,
@@ -91,6 +99,7 @@ export const CHAINS: Record<string, ChainConfig> = {
     dexscreener: "base",
     coingecko: "base",
     goPlusChainId: "8453",
+    blockscout: "https://base.blockscout.com",
     explorer: (a) => `https://basescan.org/token/${a}`,
     buyUrl: (a) => `https://app.uniswap.org/swap?chain=base&outputCurrency=${a}`,
     addressPattern: /^0x[a-fA-F0-9]{40}$/,
@@ -112,6 +121,7 @@ export const CHAINS: Record<string, ChainConfig> = {
     // bonding curves are readable on chain, which is the one source that cannot
     // go stale or move. Bottom of the priority list — see fetchChainMarket.
     launchpad: "pons-v2",
+    blockscout: "https://robinhoodchain.blockscout.com",
     explorer: (a) => `https://robinhoodchain.blockscout.com/token/${a}`,
     buyUrl: (a) => `https://www.geckoterminal.com/robinhood/tokens/${a}`,
     addressPattern: /^0x[a-fA-F0-9]{40}$/,

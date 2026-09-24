@@ -51,6 +51,8 @@ import {
   panTimeByDrag,
   priceScale,
   timeWindow,
+  wheelIntent,
+  wheelPanPx,
   zoomByDrag,
   zoomTimeAt,
   type ScaleAdjust,
@@ -150,6 +152,11 @@ export function CandleChart({
   // …and the horizontal. Same reasoning, other axis: a chart you cannot travel
   // through time in is a picture, not a chart.
   const [timeView, setTimeView] = useState<TimeView>(AUTO_TIME);
+  // A plain wheel over the plot scrolls the PAGE now (see `wheelIntent`), so
+  // the zoom that used to live there needs saying: a gesture that silently
+  // stopped doing something is a feature that reads as removed. Shown while the
+  // reader scrolls past, gone a moment later — never on first paint.
+  const [wheelHint, setWheelHint] = useState(false);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   /** The drag in progress, if any. A ref rather than state: it changes on every
    *  pointer event and nothing renders from it directly. */
@@ -163,7 +170,7 @@ export function CandleChart({
   // The wheel listener is bound ONCE (it has to be, to be non-passive), so it
   // reads the current geometry through refs rather than closing over one
   // render's — a stale `geo` there would zoom against a window that has gone.
-  const geoRef = useRef<{ plotW: number; fit: number; view: Candle[] } | null>(null);
+  const geoRef = useRef<{ plotW: number; fit: number; step: number; view: Candle[] } | null>(null);
   const candlesRef = useRef(0);
 
   // ── data ────────────────────────────────────────────────────────────────
@@ -403,10 +410,24 @@ export function CandleChart({
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
+    let hintTimer: ReturnType<typeof setTimeout> | undefined;
     const onWheel = (e: WheelEvent) => {
       const g = geoRef.current;
       if (!g || g.view.length === 0) return; // nothing drawn — leave the page alone
+      const intent = wheelIntent(e);
+      // ⚠️ THE PAGE'S WHEEL IS THE PAGE'S. No preventDefault on this path —
+      // taking it is what made the chart a scroll trap.
+      if (intent === "page") {
+        setWheelHint(true);
+        if (hintTimer) clearTimeout(hintTimer);
+        hintTimer = setTimeout(() => setWheelHint(false), 1400);
+        return;
+      }
       e.preventDefault();
+      if (intent === "pan") {
+        setTimeView((t) => panTimeByDrag(t, wheelPanPx(e), g.step, candlesRef.current, g.fit));
+        return;
+      }
       const r = el.getBoundingClientRect();
       const frac = (e.clientX - r.left - PAD_L) / Math.max(1, g.plotW);
       // Up/away = zoom IN (fewer candles, wider bodies), the direction every
@@ -416,7 +437,10 @@ export function CandleChart({
       setTimeView((t) => zoomTimeAt(t, factor, frac, candlesRef.current, g.fit));
     };
     el.addEventListener("wheel", onWheel, { passive: false });
-    return () => el.removeEventListener("wheel", onWheel);
+    return () => {
+      el.removeEventListener("wheel", onWheel);
+      if (hintTimer) clearTimeout(hintTimer);
+    };
   }, []);
 
   // The route names the link now, because only it knows which source answered.
@@ -565,6 +589,12 @@ export function CandleChart({
         )}
 
         {tooSmall && <div className="ck-msg">Not enough room here to draw the chart.</div>}
+
+        {wheelHint && status === "ok" && geo && (
+          <div className="ck-hint" aria-hidden="true">
+            {typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl"} + scroll to zoom · drag to move
+          </div>
+        )}
 
         {/* ⚠️ AN APOLOGY IS WORSE THAN SOMEBODY ELSE'S WATERMARK. Where we could
             not READ a chart, DexScreener's own is embedded rather than an empty

@@ -376,6 +376,23 @@ test("⚠️ the wheel listener is NATIVE and non-passive, or it cannot work at 
   assert.match(CHART, /geoRef\.current = geo;/);
 });
 
+test("⚠️ the wheel TAKES only what it zooms or pans — a page scroll is never preventDefault-ed", () => {
+  // "holder dan chart still broken": the handler called preventDefault on
+  // EVERY wheel event, so a reader scrolling down the token page stopped at the
+  // chart and zoomed it instead. The intent is decided first, and the page's
+  // path returns before anything is taken.
+  const src = code(CHART);
+  const body = src.slice(src.indexOf("const onWheel = (e: WheelEvent) =>"), src.indexOf('addEventListener("wheel"'));
+  const page = body.indexOf('if (intent === "page")');
+  const take = body.indexOf("e.preventDefault()");
+  assert.ok(body.indexOf("wheelIntent(e)") > 0, "the intent comes from the one owner");
+  assert.ok(page > 0 && take > page, "the page's path is checked BEFORE anything is taken");
+  const pageBlock = body.slice(page, take);
+  assert.match(pageBlock, /return;/, "…and it returns");
+  assert.ok(!/preventDefault/.test(pageBlock), "…without taking the scroll");
+  assert.match(body, /panTimeByDrag\(t, wheelPanPx\(e\), g\.step, candlesRef\.current, g\.fit\)/, "a sideways wheel travels");
+});
+
 test("⚠️ the live dot does not claim 'live' over candles from two days ago", () => {
   // Scrolled back into history the chart is still refreshing, but what the
   // reader is looking at is not the present — the pulsing dot would be the

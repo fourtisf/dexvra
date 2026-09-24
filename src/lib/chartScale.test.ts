@@ -276,3 +276,32 @@ test("no candles at all is drawable, not a crash", () => {
   assert.equal(w.count, 0);
   assert.equal(w.atLiveEdge, true);
 });
+
+// ── the wheel belongs to the PAGE unless the reader asks for the chart ──────
+import { wheelIntent, wheelPanPx } from "./chartScale.ts";
+
+test("⚠️ a plain vertical wheel scrolls the PAGE — the chart was a scroll trap", () => {
+  // "holder dan chart still broken": five notches over the plot left scrollY at
+  // 0 and lit ⤢ Auto on a chart nobody had touched.
+  assert.equal(wheelIntent({ deltaX: 0, deltaY: 100 }), "page");
+  assert.equal(wheelIntent({ deltaX: 0, deltaY: -100 }), "page");
+  assert.equal(wheelIntent({ deltaX: 2, deltaY: 40 }), "page", "a slightly diagonal trackpad scroll is still a scroll");
+});
+
+test("Ctrl / ⌘ + wheel zooms — and a trackpad PINCH arrives exactly that way", () => {
+  assert.equal(wheelIntent({ deltaX: 0, deltaY: 100, ctrlKey: true }), "zoom");
+  assert.equal(wheelIntent({ deltaX: 0, deltaY: -3, ctrlKey: true }), "zoom", "pinch: small delta, ctrlKey set by the browser");
+  assert.equal(wheelIntent({ deltaX: 0, deltaY: 100, metaKey: true }), "zoom");
+});
+
+test("a SIDEWAYS wheel travels through time; Shift + wheel is sideways in every engine", () => {
+  assert.equal(wheelIntent({ deltaX: 60, deltaY: 5 }), "pan");
+  assert.equal(wheelIntent({ deltaX: 0, deltaY: 100, shiftKey: true }), "pan");
+  assert.equal(wheelIntent({ deltaX: 0, deltaY: 0, shiftKey: true }), "page", "no movement is nothing to take");
+});
+
+test("scrolling RIGHT moves towards the newest candle (the drag's opposite sign)", () => {
+  assert.equal(wheelPanPx({ deltaX: 50, deltaY: 0 }), -50);
+  assert.equal(wheelPanPx({ deltaX: -50, deltaY: 0 }), 50);
+  assert.equal(wheelPanPx({ deltaX: 0, deltaY: 80 }), -80, "shift+wheel on an engine that leaves it on deltaY");
+});
