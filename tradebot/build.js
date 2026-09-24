@@ -76,4 +76,16 @@ const stamp = () => {
   return `${sha()}${s.tracked ? '+dirty' : ''}${s.untracked ? '+untracked' : ''}`;
 };
 
-module.exports = { sha, dirty, status, stamp };
+/**
+ * The stamp, printed AND written to `.run/build/<pid>.json` — the file is what
+ * `npm run deploy` reads, because a boot line in a log that grows several lines
+ * a second is gone within the hour (shared/buildStamp.js). Returns the stamp so
+ * the boot line can print it.
+ */
+function publish() {
+  const s = stamp();
+  require('../shared/buildStamp').writeStamp(s);
+  return s;
+}
+
+module.exports = { sha, dirty, publish, status, stamp };

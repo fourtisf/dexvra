@@ -191,6 +191,9 @@ declare -A BOOTS_BEFORE=()
 for proc in $BOT_PROCS; do BOOTS_BEFORE[$proc]="$(bootcount "$proc")"; done
 
 RESTARTED=""
+# Before any restart: a stamp FILE written by a restarted process must be newer
+# than this, or it is not this boot's (see stampfile_sha).
+RESTART_MS="$(date +%s%3N 2>/dev/null || echo 0)"
 step "Restarting"
 if [ "$DO_WEB" = "1" ]; then
   echo "· dexvra (web app)"
@@ -253,6 +256,16 @@ STALE=0
 verdict() {                       # verdict <label> <sha> <restarted 0|1> <paths-regex>
   local label="$1" sha="$2" restarted="$3" mine="$4" bare="${2%+dirty}"
   if [ -z "$sha" ]; then
+    # ⚠️ UNTOUCHED AND UNREADABLE IS NOT A VERDICT. `da073b4` ended red with
+    # "dexvra-tradebot no build stamp — did it start?" over a tradebot this
+    # deploy correctly did NOT restart: its boot line had simply scrolled out of
+    # a log the snipe loop fills several lines a second. "We could not read it"
+    # and "it is stale" are different facts — this block's own rule for an
+    # unresolvable sha — so it is SAID, never counted. A process this deploy
+    # RESTARTED and that printed nothing is still red: that one did not start.
+    if [ "$restarted" != "1" ]; then
+      printf '· %-16s \033[33mstamp not readable — not restarted by this deploy, so its commit cannot be read; npm run deploy:all establishes it\033[0m\n' "$label"; return
+    fi
     printf '· %-16s \033[31mno build stamp — did it start?\033[0m\n' "$label"; STALE=1; return
   fi
   case "$sha" in *+dirty)
@@ -319,18 +332,45 @@ else
 fi
 
 # ── the bots ──────────────────────────────────────────────────────────────
-# A restarted process is given time to print a NEW boot line; an untouched one
-# is read as it stands.
+# THE STAMP FILE FIRST. Every process writes `.run/build/<pid>.json` at boot
+# (shared/buildStamp.js), keyed by the pid that wrote it. Asking pm2 for the pid
+# RUNNING NOW and reading that file cannot return an earlier boot's stamp, and —
+# unlike the log line — it cannot scroll away: the tradebot's boot line was gone
+# from `--lines 2000` within hours, and a healthy box ended red.
+#
+# A RESTARTED process's file must also be newer than RESTART_MS, in case pm2
+# still answers the old pid for a moment. The log line stays as the fallback,
+# for a process that has not booted on this code yet.
+STAMP_DIR="$ROOT/.run/build"
+stampfile_sha() {                 # stampfile_sha <proc> <want_new 0|1>
+  local pid f at
+  pid="$(pm2 pid "$1" 2>/dev/null | head -1 | tr -dc '0-9')"
+  [ -n "$pid" ] && [ "$pid" != "0" ] || return 0
+  f="$STAMP_DIR/$pid.json"
+  [ -f "$f" ] || return 0
+  if [ "$2" = "1" ]; then
+    at="$(grep -o '"at" *: *[0-9]*' "$f" | grep -o '[0-9]*$' || true)"
+    [ -n "$at" ] && [ "$at" -ge "$RESTART_MS" ] || return 0
+  fi
+  grep -o '"sha" *: *"[^"]*"' "$f" | sed 's/.*"\([^"]*\)"$/\1/' | head -1
+}
+
+# A restarted process is given time to write a NEW stamp; an untouched one is
+# read as it stands.
 for proc in $BOT_PROCS; do
   want_new=0
   case " $RESTARTED " in *" $proc "*) want_new=1 ;; esac
   line=""
   for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
+    line="$(stampfile_sha "$proc" "$want_new")"
+    [ -n "$line" ] && break
     n="$(bootcount "$proc")"
     if [ "$want_new" = "0" ] || [ "$n" -gt "${BOOTS_BEFORE[$proc]:-0}" ]; then
       line="$(pm2 logs "$proc" --lines 2000 --nostream 2>/dev/null | grep '\[boot\] build' | tail -1 || true)"
       [ -n "$line" ] && break
     fi
+    # An untouched process has nothing new to wait for — one look is the answer.
+    [ "$want_new" = "0" ] && break
     sleep 2
   done
   sha="$(printf '%s' "$line" | grep -o '[0-9a-f]\{7,40\}\(+dirty\)\?' | tail -1 || true)"

@@ -51,6 +51,8 @@ function world(procs = ["dexvra-bot", "dexvra-adminbot", "dexvra-tradebot"]): Wo
   fs.writeFileSync(path.join(dir, "bot", "package-lock.json"), "{}\n");
   fs.writeFileSync(path.join(dir, "tradebot", "package-lock.json"), "{}\n");
   fs.writeFileSync(path.join(dir, "src.txt"), "web\n");
+  // As the real .gitignore does — a stamp file must never make the tree dirty.
+  fs.writeFileSync(path.join(dir, ".gitignore"), ".run/\n");
   sh(dir, `git add -A && git commit -qm base && git remote add origin "${origin}" && git push -q origin main`);
 
   // Each process's log starts with ONE old boot line, exactly as a box that has
@@ -59,16 +61,30 @@ function world(procs = ["dexvra-bot", "dexvra-adminbot", "dexvra-tradebot"]): Wo
   fs.writeFileSync(path.join(stub, "procs"), procs.join("\n") + "\n");
   fs.writeFileSync(path.join(stub, "newsha"), "0000000");
   for (const p of procs) fs.writeFileSync(path.join(stub, `log_${p}`), "[boot] build 0000000\n");
+  procs.forEach((p, i) => fs.writeFileSync(path.join(stub, `pid_${p}`), String(1000 + i * 100)));
   fs.writeFileSync(path.join(stub, "calls"), "");
 
   fs.writeFileSync(path.join(stub, "pm2"), `#!/usr/bin/env bash
 S="${stub}"
 echo "pm2 $*" >> "$S/calls"
-boot() { echo "[boot] build $(cat "$S/newsha")" >> "$S/log_$1"; }
+# A boot prints the log line and — when $S/stampfiles exists, i.e. the process
+# runs code that has shared/buildStamp.js — writes .run/build/<pid>.json the
+# way the real processes do. The pid changes on every restart, as pm2's does.
+boot() {
+  echo "[boot] build $(cat "$S/newsha")" >> "$S/log_$1"
+  if [ -f "$S/stampfiles" ]; then
+    mkdir -p "${dir}/.run/build"
+    printf '{"sha":"%s","pid":%s,"at":%s}\n' "$(cat "$S/newsha")" "$(cat "$S/pid_$1")" "$(date +%s%3N)" > "${dir}/.run/build/$(cat "$S/pid_$1").json"
+  fi
+}
+newpid() { echo $(( $(cat "$S/pid_$1" 2>/dev/null || echo 1000) + 1 )) > "$S/pid_$1"; }
 case "$1" in
   describe) grep -qx "$2" "$S/procs" && exit 0 || exit 1 ;;
   logs)     cat "$S/log_$2" 2>/dev/null; exit 0 ;;
+  pid)      cat "$S/pid_$2" 2>/dev/null || echo 0; exit 0 ;;
   restart)
+    if [ "$2" = "ecosystem.config.js" ]; then newpid dexvra-bot; newpid dexvra-adminbot;
+    elif [ "$2" != "dexvra" ]; then newpid "$2"; fi
     # A real process takes a moment to boot and print. $S/bootdelay models that,
     # which is the only way a test can tell "read the end of the log" from
     # "wait for a line this restart produced".
@@ -262,15 +278,79 @@ test("⚠️ a +dirty stamp is a failure — that checkout is not what main says
   assert.match(verdictLine(r.out, "dexvra-bot"), /uncommitted changes/);
 });
 
-test("⚠️ a process that prints no boot stamp at all is a failure", () => {
+test("⚠️ a process this deploy RESTARTED that prints no boot stamp is a failure", () => {
   // "did it start?" — a process pm2 lists but that never booted answers every
-  // `pm2 describe` perfectly well.
+  // `pm2 describe` perfectly well. The stub's adminbot never boots.
   const w = world();
-  push(w, ["src.txt"]);
+  push(w, ["bot/x.js"]);
+  const pm2 = path.join(w.stub, "pm2");
+  fs.writeFileSync(pm2, fs.readFileSync(pm2, "utf8").replace("boot dexvra-adminbot", "true"));
   fs.writeFileSync(path.join(w.stub, "log_dexvra-adminbot"), "");
   const r = w.run();
   assert.equal(r.code, 1);
   assert.match(verdictLine(r.out, "dexvra-adminbot"), /no build stamp/);
+});
+
+test("⚠️ THE REPORTED STATE: an UNTOUCHED process whose boot line scrolled away is said, not failed", () => {
+  // `da073b4`: a bot+web deploy, the tradebot correctly not restarted, and its
+  // `[boot] build` line long gone from a log the snipe loop fills several lines
+  // a second. The deploy ended red — "did it start?" — over a healthy process.
+  const w = world();
+  push(w, ["bot/x.js", "src.txt"]);
+  fs.writeFileSync(path.join(w.stub, "log_dexvra-tradebot"), "[snipe] tick\n".repeat(50));
+  const r = w.run();
+  assert.equal(r.code, 0, r.out);
+  assert.match(verdictLine(r.out, "dexvra-tradebot"), /stamp not readable — not restarted/);
+});
+
+test("⚠️ the STAMP FILE answers where the log line cannot", () => {
+  // The process that wrote .run/build/<pid>.json is the one pm2 says is running
+  // — so the file is read however much has been logged since.
+  const w = world();
+  const old = sh(w.dir, `git rev-parse --short HEAD`).trim();
+  push(w, ["bot/x.js"]);
+  fs.mkdirSync(path.join(w.dir, ".run", "build"), { recursive: true });
+  const pid = fs.readFileSync(path.join(w.stub, "pid_dexvra-tradebot"), "utf8").trim();
+  fs.writeFileSync(path.join(w.dir, ".run", "build", `${pid}.json`), JSON.stringify({ sha: old, pid: Number(pid), at: 1 }));
+  fs.writeFileSync(path.join(w.stub, "log_dexvra-tradebot"), "[snipe] tick\n".repeat(50));
+  const r = w.run();
+  assert.equal(r.code, 0, r.out);
+  assert.match(verdictLine(r.out, "dexvra-tradebot"), new RegExp(`${old} \\(older, and nothing of its own changed since`));
+});
+
+test("⚠️ a restarted process is read from ITS OWN new stamp file — never the old pid's", () => {
+  const w = world();
+  push(w, ["bot/x.js"]);
+  fs.writeFileSync(path.join(w.stub, "stampfiles"), "");
+  fs.writeFileSync(path.join(w.stub, "bootdelay"), "2");
+  // The OLD process's file, still on disk with a stale sha.
+  fs.mkdirSync(path.join(w.dir, ".run", "build"), { recursive: true });
+  const oldPid = fs.readFileSync(path.join(w.stub, "pid_dexvra-bot"), "utf8").trim();
+  fs.writeFileSync(path.join(w.dir, ".run", "build", `${oldPid}.json`), JSON.stringify({ sha: "deadbee", pid: Number(oldPid), at: 1 }));
+  // …and a log whose boot line never comes, so only the NEW file can pass it.
+  const pm2 = path.join(w.stub, "pm2");
+  fs.writeFileSync(pm2, fs.readFileSync(pm2, "utf8").replace('echo "[boot] build $(cat "$S/newsha")" >> "$S/log_$1"', "true"));
+  const r = w.run();
+  assert.equal(r.code, 0, r.out);
+  assert.match(verdictLine(r.out, "dexvra-bot"), new RegExp(fs.readFileSync(path.join(w.stub, "newsha"), "utf8").trim()));
+});
+
+test("…and a stamp file OLDER than the restart is not this boot's", () => {
+  // pm2 answering the old pid for a moment must not make a stale file pass.
+  const w = world();
+  push(w, ["bot/x.js"]);
+  const pm2 = path.join(w.stub, "pm2");
+  // Restart without a new pid, and without booting — only the stale file exists.
+  fs.writeFileSync(pm2, fs.readFileSync(pm2, "utf8")
+    .replace("newpid dexvra-bot; newpid dexvra-adminbot;", "true;")
+    .replace("boot dexvra-bot; boot dexvra-adminbot", "true"));
+  const head = fs.readFileSync(path.join(w.stub, "newsha"), "utf8").trim();
+  fs.mkdirSync(path.join(w.dir, ".run", "build"), { recursive: true });
+  const pid = fs.readFileSync(path.join(w.stub, "pid_dexvra-bot"), "utf8").trim();
+  fs.writeFileSync(path.join(w.dir, ".run", "build", `${pid}.json`), JSON.stringify({ sha: head, pid: Number(pid), at: 1 }));
+  const r = w.run();
+  assert.equal(r.code, 1, r.out);
+  assert.doesNotMatch(verdictLine(r.out, "dexvra-bot"), new RegExp(`^· dexvra-bot +${head}$`));
 });
 
 test("nothing new to pull restarts nothing, and still verifies", () => {

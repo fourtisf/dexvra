@@ -5753,7 +5753,7 @@ async function start() {
   // Commit FIRST. Every other boot line is only meaningful once you know which
   // code produced it, and "is my fix even running?" has cost more rounds in this
   // repo than any actual bug.
-  console.log(`[boot] build ${require('./build').stamp()}`);
+  console.log(`[boot] build ${require('./build').publish()}`);
   console.log(`[boot] chains enabled: ${core.chains.enabledChains().map((c) => c.key).join(', ')}`);
   // THE TWO SOLANA EXECUTION KNOBS, ON THE BOOT LINE.
   //

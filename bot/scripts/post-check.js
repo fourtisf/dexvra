@@ -106,7 +106,10 @@ async function assemble(row) {
  * the red — the state `chart:preview` sat in for weeks.
  */
 function verdict(a) {
-  const keyHole = a.holes.some((h) => postFigures.KEY_FIGURES.has(h));
+  // The ALERT's rule, not a copy: liquidity counts where the reading names a
+  // pool (postFigures.isKeyHole) — the operator's "every listing carries its
+  // market cap and its liquidity", which a pool makes achievable.
+  const keyHole = a.holes.some((h) => postFigures.isKeyHole(h, a.live));
   if (!keyHole && !a.lostArt && !a.unreadArt) return 'ok';
   // ⚠️ A LOST LOGO IS ALWAYS OURS. The row asserts a picture and we could not
   // turn it into bytes — that is a fact about this box, never about the token,
@@ -126,7 +129,7 @@ function report(row, a) {
   // another printed `$$ORCHFLOWS` on the line whose whole job is naming the
   // token — the `From $1,000,0…` defect, on the check that reports it.
   const head = `${ticker(row.sym || row.symbol)}${row.name ? ` — ${row.name}` : ''}  ${D}${row.chain}/${row.address}${X}`;
-  const keyHole = a.holes.some((h) => postFigures.KEY_FIGURES.has(h));
+  const keyHole = a.holes.some((h) => postFigures.isKeyHole(h, a.live));
   const level = verdict(a);
 
   if (level === 'ok') {
@@ -136,7 +139,10 @@ function report(row, a) {
       : a.art && a.art.source === 'upload'
         ? 'artwork loads (our own upload)'
         : `artwork loads${a.art && a.art.via ? ` via ${a.art.via}` : ''}${a.adopted ? " (the token contract's logo — the row is blank, the post adopts it)" : ''}`;
-    note(`price ${a.live.priceUsd} · mcap ${a.live.mcap} · ${artLine}`);
+    // ⚠️ LIQUIDITY IS PRINTED. The post now publishes it beside the market cap,
+    // and a check that never showed it could not tell the operator whether the
+    // next card would carry a figure or a dash.
+    note(`price ${a.live.priceUsd} · mcap ${a.live.mcap} · liq ${a.live.liq > 0 ? a.live.liq : '—'} · ${artLine}`);
     // A GREEN row whose artwork came from a public gateway is green TODAY. That
     // is the flip: the same url loaded on two deploys and failed on two with no
     // code change. Pinning it makes today's answer permanent.
@@ -145,14 +151,17 @@ function report(row, a) {
     }
     // A missing liquidity is normal on a curve and is never a failure here —
     // launchpads.js returns null deliberately, because a 0 reads as a rug.
-    if (a.holes.length) note(`liquidity would print as — (a bonding curve has no pool depth)`);
+    // (Reached only with NO pool named — a pool's missing depth is a fault above.)
+    if (a.holes.length) note(`liquidity would print as — (no pool yet — a bonding curve has no pool depth)`);
     return true;
   }
 
   const unknown = level === 'honest';
   (unknown ? warn : bad)(head);
   if (keyHole) {
-    note(`would publish: ${a.holes.join(' · ')} as TBA`);
+    // Spelled the way the CARD spells each hole: price and cap print TBA, a
+    // missing liquidity prints — (liqStr).
+    note(`would publish: ${a.holes.map((h) => (h === 'liquidity' ? 'liquidity as —' : `${h} as TBA`)).join(' · ')}`);
     // ⚠️ "NO LAUNCHPAD HAD IT" AND "NO LAUNCHPAD COVERS THIS CHAIN" ARE
     // DIFFERENT FACTS, and this line asserted the first for both. `$JOVI` on
     // Tron read `no indexer and no launchpad returned anything for this token`
@@ -170,7 +179,7 @@ function report(row, a) {
     note(a.why
       ? `the read did not finish: ${a.why}`
       : a.live
-        ? 'an indexer answered and publishes no price/cap for it'
+        ? `an indexer answered and publishes no ${a.holes.filter((h) => postFigures.isKeyHole(h, a.live)).join(' or ')} for it`
         : padded
           ? 'no indexer and no launchpad returned anything for this token'
           : `no indexer had it, and no launchpad covers ${row.chain} — a token still on a bonding curve there has no source at all`);

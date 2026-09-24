@@ -8,7 +8,7 @@ const log = require("./src/helpers/logger");
 // Commit FIRST. "Is my fix even running?" has cost more rounds in this repo
 // than any actual bug — a pull that did not reach the server and a change
 // that did not work look identical from Telegram.
-log.info(`[boot] build ${require("./src/helpers/build").stamp()}`);
+log.info(`[boot] build ${require("./src/helpers/build").publish()}`);
 log.info(envFiles.length ? `[env] loaded ${envFiles.join(", ")}` : "[env] no .env found — using process env only");
 // Which GeckoTerminal tier and budget this process runs on. The free ceiling is
 // counted per IP and the website shares it, so "the charts are empty" and "the

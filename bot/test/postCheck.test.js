@@ -48,6 +48,12 @@ test("a curve with no liquidity is ok — that is not a key figure", () => {
   assert.equal(verdict(A({ holes: ["liquidity"], live: { priceUsd: 1, mcap: 2, liq: null } })), "ok");
 });
 
+test("⚠️ …but a POOL with no liquidity reading is a fault — the card would print — over a depth that exists", () => {
+  // The alert's rule (postFigures.isKeyHole), not a copy: "every listing
+  // carries its market cap and its liquidity", which a pool makes achievable.
+  assert.equal(verdict(A({ holes: ["liquidity"], live: { priceUsd: 1, mcap: 2, liq: null, poolAddress: "0xpool" } })), "fault");
+});
+
 test("⚠️ a token NOBODY indexes is HONEST, not a fault", () => {
   // The post is telling the truth. A check that reddened here would be
   // permanently red on this box — the state `chart:preview` sat in for weeks,

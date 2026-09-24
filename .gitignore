@@ -30,3 +30,7 @@ data.bak-*/
 
 # fonts:check writes a sample render here — a diagnostic, not an asset
 bot/fonts-check.png
+
+# Build stamps each pm2 process writes at boot (shared/buildStamp.js) — read by
+# `npm run deploy`, runtime-only, and must never make the checkout dirty.
+.run/

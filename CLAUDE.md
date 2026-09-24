@@ -160,6 +160,36 @@ is inlined into a bundle whose spelling the minifier owns.
   (history rewritten, a tarball deploy) is reported and never counted — "could
   not establish" and "stale" are different facts.
 
+⚠️ **AND THE STAMP WAS A LOG LINE, SO IT SCROLLED AWAY.** The deploy of
+`da073b4` ended red — `dexvra-tradebot  no build stamp — did it start?` — over a
+tradebot that was online and correctly NOT restarted (no `tradebot/` or
+`shared/` file had changed). The verifier looked for its `[boot] build` line in
+the last 2000 log lines, and the snipe loop writes several lines a second, so
+the line had been gone for hours. "Not written recently" was reported as "did
+it start?" — the `[curve]` and `[jup]` scar, a third time: **a fact that lives
+only in a log line is not retrievable.**
+
+- **Every process also writes `.run/build/<pid>.json` at boot**
+  (`shared/buildStamp.js`, via `publish()` in both `build.js` files).
+  `{sha, pid, at}`, keyed by the PID. The deploy asks `pm2 pid` for the process
+  running NOW and reads that file, so an earlier boot's stamp can never be read
+  as this one, and it cannot scroll away. A RESTARTED process's file must also
+  be newer than the restart. Only under pm2; written then renamed; `.run/` is
+  gitignored because the deploy refuses a dirty tree; stamps of dead pids are
+  pruned. The log line stays as the fallback.
+- **An UNTOUCHED process whose stamp cannot be read is SAID, not failed** — the
+  unresolvable-sha rule above, which the missing-stamp branch had never
+  followed. A process this deploy RESTARTED and that wrote nothing is still red.
+- ⚠️ **The old test pinned the defect**: "a process that prints no boot stamp
+  at all is a failure" drove the UNTOUCHED case. It drives the restarted one now,
+  and the reported state is its own test.
+- Mutation-tested: the untouched case counted again, the stamp file ignored,
+  the restart-time check dropped, and any file read instead of the pid's each
+  fail a test.
+
+The FIRST deploy that carries this restarts all three bots (`shared/` changed),
+so every process writes its file from then on.
+
 ⚠️ **`bash -n` proves syntax and every defect this repo has had in a script was a
 runtime shape**, so `deployScript.test.ts` DRIVES the script against a real temp
 git repo with `npm`, `pm2` and `curl` stubbed — and the pm2 stub delays its boot

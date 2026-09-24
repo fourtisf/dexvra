@@ -66,8 +66,11 @@ const KEY_FIGURES = new Set(["price", "market cap"]);
  * retries on, so the watch and the retry cannot disagree about which hole is a
  * fault.
  */
+function isKeyHole(hole, live) {
+  return KEY_FIGURES.has(hole) || (hole === "liquidity" && !!(live && live.poolAddress));
+}
 function keyMissingOf(live) {
-  return missingFigures(live).filter((f) => KEY_FIGURES.has(f) || (f === "liquidity" && !!(live && live.poolAddress)));
+  return missingFigures(live).filter((f) => isKeyHole(f, live));
 }
 
 /**
@@ -257,4 +260,4 @@ function reportFigures(args) {
   }
 }
 
-module.exports = { missingFigures, keyMissingOf, artworkLost, artworkUnread, artFailure, artRemedy, figureAlert, reportFigures, KEY_FIGURES };
+module.exports = { missingFigures, keyMissingOf, isKeyHole, artworkLost, artworkUnread, artFailure, artRemedy, figureAlert, reportFigures, KEY_FIGURES };
