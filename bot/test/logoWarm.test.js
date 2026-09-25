@@ -138,8 +138,12 @@ test("⚠️ the review card WARMS the artwork, and both paid posts READ the war
   assert.match(review, /if \(!f\.logoFileId && f\.logoUrl\)/, "…only for an external url — an upload needs no warming");
   const ful = read("src/fulfillment.js");
   const listingPost = ful.slice(ful.indexOf("async function fulfillListing"), ful.indexOf("async function fulfillTrending"));
-  assert.match(listingPost, /logoFetch = await fetchLogoUrlWarm\(input\.logoUrl\)/, "the listing post must read the warm copy");
+  // Through readArtwork now (a second pass, a second url — logoRepair.test.js),
+  // and readArtwork's FIRST pass is the warm read. Both halves are pinned.
+  assert.match(listingPost, /logoFetch = await readArtwork\(\[input\.logoUrl/, "the listing post must read the warm copy");
+  const ra = ful.slice(ful.indexOf("async function readArtwork("), ful.indexOf("async function pinLogo("));
+  assert.match(ra, /pass === 0 \? fetchLogoUrlWarm\(url\)/, "readArtwork's first pass is the warm read");
   assert.doesNotMatch(listingPost, /await fetchLogoUrlX\(/, "…and not go around it");
   const trending = ful.slice(ful.indexOf("async function fulfillTrending"), ful.indexOf("async function fulfillBanner"));
-  assert.match(trending, /await fetchLogoUrlWarm\(logoUrl\)/, "the trending sibling too — a fix on one of two siblings is half a fix");
+  assert.match(trending, /await readArtwork\(\[logoUrl/, "the trending sibling too — a fix on one of two siblings is half a fix");
 });

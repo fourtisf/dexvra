@@ -292,7 +292,10 @@ async function sendToChannel(channel, { text, entities, media, mediaType, replyT
       }
     }
     recordPostOk();
-    return { message_id: sent.id, chat: { id: Number(target.id) || target.id }, pinned };
+    // `via` travels so a later EDIT asks the right account first: the Bot API
+    // cannot edit a message the premium user sent unless it holds "edit
+    // messages of others" there (services/logoRepair.js).
+    return { message_id: sent.id, chat: { id: Number(target.id) || target.id }, pinned, via: "gramjs" };
   } catch (e) {
     invalidateOnAuthError(e);
     if (!isPremiumEmojiError(e)) recordPostFailure(channel, e); // emoji refusal has its own field
@@ -381,11 +384,51 @@ async function editChannelMessage(channel, messageId, { text, entities }) {
   }
 }
 
+/** REPLACE the media of a message this account posted, keeping its caption
+ *  and premium-emoji entities. Used by services/logoRepair.js to put the
+ *  token's artwork onto a listing post that went out without it.
+ *
+ *  Built on `_fileToMedia` + messages.EditMessage rather than
+ *  `client.editMessage({file})`, because the latter drops `attributes` — and
+ *  without DocumentAttributeAnimated an animated banner would be swapped in as
+ *  a FILE CARD (see fileAttributes). Returns { message_id } or throws. */
+async function editChannelMedia(channel, messageId, { media, mediaType, text, entities }) {
+  try {
+    const c = await getClient();
+    const t = lib();
+    const target = await resolveTarget(c, channel);
+    const file = await resolveFile(media);
+    if (!file) throw new Error("media not gramjs-compatible");
+    const { _fileToMedia } = require("telegram/client/uploads");
+    const { media: inputMedia } = await _fileToMedia(c, {
+      file,
+      forceDocument: false,
+      attributes: fileAttributes(mediaType, t.Api),
+      workers: 1,
+    });
+    await c.invoke(
+      new t.Api.messages.EditMessage({
+        peer: await c.getInputEntity(target),
+        id: messageId,
+        message: text || "",
+        entities: premium.toGramJs(entities || [], t.Api),
+        media: inputMedia,
+      }),
+    );
+    recordPostOk();
+    return { message_id: messageId };
+  } catch (e) {
+    invalidateOnAuthError(e);
+    throw e;
+  }
+}
+
 module.exports = {
   available,
   getClient,
   sendToChannel,
   editChannelMessage,
+  editChannelMedia,
   deleteChannelMessage,
   pinChannelMessage,
   isPremiumEmojiError,

@@ -739,7 +739,8 @@ test("⚠️ the listing is CREATED after the market read, with the chain's logo
   const trending = src.slice(src.indexOf("async function fulfillTrending("));
   // The fetch reads the review-time WARM copy now (fetchLogoUrlWarm, same facts
   // as the X form) — pinned to the property, either spelling of the fetch.
-  const tFetch = trending.search(/fetchLogoUrl(?:X|Warm)\(logoUrl\)/);
+  // …or through readArtwork, whose first pass reads the warm copy (logoRepair).
+  const tFetch = trending.search(/(?:fetchLogoUrl(?:X|Warm)\(|readArtwork\(\[)logoUrl/);
   assert.ok(trending.indexOf("adoptChainLogo(chainLogo, live)") > 0 && tFetch > 0 && trending.indexOf("adoptChainLogo(chainLogo, live)") < tFetch, "the trending sibling must adopt the chain's logo before fetching");
 });
 

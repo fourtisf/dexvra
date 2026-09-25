@@ -182,13 +182,14 @@ test("BOTH fulfilment siblings pin, before the url is read by the watch and the 
   // and is not a call site; the two that assign `logoFetch` are.
   // (Either spelling: the posts read `fetchLogoUrlWarm`, which answers from the
   // review card's warm copy with the SAME facts, or falls through to the X form.)
-  const xs = src.match(/= await fetchLogoUrl(?:X|Warm)\(/g) || [];
+  // …or readArtwork, which returns the same facts plus which url loaded.
+  const xs = src.match(/= await (?:fetchLogoUrl(?:X|Warm)|readArtwork)\(/g) || [];
   assert.strictEqual(xs.length, 2, "both read through the X form so the watch gets the facts");
   // Ordering: the listing's pin sits above its reportFigures call.
-  const pinAt = src.indexOf("input.logoUrl = await pinLogo(");
+  const pinAt = src.indexOf("await pinLogo(input,");
   const watchAt = src.indexOf('kind: "listing", chain: input.chain');
   assert.ok(pinAt > 0 && watchAt > pinAt, "the listing pins BEFORE the watch reads the url");
-  const tPin = src.indexOf("row.logoUrl = await pinLogo(");
+  const tPin = src.indexOf("await pinLogo(row,");
   const tWatch = src.indexOf('kind: "trending", chain: p.chain');
   assert.ok(tPin > 0 && tWatch > tPin, "…and so does the trending slot");
 });

@@ -54,6 +54,7 @@ function attachServices(bot, services) {
   if (RANKUP_ENABLED) add("rankUpChecker", () => require("./rankUpChecker").start(tg));
   if (UPSELL_ENABLED) add("trendingUpsell", () => require("./trendingUpsell").start(tg));
   add("sweepRetry", () => require("./sweepRetry").start()); // recovers funds a failed sweep left in temp wallets
+  add("logoRepair", () => require("./logoRepair").start()); // edits a listing post that went out without its logo, once the logo loads
   add("forcePostRunner", () => require("./forcePostRunner").start()); // publishes adminbot's force-post requests
   add("gainersPoster", () => require("./gainersPoster").start()); // publishes adminbot's Top-Gainers banners + the daily one
   add("broadcastSender", () => require("../broadcast/sender").start(tg)); // admin broadcast delivery

@@ -225,6 +225,62 @@ async function sendMedia(channel, media, payload, { replyTo, pin } = {}) {
   }
 }
 
+/**
+ * REPLACE the media of a post that is already out, keeping its caption.
+ *
+ * The one caller is services/logoRepair.js: a listing that went out drawing
+ * the Dexvra mark because the token's artwork had not loaded yet gets that
+ * artwork the moment it does, IN PLACE — a second post would be a duplicate
+ * announcement, and deleting the first would break every link to it (the
+ * buyer's receipt, the tweet's "Announce On X" reply, the group mirror).
+ *
+ * The caption is RE-SENT, not kept: Telegram's editMessageMedia replaces the
+ * caption with whatever the new InputMedia carries, so omitting it would wipe
+ * the whole listing card off the post while fixing its picture.
+ *
+ * Two transports, like every send here, and the order follows who POSTED it
+ * (`msg.via`): the account that sent a message can always edit it; the other
+ * can only if it holds "edit messages of others" in that channel. Both are
+ * tried; the reasons travel back. Never throws.
+ */
+async function replaceMedia(channel, msg, media, payload) {
+  if (!tg) throw new Error("channels/post not attached to a bot");
+  const id = msg && msg.message_id;
+  if (!id || !media) return { ok: false, why: "nothing to edit" };
+  const type = media && media.type ? media.type : "photo";
+  const input = media && media.source !== undefined ? { source: media.source } : media;
+  const p = fitCaption(norm(payload));
+  const viaBot = async () => {
+    await tg.editMessageMedia(channel, id, undefined, {
+      type,
+      media: input,
+      caption: p.text,
+      ...(p.html != null ? { parse_mode: "HTML" } : p.entities && p.entities.length ? { caption_entities: p.entities } : {}),
+    });
+    return "bot";
+  };
+  const viaGram = async () => {
+    if (!p.entities || !gramjs.available() || !gramMedia(input)) throw new Error("gramjs unavailable for this media");
+    await gramjs.editChannelMedia(channel, id, { media: input, mediaType: type, text: p.text, entities: p.entities });
+    return "gramjs";
+  };
+  const order = msg.via === "gramjs" ? [viaGram, viaBot] : [viaBot, viaGram];
+  const whys = [];
+  for (const attempt of order) {
+    try {
+      const via = await attempt();
+      log.info(`[channels] media replaced ${channel}/${id} via ${via}`);
+      return { ok: true, via };
+    } catch (e) {
+      // Nothing to change IS the outcome we wanted.
+      if (/not modified/i.test((e && (e.errorMessage || e.message)) || "")) return { ok: true, via: "unchanged" };
+      whys.push(`${attempt === viaBot ? "bot" : "gramjs"}: ${(e && (e.errorMessage || e.message)) || e}`);
+    }
+  }
+  log.warn(`[channels] media replace ${channel}/${id} FAILED — ${whys.join("; ")}`);
+  return { ok: false, why: whys.join("; ") };
+}
+
 // The attached Telegram, for the one caller that needs the instance rather than
 // a send helper: the board refresh runs trendingPoster.runOnce(tg) in this
 // process on behalf of @dexvraadminbot, which has no Telegram of its own that
@@ -239,4 +295,4 @@ async function sendMedia(channel, media, payload, { replyTo, pin } = {}) {
 // REFUSED there (truncating two thirds of a paid broadcast is worse than losing
 // the photo). One owner for the limit, or the two disagree the day Telegram
 // moves it.
-module.exports = { attach, sendText, sendPhoto, sendMedia, fitCaption, CAPTION_LIMIT, ensurePinned, mirrorToGroup, CHANNELS, GROUP_CHAT, isAttached: () => !!tg, telegram: () => tg };
+module.exports = { attach, sendText, sendPhoto, sendMedia, replaceMedia, fitCaption, CAPTION_LIMIT, ensurePinned, mirrorToGroup, CHANNELS, GROUP_CHAT, isAttached: () => !!tg, telegram: () => tg };

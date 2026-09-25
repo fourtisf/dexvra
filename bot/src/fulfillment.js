@@ -15,7 +15,8 @@ const { SITE_URL, DEXVRA_API_BASE, CHANNELS, X_POST_TIMEOUT_MS,
   EMOJI_BUDGET_MS,
   CLIP_BUDGET_MS,
   MARKET_BUDGET_MS, X_TRENDING_ENABLED,
-  POST_MARKET_TRIES, POST_MARKET_PAUSE_MS, POST_SNAPSHOT_MAX_AGE_MS } = require("./config/constants");
+  POST_MARKET_TRIES, POST_MARKET_PAUSE_MS, POST_SNAPSHOT_MAX_AGE_MS,
+  POST_LOGO_TRIES, POST_LOGO_PAUSE_MS, LOGO_REPAIR_ENABLED } = require("./config/constants");
 const figures = require("./marketFigures");
 const { tierAnnounces, tierLabel } = require("./config/packages");
 const { fmtPrice, formatNumber } = require("./helpers/format");
@@ -31,6 +32,7 @@ const { mediaPath } = require("./helpers/mediaUrl");
 const tokenEmoji = require("./tokenEmoji");
 const tpl = require("./templates");
 const postFigures = require("./postFigures");
+const logoRepair = require("./services/logoRepair");
 const ponsChain = require("./ponsChain");
 const log = require("./helpers/logger");
 
@@ -455,6 +457,71 @@ async function fetchLogoUrl(logoUrl) {
 }
 
 /**
+ * THE ARTWORK, ASKED AGAIN — across every url the token is known by, and more
+ * than once.
+ *
+ * "saya ingin setiap listing token harus ada logonya jika punya logo". `$DLYN`
+ * went out drawing the Dexvra mark because ONE fetch of ONE url was the whole
+ * post: a cold CID that did not resolve inside the proxy's budget, with the
+ * chain record's own logo sitting unasked beside it and nothing that would try
+ * again three seconds later, when every gateway it had just asked was already
+ * resolving the CID. The market read learnt this for the figures (`$SFX`,
+ * `readPostMarket`); the artwork is the other half of the same promise.
+ *
+ *   · `candidates` in order of authority — the row's own logo first (the buyer
+ *     uploaded or typed it, or it was adopted into the row), then the chain
+ *     record's. De-duplicated; blanks dropped. The FIRST candidate's failure is
+ *     what is reported, because that is the url the row actually carries.
+ *   · Up to POST_LOGO_TRIES passes, POST_LOGO_PAUSE_MS apart, and ONLY while
+ *     some failure was FLAKY (`postFigures.artFailure`): a directory CID or an
+ *     allowlist refusal answers identically on the second pass, and waiting
+ *     on it would cost every such post the pause for nothing.
+ *   · The first pass reads through the warm copy, so the review card's early
+ *     fetch still pays off.
+ *
+ * Returns fetchLogoUrlX's shape plus `url` (which candidate loaded) and
+ * `passes` (how many were spent). Never throws.
+ */
+const FLAKY_ART = new Set(["no-gateway-had-it", "gateway-refusing", "web-app"]);
+async function readArtwork(candidates, opts = {}) {
+  const urls = [];
+  for (const u of candidates || []) {
+    const v = typeof u === "string" ? u.trim() : "";
+    // A fetchable url only: an `ipfs://` here would be read as a path on our
+    // own site. The chain record already carries the gateway-rewritten form.
+    if (v && (/^https?:\/\//i.test(v) || v.startsWith("/")) && !urls.includes(v)) urls.push(v);
+  }
+  const none = { bytes: null, reached: false, status: 0, why: null, via: null, source: null, url: null, passes: 0 };
+  if (!urls.length) return none;
+  const tries = Number.isFinite(opts.tries) ? Math.max(1, Math.round(opts.tries)) : POST_LOGO_TRIES;
+  const pauseMs = Number.isFinite(opts.pauseMs) ? Math.max(0, opts.pauseMs) : POST_LOGO_PAUSE_MS;
+  const fetchOne = opts.fetch || ((url, pass) => (pass === 0 ? fetchLogoUrlWarm(url) : fetchLogoUrlX(url)));
+  let first = null;
+  for (let pass = 0; pass < tries; pass++) {
+    if (pass > 0 && pauseMs) await new Promise((r) => setTimeout(r, pauseMs));
+    let flaky = false;
+    for (const url of urls) {
+      let r;
+      try {
+        r = await fetchOne(url, pass);
+      } catch (e) {
+        r = { bytes: null, reached: false, status: 0, why: e && e.message ? e.message : String(e) };
+      }
+      if (r && r.bytes) {
+        if (pass > 0 || url !== urls[0]) {
+          log.info(`[fulfil] logo loaded on pass ${pass + 1}${url !== urls[0] ? " from the chain record's url" : ""}: ${url}`);
+        }
+        return { ...r, url, passes: pass + 1 };
+      }
+      if (!first || url === urls[0]) first = { ...(r || {}), url };
+      if (FLAKY_ART.has(postFigures.artFailure(r || {}).cls)) flaky = true;
+    }
+    if (!flaky) return { ...none, ...first, bytes: null, url: null, passes: pass + 1 };
+  }
+  return { ...none, ...first, bytes: null, url: null, passes: tries };
+}
+
+/**
  * PIN THE ARTWORK: upload the bytes a post just verified to /api/media and
  * point the row at our own copy, so no later render asks a gateway for it.
  *
@@ -630,6 +697,14 @@ async function postMedia(kind, bannerCoin, logoBuffer, logoFileId, logoUrl, badg
   return photoSource(logoFileId, logoUrl);
 }
 
+/** One published post, as the repair service needs it to edit the media in
+ *  place: where it is, which account sent it, how to rebuild its banner and
+ *  the caption to re-send. Null for a post that never went out. */
+function repairPost(channel, msg, media, badge, caption) {
+  if (!msg || !msg.message_id) return null;
+  return { channel, message_id: msg.message_id, via: msg.via || null, media, badge: badge || null, caption };
+}
+
 // ── Listing (Xpress + Listing & Trending) ────────────────────────────────────
 async function fulfillListing(ctx, order) {
   // Where the time goes, phase by phase. "The listing is slow" was
@@ -732,15 +807,23 @@ async function fulfillListing(ctx, order) {
   }
 
   // 4. Channel posts (best-effort) — dynamic per-token banners.
+  // The row's own logo first, the chain record's second, each asked more than
+  // once while the failure is one a second ask can fix (`readArtwork`).
   let logoFetch = null;
-  if (!logoBuffer && input.logoUrl) {
-    logoFetch = await fetchLogoUrlWarm(input.logoUrl);
+  let artUrl = input.logoUrl || null; // the url THIS post renders from
+  if (!logoBuffer && (input.logoUrl || (live && live.logoUrl))) {
+    logoFetch = await readArtwork([input.logoUrl, live && live.logoUrl]);
     logoBuffer = logoFetch.bytes;
+    if (logoFetch.url) artUrl = logoFetch.url;
   }
   // PIN IT, before reportFigures/postMedia/photoSource read the url, so THIS
   // post renders from our own copy and Telegram is handed /api/media on the
   // last-resort path. A Telegram-uploaded logo is already ours (p.logoFileId).
-  if (logoBuffer && input.logoUrl && !p.logoFileId) input.logoUrl = await pinLogo(input, input.logoUrl, logoBuffer);
+  // Only the ROW's own url is pinned: the CAS moves a row off the url it
+  // holds, and a logo borrowed from the chain record is not that url.
+  if (logoBuffer && input.logoUrl && !p.logoFileId && artUrl === input.logoUrl) {
+    input.logoUrl = artUrl = await pinLogo(input, input.logoUrl, logoBuffer);
+  }
   // Animated logo custom-emoji (per-token pack, shown inline in channel posts
   // via GramJS). Best-effort — ensureTokenEmoji never throws.
   step("create");
@@ -778,13 +861,16 @@ async function fulfillListing(ctx, order) {
       // sources could not be asked. Absent means they answered and this
       // project published no artwork, which is not a fault and never pages.
       absentWhy: live && live.logoWhy ? String(live.logoWhy) : null,
+      repair: LOGO_REPAIR_ENABLED,
     },
   });
+  // Kept for the repair below: the same facts the watch just judged.
+  const listArt = { wanted: !!(p.logoFileId || input.logoUrl), got: !!logoBuffer, absentWhy: live && live.logoWhy ? String(live.logoWhy) : null };
   const coin = coinFrom(input, live);
   const bannerCoin = bannerCoinOf(input, live);
   const tierBadge = input.tier === "XPRESS" ? "Xpress Listing" : input.tier ? `${tierLabel(input.tier)} Tier` : null;
   step("market");
-  const listMedia = await postMedia("listing", bannerCoin, logoBuffer, p.logoFileId, input.logoUrl, tierBadge);
+  const listMedia = await postMedia("listing", bannerCoin, logoBuffer, p.logoFileId, artUrl, tierBadge);
 
   // 5 → moved BEFORE the channel posts: tweet first, so the channel post can
   // carry the fourtis-style "Announce On X" link (the line auto-drops when X
@@ -823,15 +909,33 @@ async function fulfillListing(ctx, order) {
       : null;
     if (annMsg) links.push({ kind: "announce", label: "🔔 Dexvra Announcement", url: tmeLink(CHANNELS.announce, annMsg.message_id) });
 
+    let trendingMsg = null;
     if (hours > 0) {
-      const trendMedia = await postMedia("trending", bannerCoin, logoBuffer, p.logoFileId, input.logoUrl, `Trending ${hours}H`);
-      const trendingMsg = await post.sendMedia(CHANNELS.trending, trendMedia, fmt.trendingPost(coin));
+      const trendMedia = await postMedia("trending", bannerCoin, logoBuffer, p.logoFileId, artUrl, `Trending ${hours}H`);
+      trendingMsg = await post.sendMedia(CHANNELS.trending, trendMedia, fmt.trendingPost(coin));
       if (trendingMsg) links.push({ kind: "trending", label: "🔔 Dexvra Trending", url: tmeLink(CHANNELS.trending, trendingMsg.message_id) });
     }
     await postids.set(input.chain, input.address, {
       listingMsgId: listingMsg && listingMsg.message_id,
       annMsgId: annMsg && annMsg.message_id,
     });
+    // THE ARTWORK DID NOT LOAD, SO THE POSTS ARE QUEUED FOR REPAIR — edited in
+    // place the moment it does (services/logoRepair.js). Never awaited past
+    // the queue write, and it cannot throw.
+    if (postFigures.artworkLost(listArt) || postFigures.artworkUnread(listArt)) {
+      const listCaption = fmt.listingPost(coin);
+      await logoRepair.enqueue({
+        kind: "listing", chain: input.chain, address: input.address, sym: input.sym, name: input.name,
+        urls: [artUrl, live && live.logoUrl],
+        pinFrom: !p.logoFileId && /^https?:\/\//i.test(input.logoUrl || "") ? input.logoUrl : null,
+        bannerCoin,
+        posts: [
+          repairPost(CHANNELS.listing, listingMsg, "listing", tierBadge, listCaption),
+          repairPost(CHANNELS.announce, annMsg, "listing", tierBadge, listCaption),
+          repairPost(CHANNELS.trending, trendingMsg, "trending", `Trending ${hours}H`, fmt.trendingPost(coin)),
+        ],
+      });
+    }
   } catch (e) {
     log.warn(`[fulfil] listing channel posts: ${e.message}`);
   }
@@ -899,10 +1003,11 @@ async function fulfillTrending(ctx, order) {
   // Pons token's logo, and this post does not wait for it.
   const chainLogo = { logoUrl: row.logoUrl };
   adoptChainLogo(chainLogo, live);
-  const logoUrl = chainLogo.logoUrl || null;
-  const logoFetch = await fetchLogoUrlWarm(logoUrl);
+  let logoUrl = chainLogo.logoUrl || null;
+  const logoFetch = await readArtwork([logoUrl, live && live.logoUrl]);
   const logoBuffer = logoFetch.bytes;
-  if (logoBuffer && row.logoUrl) row.logoUrl = await pinLogo(row, row.logoUrl, logoBuffer);
+  if (logoFetch.url) logoUrl = logoFetch.url;
+  if (logoBuffer && row.logoUrl && logoUrl === row.logoUrl) row.logoUrl = logoUrl = await pinLogo(row, row.logoUrl, logoBuffer);
   postFigures.reportFigures({
     kind: "trending", chain: p.chain, address: p.address, sym: row.sym || row.symbol,
     name: row.name, tier: null, live, why: marketWhy,
@@ -913,8 +1018,10 @@ async function fulfillTrending(ctx, order) {
       wanted: !!logoUrl, got: !!logoBuffer, url: logoUrl, reached: logoFetch.reached,
       status: logoFetch.status, why: logoFetch.why,
       absentWhy: live && live.logoWhy ? String(live.logoWhy) : null,
+      repair: LOGO_REPAIR_ENABLED,
     },
   });
+  const trendArt = { wanted: !!logoUrl, got: !!logoBuffer, absentWhy: live && live.logoWhy ? String(live.logoWhy) : null };
   const coin = coinFrom(row, live);
   const bannerCoin = bannerCoinOf(row, live);
   // Reuses the pack made at listing time; builds one now if it never existed.
@@ -941,9 +1048,24 @@ async function fulfillTrending(ctx, order) {
   try {
     const tMsg = await post.sendMedia(CHANNELS.trending, trendMedia, fmt.trendingPost(coin));
     if (tMsg) links.push({ kind: "trending", label: "🔔 Dexvra Trending", url: tmeLink(CHANNELS.trending, tMsg.message_id) });
+    let aMsg = null;
     if (p.hours >= 24) {
-      const aMsg = await post.sendMedia(CHANNELS.announce, trendMedia, fmt.trendingPost(coin));
+      aMsg = await post.sendMedia(CHANNELS.announce, trendMedia, fmt.trendingPost(coin));
       if (aMsg) links.push({ kind: "announce", label: "🔔 Dexvra Announcement", url: tmeLink(CHANNELS.announce, aMsg.message_id) });
+    }
+    // The same repair on the sibling — a trending slot is a purchase too.
+    if (postFigures.artworkLost(trendArt) || postFigures.artworkUnread(trendArt)) {
+      const trendCaption = fmt.trendingPost(coin);
+      await logoRepair.enqueue({
+        kind: "trending", chain: p.chain, address: p.address, sym: row.sym || row.symbol, name: row.name,
+        urls: [logoUrl, live && live.logoUrl],
+        pinFrom: /^https?:\/\//i.test(row.logoUrl || "") ? row.logoUrl : null,
+        bannerCoin,
+        posts: [
+          repairPost(CHANNELS.trending, tMsg, "trending", `Trending ${p.hours}H`, trendCaption),
+          repairPost(CHANNELS.announce, aMsg, "trending", `Trending ${p.hours}H`, trendCaption),
+        ],
+      });
     }
   } catch (e) {
     log.warn(`[fulfil] trending posts: ${e.message}`);
@@ -1312,6 +1434,7 @@ module.exports = {
   // The review card warms the artwork before payment; the post reads it back.
   warmLogo,
   _fetchLogoUrlWarm: fetchLogoUrlWarm,
+  readArtwork,
   _resetWarm: () => warmed.clear(),
   _pinLogo: pinLogo,
   _PIN_LOGO_MS: PIN_LOGO_MS,

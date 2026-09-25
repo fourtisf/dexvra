@@ -222,6 +222,11 @@ function figureAlert({ kind, chain, address, sym, name, tier, live, why, siteUrl
     unreadArt
       ? `Artwork: the row is blank because the CURVE READ could not answer — ${esc(art.absentWhy)}. This is not the project publishing no logo; the banner drew the Dexvra mark.`
       : "",
+    // ⚠️ SAID, so an operator does not race the bot: services/logoRepair.js
+    // keeps asking and edits the posts in place, and it reports either way.
+    (lostArt || unreadArt) && art.repair
+      ? "Repair: the bot keeps retrying and EDITS the channel post(s) the moment the artwork loads — a 🖼✅ or 🖼❌ line follows here."
+      : "",
     `<code>${esc(address)}</code>`,
     siteUrl ? esc(siteUrl) : "",
     // A count is not a diagnosis. These are the scripts that separate the causes

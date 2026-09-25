@@ -352,6 +352,20 @@ const POST_MARKET_PAUSE_MS = Math.min(15000, Math.max(0, blankOr(env.POST_MARKET
 // order up to a day later, and a day-old market cap is not a claim to publish.
 const POST_SNAPSHOT_MAX_AGE_MS = Math.max(0, blankOr(env.POST_SNAPSHOT_MAX_AGE_MS, 60 * 60_000));
 
+// ⚠️ THE ARTWORK GETS THE SAME SECOND CHANCE. `$DLYN` went out drawing the
+// Dexvra mark over a logo its own pad rendered in the same minute: ONE fetch of
+// a cold IPFS CID was the whole post. A post whose artwork did not load asks
+// again, POST_LOGO_TRIES passes, POST_LOGO_PAUSE_MS apart — and every pass
+// tries every candidate url (the row's own, then the chain record's). Only a
+// FLAKY failure is retried; a directory CID or an allowlist refusal answers the
+// same on the second pass. A logo that loads on the first pass costs nothing.
+const POST_LOGO_TRIES = Math.min(4, Math.max(1, Math.round(blankOr(env.POST_LOGO_TRIES, 2))));
+const POST_LOGO_PAUSE_MS = Math.min(15000, Math.max(0, blankOr(env.POST_LOGO_PAUSE_MS, 3000)));
+// …and past that, the post is REPAIRED rather than left: services/logoRepair.js
+// keeps asking on a widening schedule and edits the published channel posts'
+// media the moment the artwork loads. LOGO_REPAIR=0 switches it off.
+const LOGO_REPAIR_ENABLED = !/^(0|false|off|no)$/i.test(String(env.LOGO_REPAIR == null ? "" : env.LOGO_REPAIR).trim());
+
 // ── Rate limiting (telegraf-ratelimit) ───────────────────────────────────────
 const RATE_WINDOW = int(env.RATE_WINDOW, 3000);
 const RATE_LIMIT = int(env.RATE_LIMIT, 20);
@@ -553,6 +567,9 @@ module.exports = {
   CLIP_BUDGET_MS,
   MARKET_BUDGET_MS,
   POST_MARKET_TRIES,
+  POST_LOGO_TRIES,
+  POST_LOGO_PAUSE_MS,
+  LOGO_REPAIR_ENABLED,
   POST_MARKET_PAUSE_MS,
   POST_SNAPSHOT_MAX_AGE_MS,
   RATE_WINDOW,

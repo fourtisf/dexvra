@@ -10981,6 +10981,99 @@ deploy is the full one (`npm run deploy` decides that from the diff). ⚠️ The
 already-published `$DLYN` post cannot be changed retroactively; the `--pin` line
 above fixes the site row and every later post for that token.
 
+### "bagaimana agar masalah ini tidak terjadi lgi … setiap listing token harus ada logonya jika punya logo"
+
+Every round above (`$GG`, `$ORCHFLOWS`, `$DLYN`) made the FIRST fetch of a
+logo likelier to succeed, and none can make it certain: whether a public IPFS
+gateway holds a fresh CID this minute is a fact about somebody else's cache.
+A paid post happens once, so "likelier" left every remaining miss PERMANENT —
+the channel kept the Dexvra mark and only the operator could notice. The
+promise is now kept on both sides of the post.
+
+**1. Before the post: `fulfillment.readArtwork`.** The artwork gets the
+second chance the figures got (`$SFX`, `readPostMarket`):
+
+- **Every url the token is known by** — the row's own logo, then the chain
+  record's (`live.logoUrl`) — asked in that order, de-duplicated, and only
+  fetchable spellings (an `ipfs://` would be read as a path on our own site).
+- **`POST_LOGO_TRIES` passes (2), `POST_LOGO_PAUSE_MS` apart (3s)**, and ONLY
+  while a failure was FLAKY by `postFigures.artFailure` — a directory CID or an
+  allowlist refusal answers the same on the second pass, so waiting on it would
+  cost every such post the pause for nothing. A logo that loads first time costs
+  nothing; the first pass still reads through the review card's warm copy.
+- **The FIRST candidate's failure is what is reported**, because that is the url
+  the row carries. `url` says which one loaded.
+- ⚠️ **ONLY THE ROW'S OWN URL IS PINNED.** The pin CAS moves a row off the url
+  it holds, and a logo borrowed from the chain record is not that url — the
+  banner renders it, the row is left to the site's resolver.
+
+**2. After the post: `services/logoRepair.js`.** A post whose artwork was wanted
+and did not load (`artworkLost`), or whose row is blank only because the chain
+could not be asked (`artworkUnread`), is queued with the messages it went out
+as. The service keeps asking on a widening schedule (1m · 3m · 10m · 30m · 3h,
+~3h45m end to end) and, the moment the artwork loads:
+
+- **pins the bytes and moves the row** (same CAS as the post — an admin who
+  changed the logo meanwhile wins);
+- **rebuilds the SAME banner** — kind, badge, coin — once per distinct render;
+- **EDITS every channel post's media IN PLACE** (`post.replaceMedia`). Never a
+  second post (a duplicate announcement) and never a delete (it breaks every
+  link the buyer was already given).
+
+Rules, each one a way this could do harm:
+
+- ⚠️ **THE CAPTION IS RE-SENT.** `editMessageMedia` replaces the caption with
+  whatever the new InputMedia carries — omitting it would fix the picture and
+  wipe the listing card off the post. The payload travels with the job.
+- ⚠️ **THE AUTHOR IS ASKED FIRST.** A post the GramJS premium account sent can
+  be edited by that account; the bot can only if it holds "edit messages of
+  others". `sendToChannel` now returns `via: "gramjs"`, the job records it, and
+  `replaceMedia` tries the author first and the other account second, with both
+  reasons when neither can. "message is not modified" is success.
+- ⚠️ **`editChannelMedia` does not use `client.editMessage({file})`**, which
+  drops `attributes`: without `DocumentAttributeAnimated` an animated banner
+  would be swapped in as a FILE CARD. It builds the media with `_fileToMedia`
+  and invokes `messages.EditMessage` itself.
+- **A job is CLAIMED (written out of the file) before any edit**, so a crash
+  mid-repair loses one repair rather than re-editing the same posts on every
+  boot. Persisted in `DATA_DIR/logoRepair.json` because this box is redeployed
+  far more often than the schedule is long.
+- **Bounded**: 50 jobs (the oldest dropped, and said); a second enqueue for the
+  same post kind and token MERGES; the schedule ends.
+- **Both outcomes page**: `🖼✅ Logo repaired — N/M channel post(s)` (a recovery
+  nobody hears about reads like a forgotten outage, and a refused edit is named
+  in it), and `🖼❌ Logo repair gave up` with the last reason and a
+  `logos:check` line carrying the real chain and address. The first alert now
+  says a repair is coming, so nobody races it with a manual fix.
+- **A blank row whose chain could not be asked asks the chain again**; one whose
+  chain now answers with no artwork is DONE — the project's choice, not a fault.
+
+What it CANNOT reach, recorded so it is not mistaken for an oversight: **the X
+post** (a tweet's media cannot be edited), **the community-group mirror** (a
+forward is a frozen copy), and the per-token animated emoji pack (built once at
+fulfilment).
+
+```bash
+cd bot && node scripts/run-tests.js test/logoRepair.test.js   # 23 tests, no network
+pm2 logs dexvra-bot --lines 300 --nostream | grep -F '[logoRepair]'
+```
+
+Nineteen guarantees are MUTATION-TESTED rather than argued: one pass only, the
+chain candidate never asked, a deterministic failure retried, the caption not
+re-sent, the author not asked first, no fallback to the other account, the
+animated type dropped, the job not claimed before the edit, the schedule never
+ending, a borrowed url pinned, no merge, a blank row never asking the chain,
+the schedule not widening, one render per post, either sibling not queueing,
+the author not recorded, the alert not saying a repair is coming, and the post
+back to one fetch of one url. Each fails between one and five tests.
+
+**Config a fix depends on:** nothing — it ships ON. `LOGO_REPAIR=0` turns the
+repair off; `POST_LOGO_TRIES` / `POST_LOGO_PAUSE_MS` tune the pre-post retry.
+⚠️ For an edit to land, the account that POSTED the message (the GramJS premium
+account for a post with premium emoji, else the bot) must still be an admin
+with posting rights in that channel — the same rights it posted with.
+⚠️ `bot/` only, so the deploy is the **ecosystem restart** and no web rebuild.
+
 ## "perbaiki tampilan chartnya di mobile" — two rows of timeframe buttons, one of them dead
 
 The same screenshot, one panel down: our chart header — `$HACHIKO`, `LIN LOG`,
