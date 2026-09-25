@@ -280,7 +280,11 @@ test("an IPFS 404 falls over to the next gateway; a CDN 404 does not", () => {
   assert.match(PROXY, /if \(!cid\) return \[url\];/, "a non-IPFS url gets exactly one attempt");
   assert.match(PROXY, /const out = \[url\];/, "…and the gateway the caller named is tried FIRST");
   assert.match(PROXY, /IPFS_MAX_TRIES/, "bounded");
-  assert.match(PROXY, /Date\.now\(\) > deadline/, "…and time-bounded, or one request holds a socket for every gateway's timeout");
+  // ⚠️ The ladder is HEDGED now (lib/hedge.ts), and the deadline check moved
+  // with it — asserted on both sides, because a route that stopped passing its
+  // deadline would start every rung however late it was.
+  assert.match(read("src/lib/hedge.ts"), /Date\.now\(\) > opts\.deadline/, "…and time-bounded, or one request holds a socket for every gateway's timeout");
+  assert.match(PROXY, /\{ staggerMs: IPFS_HEDGE_MS, deadline, misses: why \}/, "…with the route's own deadline");
 });
 
 test("⚠️ a redirect somewhere we do not allow ends the request, it does not retry", () => {

@@ -381,6 +381,74 @@ async function fetchLogoUrlX(logoUrl) {
   return { ...viaProxy, bytes: null, source: viaProxy.reached ? "proxy" : "direct" };
 }
 
+/**
+ * THE ARTWORK, FETCHED WHILE THE BUYER IS STILL ON THE REVIEW CARD.
+ *
+ * ⚠️ `$DLYN` (DUALYNE, Pons, Robinhood) went out as an Xpress Listing to 12,436
+ * subscribers drawing the Dexvra mark, while ponsfamily.com rendered its logo
+ * in the same minute. The url was known MINUTES before the post — the review
+ * card shows it — and nothing asked for the bytes until the one moment that
+ * could not wait: after payment, with the buyer's receipt queued behind it, on
+ * a fresh IPFS CID that no public gateway had cached yet. Whether that first
+ * cold fetch finished inside the proxy's budget decided the artwork of a paid
+ * post, which is the `$GG` flip one feature over.
+ *
+ * `warmLogo` starts the fetch the moment the form holds an external logo url
+ * and keeps the BYTES; the post asks `fetchLogoUrlWarm`, which answers from
+ * that copy (or joins the fetch still in flight) and only fetches fresh when
+ * there is nothing warm. A warm that FAILED is forgotten rather than cached:
+ * it is not a verdict, and the post's own fetch then lands on gateways that
+ * have already started resolving the CID.
+ *
+ * Bounded — a paste nobody pays for must not grow this without end — and
+ * short-lived, because a logo url is not a permanent fact about its bytes
+ * (only a CID is, and even then the pin is what makes it permanent).
+ */
+const WARM_TTL_MS = 30 * 60_000;
+const WARM_MAX = 16;
+const warmed = new Map(); // url → { at, p, res }
+
+function warmLogo(logoUrl) {
+  const url = typeof logoUrl === "string" ? logoUrl.trim() : "";
+  // Our own upload needs no warming: it is a file on this disk.
+  if (!/^https?:\/\//i.test(url) || mediaPath(url)) return false;
+  const hit = warmed.get(url);
+  if (hit && (hit.res === null || Date.now() - hit.at < WARM_TTL_MS)) return false; // in flight, or warm
+  const entry = { at: Date.now(), p: null, res: null };
+  entry.p = fetchLogoUrlX(url)
+    .then((r) => {
+      if (r && r.bytes) {
+        entry.res = r;
+        log.info(`[fulfil] logo warmed before payment (${r.bytes.length} bytes${r.via ? ` via ${r.via}` : ""}): ${url}`);
+      } else if (warmed.get(url) === entry) {
+        // Not a verdict — the post fetches again. Its reason is logged there.
+        warmed.delete(url);
+      }
+      return r;
+    })
+    .catch(() => {
+      if (warmed.get(url) === entry) warmed.delete(url);
+      return null;
+    });
+  warmed.delete(url);
+  warmed.set(url, entry);
+  // Maps iterate in insertion order, so the first key is the oldest.
+  while (warmed.size > WARM_MAX) warmed.delete(warmed.keys().next().value);
+  return true;
+}
+
+/** fetchLogoUrlX, answered from a warm copy when there is one. */
+async function fetchLogoUrlWarm(logoUrl) {
+  const hit = logoUrl ? warmed.get(logoUrl) : null;
+  if (hit && Date.now() - hit.at < WARM_TTL_MS) {
+    // Joining a fetch still in flight is strictly better than starting a
+    // second one against the same cold gateway.
+    const r = hit.res || (await hit.p);
+    if (r && r.bytes) return r;
+  }
+  return fetchLogoUrlX(logoUrl);
+}
+
 /** The bytes and nothing else — see fetchLogoUrlX. */
 async function fetchLogoUrl(logoUrl) {
   return (await fetchLogoUrlX(logoUrl)).bytes;
@@ -666,7 +734,7 @@ async function fulfillListing(ctx, order) {
   // 4. Channel posts (best-effort) — dynamic per-token banners.
   let logoFetch = null;
   if (!logoBuffer && input.logoUrl) {
-    logoFetch = await fetchLogoUrlX(input.logoUrl);
+    logoFetch = await fetchLogoUrlWarm(input.logoUrl);
     logoBuffer = logoFetch.bytes;
   }
   // PIN IT, before reportFigures/postMedia/photoSource read the url, so THIS
@@ -832,7 +900,7 @@ async function fulfillTrending(ctx, order) {
   const chainLogo = { logoUrl: row.logoUrl };
   adoptChainLogo(chainLogo, live);
   const logoUrl = chainLogo.logoUrl || null;
-  const logoFetch = await fetchLogoUrlX(logoUrl);
+  const logoFetch = await fetchLogoUrlWarm(logoUrl);
   const logoBuffer = logoFetch.bytes;
   if (logoBuffer && row.logoUrl) row.logoUrl = await pinLogo(row, row.logoUrl, logoBuffer);
   postFigures.reportFigures({
@@ -1241,6 +1309,10 @@ module.exports = {
   // url. See bannerLogo.test.js.
   _fetchLogoUrl: fetchLogoUrl,
   _fetchLogoUrlX: fetchLogoUrlX,
+  // The review card warms the artwork before payment; the post reads it back.
+  warmLogo,
+  _fetchLogoUrlWarm: fetchLogoUrlWarm,
+  _resetWarm: () => warmed.clear(),
   _pinLogo: pinLogo,
   _PIN_LOGO_MS: PIN_LOGO_MS,
   _photoSource: photoSource,

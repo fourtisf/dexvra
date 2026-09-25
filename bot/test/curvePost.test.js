@@ -737,7 +737,10 @@ test("⚠️ the listing is CREATED after the market read, with the chain's logo
   assert.ok(adopt < create, "the chain's logo must be adopted BEFORE the row is created, or the row is born blank");
   assert.strictEqual((listing.match(/readPostMarket\(/g) || []).length, 1, "one read per listing — the post must render from the same record the row was created with");
   const trending = src.slice(src.indexOf("async function fulfillTrending("));
-  assert.ok(trending.indexOf("adoptChainLogo(chainLogo, live)") > 0 && trending.indexOf("adoptChainLogo(chainLogo, live)") < trending.indexOf("fetchLogoUrlX(logoUrl)"), "the trending sibling must adopt the chain's logo before fetching");
+  // The fetch reads the review-time WARM copy now (fetchLogoUrlWarm, same facts
+  // as the X form) — pinned to the property, either spelling of the fetch.
+  const tFetch = trending.search(/fetchLogoUrl(?:X|Warm)\(logoUrl\)/);
+  assert.ok(trending.indexOf("adoptChainLogo(chainLogo, live)") > 0 && tFetch > 0 && trending.indexOf("adoptChainLogo(chainLogo, live)") < tFetch, "the trending sibling must adopt the chain's logo before fetching");
 });
 
 // ── The pad leg is a SLICE of what is left, or the chain is never reached ───

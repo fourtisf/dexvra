@@ -53,9 +53,13 @@ test("⚠️ the route caps every fetch by what is LEFT of the total, not by per
     .readFileSync(path.join(__dirname, "..", "..", "src", "app", "api", "logo", "route.ts"), "utf8")
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/^\s*\/\/.*$/gm, "");
-  assert.match(src, /signal: AbortSignal\.timeout\(Math\.min\(perTry, left\(\)\)\)/,
-    "every fetch — redirect hops included — must be bounded by the remaining total");
-  assert.ok(!/signal: AbortSignal\.timeout\(perTry\)/.test(src),
+  // The ladder is HEDGED now (src/lib/hedge.ts): each attempt's timeout is what
+  // is left of the total, and every hop inside it shares that one signal.
+  assert.match(src, /const timeoutMs = tries\.length > 1 \? left\(\) : Math\.min\(ONE_TRY_MS, left\(\)\);/,
+    "every attempt must be bounded by the remaining total");
+  assert.match(src, /AbortSignal\.timeout\(timeoutMs\)/, "…and that bound is the signal every hop fetches with");
+  assert.match(src, /\n\s*signal,\n/, "…and the hop's fetch uses that signal, not a fresh one per hop");
+  assert.ok(!/AbortSignal\.timeout\(perTry\)/.test(src),
     "an unbounded perTry is what let the route outlast the bot");
 });
 

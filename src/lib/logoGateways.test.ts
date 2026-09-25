@@ -46,21 +46,52 @@ test("the pin's host is allowlisted, or the ladder entry could never fire", () =
 // one case that used to push nothing (a body that died mid-download).
 
 test("⚠️ every recorded gateway outcome carries elapsed ms", () => {
-  // Per LINE, not per template literal: the first push nests a template
+  // Per LINE, not per template literal: the first miss nests a template
   // (`${res ? \`HTTP …\` : "no answer"}`), and a backtick-delimited scan stops
-  // at the inner one and reports the outer push as having no elapsed time —
+  // at the inner one and reports the outer miss as having no elapsed time —
   // a guard that goes red on the code it exists to approve.
-  const pushes = src.split("\n").filter((l) => /why\.push\(/.test(l));
-  assert.ok(pushes.length >= 3, `expected the three outcomes recorded, found ${pushes.length}`);
-  for (const p of pushes) assert.match(p, /\$\{ms\(\)\}/, `no elapsed on: ${p.trim()}`);
+  //
+  // The misses are RETURNED by `attempt()` now and collected by the hedge
+  // (lib/hedge.ts), so the property is asserted where the sentence is built.
+  const misses = src.split("\n").filter((l) => /kind: "miss", why:/.test(l));
+  assert.ok(misses.length >= 3, `expected the three outcomes recorded, found ${misses.length}`);
+  for (const p of misses) assert.match(p, /\$\{ms\(\)\}/, `no elapsed on: ${p.trim()}`);
+  // …and the hedge's misses are what reaches the header, not a second list.
+  assert.match(src, /misses: why/, "the hedge must collect into the array x-logo-why is built from");
 });
 
 test("a 200 names the gateway that served it (x-logo-via)", () => {
-  assert.match(src, /"x-logo-via": `\$\{url\.hostname\} \$\{ms\(\)\}`/);
+  assert.match(src, /"x-logo-via": `\$\{url\.hostname\} \$\{ms\}`/);
+  assert.match(src, /return \{ kind: "image", url, buf, ct, ms: ms\(\) \}/, "the elapsed time travels with the winning image");
 });
 
 test("⚠️ a body that died mid-download is RECORDED, not a bare 404", () => {
   // This case used to `continue` with nothing pushed, so it reported exactly
   // like a CID nobody had.
-  assert.match(src, /why\.push\(`\$\{url\.hostname\}: body died after \$\{ms\(\)\}`\)/);
+  assert.match(src, /why: `\$\{url\.hostname\}: body died after \$\{ms\(\)\}`/);
+});
+
+// ── $DLYN: the ladder killed the one gateway that was about to answer ───────
+
+test("⚠️ the ladder is HEDGED through lib/hedge — no per-gateway abort below the request's deadline", () => {
+  // A serial ladder at 5s a gateway aborted a fresh CID's DHT walk just before
+  // it answered, four times over, and the 12s budget ran out with nothing.
+  // hedge.test.ts DRIVES the scheduler; this pins that the route uses it.
+  assert.match(src, /import \{ hedge \} from "@\/lib\/hedge"/);
+  assert.match(src, /await hedge<Attempt>\(/);
+  assert.doesNotMatch(src, /IPFS_TRY_MS/, "a per-gateway cap below the deadline is the abort this replaced");
+  assert.match(src, /tries\.length > 1 \? left\(\) : Math\.min\(ONE_TRY_MS, left\(\)\)/, "a hedged gateway runs until the deadline");
+});
+
+test("⚠️ a content-addressed url on an unlisted host rides OUR ladder — the foreign host is never fetched", () => {
+  // `https://<pad gateway>/ipfs/<cid>` was a 400 ("not allowed"), so a logo
+  // every public gateway holds byte-for-byte drew the Dexvra mark. The fix must
+  // not turn the proxy into a fetcher for arbitrary hosts: only the CID moves.
+  const get = src.slice(src.indexOf("export async function GET"));
+  assert.match(get, /if \(allowed\(first\)\) tries = candidates\(first\);/);
+  assert.match(get, /tries = ladder\(cid, \[\]\);/, "the foreign url is NOT seeded into the tries");
+  assert.match(get, /if \(!cid\) return new NextResponse\(null, \{ status: 400 \}\);/, "a non-IPFS url on an unlisted host is still refused");
+  // …and the ladder only ever builds allowlisted urls.
+  const lad = src.slice(src.indexOf("function ladder("), src.indexOf("function candidates("));
+  assert.match(lad, /allowed\(u\)/);
 });

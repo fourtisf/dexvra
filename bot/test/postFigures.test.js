@@ -272,7 +272,7 @@ test("BOTH fulfilment paths report the artwork, from the buffer the banner gets"
   // section's LAST fetch sits above its watch, whatever url it is handed.
   const watchAt = src.indexOf('kind: "trending", chain: p.chain');
   assert.ok(watchAt > 0, "the trending watch exists");
-  const fetchAt = src.lastIndexOf("await fetchLogoUrlX(", watchAt);
+  const fetchAt = Math.max(src.lastIndexOf("await fetchLogoUrlX(", watchAt), src.lastIndexOf("await fetchLogoUrlWarm(", watchAt));
   const listingWatchAt = src.indexOf('kind: "listing", chain:');
   assert.ok(fetchAt > 0, "a trending logo fetch exists");
   assert.ok(fetchAt > listingWatchAt, "…and it is the TRENDING section's fetch, not the listing's");

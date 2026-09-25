@@ -180,7 +180,9 @@ test("BOTH fulfilment siblings pin, before the url is read by the watch and the 
   assert.strictEqual(pins.length, 2, "a listing and a trending slot");
   // `= await` — the wrapper `fetchLogoUrl` reads `(await fetchLogoUrlX(…)).bytes`
   // and is not a call site; the two that assign `logoFetch` are.
-  const xs = src.match(/= await fetchLogoUrlX\(/g) || [];
+  // (Either spelling: the posts read `fetchLogoUrlWarm`, which answers from the
+  // review card's warm copy with the SAME facts, or falls through to the X form.)
+  const xs = src.match(/= await fetchLogoUrl(?:X|Warm)\(/g) || [];
   assert.strictEqual(xs.length, 2, "both read through the X form so the watch gets the facts");
   // Ordering: the listing's pin sits above its reportFigures call.
   const pinAt = src.indexOf("input.logoUrl = await pinLogo(");

@@ -32,3 +32,18 @@ test("a non-IPFS url has NO ladder — a CDN 404 is an answer about the token", 
   assert.deepEqual(ipfsCandidates("https://dd.dexscreener.com/ds-data/tokens/solana/x.png"), []);
   assert.deepEqual(ipfsCandidates("not a url"), []);
 });
+
+test("⚠️ the SUBDOMAIN gateway spelling is content-addressed too — and only for a real CID", () => {
+  // `https://<cid>.ipfs.<gateway>/` is what dweb.link and ipfs.io redirect to
+  // and what a launchpad pinning through a dedicated gateway stores. Read as
+  // "not IPFS", it had no ladder: one gateway's miss was the whole answer.
+  assert.equal(ipfsPath(`https://${CID}.ipfs.dweb.link/`), CID);
+  assert.equal(ipfsPath(`https://${CID}.ipfs.w3s.link`), CID);
+  assert.equal(ipfsPath(`https://${CID}.ipfs.pons-gw.example/logo.png?x=1`), `${CID}/logo.png`);
+  assert.equal(ipfsPath(`https://${CID.toUpperCase()}.ipfs.dweb.link/`), CID, "DNS is case-insensitive; the CID is base32 lower");
+  // A host that merely has `ipfs` as a label is not content-addressed.
+  assert.equal(ipfsPath("https://cdn.ipfs.example.com/logo.png"), null);
+  assert.equal(ipfsPath("https://bafy.ipfs.example.com/logo.png"), null, "too short to be a CID");
+  const c = ipfsCandidates(`https://${CID}.ipfs.pons-gw.example/`);
+  assert.deepEqual(c.slice(1), IPFS_GATEWAYS.map((g) => g + CID), "…and it gets the whole ladder behind it");
+});

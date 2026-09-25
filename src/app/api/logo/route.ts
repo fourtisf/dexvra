@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { IPFS_GATEWAYS, ipfsPath } from "@/lib/ipfsGateways";
+import { hedge } from "@/lib/hedge";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -87,16 +88,40 @@ const ALLOW = [
 // site's logo resolver, which verifies a Pons token's contract-published CID
 // against the same gateways. Two lists would drift.
 
-/** How many gateways one request may try, and how long each gets. A logo is an
- *  `<img>` and does not block the page, but a request that can hang for half a
- *  minute is a socket held open per token on a board of two hundred. */
+/** How many gateways one request may try. A logo is an `<img>` and does not
+ *  block the page, but a request that can hang for half a minute is a socket
+ *  held open per token on a board of two hundred. */
 // ⚠️ THE CALLER'S OWN URL COUNTS AS TRY ONE. A stored `https://ipfs.io/ipfs/<cid>`
 // therefore left room for only TWO fallbacks, and adding a gateway to the list
 // above would have pushed one out rather than widened the ladder. Four keeps
 // three real fallbacks behind the caller's url; TOTAL_MS still caps the wall
-// clock, and `left()` shrinks every later try to fit inside it.
+// clock.
 const IPFS_MAX_TRIES = 4;
-const IPFS_TRY_MS = 5000;
+/**
+ * The ladder is HEDGED, not serial: the next gateway is STARTED this long after
+ * the previous one if that one has not answered yet — and the slow one is NOT
+ * aborted. First image wins; the rest are cancelled.
+ *
+ * ⚠️ THE SERIAL LADDER GAVE EVERY GATEWAY 5s AND THEN KILLED IT, AND A FRESH
+ * CID IS EXACTLY THE CASE THAT NEEDS LONGER. A launch pinned minutes ago is not
+ * in any public gateway's cache yet, so the first request for it is a DHT walk,
+ * and on ipfs.io that walk routinely takes 5–10s. Aborting it at 5s threw away
+ * a fetch that was about to succeed, handed the slot to a gateway that then had
+ * to start the SAME walk from zero, and after four such restarts the 12s budget
+ * was gone with nothing to show — `$DLYN` (Pons, Robinhood) went out to 12,436
+ * subscribers drawing the Dexvra mark over artwork its own pad page rendered
+ * that minute, and `$GG` flipped ✓/✗ across four deploys with zero lines
+ * changed on this path. That flip is this abort.
+ *
+ * "Racing gateways" was once refused here as doubling the load on a source that
+ * is flaking. Two things make hedging a different trade: every rung is a
+ * DIFFERENT operator (the ladder is ordered for exactly that), and the next one
+ * starts only when the current one is ALREADY slow — a warm CID answers inside
+ * the first stagger and costs exactly the one request it always did. A MISS
+ * (404, HTML, a dead socket) starts the next rung at once instead of waiting
+ * out the stagger.
+ */
+const IPFS_HEDGE_MS = 1500;
 const ONE_TRY_MS = 8000;
 /**
  * The whole request's ceiling, redirects and gateway failover included.
@@ -138,6 +163,20 @@ function normalize(raw: string): URL | null {
   }
 }
 
+/** The allowlisted ladder for one CID path, skipping anything already tried. */
+function ladder(cid: string, out: URL[]): URL[] {
+  for (const gw of IPFS_GATEWAYS) {
+    if (out.length >= IPFS_MAX_TRIES) break;
+    try {
+      const u = new URL(gw + cid);
+      if (!out.some((o) => o.toString() === u.toString()) && allowed(u)) out.push(u);
+    } catch {
+      /* a malformed gateway in .env costs that entry, never the request */
+    }
+  }
+  return out;
+}
+
 /**
  * Every url worth trying for one request, in order.
  *
@@ -150,40 +189,123 @@ function candidates(url: URL): URL[] {
   const cid = ipfsPath(url.toString());
   if (!cid) return [url];
   const out = [url];
-  for (const gw of IPFS_GATEWAYS) {
-    if (out.length >= IPFS_MAX_TRIES) break;
-    try {
-      const u = new URL(gw + cid);
-      if (u.toString() !== url.toString() && allowed(u)) out.push(u);
-    } catch {
-      /* a malformed gateway in .env costs that entry, never the request */
+  return ladder(cid, out);
+}
+
+type Attempt =
+  | { kind: "image"; url: URL; buf: Buffer; ct: string; ms: string }
+  | { kind: "miss"; why: string }
+  | { kind: "final"; res: NextResponse };
+
+/**
+ * One gateway, redirects followed by hand. It never throws: a transport
+ * failure is a MISS (the next gateway may still have it), and the two outcomes
+ * that end the whole request — a redirect somewhere we do not allow, and an
+ * image too big to serve — come back as `final`.
+ */
+async function attempt(first: URL, timeoutMs: number, stop: AbortSignal): Promise<Attempt> {
+  let url = first;
+  // Elapsed per gateway rides on the reason: "ipfs.io: no answer after 5000ms"
+  // and "gateway.pinata.cloud: HTTP 429 after 310ms" send an operator to
+  // different places, and a bare status could not tell them apart.
+  const t0 = Date.now();
+  const ms = () => `${Date.now() - t0}ms`;
+  // The loser of a hedge is cancelled the moment another gateway wins, or its
+  // socket keeps downloading bytes nobody will read.
+  const signal = typeof AbortSignal.any === "function" ? AbortSignal.any([stop, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs);
+  let res: Response | null = null;
+  try {
+    // ⚠️ REDIRECTS ARE FOLLOWED BY HAND, and every hop is re-checked against
+    // the allowlist. `redirect: "follow"` hands the guard's whole job to the
+    // upstream: an allowed host answering `302 http://169.254.169.254/…`
+    // would have this server fetch its own cloud metadata and serve the bytes
+    // back.
+    for (let hop = 0; hop <= MAX_HOPS; hop++) {
+      res = await fetch(url.toString(), {
+        headers: { "user-agent": "Mozilla/5.0 (compatible; DexvraLogo/1.0)", accept: "image/*,*/*" },
+        signal,
+        redirect: "manual",
+        cache: "no-store",
+      });
+      if (res.status < 300 || res.status >= 400) break;
+      const loc = res.headers.get("location");
+      if (!loc) break;
+      // A redirect's body is never read; release it or the socket stays busy
+      // until the GC gets round to it, on a server doing this per token.
+      void res.body?.cancel().catch(() => {});
+      const next = normalize(new URL(loc, url).toString());
+      // ⚠️ A REDIRECT SOMEWHERE WE DO NOT ALLOW ENDS THE WHOLE REQUEST, and
+      // does not fall through to the next gateway: it is the one failure that
+      // is about US being pointed at something, not about the content being
+      // unavailable, and quietly trying elsewhere would bury it.
+      if (!next || !allowed(next)) return { kind: "final", res: new NextResponse(null, { status: 400 }) };
+      url = next;
+      res = null;
     }
+  } catch {
+    res = null; // transport failure — the next gateway may still have it
   }
-  return out;
+
+  if (!res || !res.ok) {
+    void res?.body?.cancel().catch(() => {});
+    return { kind: "miss", why: `${url.hostname}: ${res ? `HTTP ${res.status}` : "no answer"} after ${ms()}` };
+  }
+  const ct = res.headers.get("content-type") || "image/png";
+  if (!/^image\//i.test(ct)) {
+    // A gateway that answers 200 with an HTML "not found" page is a miss, not
+    // an image — the same thing a CDN does when it will not admit one. It is
+    // ALSO what a directory CID looks like, which is why the type is recorded.
+    void res.body?.cancel().catch(() => {});
+    return { kind: "miss", why: `${url.hostname}: served ${ct.split(";")[0]} after ${ms()}` };
+  }
+  // Refuse a body we would only throw away — the size check below happens
+  // after the download, and a declared 50MB image is not worth fetching.
+  const declared = Number(res.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > 3_000_000) {
+    void res.body?.cancel().catch(() => {});
+    return { kind: "final", res: new NextResponse(null, { status: 404 }) };
+  }
+  let buf: Buffer;
+  try {
+    buf = Buffer.from(await res.arrayBuffer());
+  } catch {
+    // The body died mid-download; another gateway may finish. RECORDED —
+    // this case used to push nothing, and reported as a bare 404.
+    return { kind: "miss", why: `${url.hostname}: body died after ${ms()}` };
+  }
+  if (!buf.length || buf.length > 3_000_000) return { kind: "final", res: new NextResponse(null, { status: 404 }) };
+  return { kind: "image", url, buf, ct, ms: ms() };
 }
 
 export async function GET(req: NextRequest) {
   const raw = req.nextUrl.searchParams.get("u");
   if (!raw) return new NextResponse(null, { status: 400 });
   const first = normalize(raw);
-  if (!first || !allowed(first)) return new NextResponse(null, { status: 400 });
+  if (!first) return new NextResponse(null, { status: 400 });
 
   // One url for an ordinary CDN, several gateways for an IPFS CID — see
   // IPFS_GATEWAYS for why a 404 is a fact about the gateway there and an answer
   // about the token everywhere else.
-  const tries = candidates(first);
-  const perTry = tries.length > 1 ? IPFS_TRY_MS : ONE_TRY_MS;
+  let tries: URL[];
+  if (allowed(first)) tries = candidates(first);
+  else {
+    // ⚠️ A CONTENT-ADDRESSED URL ON A HOST WE DO NOT ALLOW IS STILL ARTWORK WE
+    // CAN SERVE. A launchpad that pins through its own gateway publishes
+    // `https://<its gateway>/ipfs/<cid>` (or `https://<cid>.ipfs.<its host>/`),
+    // and refusing that as a stranger's host drew the Dexvra mark over a logo
+    // every public gateway holds byte-for-byte — a CID is the hash of the
+    // bytes. The foreign host is NEVER fetched, so the allowlist's job (not
+    // being anyone's image proxy) is untouched: only the CID travels, onto our
+    // own ladder.
+    const cid = ipfsPath(first.toString());
+    if (!cid) return new NextResponse(null, { status: 400 });
+    tries = ladder(cid, []);
+    if (!tries.length) return new NextResponse(null, { status: 400 });
+  }
   const deadline = Date.now() + TOTAL_MS;
-  // ⚠️ EVERY FETCH IS CAPPED BY WHAT IS LEFT OF THE TOTAL, not by `perTry`
-  // alone. The deadline below only ever gated STARTING another gateway, so the
-  // real worst case was three gateways x IPFS_TRY_MS — and up to MAX_HOPS
-  // redirects inside each, every hop a fresh AbortSignal — which is 15s with no
-  // redirects and far more with them, against a documented 12s budget.
-  //
-  // That is not merely slow: the BOT calls this with a timeout of its own, so a
-  // proxy grinding through failover exactly as designed read to its caller as
-  // UNREACHABLE, which sent the banner back to a raw single-gateway fetch — the
-  // one thing routing through here exists to replace.
+  // Every attempt is bounded by what is LEFT of the total, redirects included —
+  // the bot calls this with a timeout of its own, and a proxy grinding through
+  // failover past it reads to its caller as UNREACHABLE.
   const left = () => Math.max(250, deadline - Date.now());
 
   // ⚠️ NEVER DISCARD THE REASON — this route's 404 is the LAST place the per
@@ -194,88 +316,27 @@ export async function GET(req: NextRequest) {
   // that resolves to a DIRECTORY listing answers `text/html`, deterministically,
   // however well pinned it is). Those need different answers and got one shrug.
   const why: string[] = [];
+  const outcome = await hedge<Attempt>(
+    tries.length,
+    async (i, stop) => {
+      // A single CDN url gets its own ceiling; a hedged gateway may run until
+      // the request's deadline, which is the whole point of not aborting it.
+      const timeoutMs = tries.length > 1 ? left() : Math.min(ONE_TRY_MS, left());
+      const a = await attempt(tries[i], timeoutMs, stop);
+      return a.kind === "miss" ? { done: false, miss: a.why } : { done: true, value: a };
+    },
+    { staggerMs: IPFS_HEDGE_MS, deadline, misses: why },
+  );
 
-  for (let i = 0; i < tries.length; i++) {
-    // Only START another attempt while there is time for it. Without this the
-    // worst case is every gateway's full timeout end to end, on a board asking
-    // for two hundred logos.
-    if (i > 0 && Date.now() > deadline) break;
-    let url = tries[i];
-    // Elapsed per gateway rides on the reason: "ipfs.io: no answer after 5000ms"
-    // and "gateway.pinata.cloud: HTTP 429 after 310ms" send an operator to
-    // different places, and a bare status could not tell them apart.
-    const t0 = Date.now();
-    const ms = () => `${Date.now() - t0}ms`;
-    let res: Response | null = null;
-    try {
-      // ⚠️ REDIRECTS ARE FOLLOWED BY HAND, and every hop is re-checked against
-      // the allowlist. `redirect: "follow"` hands the guard's whole job to the
-      // upstream: an allowed host answering `302 http://169.254.169.254/…`
-      // would have this server fetch its own cloud metadata and serve the bytes
-      // back.
-      for (let hop = 0; hop <= MAX_HOPS; hop++) {
-        res = await fetch(url.toString(), {
-          headers: { "user-agent": "Mozilla/5.0 (compatible; DexvraLogo/1.0)", accept: "image/*,*/*" },
-          signal: AbortSignal.timeout(Math.min(perTry, left())),
-          redirect: "manual",
-          cache: "no-store",
-        });
-        if (res.status < 300 || res.status >= 400) break;
-        const loc = res.headers.get("location");
-        if (!loc) break;
-        // A redirect's body is never read; release it or the socket stays busy
-        // until the GC gets round to it, on a server doing this per token.
-        void res.body?.cancel().catch(() => {});
-        const next = normalize(new URL(loc, url).toString());
-        // ⚠️ A REDIRECT SOMEWHERE WE DO NOT ALLOW ENDS THE WHOLE REQUEST, and
-        // does not fall through to the next gateway: it is the one failure that
-        // is about US being pointed at something, not about the content being
-        // unavailable, and quietly trying elsewhere would bury it.
-        if (!next || !allowed(next)) return new NextResponse(null, { status: 400 });
-        url = next;
-        res = null;
-      }
-    } catch {
-      res = null; // transport failure — the next gateway may still have it
-    }
-
-    if (!res || !res.ok) {
-      why.push(`${url.hostname}: ${res ? `HTTP ${res.status}` : "no answer"} after ${ms()}`);
-      void res?.body?.cancel().catch(() => {});
-      continue;
-    }
-    const ct = res.headers.get("content-type") || "image/png";
-    if (!/^image\//i.test(ct)) {
-      // A gateway that answers 200 with an HTML "not found" page is a miss, not
-      // an image — the same thing a CDN does when it will not admit one. It is
-      // ALSO what a directory CID looks like, which is why the type is recorded.
-      why.push(`${url.hostname}: served ${ct.split(";")[0]} after ${ms()}`);
-      void res.body?.cancel().catch(() => {});
-      continue;
-    }
-    // Refuse a body we would only throw away — the size check below happens
-    // after the download, and a declared 50MB image is not worth fetching.
-    const declared = Number(res.headers.get("content-length"));
-    if (Number.isFinite(declared) && declared > 3_000_000) {
-      void res.body?.cancel().catch(() => {});
-      return new NextResponse(null, { status: 404 });
-    }
-    let buf: Buffer;
-    try {
-      buf = Buffer.from(await res.arrayBuffer());
-    } catch {
-      // The body died mid-download; another gateway may finish. RECORDED —
-      // this case used to push nothing, and reported as a bare 404.
-      why.push(`${url.hostname}: body died after ${ms()}`);
-      continue;
-    }
-    if (!buf.length || buf.length > 3_000_000) return new NextResponse(null, { status: 404 });
+  if (outcome && outcome.kind === "final") return outcome.res;
+  if (outcome && outcome.kind === "image") {
+    const { url, buf, ct, ms } = outcome;
     return new NextResponse(buf, {
       status: 200,
       headers: {
         // Which gateway answered, and how fast — the fact that makes "loaded on
         // run 3, failed on run 4" READABLE after the fact.
-        "x-logo-via": `${url.hostname} ${ms()}`,
+        "x-logo-via": `${url.hostname} ${ms}`,
         "content-type": ct,
         "cache-control": "public, max-age=86400, s-maxage=604800, stale-while-revalidate=86400",
         // An SVG logo is a DOCUMENT when opened directly, and a document served

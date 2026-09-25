@@ -326,6 +326,17 @@ async function showReview(ctx) {
     telegram: v(f.telegram),
   });
   const photo = f.logoFileId || (f.logoUrl && f.logoUrl.startsWith("http") ? f.logoUrl : null);
+  // The artwork is fetched NOW, while the buyer reads this card, and the post
+  // after payment reads the bytes back — rather than betting a paid post on
+  // the first cold fetch of a fresh IPFS CID (`$DLYN`: fulfillment.warmLogo).
+  // Fire-and-forget: this card must never wait on a gateway.
+  if (!f.logoFileId && f.logoUrl) {
+    try {
+      require("../fulfillment").warmLogo(f.logoUrl);
+    } catch (e) {
+      log.warn(`[listing] could not warm the logo for ${f.chain}/${f.address}: ${e.message}`);
+    }
+  }
   if (photo) return sendPhotoCard(ctx, photo, text, reviewKb());
   return sendCard(ctx, text, reviewKb());
 }

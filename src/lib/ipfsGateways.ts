@@ -54,7 +54,16 @@ export function ipfsPath(raw: string): string | null {
     return p || null;
   }
   const m = /^https?:\/\/[^/]+\/ipfs\/(.+)$/i.exec(s);
-  return m ? m[1] : null;
+  if (m) return m[1];
+  // The SUBDOMAIN spelling, `https://<cid>.ipfs.<gateway>/<path>` — what
+  // dweb.link and ipfs.io redirect to, and what a launchpad pinning through a
+  // dedicated gateway often stores. Only a real CID qualifies (CIDv1 base32,
+  // the one encoding a DNS label can carry), or any host named `x.ipfs.y`
+  // would be read as content-addressed.
+  const sub = /^https?:\/\/(b[a-z2-7]{50,})\.ipfs\.[^/]+(\/[^?#]*)?/i.exec(s);
+  if (!sub) return null;
+  const path = (sub[2] ?? "").replace(/^\/+/, "");
+  return path ? `${sub[1].toLowerCase()}/${path}` : sub[1].toLowerCase();
 }
 
 /**

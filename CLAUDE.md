@@ -10899,6 +10899,88 @@ Each fails between one and two tests.
 `GECKOTERMINAL_API_KEY` or `MORALIS_API_KEY`. All go in the **repo-root**
 `.env`, followed by `npm run deploy:all`.
 
+## "bot gagal proses logo … pdhl tokenya punya logo" — the ladder killed the gateway that was about to answer
+
+`$DLYN` (DUALYNE, Pons v2, Robinhood, 0% along its curve) went out as an Xpress
+Listing to **12,436 subscribers** drawing the **Dexvra mark**, beside a
+screenshot of ponsfamily.com rendering the project's `>_` artwork in the same
+minute. The figures were filled — so the market read worked, and this is the
+artwork half only. ⚠️ The exact failing class could not be measured from the
+sandbox (ponsfamily, the Robinhood RPC and Blockscout all refuse its egress);
+the ops channel's `🖼` alert and `[fulfil] logo …` in pm2 name it on the box.
+Two holes were structural and are closed either way:
+
+**1. `/api/logo`'s ladder was SERIAL at 5s a gateway, and a fresh CID is the
+case that needs longer.** A launch pinned minutes ago is in no public
+gateway's cache, so the first request is a DHT walk that routinely outlasts 5s
+on ipfs.io. The ladder aborted it just before it answered, handed the slot to a
+gateway that restarted the SAME walk from zero, and after four restarts the 12s
+budget was gone. That is also the `$GG` flip (✓/✗ across four deploys with zero
+lines changed on this path).
+
+- **`src/lib/hedge.ts` is a HEDGED ladder**: the next gateway STARTS after
+  `IPFS_HEDGE_MS` (1.5s) if the current one is still slow, the slow one is NOT
+  aborted, first image wins, the losers are cancelled. A MISS starts the next
+  rung at once. Pure and alias-free so `hedge.test.ts` DRIVES it with fake
+  gateways — "killed one second too early" is a timing shape no source scan can
+  see.
+- ⚠️ **This reverses a recorded refusal ("racing gateways doubles the load on
+  the source that is flaking"), deliberately.** Every rung is a different
+  operator, and a rung starts only when the previous one is already slow: a
+  warm CID answers inside the first stagger and costs exactly the one request it
+  always did (pinned by a test).
+- Every attempt is still bounded by what is LEFT of `TOTAL_MS`, so the
+  `LOGO_PROXY_MS` contract with the bot is unchanged.
+
+**2. A content-addressed url on an unlisted host was a 400.** A pad pinning
+through its own gateway stores `https://<its gateway>/ipfs/<cid>` or
+`https://<cid>.ipfs.<its host>/`, and the proxy refused it as a stranger's host
+— over bytes every public gateway holds, because a CID is the hash of them.
+
+- **Only the CID travels, onto OUR ladder; the foreign host is never fetched**,
+  so the allowlist's job (not being anyone's image proxy) is untouched. A
+  non-IPFS url on an unlisted host is still a 400.
+- `ipfsPath` reads the SUBDOMAIN spelling too, and only for a real CIDv1
+  (base32, ≥50 chars) — a host that merely has an `ipfs` label is not
+  content-addressed.
+
+**3. The bytes were first asked for at the one moment that could not wait.**
+The url is on the review card minutes before payment, and nothing fetched it
+until after, with the buyer's receipt queued behind it.
+
+- **`fulfillment.warmLogo` fetches while the buyer reads the review card**
+  (fire-and-forget from `showReview`), and both paid posts read through
+  `fetchLogoUrlWarm`, which answers from that copy or JOINS a warm still in
+  flight. The post then PINS those bytes as before.
+- ⚠️ **A warm that failed is FORGOTTEN, not cached** — it is not a verdict, the
+  post fetches fresh (on gateways already resolving the CID), and a stale
+  failed entry would otherwise read as "in flight" and block every later warm.
+  A mutation run found that half: the post path alone could not see it.
+- Bounded (16 urls, 30 min). Same process as fulfilment (`dexvra-bot`); a
+  restart just means the post fetches cold, which is today's behaviour.
+
+Three source guards pinned the old spelling (`fetchLogoUrlX(` at the post call
+sites, `AbortSignal.timeout(Math.min(perTry, left()))`, `why.push` with `ms()`)
+and went red over code that keeps their rule; all three assert the property now.
+
+```bash
+npm test                                                  # hedge (8) · ipfsGateways · logoGateways · logoPipeline
+cd bot && node scripts/run-tests.js test/logoWarm.test.js # 6 tests, no network
+cd /opt/dexvra/bot && npm run post:check -- robinhood 0x45614B7a71a97Ed66A63D35d14934F83a9768Ee6 --pin
+```
+
+Eighteen guarantees are MUTATION-TESTED rather than argued: the miss not
+starting the next rung, no stagger, the losers not cancelled, the stagger timer
+left running, the deadline blocking the first rung, a throwing rung crashing
+the ladder, a serial ladder, the subdomain CID check loosened or dropped, the
+post ignoring the warm copy, a failed warm kept, no eviction, no idempotency,
+the listing post going around the warm copy, and the review card not warming.
+
+**Config a fix depends on:** nothing. ⚠️ This touches `src/` AND `bot/`, so the
+deploy is the full one (`npm run deploy` decides that from the diff). ⚠️ The
+already-published `$DLYN` post cannot be changed retroactively; the `--pin` line
+above fixes the site row and every later post for that token.
+
 ## "perbaiki tampilan chartnya di mobile" — two rows of timeframe buttons, one of them dead
 
 The same screenshot, one panel down: our chart header — `$HACHIKO`, `LIN LOG`,
