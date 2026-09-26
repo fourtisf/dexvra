@@ -1,7 +1,7 @@
 // Listing flow: Xpress Listing (instant, XPRESS tier) and Listing & Trending
 // (pick a ranked tier). Guided form → review card → tier (tiered) → payment.
 // Per-chain contract-address validation is enforced (the reference bot skipped it).
-const { answer, toast, sendCard, sendPhotoCard, getMediaFileId } = require("../helpers/message");
+const { answer, toast, sendCard, sendPhotoCardX, getMediaFileId } = require("../helpers/message");
 const { chainOf, isValidAddress, payChainOf, payNativeOf } = require("../config/chains");
 const { RANKED_TIERS, tierPrice, tierMeta, tierLabel, tierEmoji, tierTrendingHours } = require("../config/packages");
 const { fetchMarket, fetchTokenDescription } = require("../marketdata");
@@ -344,9 +344,15 @@ function photoFormat(buf) {
   return null;
 }
 async function reviewPhoto(f) {
-  if (f.logoFileId) return f.logoFileId;
+  return (await reviewPhotoX(f)).photo;
+}
+/** `{ photo, why }` — `why` is set whenever the bot could NOT hand Telegram
+ *  bytes it had already checked, i.e. whenever the card's picture now rests on
+ *  Telegram fetching a url by itself (or there is nothing it can fetch). */
+async function reviewPhotoX(f) {
+  if (f.logoFileId) return { photo: f.logoFileId, why: null };
   const url = f.logoUrl && /^https?:\/\//i.test(f.logoUrl) ? f.logoUrl : null;
-  if (!url) return null;
+  if (!url) return { photo: null, why: f.logoUrl ? `the logo url is not http(s): ${String(f.logoUrl).slice(0, 120)}` : null };
   const fulfil = require("../fulfillment");
   // Started now either way: the post after payment reads the warm copy back.
   try {
@@ -357,13 +363,36 @@ async function reviewPhoto(f) {
   const { bounded } = require("../helpers/bounded");
   const got = await bounded(fulfil.fetchLogoUrlWarm(url).catch(() => null), REVIEW_LOGO_MS, () => null);
   const fmt = got && photoFormat(got.bytes);
-  if (fmt) return { source: got.bytes, filename: `logo.${fmt === "jpeg" ? "jpg" : fmt}` };
-  log.warn(
-    `[listing] review card: logo for ${f.chain}/${f.address} ${
-      got && got.bytes ? "is not a photo format Telegram shows" : got ? `did not load (${got.why || `status ${got.status}`})` : `did not load within ${REVIEW_LOGO_MS}ms`
-    } — handing Telegram the url instead: ${url}`,
-  );
-  return url;
+  if (fmt) return { photo: { source: got.bytes, filename: `logo.${fmt === "jpeg" ? "jpg" : fmt}` }, why: null };
+  const why = got && got.bytes ? "is not a photo format Telegram shows" : got ? `did not load (${got.why || `status ${got.status}`})` : `did not load within ${REVIEW_LOGO_MS}ms`;
+  // INFO, not WARN: this is not the outcome yet — Telegram may still fetch the
+  // url and the card may still carry the picture. `showReview` warns once, on
+  // what the buyer actually got; warning here too paged the ops channel over
+  // cards that went out fine.
+  log.info(`[listing] review card: logo for ${f.chain}/${f.address} ${why} — handing Telegram the url instead: ${url}`);
+  return { photo: url, why: `our fetch ${why}` };
+}
+
+/**
+ * "bagaimana agar masalah ini tidak terjadi lagi — bot harus mengirim teks with
+ * logo". The fix above makes the picture likelier; it cannot make it certain —
+ * a cold CID on every gateway, or Telegram refusing a url, still ends in the
+ * text card. And a text card is INVISIBLE from the ops side: it reads "Logo:
+ * added ✓", the buyer sees no picture, and the operator only learns of it from
+ * a screenshot — which is how this was found.
+ *
+ * So the PROMISE is watched, not the causes: a card whose token HAS a logo and
+ * that went out WITHOUT one is a WARN naming the token and every reason, which
+ * `log.warn` mirrors to the ops channel with its own de-duplication (a buyer
+ * editing five fields re-renders the card five times; that is one incident).
+ * A token with no logo pages nobody — that card is right to be text.
+ */
+function reviewPictureMissed(f, outcome) {
+  const wanted = !!(f.logoFileId || f.logoUrl);
+  if (!wanted || outcome.photo) return null;
+  const why = [outcome.fetchWhy, outcome.sendWhy].filter(Boolean).join("; ") || "no picture could be sent";
+  const sym = f.sym ? `$${String(f.sym).replace(/^\$/, "")}` : "?";
+  return `[listing] review card for ${sym} ${f.chain}/${f.address} went out WITHOUT its logo — the buyer saw "Logo: added ✓" over no picture (${why}). The paid post fetches it again and repairs it after posting; check the url: ${f.logoUrl || f.logoFileId}`;
 }
 
 async function showReview(ctx) {
@@ -388,9 +417,13 @@ async function showReview(ctx) {
     twitter: v(f.twitter),
     telegram: v(f.telegram),
   });
-  const photo = await reviewPhoto(f);
-  if (photo) return sendPhotoCard(ctx, photo, text, reviewKb());
-  return sendCard(ctx, text, reviewKb());
+  const { photo, why: fetchWhy } = await reviewPhotoX(f);
+  let r;
+  if (photo) r = await sendPhotoCardX(ctx, photo, text, reviewKb());
+  else r = { msg: await sendCard(ctx, text, reviewKb()), photo: false, why: null };
+  const missed = reviewPictureMissed(f, { photo: r.photo, fetchWhy, sendWhy: r.why && `Telegram refused the photo: ${r.why}` });
+  if (missed) log.warn(missed);
+  return r.msg;
 }
 
 // ── Edit buttons ─────────────────────────────────────────────────────────────
@@ -521,6 +554,7 @@ async function discard(ctx) {
 module.exports = {
   showReview,
   _reviewPhoto: reviewPhoto,
+  _reviewPictureMissed: reviewPictureMissed,
   _photoFormat: photoFormat,
   goPay,
   entryXpress,

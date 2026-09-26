@@ -143,3 +143,91 @@ test("photoFormat reads magic bytes, not a file name", () => {
   assert.strictEqual(f(SVG), null);
   assert.strictEqual(f(null), null);
 });
+
+// ── "bagaimana agar masalah ini tidak terjadi lgi" ──────────────────────────
+// The fix makes the picture likelier, never certain. What stops the NEXT one
+// reaching a buyer unseen is that a card which promised a logo and went out as
+// text now WARNS (→ the ops channel, de-duplicated), naming the token and why.
+const log = require("../src/helpers/logger");
+function captureWarn() {
+  const orig = log.warn;
+  const lines = [];
+  log.warn = (...a) => lines.push(a.map(String).join(" "));
+  return { lines, restore: () => (log.warn = orig) };
+}
+const refusingCtx = (f) => {
+  const r = fakeCtx(f);
+  r.ctx.replyWithPhoto = async () => {
+    throw new Error("400: Bad Request: wrong file identifier/HTTP URL specified");
+  };
+  return r;
+};
+
+test("⚠️ THE WATCH: a card that promised a logo and went out as TEXT warns — naming the token and BOTH reasons", async () => {
+  fulfil._resetWarm();
+  const { restore } = stubFetch(() => miss());
+  const w = captureWarn();
+  try {
+    const { ctx, sent } = refusingCtx(form());
+    await listing.showReview(ctx);
+    assert.strictEqual(sent[0].kind, "text", "precondition: the card fell back to text");
+    const hit = w.lines.filter((l) => /WITHOUT its logo/.test(l));
+    assert.strictEqual(hit.length, 1, `warns: ${w.lines.join(" || ")}`);
+    assert.match(hit[0], /\$HAPPYCAT/);
+    assert.match(hit[0], /0x113ff96E9392a6501f65B3BD4AACB89D3D0945cC/);
+    assert.match(hit[0], /our fetch did not load/, "our own fetch's reason");
+    assert.match(hit[0], /Telegram refused the photo: .*wrong file identifier/, "…and Telegram's");
+  } finally {
+    w.restore();
+    restore();
+  }
+});
+
+test("…and a card that DID carry the picture says nothing — not even when our fetch missed and Telegram fetched the url itself", async () => {
+  for (const answer of [() => bytes(PNG), () => miss()]) {
+    fulfil._resetWarm();
+    const { restore } = stubFetch(answer);
+    const w = captureWarn();
+    try {
+      const { ctx, sent } = fakeCtx(form());
+      await listing.showReview(ctx);
+      assert.strictEqual(sent[0].kind, "photo");
+      // Only the WATCH's line is this test's business; fulfillment's own fetch
+      // has warns of its own about the banner, which are a different surface.
+      assert.deepStrictEqual(w.lines.filter((l) => /WITHOUT its logo|handing Telegram the url/.test(l)), [], "a card that went out fine must not page anybody");
+    } finally {
+      w.restore();
+      restore();
+    }
+  }
+});
+
+test("…a token with NO logo is right to be a text card and pages nobody", async () => {
+  fulfil._resetWarm();
+  const { restore } = stubFetch(() => bytes(PNG));
+  const w = captureWarn();
+  try {
+    const { ctx, sent } = fakeCtx(form({ logoUrl: undefined }));
+    await listing.showReview(ctx);
+    assert.strictEqual(sent[0].kind, "text");
+    assert.deepStrictEqual(w.lines.filter((l) => /WITHOUT its logo/.test(l)), []);
+  } finally {
+    w.restore();
+    restore();
+  }
+});
+
+test("…a logo that is not an http(s) url (nothing can fetch it) is a text card over 'added ✓' — and warns", async () => {
+  fulfil._resetWarm();
+  const { restore } = stubFetch(() => bytes(PNG));
+  const w = captureWarn();
+  try {
+    const { ctx, sent } = fakeCtx(form({ logoUrl: "ipfs://bafkreif3og7rosylkz34ho7mbgzdkyscslhnastl3qszh6qykfwzg6lk3m" }));
+    await listing.showReview(ctx);
+    assert.strictEqual(sent[0].kind, "text");
+    assert.ok(w.lines.some((l) => /WITHOUT its logo.*not http/.test(l)), w.lines.join(" || "));
+  } finally {
+    w.restore();
+    restore();
+  }
+});

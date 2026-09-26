@@ -63,18 +63,30 @@ async function sendCard(ctx, payload, keyboard, opts = {}) {
 /** Same, but with a photo (used for the listing review card). `photo` is a
  *  file_id, URL string, or { source }. Falls back to a text card on failure. */
 async function sendPhotoCard(ctx, photo, payload, keyboard, opts = {}) {
+  const r = await sendPhotoCardX(ctx, photo, payload, keyboard, opts);
+  // ⚠️ WARN, not debug: a card that should have carried a picture went out
+  // as text, and production does not print debug — "Logo: added ✓" over no
+  // picture was reported from a screenshot because this line said nothing.
+  if (!r.photo) log.warn(`[msg] photo card failed (${r.why}) — falling back to text`);
+  return r.msg;
+}
+
+/** The same send, reporting WHICH card went out: `{ msg, photo, why }`.
+ *  `photo:false` with a `why` is "a picture was meant and the text card went
+ *  instead" — the one outcome a caller that PROMISED a picture has to be told
+ *  about, because a text card and a photo card both come back as a message and
+ *  nothing else can tell them apart. It does not log: the caller knows WHICH
+ *  token that was, and a warn that cannot name it is a warn nobody can act on. */
+async function sendPhotoCardX(ctx, photo, payload, keyboard, opts = {}) {
   await deleteLatest(ctx);
   const { text, extra } = payloadArgs(payload, true);
   try {
     const msg = await ctx.replyWithPhoto(photo, { caption: text, ...extra, ...opts, ...(keyboard || {}) });
     if (ctx.session) ctx.session.latest_bot_message = msg.message_id;
-    return msg;
+    return { msg, photo: true, why: null };
   } catch (e) {
-    // ⚠️ WARN, not debug: a card that should have carried a picture went out
-    // as text, and production does not print debug — "Logo: added ✓" over no
-    // picture was reported from a screenshot because this line said nothing.
-    log.warn(`[msg] photo card failed (${e.message}) — falling back to text`);
-    return sendCard(ctx, payload, keyboard, opts);
+    const msg = await sendCard(ctx, payload, keyboard, opts);
+    return { msg, photo: false, why: String((e && e.message) || e) };
   }
 }
 
@@ -98,4 +110,4 @@ function getMediaFileId(ctx) {
   return null;
 }
 
-module.exports = { answer, deleteLatest, sendCard, sendPhotoCard, toast, getMediaFileId, payloadArgs, HTML };
+module.exports = { answer, deleteLatest, sendCard, sendPhotoCard, sendPhotoCardX, toast, getMediaFileId, payloadArgs, HTML };

@@ -11269,6 +11269,39 @@ upload no longer short-circuited. Each fails between one and three tests.
 **Config a fix depends on:** nothing. `bot/` only, so the deploy is the
 ecosystem restart.
 
+#### "bagaimana agar masalah ini tidak terjadi lgi — bot harus mengirim teks with logo"
+
+Asked over the screenshot proving the fix above: $HAPPYCAT's review card with
+its artwork. The upload makes the picture LIKELIER and cannot make it certain —
+a cold CID on every gateway, or Telegram refusing a url, still ends in the text
+card. And that card was invisible from the ops side: it reads `Logo: added ✓`,
+the buyer sees no picture, and the operator learns of it from a screenshot.
+
+- **The PROMISE is watched, not the causes.** `sendPhotoCardX` reports which
+  card actually went out (`{msg, photo, why}` — a text card and a photo card
+  both come back as a message, and nothing else tells them apart), and
+  `reviewPictureMissed` turns "the token HAS a logo and the card went out
+  without one" into ONE `log.warn` naming the token, our fetch's reason and
+  Telegram's. `log.warn` mirrors to the ops channel with its own dedupe, so a
+  buyer editing five fields is one incident, not five.
+- **A token with no logo pages nobody** — that card is right to be text. An
+  `ipfs://` logo nothing can fetch DOES page: the card says "added ✓" over none.
+- ⚠️ **The intermediate "handing Telegram the url" line is INFO now.** It is
+  not the outcome — Telegram may still fetch the url and the card may still
+  carry the picture — and as a warn it paged the ops channel over cards that
+  went out fine. One fault, one alert, on what the buyer actually got.
+
+```bash
+cd bot && node scripts/run-tests.js test/reviewLogo.test.js   # 11 tests, no network
+pm2 logs dexvra-bot --lines 300 --nostream | grep -F 'WITHOUT its logo'
+```
+
+Six guarantees are MUTATION-TESTED: the warn removed, a picture card warning
+anyway, a logoless card warning, Telegram's reason dropped, the intermediate
+line back to WARN, and the unfetchable-url reason dropped. Each fails a test.
+
+**Config a fix depends on:** nothing. `bot/` only — the ecosystem restart.
+
 ### "bagaimana kalo pair dengan tokenized stok" — the stock is somebody else's QUOTE
 
 Asked over the deploy that proved the USDG half (`quoteUsdSource: "peg"`). A

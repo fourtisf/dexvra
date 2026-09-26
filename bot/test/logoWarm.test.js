@@ -139,8 +139,10 @@ test("⚠️ the review card WARMS the artwork, and both paid posts READ the war
   // which went red the day the card started uploading those bytes itself.)
   const review = listing.slice(listing.indexOf("async function reviewPhoto"), listing.indexOf("async function editField"));
   assert.match(review, /\.warmLogo\(url\)/, "the review card must start the fetch");
-  assert.match(review, /showReview[\s\S]*reviewPhoto\(f\)/, "…and showReview must go through it");
-  assert.ok(review.indexOf("if (f.logoFileId) return f.logoFileId") < review.indexOf(".warmLogo(url)"), "…only for an external url — an upload needs no warming");
+  // reviewPhotoX (the `{photo, why}` form the watch reads) — matched as a
+  // prefix so the property, not the spelling, is what is pinned.
+  assert.match(review, /showReview[\s\S]*reviewPhotoX?\(f\)/, "…and showReview must go through it");
+  assert.ok(review.indexOf("if (f.logoFileId) return") < review.indexOf(".warmLogo(url)"), "…only for an external url — an upload needs no warming");
   const ful = read("src/fulfillment.js");
   const listingPost = ful.slice(ful.indexOf("async function fulfillListing"), ful.indexOf("async function fulfillTrending"));
   // Through readArtwork now (a second pass, a second url — logoRepair.test.js),
