@@ -43,7 +43,10 @@ interface DsPair {
   chainId: string;
   pairAddress: string;
   baseToken: { address: string; name: string; symbol: string };
+  quoteToken?: { address: string; name?: string; symbol?: string };
   priceUsd?: string;
+  /** The BASE token's price in QUOTE-token units. */
+  priceNative?: string;
   txns?: Partial<Record<"m5" | "h1" | "h6" | "h24", { buys: number; sells: number }>>;
   volume?: Partial<Record<"m5" | "h1" | "h6" | "h24", number>>;
   priceChange?: Partial<Record<"m5" | "h1" | "h6" | "h24", number>>;
@@ -143,4 +146,54 @@ export async function fetchDsMarket(
     throw lastErr instanceof Error ? lastErr : new Error(`DexScreener failed (${chainId})`);
   for (const [k, v] of best) out.set(k, v.m);
   return out;
+}
+
+/** Below this depth a pair may not set a quote asset's price: one thin pool
+ *  seen as the asset is how a wrong number reaches every launch paired with it. */
+export const DS_QUOTE_MIN_LIQ_USD = 1_000;
+
+/**
+ * USD per unit of ONE token, read from EITHER side of its pairs — for a Pons
+ * launch's quote asset (a tokenised stock like NVDA on Robinhood Chain).
+ *
+ * `fetchDsMarket` counts base-side pairs only, which is right for pricing a
+ * listing and wrong here: a tokenised stock on a launchpad chain is overwhelmingly
+ * the QUOTE of other people's pairs (every "Paired NVDA" launch is X/NVDA), so
+ * the base-side rule answered "no price" about an asset DexScreener prices in
+ * every one of those rows. On a quote-side pair DS publishes the base's USD price
+ * and the base's price IN the quote, so the quote's USD price is their ratio —
+ * DS's own figure, taken the other way round, not a new guess.
+ *
+ * ⚠️ Judged by the DEEPEST pair, and a pair under `DS_QUOTE_MIN_LIQ_USD` never
+ * answers: this number multiplies every price, cap and liquidity figure of
+ * every launch paired with the asset, so a dust pool is refused rather than
+ * believed. Null means "no pair deep enough", never a zero.
+ */
+export async function fetchDsTokenUsd(chainId: string, address: string): Promise<number | null> {
+  const ds = CHAINS[chainId]?.dexscreener;
+  if (!ds || !address) return null;
+  const res = await fetch(`${BASE}/${ds}/${address}`, {
+    headers: { accept: "application/json" },
+    signal: AbortSignal.timeout(9000),
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(`DexScreener ${res.status} (${chainId})`);
+  const pairs = ((await res.json()) ?? []) as DsPair[];
+  const want = address.toLowerCase();
+  let best: { liq: number; usd: number } | null = null;
+  for (const p of Array.isArray(pairs) ? pairs : []) {
+    const liq = num(p.liquidity?.usd) ?? 0;
+    if (liq < DS_QUOTE_MIN_LIQ_USD) continue;
+    const baseUsd = num(p.priceUsd);
+    if (baseUsd == null || baseUsd <= 0) continue;
+    let usd: number | null = null;
+    if (p.baseToken?.address?.toLowerCase() === want) usd = baseUsd;
+    else if (p.quoteToken?.address?.toLowerCase() === want) {
+      const native = num(p.priceNative);
+      if (native != null && native > 0) usd = baseUsd / native;
+    }
+    if (usd == null || !Number.isFinite(usd) || usd <= 0) continue;
+    if (!best || liq > best.liq) best = { liq, usd };
+  }
+  return best ? best.usd : null;
 }

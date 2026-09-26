@@ -11233,6 +11233,43 @@ head ignoring the market read. Each fails between one and two tests.
 does both — and a record already in the site's cache keeps `null` for up to its
 20s TTL after the restart.
 
+### "bagaimana kalo pair dengan tokenized stok" — the stock is somebody else's QUOTE
+
+Asked over the deploy that proved the USDG half (`quoteUsdSource: "peg"`). A
+launch "Paired NVDA" has no peg, so its USD figure rides the DexScreener rung —
+and that rung read through `fetchDsMarket`, which counts **base-side pairs
+only**. That rule is right for pricing a listing (a token seen as the quote of a
+stranger's pair must not take that pair's price) and wrong for a quote asset: on
+a launchpad chain a tokenised stock is overwhelmingly the QUOTE of other
+people's pairs — every "Paired NVDA" launch IS an X/NVDA pair. So the asset read
+as unpriced over a number DexScreener publishes in every one of those rows, and
+the whole ladder fell to GeckoTerminal, the metered rung.
+
+- **`fetchDsTokenUsd` reads EITHER side.** A quote-side pair publishes the
+  base's USD price and the base's price IN the quote, so the quote's USD price
+  is `priceUsd ÷ priceNative` — DexScreener's own figure the other way round,
+  not a new guess.
+- ⚠️ **The DEEPEST pair decides, and nothing under `DS_QUOTE_MIN_LIQ_USD`
+  ($1,000) answers.** This one number multiplies the price, cap and liquidity of
+  every launch paired with the asset, so a dust pool is refused rather than
+  believed — null, never a zero.
+- **The board reader is untouched.** `fetchDsMarket` keeps its base-side rule;
+  only the quote-asset rung uses the new reader.
+
+```bash
+node --test --experimental-strip-types src/lib/providers/dexscreener.test.ts   # 12 — incl. the quote-side reader
+npm run test:pons                                                              # 133 — a "Paired NVDA" launch, priced
+```
+
+Four guarantees are MUTATION-TESTED: the rung back to the base-side reader, the
+liquidity floor dropped, the ratio inverted, and the first pair taken instead of
+the deepest. Each fails between one and two checks.
+
+**Config a fix depends on:** nothing. ⚠️ Whether DexScreener carries a given
+stock token FROM THE BOX is measured, not assumed — `/api/pons` for that launch
+names the rung that priced it (`quoteUsdSource`) or every rung that refused
+(`marketWhy`). `src/` only, so the deploy is the web rebuild.
+
 ## "perbaiki tampilan chartnya di mobile" — two rows of timeframe buttons, one of them dead
 
 The same screenshot, one panel down: our chart header — `$HACHIKO`, `LIN LOG`,

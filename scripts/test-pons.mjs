@@ -293,6 +293,9 @@ function handle({ method, params }) {
 // GeckoTerminal has to answer; "none" refuses all three, which is the state
 // that used to publish TBA over a curve price the chain had just answered.
 let quoteMode = "coinbase";
+// When set, DexScreener prices the tokenised-stock pair token at this USD figure
+// — as the QUOTE side of another pair, the only way it appears in the wild here.
+let dsStockUsd = 0;
 // When set, every RPC batch carrying an eth_getLogs never answers.
 let hangLogs = false;
 // "ok" · "refuse-curve" (HTTP 429 to any eth_call aimed at the curve or the
@@ -318,6 +321,16 @@ globalThis.fetch = async (url, init) => {
       status: 200,
       headers: { "content-type": "application/json" },
     });
+  }
+  if (href.includes("api.dexscreener.com") && dsStockUsd && href.toLowerCase().includes(STOCK)) {
+    // A tokenised stock the way it actually appears on a launchpad chain: as
+    // the QUOTE of somebody else's pair. base $0.36 = 0.002 NVDA → NVDA $180.
+    return new Response(JSON.stringify([{
+      chainId: "robinhood", pairAddress: "0xpair",
+      baseToken: { address: "0x1111000000000000000000000000000000001111", name: "M", symbol: "M" },
+      quoteToken: { address: STOCK, symbol: "NVDA" },
+      priceUsd: String(0.002 * dsStockUsd), priceNative: "0.002", liquidity: { usd: 50_000 },
+    }]), { status: 200, headers: { "content-type": "application/json" } });
   }
   if (href.includes("api.dexscreener.com")) {
     // Never answers in this harness: the rung is the same reader the board
@@ -991,6 +1004,21 @@ delete process.env.TELEGRAM_CHAT_ID;
   check("…and the reason names the asset", stock && /no USD reference for NVDA/.test(stock.marketWhy || ""), String(stock && stock.marketWhy));
   const stockRow = (await pons.fetchPonsMarket([STOCK_TOKEN])).get(STOCK_TOKEN);
   check("…and the board does not price it with ETH either", !stockRow, JSON.stringify(stockRow && stockRow.priceUsd));
+
+  // "bagaimana kalo pair dengan tokenized stok" — the same launch once
+  // DexScreener carries the stock, as the QUOTE of somebody else's pair. The
+  // base-side board reader never counted that row, so the asset read as
+  // unpriced over a number DexScreener publishes.
+  {
+    __resetQuoteAssetUsd();
+    dsStockUsd = 180;
+    const priced = await pons.fetchPonsLaunch(STOCK_TOKEN);
+    check("a stock-paired launch is priced off DexScreener's QUOTE-side pair", priced && priced.quoteUsdSource === "dexscreener", String(priced && priced.quoteUsdSource));
+    check("…at the chain's price × the stock's USD price", priced && near(priced.priceUsd, priced.priceQuote * 180, 1e-9), `${priced && priced.priceUsd} vs ${priced && priced.priceQuote * 180}`);
+    check("…naming the asset it was priced in", priced && priced.quoteAsset === "NVDA", String(priced && priced.quoteAsset));
+    dsStockUsd = 0;
+    __resetQuoteAssetUsd();
+  }
 
   // ⚠️ A pair token whose decimals() could not be READ is not priced as if it
   // were 18 — that is a price off by 10^12 on a USDG launch.

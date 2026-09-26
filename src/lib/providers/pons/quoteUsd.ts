@@ -26,7 +26,7 @@
 //
 // Alias-free (relative imports only) so `npm test` can drive the ladder.
 import { PONS } from "../../../config/pons.ts";
-import { fetchDsMarket } from "../dexscreener.ts";
+import { fetchDsMarket, fetchDsTokenUsd } from "../dexscreener.ts";
 import { fetchTokenPriceUsd } from "../geckoterminal.ts";
 
 export type QuoteUsdSource = "coinbase" | "dexscreener" | "geckoterminal" | "peg";
@@ -172,8 +172,9 @@ export async function readQuoteAssetUsd(
       "dexscreener",
       deps.dexscreener ??
         (async () => {
-          const m = await fetchDsMarket(chain, [address]);
-          const px = m.get(address.toLowerCase())?.priceUsd;
+          // Either side of its pairs: a tokenised stock is mostly somebody
+          // else's QUOTE, which the base-side board reader never counts.
+          const px = await fetchDsTokenUsd(chain, address);
           if (!(typeof px === "number" && px > 0)) throw new Error(`DexScreener: no ${symbol ?? "quote"} price`);
           return px;
         }),

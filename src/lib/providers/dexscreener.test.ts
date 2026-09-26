@@ -139,3 +139,52 @@ test("the market cycle awaits the GT-only chains before the covered ones start",
   assert.match(src, /const \[gtOnly, covered\] = partitionByFallback/);
   assert.match(src, /\.\.\.\(await Promise\.allSettled\(gtOnly\.map\(fetchOne\)\)\),\s*\n\s*\.\.\.\(await Promise\.allSettled\(covered\.map\(fetchOne\)\)\),/, "the GT-only group is no longer awaited ahead of the covered group");
 });
+
+// "bagaimana kalo pair dengan tokenized stok" — a Pons launch "Paired NVDA" is
+// priced in a tokenised stock, and on a launchpad chain that stock is mostly
+// the QUOTE of other people's pairs. The base-side board reader answered "no
+// price" about an asset DexScreener prices in every one of those rows.
+{
+  const { fetchDsTokenUsd, DS_QUOTE_MIN_LIQ_USD } = await import("./dexscreener.ts");
+  const NVDA = "0xNvdaNvdaNvdaNvdaNvdaNvdaNvdaNvdaNvdaNvda";
+  const quotePair = (liq: number, baseUsd: string, native: string) => ({
+    chainId: "robinhood", pairAddress: `p${liq}`,
+    baseToken: { address: `0xMeme${liq}`, name: "M", symbol: "M" },
+    quoteToken: { address: NVDA, symbol: "NVDA" },
+    priceUsd: baseUsd, priceNative: native, liquidity: { usd: liq },
+  });
+
+  test("a QUOTE-side pair prices the asset as priceUsd ÷ priceNative", async () => {
+    // meme = $0.36 and = 0.002 NVDA → NVDA = $180
+    mockDs(() => [quotePair(50_000, "0.36", "0.002")]);
+    try {
+      const usd = await fetchDsTokenUsd("robinhood", NVDA);
+      assert.ok(usd != null && Math.abs(usd - 180) < 1e-9, String(usd));
+    } finally { globalThis.fetch = realFetch; }
+  });
+
+  test("…a base-side pair still answers with its own priceUsd, and the DEEPEST pair wins", async () => {
+    mockDs(() => [
+      { ...quotePair(20_000, "0.36", "0.002") },                         // → 180, shallower
+      { chainId: "robinhood", pairAddress: "deep", baseToken: { address: NVDA, name: "N", symbol: "NVDA" },
+        quoteToken: { address: "0xUsdg" }, priceUsd: "181", liquidity: { usd: 90_000 } },
+    ]);
+    try { assert.strictEqual(await fetchDsTokenUsd("robinhood", NVDA), 181); }
+    finally { globalThis.fetch = realFetch; }
+  });
+
+  test("⚠️ a dust pair is never believed — it would price every launch paired with the asset", async () => {
+    mockDs(() => [quotePair(DS_QUOTE_MIN_LIQ_USD - 1, "5", "0.001")]);   // would say $5,000
+    try { assert.strictEqual(await fetchDsTokenUsd("robinhood", NVDA), null); }
+    finally { globalThis.fetch = realFetch; }
+  });
+
+  test("…a pair that names the asset on neither side, or has no priceNative, contributes nothing", async () => {
+    mockDs(() => [
+      { ...quotePair(50_000, "0.36", "0.002"), quoteToken: { address: "0xSomethingElse" } },
+      { ...quotePair(60_000, "0.36", "") },
+    ]);
+    try { assert.strictEqual(await fetchDsTokenUsd("robinhood", NVDA), null); }
+    finally { globalThis.fetch = realFetch; }
+  });
+}
