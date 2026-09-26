@@ -44,13 +44,11 @@ const Q96 = 2 ** 96;
  * into the cache would be served stale for the life of the process.
  */
 const NATIVE_USD_KEY = "pons:native-usd";
-let quoteUsdSource: QuoteUsdSource | null = null;
 // Test seam: `cached()` serves a stale copy while it refreshes, so a suite that
 // walks the ladder through three outcomes needs a fresh key per outcome.
 let nativeUsdGen = 0;
 export const __resetNativeUsd = (): void => {
   nativeUsdGen++;
-  quoteUsdSource = null;
 };
 
 export interface NativeUsdRead {
@@ -60,15 +58,28 @@ export interface NativeUsdRead {
   why: string | null;
 }
 
+/**
+ * ⚠️ THE SOURCE IS CACHED WITH THE NUMBER, never beside it in module state.
+ * `cache` lives on `globalThis` and is shared by every route bundle Next
+ * builds, while a module-level variable is one COPY PER BUNDLE. So when the
+ * board's copy of this module filled the cache, `/api/pons`'s copy read the
+ * number and had no idea where it came from — the live record for a
+ * USDG-paired launch said `quoteUsdSource: null` over a price that was pegged.
+ * A value and the fact about it travel as one entry, or they come apart.
+ */
+interface PricedRef {
+  usd: number;
+  source: QuoteUsdSource | null;
+}
+
 export async function nativeUsdX(): Promise<NativeUsdRead> {
   try {
-    const usd = await cached(`${NATIVE_USD_KEY}#${nativeUsdGen}`, NATIVE_USD_TTL, async () => {
+    const ref = await cached<PricedRef>(`${NATIVE_USD_KEY}#${nativeUsdGen}`, NATIVE_USD_TTL, async () => {
       const r = await readNativeUsd();
       if (r.usd == null) throw new Error(r.why.join("; ") || "no source answered");
-      quoteUsdSource = r.source;
-      return r.usd;
+      return { usd: r.usd, source: r.source };
     });
-    return { usd, source: quoteUsdSource, why: null };
+    return { usd: ref.usd, source: ref.source, why: null };
   } catch (e) {
     return {
       usd: null,
@@ -98,24 +109,20 @@ export async function quoteUsdFor(snapshot: LaunchSnapshot): Promise<NativeUsdRe
   if (snapshot.quote?.decimals == null) {
     return { usd: null, source: null, why: `could not read ${label}'s decimals` };
   }
-  let source: QuoteUsdSource | null = null;
   try {
-    const usd = await cached(`pons:quote-usd:${address}#${quoteAssetGen.n}`, NATIVE_USD_TTL, async () => {
+    // One entry for the number AND its source — see `PricedRef`.
+    const ref = await cached<PricedRef>(`pons:quote-usd:${address}#${quoteAssetGen.n}`, NATIVE_USD_TTL, async () => {
       const r = await readQuoteAssetUsd(PONS.chain, address, snapshot.quote?.symbol ?? null);
       if (r.usd == null) throw new Error(r.why.join("; ") || "no source answered");
-      source = r.source;
-      quoteAssetSource.set(address, r.source);
-      return r.usd;
+      return { usd: r.usd, source: r.source };
     });
-    return { usd, source: source ?? quoteAssetSource.get(address) ?? null, why: null };
+    return { usd: ref.usd, source: ref.source, why: null };
   } catch (e) {
     return { usd: null, source: null, why: `no USD reference for ${label} — ${e instanceof Error ? e.message : String(e)}` };
   }
 }
-const quoteAssetSource = new Map<string, QuoteUsdSource | null>();
 export const __resetQuoteAssetUsd = (): void => {
   quoteAssetGen.n++;
-  quoteAssetSource.clear();
 };
 
 const tokenDecimals = (snapshot: LaunchSnapshot): number => snapshot.meta?.decimals ?? 18;

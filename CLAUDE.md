@@ -11180,6 +11180,59 @@ Each fails between one and nine checks.
 `src/`, so `npm run deploy` restarts all three bot processes and rebuilds the
 site. That is what it decides from the diff anyway.
 
+### "pair selain eth … bot harus baca datanya otomatis" — the record was right, and three readers of it were not
+
+The deploy of that fix proved the price half: `/api/pons` for $HAPPYCAT came
+back with its name, ticker, logo, `quoteAsset: "USDG"`, a price, a $3,980 cap
+and $352.96 of liquidity. **And three lines of the same screenshot were still
+wrong**, each a reader dropping part of an answer it had been handed.
+
+**1. ⚠️ `quoteUsdSource: null` OVER A PEGGED PRICE — a module variable is one
+copy PER BUNDLE.** `cache` lives on `globalThis` and is shared by every route
+bundle Next builds; the source of the USD reference lived BESIDE it, in a
+module-level variable (native) and a module-level Map (ERC-20). So when the
+board's copy of `market.ts` filled `pons:quote-usd:<usdg>`, `/api/pons`'s copy
+read the number from the shared cache and had no idea where it came from. The
+suite could not see it: one test process loads the module once.
+
+- **The number and its source are ONE cache entry** (`PricedRef`). A value and
+  the fact about it travel together, or they come apart at the first boundary.
+- **The test loads TWO COPIES of the module** (`market.ts?bundle=a` /
+  `?bundle=b`) over one cache — the production shape — and the second must
+  still name the source. On the old code it reads `null` for both the USDG peg
+  and the ETH reference, exactly as the box did.
+
+**2. `liq —` on the post over the $352.96 the site prints.** `ponsChain.toInfo`
+writes `liq: 0` deliberately: that is the field the auto-lister's `minLiq` gate
+reads, and a curve reserve is not the pool depth that gate was written for. So
+the chain's liquidity never reached the paid post, and dexvra.io and the channel
+printed two different answers for one token.
+
+- **It travels as `curveLiq`**, and only `marketdata.mergeCurve` takes it — LAST,
+  behind any indexer's depth and the pad's, filling a hole only. The gate's
+  `liq` stays 0, pinned by a test, so a curve still cannot pass `minLiq` on a
+  reserve.
+
+**3. `$?` in `post:check` for a token that is not listed yet** — which is the
+moment the check is run for. The head read only the listing row; the market
+read beside it already carried the contract's ticker and name. It falls back to
+them now, and the test DRIVES `report()` rather than scanning it.
+
+```bash
+npm run test:pons                                                                          # 130 — incl. the two-bundle cache
+cd bot && node scripts/run-tests.js test/curvePost.test.js test/postCheck.test.js           # the reserve, the gate, the head
+cd /opt/dexvra/bot && npm run post:check -- robinhood 0x113ff96E9392a6501f65B3BD4AACB89D3D0945cC
+```
+
+Six guarantees are MUTATION-TESTED: the source kept in module state again (both
+the ERC-20 and the native reference), the reserve dropped from the merge, the
+reserve outranking an indexer's depth, the gate's `liq` fed the reserve, and the
+head ignoring the market read. Each fails between one and two tests.
+
+**Config a fix depends on:** nothing. ⚠️ `bot/` AND `src/`, so `npm run deploy`
+does both — and a record already in the site's cache keeps `null` for up to its
+20s TTL after the restart.
+
 ## "perbaiki tampilan chartnya di mobile" — two rows of timeframe buttons, one of them dead
 
 The same screenshot, one panel down: our chart header — `$HACHIKO`, `LIN LOG`,

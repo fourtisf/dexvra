@@ -805,3 +805,41 @@ test("⚠️ the post's why carries a chain read that failed — 'site answered 
     restore();
   }
 });
+
+// "liat ini jdi pair selain eth saya ingin bot harus baca datanya otomatis" —
+// $HAPPYCAT (Pons, paired USDG): /api/pons answered liquidityUsd 352.96 and
+// dexvra.io printed it, while post:check for the same token read `liq —`.
+// `toInfo` writes `liq: 0` on purpose (the auto-lister's `minLiq` gate reads
+// that field, and a curve reserve is not the pool depth it was written for), so
+// the chain's figure never reached the post. It travels as `curveLiq` now.
+test("⚠️ the curve's raised reserve reaches the POST as its liquidity — the figure the site prints", async () => {
+  const withLiq = { launch: { ...LAUNCH.launch, liquidityUsd: 352.96 } };
+  const { restore } = stubFetch((who) => (who === "chain" ? withLiq : who === "pad" ? undefined : null));
+  try {
+    const m = await market.fetchMarket("robinhood", WROTE, cheap);
+    assert.ok(m, "the read must price the curve");
+    assert.strictEqual(m.liq, 352.96, "the post must print the liquidity dexvra.io prints for this token");
+  } finally {
+    restore();
+  }
+});
+
+test("…while the auto-lister's `liq` gate still reads the curve as NO pool depth", async () => {
+  const withLiq = { launch: { ...LAUNCH.launch, liquidityUsd: 352.96 } };
+  const { restore } = stubFetch((who) => (who === "chain" ? withLiq : null));
+  try {
+    const r = await ponsChain.fetchTokenInfoX("robinhood", WROTE);
+    assert.ok(r && r.info, "the chain record must come back");
+    assert.strictEqual(r.info.liq, 0, "`liq` is the gate's field and a curve reserve must not pass `minLiq`");
+    assert.strictEqual(r.info.curveLiq, 352.96, "the reserve travels under its own name");
+  } finally {
+    restore();
+  }
+});
+
+test("…and a live pool reading still outranks the curve's reserve", () => {
+  const merged = market._mergeCurve({ priceUsd: 1, mcap: 2, liq: 9000 }, { curveLiq: 352.96 });
+  assert.strictEqual(merged.liq, 9000, "an indexer's depth is an ANSWER and is never replaced");
+  const filled = market._mergeCurve({ priceUsd: 1, mcap: 2 }, { curveLiq: 352.96 });
+  assert.strictEqual(filled.liq, 352.96, "…and the reserve fills only the hole");
+});

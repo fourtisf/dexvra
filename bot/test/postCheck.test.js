@@ -284,3 +284,26 @@ test("⚠️ assemble() adopts the chain's logo through the post's own rule befo
   assert.ok(!/_fetchLogoUrlX\(row\.logoUrl\)/.test(fn), "the fetch reads the adopted url, not the row's");
   assert.ok(!/wanted: !!row\.logoUrl/.test(fn), "…and so does the lost-artwork verdict");
 });
+
+// $HAPPYCAT was checked BEFORE it was listed — which is the moment this check
+// is run for — and the head read `$?` over a market read that carried the
+// contract's own ticker and name.
+test("⚠️ a token that is not a listing yet is named by the market read, never `$?`", () => {
+  const { report } = require("../scripts/post-check.js");
+  const lines = [];
+  const orig = console.log;
+  console.log = (m) => lines.push(String(m));
+  try {
+    report(
+      { chain: "robinhood", address: "0x113ff96E9392a6501f65B3BD4AACB89D3D0945cC", sym: null, name: null, logoUrl: null },
+      { live: { priceUsd: 0.0000039804, mcap: 3980.42, liq: 352.96, symbol: "HAPPYCAT", name: "Happy Cat" },
+        holes: [], why: null, logoUrl: "https://gateway.pinata.cloud/ipfs/x", art: { via: "gateway.pinata.cloud" }, adopted: true },
+    );
+  } finally {
+    console.log = orig;
+  }
+  const out = lines.join("\n");
+  assert.match(out, /\$HAPPYCAT — Happy Cat/, `the head must carry the contract's ticker and name:\n${out}`);
+  assert.doesNotMatch(out, /\$\?/, "no `$?` over a ticker we already read");
+  assert.match(out, /liq 352\.96/, "…and the curve's liquidity, not a dash");
+});

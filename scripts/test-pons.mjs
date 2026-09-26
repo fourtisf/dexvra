@@ -963,6 +963,25 @@ delete process.env.TELEGRAM_CHAT_ID;
   check("…and progress is raised ÷ threshold in the SAME asset", rec && near(rec.progressPct, (400 / 8090) * 100, 1e-9), String(rec && rec.progressPct));
   check("…and quoteSymbol keeps its native-only meaning", rec && rec.quoteSymbol === null);
 
+  // ⚠️ `cache` is on globalThis and shared by every route bundle Next builds;
+  // a module-level variable is one copy PER BUNDLE. The live record said
+  // `quoteUsdSource: null` over a pegged price because the board's copy of
+  // market.ts filled the cache and /api/pons's copy read the number with no
+  // idea where it came from. Two fresh copies of the module, one cache: the
+  // second must still say how the number it READ was priced.
+  {
+    const bundleA = await import("../src/lib/providers/pons/market.ts?bundle=a");
+    const bundleB = await import("../src/lib/providers/pons/market.ts?bundle=b");
+    check("(the two bundles are separate module instances)", bundleA !== bundleB && bundleA.fetchPonsLaunch !== bundleB.fetchPonsLaunch);
+    const a = await bundleA.fetchPonsLaunch(USDG_TOKEN);
+    const b = await bundleB.fetchPonsLaunch(USDG_TOKEN);
+    check("a bundle that FILLED the cache names the source", a && a.quoteUsdSource === "peg", String(a && a.quoteUsdSource));
+    check("…and a bundle that READ it from the shared cache names it too", b && b.quoteUsdSource === "peg", String(b && b.quoteUsdSource));
+    const na = await bundleA.nativeUsdX();
+    const nb = await bundleB.nativeUsdX();
+    check("…the same for the ETH reference", na.usd != null && nb.source != null && nb.source === na.source, `${na.source} / ${nb.source}`);
+  }
+
   // A pair token that is not a dollar and that no source here prices: the
   // chain's own reading survives, the USD figure is honestly missing, and the
   // reason NAMES the asset — never an ETH price stood in for it.

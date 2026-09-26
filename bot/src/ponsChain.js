@@ -116,6 +116,14 @@ function toInfo(launch) {
     change24h: 0,
     pairCreatedAt: 0,
     pairCount: 1,
+    // What the SITE prints as this token's liquidity: the quote really raised
+    // into the curve, in USD, off the same record. Carried under its OWN name
+    // because `liq` above is what the auto-lister's `minLiq` gate reads, and a
+    // curve reserve is not the pool depth that gate was written for. Only the
+    // market read (`marketdata.mergeCurve`) takes it — so a paid post prints
+    // the number dexvra.io shows for the token instead of "—" beside it.
+    curveLiq: Number.isFinite(Number(launch.liquidityUsd)) && Number(launch.liquidityUsd) > 0
+      ? Number(launch.liquidityUsd) : null,
     description: cleanDescription(launch.description),
     graduated,
     // Three-valued, like every other pad: true / false / null for "nobody

@@ -128,7 +128,13 @@ function report(row, a) {
   // ⚠️ ONE `$`. The listing store's convention is `sym: "$BONK"`, so prepending
   // another printed `$$ORCHFLOWS` on the line whose whole job is naming the
   // token — the `From $1,000,0…` defect, on the check that reports it.
-  const head = `${ticker(row.sym || row.symbol)}${row.name ? ` — ${row.name}` : ''}  ${D}${row.chain}/${row.address}${X}`;
+  // A token that is NOT a listing yet has no row to name it — which is exactly
+  // the case this check is run for before a buyer pays — so the market read's
+  // own name and ticker (the contract's, for a curve) stand in. `$?` over a
+  // token whose contract publishes its ticker is a blank we already filled.
+  const sym = row.sym || row.symbol || (a.live && a.live.symbol);
+  const name = row.name || (a.live && a.live.name);
+  const head = `${ticker(sym)}${name ? ` — ${name}` : ''}  ${D}${row.chain}/${row.address}${X}`;
   const keyHole = a.holes.some((h) => postFigures.isKeyHole(h, a.live));
   const level = verdict(a);
 
@@ -327,4 +333,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { verdict, assemble };
+module.exports = { verdict, assemble, report };

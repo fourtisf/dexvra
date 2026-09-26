@@ -545,7 +545,9 @@ function mergeCurve(out, lp) {
     ...base,
     priceUsd: num(base.priceUsd) ?? num(lp.priceUsd),
     mcap: num(base.mcap) ?? num(lp.mcap),
-    liq: num(base.liq) ?? num(lp.liq),
+    // `curveLiq` is the chain record's raised reserve (ponsChain) — the figure
+    // the site prints — and only ever fills a hole an indexer left.
+    liq: num(base.liq) ?? num(lp.liq) ?? num(lp.curveLiq),
     // A launchpad publishes no 24h volume, so this can only ever carry through
     // what an indexer already found. NOT defaulted to 0: a token still on a
     // bonding curve has traded, and calling that "zero volume" would let the
@@ -857,5 +859,6 @@ module.exports = {
   CANDLE_TTL_MS,
   CHANGE_POOL_MIN_SHARE,
   _pickTrusted: pickTrusted,
+  _mergeCurve: mergeCurve,
   SANE_CHANGE_PCT,
   MCAP_DISAGREE_FACTOR, fetchMarket, fetchPrice, fetchTokenDescription };
