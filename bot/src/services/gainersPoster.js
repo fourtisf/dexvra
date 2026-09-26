@@ -12,7 +12,7 @@
 const cfgStore = require("./gainersConfig");
 const store = require("../gainerspost/store");
 const gainers = require("../gainers");
-const gb = require("../gainersBanner");
+const gr = require("../gainersRender");
 const post = require("../channels/post");
 const x = require("../twitter");
 const { X_GAINERS_ENABLED } = require("../config/constants");
@@ -37,7 +37,12 @@ async function drainQueue() {
   for (const job of store.pending()) {
     if (!(await store.claim(job.id))) continue; // another tick got it
     try {
-      const msg = await post.sendPhoto(job.channel, { source: job.imagePath }, job.caption, { pin: job.pin });
+      // A motion banner goes out through sendMedia as an ANIMATION (Telegram
+      // plays the MP4 as a looping GIF); a still keeps the sendPhoto path it
+      // has always used. A job queued before motion existed has no mediaType.
+      const msg = job.mediaType === "animation"
+        ? await post.sendMedia(job.channel, { type: "animation", source: job.imagePath }, job.caption, { pin: job.pin })
+        : await post.sendPhoto(job.channel, { source: job.imagePath }, job.caption, { pin: job.pin });
       const ok = Boolean(msg && msg.message_id);
       // …and the same board on X, exactly like the daily auto-post. The tweet
       // copy travelled with the job (the admin bot has the coins, this process
@@ -63,32 +68,34 @@ async function drainQueue() {
  */
 async function postNow({ template = null, by = "schedule" } = {}) {
   const cfg = cfgStore.get();
-  if (!gb.available()) return { ok: false, reason: "canvas unavailable on this host" };
-  const id = gb.pickTemplate(template || cfg.template, { pool: cfg.pool });
+  if (!gr.available()) return { ok: false, reason: "canvas unavailable on this host" };
+  const id = gr.pickTemplate(template || cfg.template, { pool: cfg.pool, format: cfg.format });
   const res = await gainers.topGainers({
-    limit: gb.countOf(id),
+    limit: gr.countOf(id),
     minGainPct: cfg.minGainPct,
     minLiqUsd: cfg.minLiqUsd, minMcapUsd: cfg.minMcapUsd,
   });
   if (!res.coins.length) return { ok: false, reason: res.notes.join(" ") || "no live gainers" };
 
-  const image = await gb.render({
+  const out = await gr.render({
     template: id,
     coins: res.coins,
     dateText: cfg.showDate ? gainers.dateText(cfg.tz) : "",
     showPct: cfg.showPct,
     bgPath: cfgStore.bgForRender(),
   });
-  if (!image) return { ok: false, reason: "banner render failed" };
+  if (!out) return { ok: false, reason: "banner render failed" };
 
   const channel = cfgStore.targetChannel(cfg);
   // Tweet the board FIRST, with the rendered banner as the tweet's media, so the
   // Telegram caption can carry a live "Announce On X" link to it — the same
   // ordering every other post type uses. The line drops itself when there is no
   // tweet, so a slow or unconfigured X costs the link and nothing else.
-  const xUrl = await tweetGainers(res.coins, image, cfg);
+  const xUrl = await tweetGainers(res.coins, out.still, cfg);
   const caption = gainers.captionPayload(res.coins, { tz: cfg.tz, showMcap: cfg.showMcap, showPct: cfg.showPct, xUrl });
-  const msg = await post.sendPhoto(channel, { source: image }, caption, { pin: cfg.pin });
+  const msg = out.mediaType === "animation"
+    ? await post.sendMedia(channel, { type: "animation", source: out.media }, caption, { pin: cfg.pin })
+    : await post.sendPhoto(channel, { source: out.media }, caption, { pin: cfg.pin });
   if (!msg || !msg.message_id) return { ok: false, reason: `${channel} refused the post — is the bot an admin there?` };
   const symbols = res.coins.map((c) => c.symbol);
   log.info(`[gainers] daily ${id} → ${tmeLink(channel, msg.message_id)} (${symbols.join(", ")}) by ${by}`);
@@ -123,7 +130,7 @@ const tweetGainers = (coins, image, cfg) =>
 /** An admin-queued banner's tweet. Its copy was built by the admin bot and
  *  travelled on the job; a job queued before this existed has no xList and is
  *  simply not tweeted rather than tweeted blank. */
-const tweetQueued = (job) => tweetBoard(job.xList, job.xDate || "", job.imagePath);
+const tweetQueued = (job) => tweetBoard(job.xList, job.xDate || "", job.stillPath || job.imagePath);
 
 /** One scheduler beat. `post` is injectable so the once-a-day guarantee can be
  *  tested without a Telegram connection — the guard is the whole point of this

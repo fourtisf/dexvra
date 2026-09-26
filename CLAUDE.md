@@ -3128,6 +3128,47 @@ ladder share a silhouette:
   widest bar always belongs to rank 1 because gainers.js sorts by the same
   number. A drawn value follows the same rule as a printed one.
 
+### "versi gif atau vidio bukan gambar lgi" — ten MOTION boards, and every token draws its logo
+
+`bot/src/gainersMotion.js` renders the board as a ~6s looping MP4 (H.264, no
+audio) that Telegram plays as a GIF via `sendAnimation`: frames drawn with
+@napi-rs/canvas, piped to ffmpeg as raw RGBA. One layout per board size, each
+moving its own way — v1 Spotlight · v2 Face-off · v3 Podium Rise · v4 Card Flip
+· v5 Bar Race · v6 Orbit · v7 Stack · v8 Neon Grid · v9 Split-Flap · v10
+Bubbles — and a test fails if two share a layout or a backdrop.
+
+- **`gainersRender.js` is the ONE door** for the panel, the queue and the daily
+  poster: which layout, how many coins, what it renders to, how it is sent. A
+  second copy is how the preview would show a video while the daily post sends
+  a PNG. `format` (⚙️ → 🎬 Format) decides what 🎲 random and the daily post
+  roll; it **ships as video**, and a concrete layout id is honoured either way.
+- **A video that does not encode degrades to its own still frame as a photo**,
+  never to nothing, and says so. The tweet always gets the still (`stillPath`
+  travels beside the MP4 on the queued job).
+- ⚠️ **The count-up lands EXACTLY on `fmtPct(c.pct)`** and draws nothing before
+  it starts — a `0.0%` frame is a figure nobody measured. `Number(null)` is 0,
+  so absence is checked first (sixth time in this file).
+- **`showPct:false` removes every drawing of the figure** — the bar race's bar
+  and the bubble area included, and the split-flap's per-glyph `%`. Pinned by a
+  fillText spy with a vacuity check.
+- **The loop is seamless**: backdrop motion is periodic in the clip length and
+  the content fades back to the empty backdrop frame 0 builds from.
+- **Every token draws its logo, three passes cheapest first**
+  (`gainers.resolveLogo`): the row's and the live read's urls + the DexScreener
+  CDN; then the same artwork through our own `/api/logo` (gateway failover —
+  an `ipfs://` logo used to be glued onto `SITE_URL` and 404); then
+  `services/tokenLogo.resolveLogo` bounded by `GAINERS_LOGO_RESOLVE_MS` (8s).
+  Only then the monogram — logged at INFO with the upstreams that refused.
+
+```bash
+cd bot && node scripts/run-tests.js test/gainersMotion.test.js   # 15 tests, no network
+```
+
+**Config a fix depends on:** nothing. `GAINERS_MOTION_FPS` / `_SECONDS` tune the
+clip; `FFMPEG_PATH` overrides the bundled binary. ⚠️ `bot/` only, so the deploy
+is the ecosystem restart (the admin bot renders the preview, the main bot
+publishes).
+
 ### The winner's NAME is not a ranking signal
 
 `$巨兽BEHEMOTH` was drawn at 44px against 31px for the two cards beside it, and a

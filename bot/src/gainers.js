@@ -159,6 +159,10 @@ function logoCandidates(coin) {
   const push = (u) => {
     const s = String(u || "").trim();
     if (!s) return;
+    // An ipfs:// / ar:// URI is not a path on our site — prefixing SITE_URL
+    // onto it built a url that 404s on every try. It is fetched through the
+    // proxy's gateway ladder instead (proxyCandidates).
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(s) && !/^https?:\/\//i.test(s)) return;
     // A store logo is a relative /api/media/… path; make it publicly fetchable.
     const abs = /^https?:\/\//i.test(s) ? s : `${SITE_URL}${s.startsWith("/") ? "" : "/"}${s}`;
     if (!out.includes(abs)) out.push(abs);
@@ -167,6 +171,32 @@ function logoCandidates(coin) {
   push(coin.liveLogoUrl);
   const ds = dexscreener.DS_CHAIN[coin.chain];
   if (ds && coin.address) push(`https://dd.dexscreener.com/ds-data/tokens/${ds}/${coin.address}.png?size=lg`);
+  return out;
+}
+
+/**
+ * The SAME artwork, asked through our own `/api/logo` proxy — the one owner of
+ * "can this url be rendered": it fails over across the IPFS gateway ladder
+ * (a CID is the hash of the bytes, so one gateway's 404 is a fact about the
+ * gateway), hedges a slow one, and carries the hotlink allowlist. A banner that
+ * fetched a raw url and gave up drew a monogram over a logo the website draws
+ * perfectly well — the $GG / $ORCHFLOWS shape, on the gainers board.
+ * Localhost (DEXVRA_API_BASE), so it costs no public round trip.
+ */
+function proxyCandidates(coin) {
+  const { mediaPath } = require("./helpers/mediaUrl");
+  const out = [];
+  for (const raw of [coin.logoUrl, coin.liveLogoUrl]) {
+    const s = String(raw || "").trim();
+    if (!s) continue;
+    const own = mediaPath(s);
+    const u = own
+      ? `${DEXVRA_API_BASE}${own}`
+      : /^(https?|ipfs|ar):\/\//i.test(s)
+        ? `${DEXVRA_API_BASE}/api/logo?u=${encodeURIComponent(s)}`
+        : null;
+    if (u && !out.includes(u)) out.push(u);
+  }
   return out;
 }
 
@@ -231,10 +261,10 @@ async function decodes(buf) {
 /** First candidate URL that downloads AND decodes, else null. Cached per URL
  *  (negatives too — a 404'd CDN path stays 404 for the next 20 minutes, and a
  *  banner rebuild after a slot edit must not re-fetch nine logos). */
-async function resolveLogo(coin) {
+async function tryUrls(urls) {
   const now = Date.now();
   if (_logoCache.size > LOGO_CACHE_MAX) _logoCache.clear();
-  for (const url of logoCandidates(coin)) {
+  for (const url of urls) {
     const hit = _logoCache.get(url);
     if (hit && now - hit.at < LOGO_TTL_MS) {
       if (hit.buf) return hit.buf;
@@ -246,6 +276,54 @@ async function resolveLogo(coin) {
     if (ok) return buf;
     if (buf) log.debug(`[gainers] logo not decodable, trying next: ${url}`);
   }
+  return null;
+}
+
+/** How long the last-resort lookup (services/tokenLogo — seven sources) may
+ *  take per token. Bounded: a banner is rendered while an admin waits. */
+const LOGO_RESOLVE_MS = Math.max(1000, Number(process.env.GAINERS_LOGO_RESOLVE_MS) || 8000);
+
+/**
+ * "Every token must have its logo." Three passes, cheapest first:
+ *   1. the urls the row and the live read carry, plus the DexScreener CDN;
+ *   2. the same artwork through our own /api/logo proxy (gateway failover);
+ *   3. the resolver the listing cleanup uses (DexScreener, launchpads,
+ *      pools.trade, Trust Wallet, then the metered GT/CoinGecko), bounded.
+ * Only when all three come up empty does the banner draw the monogram — and
+ * it says so at INFO, because a monogram and a logo nobody could fetch look
+ * identical on a public board.
+ */
+async function resolveLogo(coin, { deps = {} } = {}) {
+  const direct = await tryUrls(logoCandidates(coin));
+  if (direct) return direct;
+  const proxied = await tryUrls(proxyCandidates(coin));
+  if (proxied) return proxied;
+  if (!coin.chain || !coin.address) return null;
+  const lookup = deps.lookup || require("./services/tokenLogo").resolveLogo;
+  let res = null;
+  let timer;
+  try {
+    res = await Promise.race([
+      lookup(coin.chain, coin.address),
+      new Promise((r) => {
+        timer = setTimeout(() => r(null), LOGO_RESOLVE_MS);
+      }),
+    ]);
+  } catch {
+    res = null;
+  } finally {
+    clearTimeout(timer);
+  }
+  const url = res && res.url;
+  if (url) {
+    coin.logoUrl = coin.logoUrl || url;
+    const buf = await tryUrls([url, `${DEXVRA_API_BASE}/api/logo?u=${encodeURIComponent(url)}`]);
+    if (buf) return buf;
+  }
+  log.info(
+    `[gainers] no logo for $${coin.symbol} (${coin.chain}/${coin.address}) — drawing its monogram` +
+      (res && res.unreachable && res.unreachable.length ? `; could not ask: ${res.unreachable.slice(0, 3).join("; ")}` : ""),
+  );
   return null;
 }
 
@@ -606,5 +684,5 @@ module.exports = {
   captionPayload,
   summary,
   // exposed for tests
-  _internals: { normSymbol, xHandle, enrichHandles, logoCandidates, parseTokenRef, candidateChains, boardCoin, mapLimit },
+  _internals: { normSymbol, xHandle, enrichHandles, logoCandidates, proxyCandidates, resolveLogo, parseTokenRef, candidateChains, boardCoin, mapLimit },
 };

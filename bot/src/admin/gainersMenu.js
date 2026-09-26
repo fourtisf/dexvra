@@ -16,6 +16,10 @@ const { Markup } = require("telegraf");
 const { promises: fs } = require("node:fs");
 const gainers = require("../gainers");
 const gb = require("../gainersBanner");
+const gm = require("../gainersMotion");
+// One owner of "which layout, how many coins, what it renders to" — the still
+// banners and the motion ones answer through it, here and in the poster alike.
+const gr = require("../gainersRender");
 const cfgStore = require("../services/gainersConfig");
 const store = require("../gainerspost/store");
 const mediaMirror = require("../db/mediaMirror");
@@ -35,7 +39,7 @@ const mark = (b) => (b ? ON : OFF);
 // ── panels ──────────────────────────────────────────────────────────────────
 function homeText() {
   const c = cfgStore.get();
-  const tplName = c.template === "random" ? `🎲 random${c.pool.length ? ` (${c.pool.length} in rotation)` : " (all)"}` : gb.labelOf(c.template);
+  const tplName = c.template === "random" ? `🎲 random${c.pool.length ? ` (${c.pool.length} in rotation)` : " (all)"}` : gr.labelOf(c.template);
   const filters = [
     `≥ +${c.minGainPct}%`,
     c.minMcapUsd ? `MC ≥ ${fmtCap(c.minMcapUsd)}` : null,
@@ -52,24 +56,32 @@ function homeText() {
     "",
     `📢 <b>Channel:</b> <code>${escapeHtml(cfgStore.targetChannel(c))}</code>`,
     `🖼 <b>Layout:</b> ${escapeHtml(tplName)}`,
+    `🎬 <b>Format:</b> ${fmtName(c.format)}`,
     `🎯 <b>Filters:</b> ${escapeHtml(filters)}`,
     `⏰ <b>Daily post:</b> ${c.daily ? `ON at <b>${c.dailyTime}</b> ${escapeHtml(c.tz)}` : "OFF"}`,
   ];
   if (hasBg()) lines.push("🎨 <b>Background:</b> custom artwork set");
   if (!gb.available()) lines.push("\n⚠️ <b>canvas is unavailable on this host</b> — banners cannot be rendered here.");
-  lines.push("", "Pick a layout to preview it with live data:");
+  lines.push("", "Pick a layout to preview it with live data — 🎬 are videos (MP4, played as a looping GIF), one style per board size:");
   return lines.join("\n");
 }
 
-function homeKb() {
+const fmtName = (f) => (f === "image" ? "🖼 Image (PNG)" : "🎬 Video (MP4 · plays as a GIF)");
+
+/** Two layout buttons per row, labelled with the board size they draw. */
+function layoutRows(ids) {
   const rows = [];
-  const ids = gb.TEMPLATE_IDS;
   for (let i = 0; i < ids.length; i += 2) {
-    rows.push(
-      ids.slice(i, i + 2).map((id) => Markup.button.callback(`${gb.labelOf(id)} · ${gb.countOf(id)}`, `gn_t:${id}`)),
-    );
+    rows.push(ids.slice(i, i + 2).map((id) => Markup.button.callback(`${gr.labelOf(id)} · Top ${gr.countOf(id)}`, `gn_t:${id}`)));
   }
-  rows.push([Markup.button.callback("🎲 Random layout", "gn_t:random")]);
+  return rows;
+}
+
+function homeKb() {
+  const c = cfgStore.get();
+  const rows = layoutRows(gm.TEMPLATE_IDS);
+  rows.push([Markup.button.callback("🖼 Still image layouts", "gn_img")]);
+  rows.push([Markup.button.callback(`🎲 Random ${c.format === "image" ? "image" : "video"}`, "gn_t:random")]);
   rows.push([Markup.button.callback("📡 Check live data", "gn_data"), Markup.button.callback("⚙️ Settings", "gn_set")]);
   rows.push([Markup.button.callback("⬅ Back to menu", "home")]);
   return Markup.inlineKeyboard(rows);
@@ -81,8 +93,9 @@ function setText() {
     "⚙️ <b>Top Gainers — settings</b>",
     "",
     `📢 <b>Channel:</b> <code>${escapeHtml(cfgStore.targetChannel(c))}</code>${c.channel ? "" : " <i>(default: trending)</i>"}`,
-    `🖼 <b>Default layout:</b> ${escapeHtml(c.template === "random" ? "random" : gb.labelOf(c.template))}`,
-    `🎲 <b>Random rotation:</b> ${c.pool.length ? escapeHtml(c.pool.map((t) => gb.labelOf(t)).join(", ")) : "every layout"}`,
+    `🎬 <b>Format:</b> ${fmtName(c.format)} <i>— what 🎲 random and the daily post roll</i>`,
+    `🖼 <b>Default layout:</b> ${escapeHtml(c.template === "random" ? "random" : gr.labelOf(c.template))}`,
+    `🎲 <b>Random rotation:</b> ${c.pool.length ? escapeHtml(c.pool.map((t) => gr.labelOf(t)).join(", ")) : "every layout of that format"}`,
     "",
     `⏰ <b>Daily auto-post:</b> ${c.daily ? "ON" : "OFF"} — <b>${c.dailyTime}</b> (${escapeHtml(c.tz)})`,
     `📌 <b>Pin the post:</b> ${c.pin ? "yes" : "no"}`,
@@ -103,6 +116,7 @@ function setKb() {
   const c = cfgStore.get();
   return Markup.inlineKeyboard([
     [Markup.button.callback("📢 Channel", "gn_ch"), Markup.button.callback("🖼 Default layout", "gn_tpl")],
+    [Markup.button.callback(c.format === "image" ? "🎬 Format: Image → switch to Video" : "🖼 Format: Video → switch to Image", "gn_fmt")],
     [Markup.button.callback(`⏰ Daily ${c.daily ? "ON → turn OFF" : "OFF → turn ON"}`, "gn_daily")],
     [Markup.button.callback("🕘 Post time", "gn_time"), Markup.button.callback("🌍 Timezone", "gn_tz")],
     [Markup.button.callback("🎯 Min gain %", "gn_min"), Markup.button.callback("🏦 Min market cap", "gn_mc")],
@@ -120,8 +134,8 @@ function setKb() {
 
 function tplPickKb() {
   const c = cfgStore.get();
-  const rows = gb.TEMPLATE_IDS.map((id) => [
-    Markup.button.callback(`${c.template === id ? "✅ " : ""}${gb.labelOf(id)}`, `gn_dt:${id}`),
+  const rows = gr.TEMPLATE_IDS.map((id) => [
+    Markup.button.callback(`${c.template === id ? "✅ " : ""}${gr.labelOf(id)} · Top ${gr.countOf(id)}`, `gn_dt:${id}`),
     Markup.button.callback(`${c.pool.includes(id) ? "🎲 in" : "· out"}`, `gn_pool:${id}`),
   ]);
   rows.unshift([Markup.button.callback(`${c.template === "random" ? "✅ " : ""}🎲 Random each time`, "gn_dt:random")]);
@@ -216,8 +230,8 @@ const SAMPLE_TTL_MS = 3 * 60 * 1000;
  */
 async function sendPreview(ctx, template, { fresh = true, note = "" } = {}) {
   const cfg = cfgStore.get();
-  const id = gb.pickTemplate(template, { pool: cfg.pool });
-  const need = gb.countOf(id);
+  const id = gr.pickTemplate(template, { pool: cfg.pool, format: cfg.format });
+  const need = gr.countOf(id);
   const sess = ctx.session.gn;
   let coins;
   let source = "session";
@@ -256,14 +270,14 @@ async function sendPreview(ctx, template, { fresh = true, note = "" } = {}) {
     return null;
   }
 
-  const image = await gb.render({
+  const out = await gr.render({
     template: id,
     coins,
     dateText: cfg.showDate ? gainers.dateText(cfg.tz) : "",
     showPct: cfg.showPct,
     bgPath: bgForRender(),
   });
-  if (!image) {
+  if (!out) {
     await ctx.reply("⚠️ The banner didn't render (see the bot logs). Nothing was posted.", { parse_mode: "HTML", ...homeKb() });
     return null;
   }
@@ -277,10 +291,14 @@ async function sendPreview(ctx, template, { fresh = true, note = "" } = {}) {
   // Two messages on purpose: the CAPTION is what the channel will show (premium
   // emoji ride as entities), and the controls card below it is admin-only chrome.
   // Merging them would make the admin approve a caption they never saw clean.
-  await ctx.replyWithPhoto(
-    { source: image },
-    { caption: shown.text, ...(shown.entities && shown.entities.length ? { caption_entities: shown.entities } : {}) },
-  );
+  const capExtra = { caption: shown.text, ...(shown.entities && shown.entities.length ? { caption_entities: shown.entities } : {}) };
+  // The preview is sent the way the channel will get it: a motion banner as an
+  // ANIMATION (a still of it would approve something nobody has seen move).
+  if (out.mediaType === "animation") {
+    await ctx.replyWithAnimation({ source: out.media, filename: "dexvra-top-gainers.mp4" }, capExtra);
+  } else {
+    await ctx.replyWithPhoto({ source: out.media }, capExtra);
+  }
   const short = coins.length < need ? `\n⚠️ Only <b>${coins.length}</b> live gainer(s) passed the filters — the layout adapted to fit.` : "";
   // THE POOL, ON THE SCREEN. topGainers has always measured and returned it, and
   // nothing ever printed it — so when the board's live rows collapsed from many
@@ -308,7 +326,7 @@ async function sendPreview(ctx, template, { fresh = true, note = "" } = {}) {
     hOn(hx.notListed).length ? `\n🔗 <i>Not in the listing store: ${escapeHtml(hOn(hx.notListed).map((s) => `$${s}`).join(", "))} — on the site board but never listed through the bot.</i>` : "",
   ].join("");
   await ctx.reply(
-    `👀 <b>Preview — ${escapeHtml(gb.labelOf(id))}</b>\n` +
+    `👀 <b>Preview — ${escapeHtml(gr.labelOf(id))}</b>${out.mediaType === "animation" ? " · 🎬 video" : gm.isTemplate(id) ? " · ⚠️ the video did not encode, this is its still frame" : ""}\n` +
       `📡 Data: <b>${escapeHtml(source)}</b> · ${escapeHtml(coins.map((c) => `$${c.symbol}`).join(", "))}` +
       (cfg.showPct ? "" : "\n📈 <b>Percentage gain: hidden</b> — the ranking is published without the figures. Tap 📈 below to show them.") +
       poolLine +
@@ -346,6 +364,12 @@ async function waitForJob(id, { tries = 14, gapMs = 1500 } = {}) {
   return store.get(id);
 }
 
+/** A video takes a few seconds to encode; say so, or the tap reads as dead. */
+const buildingNote = (arg) =>
+  gm.isTemplate(arg) || (arg === "random" && cfgStore.get().format !== "image")
+    ? "⏳ Rendering the video preview… (a few seconds)"
+    : "⏳ Building the preview…";
+
 // ── registration ────────────────────────────────────────────────────────────
 /**
  * @param {import("telegraf").Telegraf} bot
@@ -378,6 +402,16 @@ function register(bot, deps) {
   bot.action("gn_set", cb((ctx) => edit(ctx, setText(), setKb())));
   bot.action("gn_tpl", cb((ctx) => edit(ctx, "🖼 <b>Default layout</b>\n\nThe left button picks the layout used by the daily post; the right one adds/removes it from the 🎲 random rotation.", tplPickKb())));
   bot.action("gn_bg", cb((ctx) => edit(ctx, bgText(), bgKb())));
+  bot.action("gn_img", cb((ctx) => edit(
+    ctx,
+    "🖼 <b>Still image layouts</b>\n\nThe original PNG banners. Pick one to preview it with live data.",
+    Markup.inlineKeyboard([...layoutRows(gb.TEMPLATE_IDS), [Markup.button.callback("⬅ Back", "gn")]]),
+  )));
+  bot.action("gn_fmt", cb(async (ctx) => {
+    const next = await cfgStore.set({ format: cfgStore.get().format === "image" ? "animated" : "image" });
+    log.info(`[adminbot] gainers format → ${next.format} by @${ctx.from.username || ctx.from.id}`);
+    await edit(ctx, setText(), setKb());
+  }));
 
   // ── preview / publish ──
   // Picking a layout RE-SLICES the sample already taken. Re-sampling here is
@@ -385,7 +419,7 @@ function register(bot, deps) {
   // top gainers were.
   bot.action(/^gn_t:(.+)$/, cb(async (ctx) => {
     const arg = ctx.match[1];
-    await ctx.reply(`⏳ Building the preview…`, HTML).catch(() => {});
+    await ctx.reply(buildingNote(arg), HTML).catch(() => {});
     await sendPreview(ctx, arg === "random" ? "random" : arg, { fresh: true });
   }));
 
@@ -429,18 +463,21 @@ function register(bot, deps) {
     const cfg = cfgStore.get();
     const coins = sess.coins;
     await gainers.loadLogos(coins);
-    const image = await gb.render({
+    const out = await gr.render({
       template: sess.template,
       coins,
       dateText: cfg.showDate ? gainers.dateText(cfg.tz) : "",
       showPct: cfg.showPct,
       bgPath: bgForRender(),
     });
-    if (!image) return ctx.reply("⚠️ The banner didn't render — nothing was posted.", HTML);
+    if (!out) return ctx.reply("⚠️ The banner didn't render — nothing was posted.", HTML);
     const channel = cfgStore.targetChannel(cfg);
     const caption = gainers.captionPayload(coins, { tz: cfg.tz, showMcap: cfg.showMcap, showPct: cfg.showPct });
     const job = await store.request({
-      image,
+      image: out.media,
+      mediaType: out.mediaType,
+      ext: out.ext,
+      still: out.still,
       caption,
       channel,
       template: sess.template,
@@ -731,7 +768,7 @@ function register(bot, deps) {
 module.exports = {
   register,
   // exposed for tests / the smoke check
-  _panels: { homeText, homeKb, setText, setKb, tplPickKb, bgText, previewKb, posKb },
+  _panels: { homeText, homeKb, setText, setKb, tplPickKb, bgText, previewKb, posKb, layoutRows },
   BG_NAME,
   bgPath,
   hasBg,

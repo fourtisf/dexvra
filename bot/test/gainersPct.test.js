@@ -172,7 +172,7 @@ test("an omitted showPct draws the figure — the switch may not default to hidd
 // a fix half-made (fulfillment's own scar), so every render, caption and tweet
 // site in BOTH files has to carry the switch — counted, over comment-stripped
 // source, because a site added later forgets in exactly the same way.
-test("every gb.render / captionPayload / listText site in the panel AND the poster passes showPct", () => {
+test("every gr.render / captionPayload / listText site in the panel AND the poster passes showPct", () => {
   const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1");
   const expect = {
     "src/admin/gainersMenu.js": { render: 2, caption: 2, list: 1 },
@@ -180,9 +180,9 @@ test("every gb.render / captionPayload / listText site in the panel AND the post
   };
   for (const [file, want] of Object.entries(expect)) {
     const src = strip(fs.readFileSync(path.join(__dirname, "..", file), "utf8"));
-    const renders = src.split("gb.render({").slice(1).map((c) => c.split("});")[0]);
-    assert.strictEqual(renders.length, want.render, `${file}: gb.render sites moved — re-count, and make sure each carries the switch`);
-    for (const r of renders) assert.match(r, /showPct: cfg\.showPct/, `${file}: a gb.render site without showPct`);
+    const renders = src.split("gr.render({").slice(1).map((c) => c.split("});")[0]);
+    assert.strictEqual(renders.length, want.render, `${file}: gr.render sites moved — re-count, and make sure each carries the switch`);
+    for (const r of renders) assert.match(r, /showPct: cfg\.showPct/, `${file}: a gr.render site without showPct`);
     const captions = src.split("gainers.captionPayload(").slice(1).map((c) => c.split(")")[0]);
     assert.strictEqual(captions.length, want.caption, `${file}: captionPayload sites moved`);
     for (const c of captions) assert.match(c, /showPct: cfg\.showPct/, `${file}: a captionPayload site without showPct`);

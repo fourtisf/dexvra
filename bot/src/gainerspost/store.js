@@ -33,7 +33,8 @@ function ensureDir() {
   }
 }
 const fileOf = (id) => path.join(GP_DIR, `${id}.json`);
-const imageOf = (id) => path.join(GP_DIR, `${id}.png`);
+const imageOf = (id, ext = "png") => path.join(GP_DIR, `${id}.${ext}`);
+const stillOf = (id) => path.join(GP_DIR, `${id}.still.png`);
 let seq = 0;
 const newId = () => `gp_${Date.now().toString(36)}${(seq++).toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 
@@ -63,14 +64,28 @@ async function write(job) {
  *   string = don't tweet this one.
  * @param {string} o.xDate     date line for the tweet ("" when the operator
  *   turned the date off, so the tweet matches the banner).
+ * @param {string} o.mediaType "photo" (PNG) or "animation" (a motion banner, MP4)
+ * @param {Buffer} o.still     the motion banner's final frame as a PNG — tweeted
+ *   in its place, because the board goes to X as a picture.
  */
-async function request({ image, caption, channel, template, symbols = [], xList = "", xDate = "", by = "admin", pin = false }) {
+async function request({ image, caption, channel, template, symbols = [], xList = "", xDate = "", by = "admin", pin = false, mediaType = "photo", ext = "png", still = null }) {
   ensureDir();
   const id = newId();
-  const img = imageOf(id);
-  const tmp = `${img}.${process.pid}.tmp`;
-  await fs.writeFile(tmp, image);
-  await fs.rename(tmp, img);
+  // A motion banner is an MP4 sent with sendAnimation; its STILL frame travels
+  // beside it for the tweet (X takes the board as a picture).
+  const type = mediaType === "animation" ? "animation" : "photo";
+  const img = imageOf(id, type === "animation" ? (ext === "gif" ? "gif" : "mp4") : "png");
+  const put = async (file, bytes) => {
+    const tmp = `${file}.${process.pid}.tmp`;
+    await fs.writeFile(tmp, bytes);
+    await fs.rename(tmp, file);
+  };
+  let stillPath = null;
+  if (type === "animation" && still) {
+    stillPath = stillOf(id);
+    await put(stillPath, still);
+  }
+  await put(img, image);
   return write({
     id,
     kind: "gainers",
@@ -81,6 +96,8 @@ async function request({ image, caption, channel, template, symbols = [], xList 
     xList,
     xDate,
     imagePath: img,
+    mediaType: type,
+    stillPath,
     pin: Boolean(pin),
     by,
     status: "pending",
@@ -124,6 +141,7 @@ async function expireStale() {
     if (!job || job.status !== "pending" || now - job.at <= STALE_MS) continue;
     await write({ ...job, status: "expired", doneAt: now });
     await fs.unlink(job.imagePath || imageOf(job.id)).catch(() => {});
+    if (job.stillPath) await fs.unlink(job.stillPath).catch(() => {});
     n++;
   }
   return n;
@@ -142,6 +160,7 @@ async function finish(id, { ok, result = null, error = null }) {
   const job = get(id);
   if (!job) return null;
   await fs.unlink(job.imagePath || imageOf(id)).catch(() => {});
+  if (job.stillPath) await fs.unlink(job.stillPath).catch(() => {});
   return write({ ...job, status: ok ? "done" : "failed", result, error, doneAt: Date.now() });
 }
 
@@ -158,6 +177,7 @@ async function prune(maxAgeMs = 6 * 60 * 60 * 1000) {
     if (now - (job.doneAt || job.at) > maxAgeMs) {
       await fs.unlink(path.join(GP_DIR, name)).catch(() => {});
       await fs.unlink(job.imagePath || imageOf(id)).catch(() => {});
+      if (job.stillPath) await fs.unlink(job.stillPath).catch(() => {});
       n++;
     }
   }

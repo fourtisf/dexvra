@@ -54,7 +54,7 @@ function harness() {
   let mid = 100;
   Telegram.prototype.callApi = async function stubbedCallApi(method, payload) {
     calls.push({ method, payload });
-    if (method === "sendMessage" || method === "sendPhoto") {
+    if (method === "sendMessage" || method === "sendPhoto" || method === "sendAnimation") {
       return { message_id: ++mid, date: 0, chat: CHAT, text: payload && payload.text };
     }
     return true;
@@ -384,7 +384,9 @@ test("📈 a tap on a card whose sample is gone still flips the switch and takes
     await h.tap("gn_pvpct");
     assert.strictEqual(cfg.get().showPct, false, "the tap did not reach the store");
     assert.strictEqual(samples, 1, "nothing was sampled — the tap rendered from a sample that does not exist");
-    const photos = h.calls.filter((c) => c.method === "sendPhoto");
+    // "random" rolls the configured FORMAT, which ships as video — the preview
+    // is a sendAnimation then, and a sendPhoto for a still layout.
+    const photos = h.calls.filter((c) => c.method === "sendPhoto" || c.method === "sendAnimation");
     assert.strictEqual(photos.length, 1, "no preview was rendered");
     assert.doesNotMatch(String(photos[0].payload.caption || ""), /%/);
   } finally {
