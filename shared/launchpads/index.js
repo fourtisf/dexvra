@@ -197,10 +197,27 @@ async function padToken(pad, chain, address, now) {
   // A pad with one path behaves identically to before; `pads.js pathList` is
   // where a list comes from, and an operator's pin replaces it.
   const paths = Array.isArray(pad.tokenPaths) && pad.tokenPaths.length ? pad.tokenPaths : [pad.tokenPath];
+  // ⚠️ THE WALK HAS ONE BUDGET, NOT ONE PER SPELLING. Four spellings at
+  // LAUNCHPAD_TIMEOUT_MS each is a 24s lookup on a host that answers each 404
+  // slowly — and every caller waits for this pad before it merges (the listing
+  // form's autofill lost $HAPPYCAT's chain-read name that way). Past the budget
+  // the walk stops and the answer is INCONCLUSIVE: not cached (it is not "the
+  // pad never heard of this token") and not benched (the host answered).
+  const walkStart = Date.now();
+  const walkMs = TIMEOUT_MS();
   let r = null;
-  for (const tpl of paths) {
-    r = await http.getJson(c, P.fill(tpl, { id: address }), { timeoutMs: TIMEOUT_MS() });
+  let cutShort = false;
+  for (let i = 0; i < paths.length; i++) {
+    const left = walkMs - (Date.now() - walkStart);
+    if (i > 0 && left < 1000) { cutShort = true; break; }
+    r = await http.getJson(c, P.fill(paths[i], { id: address }), { timeoutMs: i === 0 ? walkMs : left });
     if (r.ok || r.status !== 404) break;
+  }
+  if (cutShort) {
+    noteOk(pad.key);
+    out.status = 404;
+    out.why = `${pad.label}: ran out of time after ${paths.length > 1 ? 'some' : 'the'} path spelling(s) answered 404 — inconclusive, asked again next time`;
+    return out;
   }
   out.status = r.status;
   if (!r.ok) {

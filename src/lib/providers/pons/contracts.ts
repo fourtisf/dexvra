@@ -71,8 +71,20 @@ export interface PoolState {
   liquidity: bigint;
 }
 
+/** The asset a launch is PRICED IN — ETH for a native launch, otherwise the
+ *  ERC-20 its creator paired with (USDG, a tokenised stock). Its decimals are
+ *  what every quote amount on the curve is counted in: reading a USDG curve's
+ *  6-decimal reserves as 18-decimal ETH put its price off by 10^12. */
+export interface QuoteMeta {
+  decimals: number | null;
+  symbol: string | null;
+}
+
 export interface LaunchSnapshot {
   launch: LaunchRecord;
+  /** Null decimals means the pair token's `decimals()` could not be read — a
+   *  launch that is then not priced, never priced as if it were 18. */
+  quote: QuoteMeta;
   curve: CurveState | null;
   meta: TokenMeta | null;
   pool: PoolState | null;
@@ -389,6 +401,46 @@ async function readPoolStates(
   return { pools: out, why };
 }
 
+// ── Pair-token metadata (ERC-20-quoted launches) ──────────────────────────
+// A pair token is one of a handful Pons configures (the launch config is the
+// factory's, not the creator's), so the set is small and never changes:
+// remembered for the life of the process — but ONLY an answer. A refused read
+// is asked again next time; remembering it would leave that quote asset
+// unpriceable until a restart, the `decimalsCache` scar one module over.
+const quoteMetaCache = new Map<string, QuoteMeta>();
+const NATIVE_QUOTE: QuoteMeta = { decimals: PONS.nativeDecimals, symbol: PONS.nativeSymbol };
+
+async function readQuoteMeta(records: LaunchRecord[]): Promise<Map<string, QuoteMeta>> {
+  const wanted = [
+    ...new Set(
+      records.filter((r) => !r.nativeQuote).map((r) => r.pairToken.toLowerCase()),
+    ),
+  ].filter((a) => !quoteMetaCache.has(a));
+  if (wanted.length) {
+    const results = await rpcBatch(
+      PONS.rpcUrls,
+      wanted.flatMap((a) => [call(a, encodeCall("decimals()")), call(a, encodeCall("symbol()"))]),
+      PONS.rpcTimeoutMs,
+    ).catch(() => []);
+    wanted.forEach((a, i) => {
+      const decimals = ok(results[i * 2], (hex) => Number(one<bigint>(["uint8"], hex)));
+      const symbol = ok(results[i * 2 + 1], (hex) => one<string>(["string"], hex));
+      if (decimals === null) return;   // not an answer: asked again next time
+      quoteMetaCache.set(a, { decimals, symbol: symbol ? symbol.slice(0, 16) : null });
+    });
+  }
+  const out = new Map<string, QuoteMeta>();
+  for (const r of records) {
+    if (r.nativeQuote) continue;
+    const a = r.pairToken.toLowerCase();
+    out.set(a, quoteMetaCache.get(a) ?? { decimals: null, symbol: null });
+  }
+  return out;
+}
+
+/** Test seam: forget the pair-token metadata. */
+export const __resetQuoteMeta = (): void => quoteMetaCache.clear();
+
 /** One batched snapshot per address: launch record, curve state, metadata and
  *  — for graduated launches — the V4 pool. Unknown addresses are omitted. */
 export async function readLaunchSnapshots(addresses: string[]): Promise<Map<string, LaunchSnapshot>> {
@@ -405,7 +457,7 @@ export async function readLaunchSnapshotsX(
   if (list.length === 0) return { snapshots: new Map(), failed };
 
   const graduated = list.filter((r) => r.phase === "PoolCreated");
-  const [details, poolRead] = await Promise.all([
+  const [details, poolRead, quotes] = await Promise.all([
     readCurvesAndMeta(list),
     // A throw out of the pool read is still OUR failure, not a chain with no
     // pools: the reason travels rather than the whole graduated set reading as
@@ -414,6 +466,7 @@ export async function readLaunchSnapshotsX(
       pools: new Map<string, PoolState>(),
       why: new Map<string, string>(graduated.map((r) => [r.token.toLowerCase(), errText(err)])),
     })),
+    readQuoteMeta(list).catch(() => new Map<string, QuoteMeta>()),
   ]);
 
   const out = new Map<string, LaunchSnapshot>();
@@ -422,6 +475,9 @@ export async function readLaunchSnapshotsX(
     const detail = details.get(key);
     out.set(key, {
       launch: record,
+      quote: record.nativeQuote
+        ? NATIVE_QUOTE
+        : quotes.get(record.pairToken.toLowerCase()) ?? { decimals: null, symbol: null },
       curve: detail?.curve ?? null,
       meta: detail?.meta ?? null,
       pool: poolRead.pools.get(key) ?? null,

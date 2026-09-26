@@ -17,6 +17,7 @@ const poolstrade = require("./poolstrade");
 const launchpads = require("./launchpads");
 const ponsChain = require("./ponsChain");
 const log = require("./helpers/logger");
+const { bounded } = require("./helpers/bounded");
 
 /**
  * Candidates from every source, interleaved and de-duplicated.
@@ -150,8 +151,34 @@ function mergeInfo(base, extra) {
  * numbers on that pair are the ones worth keeping (so the pads must not
  * overwrite them). Filling holes is the only combination that gets both.
  */
-async function fetchTokenInfoX(chain, address) {
-  const dsP = ds.fetchTokenInfoX(chain, address);
+async function fetchTokenInfoX(chain, address, opts = {}) {
+  // ⚠️ A CALLER ON A CLOCK GETS EACH SOURCE'S ANSWER THAT ARRIVED IN TIME — not
+  // nothing because one of them did not. `Promise.all` below waits for the
+  // SLOWEST source, and the listing form wraps this whole call in its own
+  // ceiling, so one pad that hangs threw away every answer that had already
+  // landed. Reported with $HAPPYCAT (Pons, Robinhood): the contract had
+  // answered its name, ticker and logo, the Pons pad's HTTP path walk (a
+  // guessed host, up to four spellings at LAUNCHPAD_TIMEOUT_MS each) outran the
+  // form's 8s, and the form asked "What is your project called?" about a token
+  // whose name was sitting in a resolved promise. The chain read is the one
+  // source that cannot be unreachable, and it was held hostage by the one that
+  // most often is. A late source is LEFT RUNNING (it lands in its own cache
+  // for the next paste) and contributes nothing; background callers pass no
+  // budget and wait exactly as before.
+  const budget = Number(opts && opts.budgetMs) > 0 ? Number(opts.budgetMs) : 0;
+  const late = [];
+  const timed = (p, name, fallback) => {
+    if (!budget) return p;
+    return bounded(Promise.resolve(p).catch(() => fallback), budget, () => {
+      late.push(name);
+      return fallback;
+    });
+  };
+  const dsP = timed(
+    Promise.resolve(ds.fetchTokenInfoX(chain, address)).catch((e) => ({ info: null, ok: false, why: e && e.message ? e.message : String(e) })),
+    "dexscreener",
+    { info: null, ok: false, why: `DexScreener did not answer within ${budget}ms` },
+  );
   // The launchpads that know this token, most specific first. `mergeInfo` only
   // ever fills holes, so this order is precedence among them — and the indexer
   // below outranks all of them on the fields it answers for.
@@ -169,14 +196,18 @@ async function fetchTokenInfoX(chain, address) {
     // unlistable, with the panel asserting a measured $0 for a market nobody had
     // looked at. Now the indexer's live numbers win and the pad fills the holes
     // it is actually good for: the socials, the logo and the curve state.
-    extras.push(poolstrade.fetchTokenInfo(chain, address).catch(() => null));
+    extras.push(timed(poolstrade.fetchTokenInfo(chain, address).catch(() => null), "poolstrade", null));
   }
   if (launchpads.covers(chain)) {
     extras.push(
-      launchpads.fetchTokenInfo(chain, address).catch((e) => {
-        log.debug(`[discovery] launchpads ${chain}/${address}: ${e.message}`);
-        return null;
-      }),
+      timed(
+        launchpads.fetchTokenInfo(chain, address).catch((e) => {
+          log.debug(`[discovery] launchpads ${chain}/${address}: ${e.message}`);
+          return null;
+        }),
+        "launchpads",
+        null,
+      ),
     );
   }
   // LAST, and that is the whole safety of it: mergeInfo only ever fills holes,
@@ -186,16 +217,24 @@ async function fetchTokenInfoX(chain, address) {
   // are third-party HTTP, and the Pons pad's host and path are still a guess.
   if (ponsChain.covers(chain)) {
     extras.push(
-      ponsChain.fetchTokenInfo(chain, address).catch((e) => {
-        log.debug(`[discovery] pons-chain ${chain}/${address}: ${e.message}`);
-        return null;
-      }),
+      timed(
+        ponsChain.fetchTokenInfo(chain, address).catch((e) => {
+          log.debug(`[discovery] pons-chain ${chain}/${address}: ${e.message}`);
+          return null;
+        }),
+        "pons-chain",
+        null,
+      ),
     );
   }
   if (!extras.length) return dsP;
   const [dsAns, ...rest] = await Promise.all([dsP, ...extras]);
   let info = dsAns.info;
   for (const e of rest) info = mergeInfo(info, e);
+  // Which sources missed the clock, at INFO: "the form asked for the name" has
+  // four causes and only this line separates a slow pad from a token nobody
+  // knows — production does not print debug.
+  if (late.length) log.info(`[discovery] ${chain}/${address}: ${late.join(", ")} did not answer within ${budget}ms — the form used what did`);
   // ⚠️ A LAUNCHPAD RECORD DOES NOT MAKE A REFUSAL INTO AN ANSWER on the fields
   // the gates read. The pads carry socials and a logo; `liq`, `vol24` and
   // `pairCreatedAt` come from the indexer, and scoring those gates against a
@@ -206,8 +245,8 @@ async function fetchTokenInfoX(chain, address) {
 }
 
 /** The long-standing shape, for callers that only ever wanted the record. */
-async function fetchTokenInfo(chain, address) {
-  return (await fetchTokenInfoX(chain, address)).info;
+async function fetchTokenInfo(chain, address, opts) {
+  return (await fetchTokenInfoX(chain, address, opts)).info;
 }
 
 module.exports = { fetchDiscovery, fetchDiscoveryX, fetchTokenInfo, fetchTokenInfoX, mergeInfo };

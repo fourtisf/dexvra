@@ -113,11 +113,24 @@ const GRAD_PRICE_ETH = 0.000002;
 const SQRT_PRICE_X96 = BigInt(Math.floor(Math.sqrt(1 / GRAD_PRICE_ETH) * 2 ** 96));
 const POOL_LIQUIDITY = 10n ** 21n;
 
-const launchRecord = ({ token, curve, phase, sweptQuote = 0n }) =>
+// An ERC-20-paired launch — "Paired USDG" on the pad's own page. USDG counts
+// in 6 decimals, which is the whole trap: read at ETH's 18, its price is off
+// by 10^12. 3000 USDG phantom against 800M tokens, 400 USDG really raised of
+// an 8090 USDG threshold ($HAPPYCAT's own numbers, near enough).
+const USDG_TOKEN = "0xaaaa00000000000000000000000000000000aaaa";
+const USDG_CURVE = "0xbbbb00000000000000000000000000000000bbbb";
+const USDG = "0xcccc00000000000000000000000000000000cccc";
+const USD6 = (n) => BigInt(Math.round(n * 1e6));
+// A pair token that is NOT a dollar and that no market source prices here.
+const STOCK_TOKEN = "0xdddd00000000000000000000000000000000dddd";
+const STOCK_CURVE = "0xeeee00000000000000000000000000000000eeee";
+const STOCK = "0xffff00000000000000000000000000000000ffff";
+
+const launchRecord = ({ token, curve, phase, sweptQuote = 0n, pairToken = ZERO, threshold = THRESHOLD }) =>
   hexResult([
     addrWord(token), addrWord(curve), addrWord("0x7777777777777777777777777777777777777777"),
-    addrWord("0x8888888888888888888888888888888888888888"), addrWord(ZERO),
-    word(THRESHOLD), word(3000), word(60), word(100), word(1), word(phase),
+    addrWord("0x8888888888888888888888888888888888888888"), addrWord(pairToken),
+    word(threshold), word(3000), word(60), word(100), word(1), word(phase),
     word(sweptQuote), word(0), word(0), word(1),
   ]);
 
@@ -179,6 +192,10 @@ function ethCallResult(to, data) {
     if (sel === SEL("getLaunchedToken(address)")) {
       const argument = `0x${data.slice(10 + 24, 10 + 64)}`;
       if (argument.toLowerCase() === TOKEN) return launchRecord({ token: TOKEN, curve: CURVE, phase: 0 });
+      if (argument.toLowerCase() === USDG_TOKEN)
+        return launchRecord({ token: USDG_TOKEN, curve: USDG_CURVE, phase: 0, pairToken: USDG, threshold: USD6(8090) });
+      if (argument.toLowerCase() === STOCK_TOKEN)
+        return launchRecord({ token: STOCK_TOKEN, curve: STOCK_CURVE, phase: 0, pairToken: STOCK, threshold: TOKENS(10) });
       if (argument.toLowerCase() === GRAD_TOKEN)
         return launchRecord({ token: GRAD_TOKEN, curve: GRAD_CURVE, phase: 2, sweptQuote: THRESHOLD });
       return hexResult(Array.from({ length: 15 }, () => word(0)));
@@ -197,7 +214,26 @@ function ethCallResult(to, data) {
     if (sel === SEL("token()")) return hexResult([addrWord(live ? TOKEN : GRAD_TOKEN)]);
   }
 
-  if (target === TOKEN || target === GRAD_TOKEN) {
+  if (target === USDG_CURVE || target === STOCK_CURVE) {
+    const usdg = target === USDG_CURVE;
+    if (sel === SEL("getReserves()"))
+      return hexResult(usdg ? [word(USD6(3000)), word(CURVE_TOKENS)] : [word(TOKENS(6)), word(CURVE_TOKENS)]);
+    if (sel === SEL("realQuoteReserve()")) return hexResult([word(usdg ? USD6(400) : TOKENS(1))]);
+    if (sel === SEL("sellableTokens()")) return hexResult([word(CURVE_TOKENS)]);
+    if (sel === SEL("graduated()")) return hexResult([word(0)]);
+    if (sel === SEL("token()")) return hexResult([addrWord(usdg ? USDG_TOKEN : STOCK_TOKEN)]);
+  }
+
+  if (target === USDG) {
+    if (sel === SEL("decimals()")) return hexResult([word(6)]);
+    if (sel === SEL("symbol()")) return stringReturn("USDG");
+  }
+  if (target === STOCK) {
+    if (sel === SEL("decimals()")) return hexResult([word(18)]);
+    if (sel === SEL("symbol()")) return stringReturn("NVDA");
+  }
+
+  if (target === TOKEN || target === GRAD_TOKEN || target === USDG_TOKEN || target === STOCK_TOKEN) {
     if (sel === SEL("decimals()")) { decimalsAsks++; return hexResult([word(18)]); }
     if (sel === SEL("totalSupply()")) return hexResult([word(TOTAL_SUPPLY)]);
     if (sel === SEL("symbol()")) return stringReturn("PONSY");
@@ -321,6 +357,13 @@ globalThis.fetch = async (url, init) => {
       e && e.method === "eth_call" && aimedAt(e) === POOL_MANAGER &&
       String(e?.params?.[0]?.data || "").startsWith(SEL("extsload(bytes32)"));
     if (rpcMode === "refuse-decimals" && entries.some(isDecimalsRead)) {
+      refusedRpc++;
+      return new Response("rate limited", { status: 429, headers: { "retry-after": "1" } });
+    }
+    // "refuse-quote": only the PAIR TOKEN's reads are refused — the launch,
+    // the curve and the token all answer, so a missing price can only be the
+    // quote asset's decimals.
+    if (rpcMode === "refuse-quote" && entries.some((e) => e && e.method === "eth_call" && aimedAt(e) === USDG)) {
       refusedRpc++;
       return new Response("rate limited", { status: 429, headers: { "retry-after": "1" } });
     }
@@ -886,6 +929,63 @@ delete process.env.TELEGRAM_CHAT_ID;
   }
 
   rpcMode = "ok";
+  __resetHistories();
+}
+
+// ── An ERC-20-paired launch ($HAPPYCAT, "Paired USDG") ─────────────────────
+// It used to publish NO price and NO market cap anywhere ("no USD reference
+// for an arbitrary quote asset"), so the site, the listing form and the paid
+// post all read TBA about a token the pad prices in dollars.
+{
+  const { __resetQuoteMeta } = await import("../src/lib/providers/pons/contracts.ts");
+  const { __resetQuoteAssetUsd } = await import("../src/lib/providers/pons/market.ts");
+  const { __resetRpc } = await import("../src/lib/evm/rpc.ts");
+  __resetQuoteMeta();
+  __resetQuoteAssetUsd();
+  __resetHistories();
+  rpcMode = "ok";
+  quoteMode = "coinbase";
+
+  const row = (await pons.fetchPonsMarket([USDG_TOKEN])).get(USDG_TOKEN);
+  const want = 3000 / 800_000_000; // USDG per token, and a USDG is a dollar
+  check("a USDG-paired curve is priced", Boolean(row));
+  if (row) {
+    check("…at its USDG price, read in USDG's OWN 6 decimals", near(row.priceUsd, want, 1e-9), `${row.priceUsd} vs ${want}`);
+    check("…never multiplied by the ETH reference", !near(row.priceUsd, want * ETH_USD, 1e-3), String(row.priceUsd));
+    check("…market cap is price × supply", near(row.mcap, want * 1e9, 1e-9), String(row.mcap));
+    check("…liquidity is the USDG really raised", near(row.liq, 400, 1e-9), String(row.liq));
+  }
+
+  const rec = await pons.fetchPonsLaunch(USDG_TOKEN);
+  check("the launch record carries the USD price the form and the post read", rec && near(rec.priceUsd, want, 1e-9), String(rec && rec.priceUsd));
+  check("…and names the quote asset and how it was priced", rec && rec.quoteAsset === "USDG" && rec.quoteUsdSource === "peg", `${rec && rec.quoteAsset} / ${rec && rec.quoteUsdSource}`);
+  check("…and no marketWhy over a price it has", rec && rec.marketWhy === null, String(rec && rec.marketWhy));
+  check("…and progress is raised ÷ threshold in the SAME asset", rec && near(rec.progressPct, (400 / 8090) * 100, 1e-9), String(rec && rec.progressPct));
+  check("…and quoteSymbol keeps its native-only meaning", rec && rec.quoteSymbol === null);
+
+  // A pair token that is not a dollar and that no source here prices: the
+  // chain's own reading survives, the USD figure is honestly missing, and the
+  // reason NAMES the asset — never an ETH price stood in for it.
+  const stock = await pons.fetchPonsLaunch(STOCK_TOKEN);
+  check("a non-dollar pair token nobody prices publishes no USD figure", stock && stock.priceUsd === null, String(stock && stock.priceUsd));
+  check("…while the chain's own price survives", stock && stock.priceQuote > 0, String(stock && stock.priceQuote));
+  check("…and the reason names the asset", stock && /no USD reference for NVDA/.test(stock.marketWhy || ""), String(stock && stock.marketWhy));
+  const stockRow = (await pons.fetchPonsMarket([STOCK_TOKEN])).get(STOCK_TOKEN);
+  check("…and the board does not price it with ETH either", !stockRow, JSON.stringify(stockRow && stockRow.priceUsd));
+
+  // ⚠️ A pair token whose decimals() could not be READ is not priced as if it
+  // were 18 — that is a price off by 10^12 on a USDG launch.
+  __resetQuoteMeta();
+  __resetQuoteAssetUsd();
+  rpcMode = "refuse-quote";
+  const blind = await pons.fetchPonsMarket([USDG_TOKEN]).catch(() => new Map());
+  check("a USDG launch whose pair-token decimals the node refused is left unpriced, not guessed", !blind.get(USDG_TOKEN));
+  __resetRpc();
+  const blindRec = await pons.fetchPonsLaunch(USDG_TOKEN);
+  check("…and the record says which read it was", blindRec && /pair token's decimals/.test(blindRec.marketWhy || ""), String(blindRec && blindRec.marketWhy));
+  __resetRpc();
+  rpcMode = "ok";
+  __resetQuoteMeta();
   __resetHistories();
 }
 

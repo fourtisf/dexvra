@@ -29,7 +29,7 @@ import { PONS } from "../../../config/pons.ts";
 import { fetchDsMarket } from "../dexscreener.ts";
 import { fetchTokenPriceUsd } from "../geckoterminal.ts";
 
-export type QuoteUsdSource = "coinbase" | "dexscreener" | "geckoterminal";
+export type QuoteUsdSource = "coinbase" | "dexscreener" | "geckoterminal" | "peg";
 
 export interface QuoteUsdRead {
   usd: number | null;
@@ -113,6 +113,72 @@ export async function readNativeUsd(deps: QuoteUsdDeps = {}): Promise<QuoteUsdRe
     ["coinbase", deps.coinbase ?? coinbaseSpot],
     ["dexscreener", deps.dexscreener ?? dexscreenerWeth],
     ["geckoterminal", deps.geckoterminal ?? geckoTerminal],
+  ];
+  const why: string[] = [];
+  for (const [source, fn] of rungs) {
+    const r = await bounded(fn, stepMs);
+    if (r.ok) return { usd: r.value, source, why };
+    why.push(`${source}: ${r.why}`);
+  }
+  return { usd: null, source: null, why };
+}
+
+// ── An ERC-20 quote asset (USDG, a tokenised stock) ───────────────────────
+//
+// "bot masih gagal membaca tokennya" — $HAPPYCAT, Pons v2, "Paired USDG". The
+// provider priced a launch ONLY when it was paired with ETH ("no USD reference
+// for an arbitrary quote asset"), so every USDG-paired launch published no
+// price and no market cap anywhere: the site, the listing form, the paid post.
+// Pons prices those launches in a DOLLAR stablecoin — the pad's own page shows
+// "Price in USDG" beside "Price" and they are the same number.
+//
+//   1. peg        — a stablecoin symbol on a pair token the FACTORY configured.
+//                   ⚠️ Symbol-based and still safe, because a launch's pair
+//                   token comes from Pons's launch config, never from the
+//                   creator: nobody can pair a launch against a fake "USDG".
+//                   PONS_USD_PEGGED replaces the set; `PONS_USD_PEGGED=0`
+//                   turns the rung off.
+//   2. DexScreener — the asset's own market on the chain, for a quote that is
+//                   not a dollar (a tokenised stock).
+//   3. GeckoTerminal — LAST, the metered one, as in the native ladder.
+//
+// Display only, like everything in this provider: nothing here authorises a
+// swap.
+const DEFAULT_PEGGED = ["USDG", "USDC", "USDT", "USDC.E", "USDT0"];
+
+export function peggedSymbols(env: string | undefined = process.env.PONS_USD_PEGGED): Set<string> {
+  const raw = (env ?? "").trim();
+  if (/^(0|off|false|no)$/i.test(raw)) return new Set();
+  const list = raw ? raw.split(",") : DEFAULT_PEGGED;
+  return new Set(list.map((s) => s.trim().toUpperCase()).filter(Boolean));
+}
+
+export interface QuoteAssetDeps extends QuoteUsdDeps {
+  pegged?: Set<string>;
+}
+
+/** USD per unit of an ERC-20 quote asset. Never throws. */
+export async function readQuoteAssetUsd(
+  chain: string,
+  address: string,
+  symbol: string | null,
+  deps: QuoteAssetDeps = {},
+): Promise<QuoteUsdRead> {
+  const stepMs = deps.stepMs ?? STEP_MS;
+  const pegged = deps.pegged ?? peggedSymbols();
+  if (symbol && pegged.has(symbol.trim().toUpperCase())) return { usd: 1, source: "peg", why: [] };
+  const rungs: [QuoteUsdSource, () => Promise<number>][] = [
+    [
+      "dexscreener",
+      deps.dexscreener ??
+        (async () => {
+          const m = await fetchDsMarket(chain, [address]);
+          const px = m.get(address.toLowerCase())?.priceUsd;
+          if (!(typeof px === "number" && px > 0)) throw new Error(`DexScreener: no ${symbol ?? "quote"} price`);
+          return px;
+        }),
+    ],
+    ["geckoterminal", deps.geckoterminal ?? (() => fetchTokenPriceUsd(chain, address))],
   ];
   const why: string[] = [];
   for (const [source, fn] of rungs) {

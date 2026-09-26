@@ -407,13 +407,17 @@ head("7 · The ETH/USD reference, as the app serves it");
     // three probes showing every rung answering — over a curve the node had
     // refused to read. The record's own fields say which it is.
     if (px > 0) {
-      ok(`${tokens[0].slice(0, 10)}… priced at $${px.toPrecision(4)} — ETH reference from ${launch.quoteUsdSource || "(source not reported — an older build?)"}`);
+      ok(`${tokens[0].slice(0, 10)}… priced at $${px.toPrecision(4)} — ${launch.quoteAsset || "ETH"} reference from ${launch.quoteUsdSource || "(source not reported — an older build?)"}`);
       note("the ladder is Coinbase spot → DexScreener (WETH) → GeckoTerminal; the first rung that answers wins");
     } else if (launch.readWhy) {
       warn(`no ETH price to convert — the curve could not be read: ${launch.readWhy}`);
       note("that is the node (section 4), not the ETH/USD ladder — the probes below say whether the ladder itself answers from this box");
     } else if (launch.quoteSymbol === null) {
-      note("quoted in an ERC-20, not ETH — no USD reference by design");
+      // An ERC-20-paired launch (USDG, a tokenised stock) is priced through its
+      // own asset now — a stablecoin by its peg, anything else off its market.
+      // A miss here is about THAT asset, never the ETH ladder below.
+      warn(`quoted in ${launch.quoteAsset || "an ERC-20"}, not ETH — ${launch.marketWhy || "no USD reference"}`);
+      note("a dollar stablecoin is priced by its peg (PONS_USD_PEGGED); any other pair token needs a DexScreener or GeckoTerminal market on this chain");
     } else if (launch.priceQuote === null) {
       // `=== null`, not `== null`: the app serialises priceQuote on every
       // record (a number, or an explicit null when the curve answered no

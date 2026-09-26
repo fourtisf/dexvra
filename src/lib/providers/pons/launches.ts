@@ -10,7 +10,7 @@ import { decodeLogData, topic0, topicToAddress } from "@/lib/evm/abi";
 import { getLogs, rpcBatch, type RpcLog } from "@/lib/evm/rpc";
 import { blockSeconds, blockTag, chainHead, timestampOf } from "./chain";
 import { readLaunchSnapshots, type LaunchSnapshot } from "./contracts";
-import { nativeUsd, summarise } from "./market";
+import { nativeUsd, quoteUsdFor, summarise } from "./market";
 import {
   commitScan,
   coveredBlocks,
@@ -193,9 +193,24 @@ export async function fetchPonsLaunchFeed(limit = PONS.launchEnrichLimit): Promi
     wanted.length ? readLaunchSnapshots(wanted.map((e) => e.token)).catch(() => empty) : empty,
   ]);
 
+  // ⚠️ `quoteUsd` is ETH's price, and handing it to a USDG-paired launch would
+  // print a curve price multiplied by the ETH price. An ERC-20-paired launch
+  // asks for its own asset's reference (cached per asset, so a feed of twenty
+  // costs one read per distinct pair token).
+  const erc20Usd = new Map<string, number | null>();
+  for (const snapshot of snapshots.values()) {
+    if (snapshot.launch.nativeQuote) continue;
+    const key = snapshot.launch.pairToken.toLowerCase();
+    if (!erc20Usd.has(key)) erc20Usd.set(key, (await quoteUsdFor(snapshot)).usd);
+  }
   const items = wanted.map((event): PonsLaunchFeedItem => {
     const snapshot = snapshots.get(event.token.toLowerCase());
-    const summary = snapshot ? summarise(snapshot, quoteUsd) : null;
+    const usd = !snapshot
+      ? null
+      : snapshot.launch.nativeQuote
+        ? quoteUsd
+        : erc20Usd.get(snapshot.launch.pairToken.toLowerCase()) ?? null;
+    const summary = snapshot ? summarise(snapshot, usd) : null;
     return {
       chain: PONS.chain,
       address: event.token,

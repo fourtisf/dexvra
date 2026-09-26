@@ -132,3 +132,21 @@ test("⚠️ a flow handler that throws is ANSWERED, not swallowed into a warn",
     listing.handleText = real;
   }
 });
+
+// ⚠️ THE DISCOVERY GETS A BUDGET INSIDE THE FORM'S CEILING. Without it the
+// form's own `bounded` fires first and discards every answer the merge had
+// already collected — $HAPPYCAT: the Pons contract had answered its name and
+// the form asked "What is your project called?" because a guessed pad host
+// outran 8s. The budget must be SMALLER than the ceiling or it is decoration.
+test("the discovery merge is handed a budget under the form's own ceiling", async () => {
+  let opts = null;
+  listing._lookups.fetchTokenInfo = async (_c, _a, o) => { opts = o; return { name: "Happy Cat", symbol: "HAPPYCAT" }; };
+  listing._lookups.fetchMarket = async () => null;
+  listing._lookups.fetchTokenDescription = async () => null;
+  const ctx = ctxWith({ type: "xpress_listing", form: form(), awaitingField: "address" }, MINT);
+  await drive(ctx);
+  assert.ok(opts && opts.budgetMs > 0, "fetchTokenInfo was called with no budget");
+  const ceiling = listing._test.AUTOFILL_MAX_MS;
+  assert.ok(opts.budgetMs < ceiling, `budget ${opts.budgetMs}ms is not under the form's ${ceiling}ms ceiling`);
+  assert.strictEqual(ctx.session.form.sym, "HAPPYCAT");
+});

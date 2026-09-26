@@ -568,3 +568,55 @@ test('…and a REAL override still wins, including the legitimate {id} / {n} fil
     delete process.env.LAUNCHPAD_PONS_TOKEN_PATH; delete process.env.LAUNCHPAD_PONS_FEED_PATH; delete process.env.LAUNCHPAD_PONS_API;
   }
 });
+
+// ⚠️ THE PATH WALK HAS ONE BUDGET. Four spellings at LAUNCHPAD_TIMEOUT_MS each
+// was a 24s lookup on a host answering 404 slowly, and every caller waits for
+// the pad before it merges — the listing form lost $HAPPYCAT's chain-read name
+// that way. Past the budget the answer is INCONCLUSIVE: not the cached "the pad
+// never heard of this token".
+test('a slow 404 walk stops at ONE timeout, and the cut-short answer is not cached', async () => {
+  reset({ LAUNCHPAD_FLAP: '0', LAUNCHPAD_TIMEOUT_MS: '1000' });
+  let calls = 0;
+  global.fetch = async (url) => {
+    if (/ponsfamily/.test(String(url))) {
+      calls++;
+      await new Promise((r) => setTimeout(r, 600));
+    }
+    return { ok: false, status: 404, text: async () => '', json: async () => ({}) };
+  };
+  const started = Date.now();
+  const first = await lp.tokenRecord('robinhood', PONS_TOKEN);
+  assert.ok(Date.now() - started < 2000, `the walk took ${Date.now() - started}ms — every spelling paid its own timeout`);
+  assert.ok(calls < 4, `all ${calls} spellings were walked past the budget`);
+  assert.equal(first.record, null);
+  const spent = calls;
+  await lp.tokenRecord('robinhood', PONS_TOKEN);
+  assert.ok(calls > spent, 'a walk cut short was cached as "the pad does not know this token"');
+});
+
+test('…and a later spelling gets only what is LEFT of that budget, not a fresh timeout', async () => {
+  reset({ LAUNCHPAD_FLAP: '0', LAUNCHPAD_TIMEOUT_MS: '1500' });
+  let n = 0;
+  global.fetch = async (url, init) => {
+    if (!/ponsfamily/.test(String(url))) return { ok: false, status: 404, text: async () => '', json: async () => ({}) };
+    n++;
+    if (n === 1) {
+      await new Promise((r) => setTimeout(r, 400));
+      return { ok: false, status: 404, text: async () => '', json: async () => ({}) };
+    }
+    // The second spelling hangs until the client gives up on it. ⚠️ The
+    // client's AbortSignal.timeout is unref'd, so a ref'd backstop holds the
+    // loop open — without it node cancels the test, which reads as a kill.
+    return new Promise((_, rej) => {
+      const fail = () => { clearTimeout(backstop); rej(Object.assign(new Error('aborted'), { name: 'TimeoutError' })); };
+      const backstop = setTimeout(fail, 3000);
+      const s = init && init.signal;
+      if (s && s.aborted) return fail();   // the next base, on a signal already spent
+      if (s) s.addEventListener('abort', fail);
+    });
+  };
+  const started = Date.now();
+  await lp.tokenRecord('robinhood', PONS_TOKEN);
+  const took = Date.now() - started;
+  assert.ok(took < 1750, `the walk took ${took}ms — the second spelling was handed a whole fresh timeout`);
+});

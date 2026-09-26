@@ -47,6 +47,9 @@ const URL_RE = /^https?:\/\/\S+$/i;
  * keeps running and lands in its cache, so a retry gets it for free.
  */
 const AUTOFILL_MAX_MS = Math.max(1000, Number(process.env.LISTING_AUTOFILL_MS || 8000));
+/** What the discovery merge may spend before it answers with what it has —
+ *  under the form's own ceiling, or the ceiling fires first and discards it. */
+const DISCOVERY_BUDGET_MS = Math.max(Math.round(AUTOFILL_MAX_MS / 2), AUTOFILL_MAX_MS - 750);
 
 /** Test seam — the three lookups, swappable without a network. The
  *  `core._deps.providerFor` shape, for the same reason. */
@@ -174,7 +177,9 @@ async function handleText(ctx) {
       // The indexer wins for socials. Each source has AUTOFILL_MAX_MS to
       // answer; see `bounded` for why a ceiling here is load-bearing.
       const [ds, gt, desc] = await Promise.all([
-        bounded(() => _lookups.fetchTokenInfo(f.chain, input)),
+        // The discovery gets a budget INSIDE the form's ceiling, so a source
+        // that hangs costs its own answer and never the ones that arrived.
+        bounded(() => _lookups.fetchTokenInfo(f.chain, input, { budgetMs: DISCOVERY_BUDGET_MS })),
         bounded(() => _lookups.fetchMarket(f.chain, input)),
         bounded(() => _lookups.fetchTokenDescription(f.chain, input)),
       ]);
@@ -479,5 +484,5 @@ module.exports = {
   handleText,
   handlePhoto,
   _lookups,
-  _test: { bondingLine, emptyForm },
+  _test: { bondingLine, emptyForm, AUTOFILL_MAX_MS, DISCOVERY_BUDGET_MS },
 };

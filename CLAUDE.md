@@ -11074,6 +11074,112 @@ account for a post with premium emoji, else the bot) must still be an admin
 with posting rights in that channel — the same rights it posted with.
 ⚠️ `bot/` only, so the deploy is the **ecosystem restart** and no web rebuild.
 
+## "bot masih gagal membaca tokenya" — one slow pad threw the chain's answer away, and a USDG launch had no price
+
+`$HAPPYCAT` (Pons v2, Robinhood, `0x113ff96E9392a6501f65B3BD4AACB89D3D0945cC`,
+**"Paired USDG"**, 17% along its curve): the CA pasted into the listing form and
+the bot answering **"Token Name — What is your project called?"** about a token
+whose contract publishes its name, ticker and logo. Two defects, and the second
+would have been the next report.
+
+**1. The merge waited for its SLOWEST source, inside the form's 8s ceiling.**
+`discovery.fetchTokenInfoX` merged DexScreener, pools.trade, the launchpad
+registry and the Pons contract with `Promise.all`, and the form wrapped the whole
+call in `bounded(…, LISTING_AUTOFILL_MS)`. The Pons pad's HTTP host is still a
+guess walking up to four path spellings at `LAUNCHPAD_TIMEOUT_MS` (6s) each, so
+it could outrun the ceiling. When the ceiling fired, the answer the contract had
+already returned was discarded with everything else. **The one source that
+cannot be unreachable was held hostage by the one that most often is.**
+
+- **A caller on a clock passes `budgetMs`**, and each source is raced against it
+  (`helpers/bounded`). A late source is LEFT RUNNING, contributes nothing and is
+  named at INFO (`[discovery] … launchpads did not answer within Nms — the form
+  used what did`), because production does not print debug. The form's budget
+  sits UNDER its own ceiling (`DISCOVERY_BUDGET_MS`), or the ceiling fires first
+  and the budget is decoration. Background callers pass none and wait as before.
+- ⚠️ **A timed-out DexScreener is `ok:false`, never an answer**, so `ok` still
+  follows the indexer and a timeout cannot read as "nothing there".
+- **The pad's path walk has ONE budget, not one per spelling.** Past
+  `LAUNCHPAD_TIMEOUT_MS` it stops, and the cut-short answer is INCONCLUSIVE:
+  not cached as "the pad never heard of this token" (that is only true when
+  every spelling answered 404) and not benched (the host answered). A later
+  spelling gets only what is LEFT of the budget.
+  ⚠️ The test for that needed a ref'd backstop timer, because the client's
+  `AbortSignal.timeout` is unref'd, and node CANCELLED the test rather than
+  failing it. A mutation run read the cancellation as a kill. It also has to
+  answer an already-aborted signal, or the next base in the failover waits on a
+  signal that has already fired.
+
+**2. An ERC-20-paired launch was never priced.** The provider priced a launch
+only when it was paired with ETH (*"quoted in an ERC-20 — no USD reference for an
+arbitrary quote asset"*). So every USDG-paired Pons token published no price and
+no market cap anywhere: the site, the listing form and the paid post. It was also
+worse than "unpriced": every quote amount was counted in ETH's 18 decimals, and
+USDG counts in 6, so the raw curve price was off by 10^12.
+
+- **`LaunchSnapshot.quote`** carries the pair token's own `decimals()` and
+  `symbol()`, read once per asset in one batch and cached only as an ANSWER.
+  A refused read is asked again, the `decimalsCache` scar. ⚠️ **Unknown decimals
+  are refused, never guessed as 18**. `quoteDecimals()` answers null and the
+  launch is left unpriced with *"could not read the pair token's decimals"*.
+  Two layers enforce that (the null in `quoteDecimals`, the guard in
+  `quoteUsdFor`), and a mutation run shows each alone is behaviour-neutral while
+  the other stands. Only removing both kills the test.
+- **`quoteUsdFor(snapshot)` is the one owner of "USD per unit of THIS launch's
+  quote asset"**: ETH through the native ladder, an ERC-20 through
+  `readQuoteAssetUsd`:
+  1. **peg**, for a dollar stablecoin symbol (`USDG`, `USDC`, `USDT`, `USDC.E`,
+     `USDT0`). ⚠️ This is symbol-based and still safe, because a launch's pair
+     token comes from Pons's launch CONFIG and never from the creator, so nobody
+     can pair against a fake "USDG". `PONS_USD_PEGGED` replaces the set and `0`
+     turns the rung off.
+  2. DexScreener, for an asset that is not a dollar (a tokenised stock).
+  3. GeckoTerminal, last.
+- ⚠️ **Every caller had to hand the RIGHT reference, or the fix prints a USDG
+  price multiplied by the ETH price.** The board (`fetchPonsMarket`) resolves
+  each launch separately, the record (`fetchPonsLaunch`) asks `quoteUsdFor`, and
+  the launch feed resolves each distinct pair token once. `buildMarket` lost its
+  "ETH only" gate precisely because it now trusts its caller for this.
+- **`quoteSymbol` keeps its native-only meaning** (`unpricedByUs` reads it, and
+  a mutation-tested guarantee rests on it). The asset is a new field,
+  `quoteAsset`. `pons:check` §7 names the asset and its source, and warns with
+  that asset's own reason rather than blaming the ETH ladder.
+
+⚠️ **Known gap, recorded rather than half-fixed.** `/api/pons/trades` takes a
+curve address alone, so it cannot know the quote asset. On a USDG-paired launch
+its per-trade USD figures are still ETH-denominated. Fixing it means the route
+learning the launch, which is its own change.
+
+```bash
+cd bot && node scripts/run-tests.js test/discoveryBudget.test.js test/listingAutofill.test.js   # no network
+cd tradebot && SKIP_DOTENV=1 node --test launchpads.test.js                                      # the one-budget walk
+npm run test:pons                                                                               # USDG / NVDA / refused-decimals launches
+node --test --experimental-strip-types src/lib/providers/pons/quoteUsd.test.ts
+cd /opt/dexvra && npm run pons:check                                                            # §7 names the asset that priced it
+curl -s "http://127.0.0.1:3005/api/pons?address=0x113ff96E9392a6501f65B3BD4AACB89D3D0945cC"
+```
+
+Fourteen guarantees are MUTATION-TESTED rather than argued:
+- the form passing no budget
+- the merge ignoring the budget
+- a timed-out DexScreener reading as an answer
+- the budget hardcoded for every caller
+- the walk never cut short
+- the cut-short answer cached
+- a later spelling handed a fresh timeout
+- the ETH reference handed to an ERC-20 launch
+- the board doing the same
+- the record doing the same
+- 18 decimals for every quote asset
+- the peg removed
+- both unknown-decimals layers removed together
+
+Each fails between one and nine checks.
+
+**Config a fix depends on:** nothing. ⚠️ This touches `bot/`, `shared/` AND
+`src/`, so `npm run deploy` restarts all three bot processes and rebuilds the
+site. That is what it decides from the diff anyway.
+
 ## "perbaiki tampilan chartnya di mobile" — two rows of timeframe buttons, one of them dead
 
 The same screenshot, one panel down: our chart header — `$HACHIKO`, `LIN LOG`,

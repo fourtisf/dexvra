@@ -142,7 +142,11 @@ test("the form stops at the contract step, before it fills anything in", () => {
   const i = src.indexOf("if (await listed.blockIfListed(ctx, input, f.chain)) return;");
   assert.ok(i > -1, "no check at the contract step");
   assert.ok(i < src.indexOf("f.address = input;"), "…and it runs before the form is populated");
-  assert.ok(i < src.indexOf("fetchTokenInfo(f.chain, input)"), "…and before the autofill round-trip");
+  // The call's argument list may grow (it carries a budget now); the rule is
+  // the ORDER, so match the call, not its closing parenthesis.
+  const autofill = src.indexOf("fetchTokenInfo(f.chain, input");
+  assert.ok(autofill > -1, "the autofill call was not found — the guard would be vacuous");
+  assert.ok(i < autofill, "…and before the autofill round-trip");
 });
 
 test("it is checked AGAIN at the last gate before money moves", () => {

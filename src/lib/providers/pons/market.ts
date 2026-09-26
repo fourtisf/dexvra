@@ -10,7 +10,7 @@ import { cached, within } from "@/lib/cache";
 import { fromUnits } from "@/lib/evm/abi";
 import { PONS, ponsExplorerUrl, ponsTokenUrl, type GraduationPhase } from "@/config/pons";
 import { PERIOD_KEYS, type PeriodKey, type Trade, type TxSplit } from "@/lib/types";
-import { readNativeUsd, type QuoteUsdSource } from "./quoteUsd";
+import { readNativeUsd, readQuoteAssetUsd, type QuoteUsdSource } from "./quoteUsd";
 import type { LiveMarket } from "../market";
 import {
   readCurveTokenDecimals,
@@ -85,21 +85,63 @@ export const nativeUsd = async (): Promise<number> => {
   return r.usd;
 };
 
+/** USD per unit of THIS launch's quote asset — ETH through the native ladder,
+ *  an ERC-20 (USDG, a tokenised stock) through its own. One answer per asset,
+ *  cached like the native one: only an answer is written. */
+const quoteAssetGen = { n: 0 };
+export async function quoteUsdFor(snapshot: LaunchSnapshot): Promise<NativeUsdRead> {
+  if (snapshot.launch.nativeQuote) return nativeUsdX();
+  const address = snapshot.launch.pairToken.toLowerCase();
+  const label = snapshot.quote?.symbol || "the pair token";
+  // An asset whose decimals we could not read cannot be priced anyway, so it
+  // costs no market request; `describe` names the decimals as the cause.
+  if (snapshot.quote?.decimals == null) {
+    return { usd: null, source: null, why: `could not read ${label}'s decimals` };
+  }
+  let source: QuoteUsdSource | null = null;
+  try {
+    const usd = await cached(`pons:quote-usd:${address}#${quoteAssetGen.n}`, NATIVE_USD_TTL, async () => {
+      const r = await readQuoteAssetUsd(PONS.chain, address, snapshot.quote?.symbol ?? null);
+      if (r.usd == null) throw new Error(r.why.join("; ") || "no source answered");
+      source = r.source;
+      quoteAssetSource.set(address, r.source);
+      return r.usd;
+    });
+    return { usd, source: source ?? quoteAssetSource.get(address) ?? null, why: null };
+  } catch (e) {
+    return { usd: null, source: null, why: `no USD reference for ${label} — ${e instanceof Error ? e.message : String(e)}` };
+  }
+}
+const quoteAssetSource = new Map<string, QuoteUsdSource | null>();
+export const __resetQuoteAssetUsd = (): void => {
+  quoteAssetGen.n++;
+  quoteAssetSource.clear();
+};
+
 const tokenDecimals = (snapshot: LaunchSnapshot): number => snapshot.meta?.decimals ?? 18;
 
+/** What the launch's QUOTE amounts are counted in — 18 for ETH, the pair
+ *  token's own `decimals()` otherwise, and null when that could not be read:
+ *  a USDG curve read at 18 decimals is priced 10^12 too low, so an unknown is
+ *  refused rather than guessed. */
+const quoteDecimals = (snapshot: LaunchSnapshot): number | null =>
+  snapshot.launch.nativeQuote ? PONS.nativeDecimals : snapshot.quote?.decimals ?? null;
+
 /** Effective AMM-side price of a trade, in quote per token. */
-const tradePrice = (trade: PonsTrade, decimals: number): number => {
+const tradePrice = (trade: PonsTrade, decimals: number, qDecimals: number = PONS.nativeDecimals): number => {
   const tokens = fromUnits(trade.tokens, decimals);
-  return tokens > 0 ? fromUnits(trade.quote, PONS.nativeDecimals) / tokens : 0;
+  return tokens > 0 ? fromUnits(trade.quote, qDecimals) / tokens : 0;
 };
 
 /** Marginal price of the bonding curve, in quote per token. */
 function curveSpot(snapshot: LaunchSnapshot): number | null {
   const curve = snapshot.curve;
   if (!curve || curve.graduated || curve.tokenReserve <= 0n) return null;
+  const qd = quoteDecimals(snapshot);
+  if (qd == null) return null;
   const tokens = fromUnits(curve.tokenReserve, tokenDecimals(snapshot));
   if (tokens <= 0) return null;
-  return fromUnits(curve.quoteReserve, PONS.nativeDecimals) / tokens;
+  return fromUnits(curve.quoteReserve, qd) / tokens;
 }
 
 /**
@@ -112,11 +154,13 @@ function poolSpot(snapshot: LaunchSnapshot): { price: number; quoteAmount: numbe
   if (!pool || pool.sqrtPriceX96 <= 0n) return null;
 
   const decimals = tokenDecimals(snapshot);
+  const qd = quoteDecimals(snapshot);
+  if (qd == null) return null;
   const [currency0] = sortCurrencies(snapshot.launch.pairToken, snapshot.launch.token);
   const quoteIsCurrency0 = currency0.toLowerCase() === snapshot.launch.pairToken.toLowerCase();
   const [decimals0, decimals1] = quoteIsCurrency0
-    ? [PONS.nativeDecimals, decimals]
-    : [decimals, PONS.nativeDecimals];
+    ? [qd, decimals]
+    : [decimals, qd];
 
   const sqrtP = Number(pool.sqrtPriceX96) / Q96;
   if (!Number.isFinite(sqrtP) || sqrtP <= 0) return null;
@@ -158,6 +202,7 @@ function periodStats(
   spotQuote: number,
   quoteUsd: number,
   nowSeconds: number,
+  qDecimals: number,
 ): PeriodStats {
   const stats = emptyStats();
   for (const period of PERIOD_KEYS) {
@@ -169,14 +214,14 @@ function periodStats(
     let buys = 0;
     let sells = 0;
     for (const trade of window) {
-      volumeQuote += fromUnits(trade.quote, PONS.nativeDecimals);
+      volumeQuote += fromUnits(trade.quote, qDecimals);
       if (trade.kind === "buy") buys++;
       else sells++;
     }
     stats.vol[period] = volumeQuote * quoteUsd;
     stats.txns[period] = { buys, sells };
 
-    const opening = tradePrice(window[0], decimals);
+    const opening = tradePrice(window[0], decimals, qDecimals);
     if (opening > 0 && spotQuote > 0) {
       stats.chg[period] = ((spotQuote - opening) / opening) * 100;
     }
@@ -191,9 +236,11 @@ function periodStats(
  *  chain had answered. */
 function spotQuoteOf(snapshot: LaunchSnapshot, history: CurveHistory | undefined): number | null {
   const decimals = tokenDecimals(snapshot);
+  const qd = quoteDecimals(snapshot);
+  if (qd == null) return null;
   const trades = history?.trades ?? [];
   const pool = poolSpot(snapshot);
-  const last = trades.length ? tradePrice(trades[trades.length - 1], decimals) : 0;
+  const last = trades.length ? tradePrice(trades[trades.length - 1], decimals, qd) : 0;
   const spot = pool?.price ?? curveSpot(snapshot) ?? (last > 0 ? last : null);
   return spot != null && spot > 0 ? spot : null;
 }
@@ -204,8 +251,10 @@ function buildMarket(
   quoteUsd: number,
   nowSeconds: number,
 ): LiveMarket | null {
-  // No USD reference for an ERC-20-quoted launch — skip rather than guess.
-  if (!snapshot.launch.nativeQuote) return null;
+  // `quoteUsd` is USD per unit of THIS launch's quote asset — the caller asks
+  // `quoteUsdFor`, never hands an ETH price to a USDG launch.
+  const qd = quoteDecimals(snapshot);
+  if (qd == null) return null;
 
   const decimals = tokenDecimals(snapshot);
   const trades = history?.trades ?? [];
@@ -221,12 +270,12 @@ function buildMarket(
   const liquidityQuote = pool
     ? pool.quoteAmount * 2
     : snapshot.curve && !snapshot.curve.graduated
-      ? fromUnits(snapshot.curve.realQuoteReserve, PONS.nativeDecimals)
+      ? fromUnits(snapshot.curve.realQuoteReserve, qd)
       // Swept but not yet seeded (or rescued): the curve is drained, so the
       // reserves pulled into the factory are what is actually behind the token.
-      : fromUnits(snapshot.launch.sweptQuote, PONS.nativeDecimals);
+      : fromUnits(snapshot.launch.sweptQuote, qd);
 
-  const stats = periodStats(trades, decimals, spotQuote, quoteUsd, nowSeconds);
+  const stats = periodStats(trades, decimals, spotQuote, quoteUsd, nowSeconds, qd);
 
   return {
     priceUsd,
@@ -264,9 +313,13 @@ export async function fetchPonsMarket(addresses: string[]): Promise<Map<string, 
   }
   if (snapshots.size === 0) return out;
 
-  const [quote, histories] = await Promise.all([
-    nativeUsdX(),
-    readCurveHistories([...snapshots.values()].map((s) => s.launch.curve)).catch(
+  const list = [...snapshots.entries()];
+  const [quotes, histories] = await Promise.all([
+    // Per launch: an ETH-paired curve and a USDG-paired one are priced in
+    // different assets, and handing the second the first's reference is a
+    // number off by the ETH price.
+    Promise.all(list.map(([, snapshot]) => quoteUsdFor(snapshot))),
+    readCurveHistories(list.map(([, s]) => s.launch.curve)).catch(
       () => new Map<string, CurveHistory>(),
     ),
   ]);
@@ -276,17 +329,22 @@ export async function fetchPonsMarket(addresses: string[]): Promise<Map<string, 
   // reach the chain" and parks the whole on-chain reader for five minutes,
   // over snapshots it had just read perfectly well. The park exists for a dead
   // RPC. With no dollar figure there is no LiveMarket row to publish, so the
-  // honest answer is an empty map and the reason, and the next cycle asks
-  // again — the ladder's own cache makes that one bounded read, not a walk.
-  if (quote.usd == null) {
-    console.warn(`[market] ${PONS.chain}: ${quote.why} — ${snapshots.size} curve token(s) go unpriced this cycle`);
-    return out;
-  }
-
+  // honest answer is no row and the reason, and the next cycle asks again —
+  // the ladder's own cache makes that one bounded read, not a walk.
+  const unpriced = new Map<string, number>();
   const now = Math.floor(Date.now() / 1000);
-  for (const [address, snapshot] of snapshots) {
+  list.forEach(([address, snapshot], i) => {
+    const quote = quotes[i];
+    if (quote.usd == null) {
+      const why = quote.why ?? "no USD reference";
+      unpriced.set(why, (unpriced.get(why) ?? 0) + 1);
+      return;
+    }
     const market = buildMarket(snapshot, histories.get(snapshot.launch.curve.toLowerCase()), quote.usd, now);
     if (market) out.set(address, market);
+  });
+  for (const [why, n] of unpriced) {
+    console.warn(`[market] ${PONS.chain}: ${why} — ${n} curve token(s) go unpriced this cycle`);
   }
   return out;
 }
@@ -326,11 +384,14 @@ export interface LaunchSummary {
  *  scan per curve. */
 export function summarise(snapshot: LaunchSnapshot, quoteUsd: number | null): LaunchSummary {
   const market = quoteUsd ? buildMarket(snapshot, undefined, quoteUsd, Math.floor(Date.now() / 1000)) : null;
-  const threshold = fromUnits(snapshot.launch.graduationThreshold, PONS.nativeDecimals);
+  // Progress is a RATIO of two quote amounts, so it holds whatever the quote's
+  // decimals — 18 stands in only where they could not be read.
+  const qd = quoteDecimals(snapshot) ?? PONS.nativeDecimals;
+  const threshold = fromUnits(snapshot.launch.graduationThreshold, qd);
   const raised =
     snapshot.curve && !snapshot.curve.graduated
-      ? fromUnits(snapshot.curve.realQuoteReserve, PONS.nativeDecimals)
-      : fromUnits(snapshot.launch.sweptQuote, PONS.nativeDecimals);
+      ? fromUnits(snapshot.curve.realQuoteReserve, qd)
+      : fromUnits(snapshot.launch.sweptQuote, qd);
   return {
     priceUsd: market?.priceUsd ?? null,
     mcapUsd: market?.mcap ?? null,
@@ -347,6 +408,7 @@ export interface PonsLaunchInfo {
   creatorFeeRecipient: string;
   pairToken: string;
   quoteSymbol: string | null;
+  quoteAsset: string | null;
   phase: GraduationPhase;
   graduated: boolean;
   name: string | null;
@@ -402,18 +464,19 @@ function describe(
   // was rate-limiting the box.
   const marketWhy = market
     ? null
-    : !snapshot.launch.nativeQuote
-      ? "quoted in an ERC-20, not ETH — no USD reference for an arbitrary quote asset"
+    : quoteDecimals(snapshot) == null
+      ? `could not read the pair token's decimals (${snapshot.launch.pairToken}) — its quote amounts cannot be counted`
       : spotQuote == null
         ? snapshot.readWhy
           ? `could not read the curve — ${snapshot.readWhy}`
           : "the curve and the pool answered no price"
         : quote.why ?? "no USD reference";
   const { launch, curve, meta } = snapshot;
-  const threshold = fromUnits(launch.graduationThreshold, PONS.nativeDecimals);
+  const qd = quoteDecimals(snapshot) ?? PONS.nativeDecimals;
+  const threshold = fromUnits(launch.graduationThreshold, qd);
   const raised = curve && !curve.graduated
-    ? fromUnits(curve.realQuoteReserve, PONS.nativeDecimals)
-    : fromUnits(launch.sweptQuote, PONS.nativeDecimals);
+    ? fromUnits(curve.realQuoteReserve, qd)
+    : fromUnits(launch.sweptQuote, qd);
   const graduated = launch.phase !== "NotGraduated";
 
   return {
@@ -423,6 +486,9 @@ function describe(
     creatorFeeRecipient: launch.creatorFeeRecipient,
     pairToken: launch.pairToken,
     quoteSymbol: launch.nativeQuote ? PONS.nativeSymbol : null,
+    // What an ERC-20-paired launch is priced in (USDG, a tokenised stock).
+    // `quoteSymbol` keeps its native-only meaning — `unpricedByUs` reads it.
+    quoteAsset: snapshot.quote?.symbol ?? null,
     phase: launch.phase,
     graduated,
     name: meta?.name || null,
@@ -480,7 +546,7 @@ export async function fetchPonsLaunch(address: string): Promise<PonsLaunchInfo |
   // SIDE_MS the read is left RUNNING (its result lands in its own cache for
   // the next reader) and the record goes out without that half.
   const [quote, hist, prof] = await Promise.all([
-    nativeUsdX(),
+    quoteUsdFor(snapshot),
     within(readCurveHistories([snapshot.launch.curve]), SIDE_MS),
     // Best-effort: a token whose creator set nothing, and a read that failed,
     // both leave the form asking — neither may cost the rest of the record.
