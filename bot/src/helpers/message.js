@@ -70,7 +70,10 @@ async function sendPhotoCard(ctx, photo, payload, keyboard, opts = {}) {
     if (ctx.session) ctx.session.latest_bot_message = msg.message_id;
     return msg;
   } catch (e) {
-    log.debug(`[msg] photo card failed (${e.message}) — falling back to text`);
+    // ⚠️ WARN, not debug: a card that should have carried a picture went out
+    // as text, and production does not print debug — "Logo: added ✓" over no
+    // picture was reported from a screenshot because this line said nothing.
+    log.warn(`[msg] photo card failed (${e.message}) — falling back to text`);
     return sendCard(ctx, payload, keyboard, opts);
   }
 }

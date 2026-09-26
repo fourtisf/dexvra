@@ -1433,6 +1433,9 @@ module.exports = {
   _fetchLogoUrlX: fetchLogoUrlX,
   // The review card warms the artwork before payment; the post reads it back.
   warmLogo,
+  // Read by the listing review card too (handlers/listing reviewPhoto), so the
+  // card and the post share one fetch and one warm cache.
+  fetchLogoUrlWarm,
   _fetchLogoUrlWarm: fetchLogoUrlWarm,
   readArtwork,
   _resetWarm: () => warmed.clear(),

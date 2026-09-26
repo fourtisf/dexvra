@@ -11233,6 +11233,42 @@ head ignoring the market read. Each fails between one and two tests.
 does both — and a record already in the site's cache keeps `null` for up to its
 20s TTL after the restart.
 
+### "harusnya bot mengirim teks pake logo juga" — the review card said "added ✓" over no picture
+
+With the autofill fixed, $HAPPYCAT's review card came back with the name, the
+ticker, the X link and **`Logo: added ✓`** — as a TEXT card. `showReview` did
+try to send a photo: it handed Telegram the logo's URL, i.e. one IPFS gateway
+serving a fresh CID, and made **Telegram** fetch it with no failover and inside
+its own fetch limits. That failed, `sendPhotoCard` fell back to text, and the
+only trace was a `log.debug` production never prints. The bot had ALREADY
+fetched those same bytes — `warmLogo` runs from this very card for the post.
+
+- **`reviewPhoto` uploads the bytes the bot fetched** — `fulfillment
+  .fetchLogoUrlWarm`, through `/api/logo` with the gateway ladder, the same
+  fetch and the same warm cache the paid post reads back. One fetch, two users.
+- **Bounded** (`REVIEW_LOGO_MS`, 6s): the card answers a paste and may not wait
+  on a gateway longer. The fetch is left running for the post.
+- ⚠️ **Only a format Telegram shows as a photo is uploaded** (JPEG/PNG/WEBP/GIF
+  by magic bytes). An SVG through `sendPhoto` is an error and the card would
+  lose the picture anyway.
+- **It can only ADD a picture**: anything it cannot upload is handed to
+  Telegram as the url, exactly as before, and a buyer's own upload still goes as
+  its file id with no fetch at all.
+- ⚠️ **`sendPhotoCard`'s fallback logs at WARN now.** A card that should have
+  carried a picture going out as text is a fault, and a debug line is how this
+  one reached us as a screenshot instead of a log line.
+
+```bash
+cd bot && node scripts/run-tests.js test/reviewLogo.test.js test/logoWarm.test.js   # 13 tests, no network
+```
+
+Five guarantees are MUTATION-TESTED: the url handed to Telegram again, the fetch
+unbounded, any bytes uploaded regardless of format, the warm dropped, and an
+upload no longer short-circuited. Each fails between one and three tests.
+
+**Config a fix depends on:** nothing. `bot/` only, so the deploy is the
+ecosystem restart.
+
 ### "bagaimana kalo pair dengan tokenized stok" — the stock is somebody else's QUOTE
 
 Asked over the deploy that proved the USDG half (`quoteUsdSource: "peg"`). A

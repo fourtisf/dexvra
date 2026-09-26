@@ -308,6 +308,64 @@ function bondingLine(f) {
   return `\n\n🚀 **Still bonding**${pad}${pct}\n_No DEX pool yet, so charts and liquidity stay empty until it migrates._`;
 }
 
+/**
+ * The picture the review card is sent with — the logo the buyer is about to
+ * pay to publish, so they can see it is the RIGHT one before they do.
+ *
+ * "harusnya bot mengirim teks pake logo juga": a Pons launch's logo is an IPFS
+ * url rewritten to one gateway, and handing Telegram that URL makes TELEGRAM
+ * fetch it — a cold CID on one gateway, inside Telegram's own fetch limits,
+ * with no failover. It failed, `sendPhotoCard` fell back to the text card, and
+ * the only trace was a debug line production does not print. The card said
+ * "Logo: added ✓" over no picture.
+ *
+ * So the bytes are fetched HERE, through the same path the paid post uses
+ * (`fulfillment.fetchLogoUrlWarm` → `/api/logo`, gateway failover included),
+ * and uploaded. Same fetch, same cache: the post after payment reads these
+ * bytes back instead of betting on a cold gateway a second time.
+ *
+ *   · BOUNDED (`REVIEW_LOGO_MS`, 6s): the card is the answer to the paste, and
+ *     it may never wait on a gateway for longer than that. The fetch is left
+ *     running — its result lands in the warm cache for the post.
+ *   · Only a format Telegram shows as a PHOTO is uploaded (JPEG/PNG/WEBP/GIF,
+ *     by magic bytes). An SVG sent through sendPhoto is an error, and the
+ *     card would fall back to text anyway — so it goes the old way.
+ *   · A buyer's own upload is a Telegram file id already and is sent as one.
+ *   · Anything else keeps the old behaviour — Telegram is handed the url — so
+ *     this can only ever ADD a picture, never lose one.
+ */
+const REVIEW_LOGO_MS = Math.max(1000, Number(process.env.REVIEW_LOGO_MS) || 6000);
+function photoFormat(buf) {
+  if (!Buffer.isBuffer(buf) || buf.length < 12) return null;
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return "jpeg";
+  if (buf.slice(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "png";
+  if (buf.slice(0, 4).toString("ascii") === "RIFF" && buf.slice(8, 12).toString("ascii") === "WEBP") return "webp";
+  if (buf.slice(0, 4).toString("ascii") === "GIF8") return "gif";
+  return null;
+}
+async function reviewPhoto(f) {
+  if (f.logoFileId) return f.logoFileId;
+  const url = f.logoUrl && /^https?:\/\//i.test(f.logoUrl) ? f.logoUrl : null;
+  if (!url) return null;
+  const fulfil = require("../fulfillment");
+  // Started now either way: the post after payment reads the warm copy back.
+  try {
+    fulfil.warmLogo(url);
+  } catch (e) {
+    log.warn(`[listing] could not warm the logo for ${f.chain}/${f.address}: ${e.message}`);
+  }
+  const { bounded } = require("../helpers/bounded");
+  const got = await bounded(fulfil.fetchLogoUrlWarm(url).catch(() => null), REVIEW_LOGO_MS, () => null);
+  const fmt = got && photoFormat(got.bytes);
+  if (fmt) return { source: got.bytes, filename: `logo.${fmt === "jpeg" ? "jpg" : fmt}` };
+  log.warn(
+    `[listing] review card: logo for ${f.chain}/${f.address} ${
+      got && got.bytes ? "is not a photo format Telegram shows" : got ? `did not load (${got.why || `status ${got.status}`})` : `did not load within ${REVIEW_LOGO_MS}ms`
+    } — handing Telegram the url instead: ${url}`,
+  );
+  return url;
+}
+
 async function showReview(ctx) {
   const f = ctx.session.form;
   ctx.session.reviewShown = true;
@@ -330,18 +388,7 @@ async function showReview(ctx) {
     twitter: v(f.twitter),
     telegram: v(f.telegram),
   });
-  const photo = f.logoFileId || (f.logoUrl && f.logoUrl.startsWith("http") ? f.logoUrl : null);
-  // The artwork is fetched NOW, while the buyer reads this card, and the post
-  // after payment reads the bytes back — rather than betting a paid post on
-  // the first cold fetch of a fresh IPFS CID (`$DLYN`: fulfillment.warmLogo).
-  // Fire-and-forget: this card must never wait on a gateway.
-  if (!f.logoFileId && f.logoUrl) {
-    try {
-      require("../fulfillment").warmLogo(f.logoUrl);
-    } catch (e) {
-      log.warn(`[listing] could not warm the logo for ${f.chain}/${f.address}: ${e.message}`);
-    }
-  }
+  const photo = await reviewPhoto(f);
   if (photo) return sendPhotoCard(ctx, photo, text, reviewKb());
   return sendCard(ctx, text, reviewKb());
 }
@@ -473,6 +520,8 @@ async function discard(ctx) {
 
 module.exports = {
   showReview,
+  _reviewPhoto: reviewPhoto,
+  _photoFormat: photoFormat,
   goPay,
   entryXpress,
   entryListingTrending,

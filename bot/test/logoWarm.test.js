@@ -133,9 +133,14 @@ const read = (p) => strip(fss.readFileSync(path.join(__dirname, "..", p), "utf8"
 
 test("⚠️ the review card WARMS the artwork, and both paid posts READ the warm copy", () => {
   const listing = read("src/handlers/listing.js");
-  const review = listing.slice(listing.indexOf("async function showReview"), listing.indexOf("async function editField"));
-  assert.match(review, /require\("\.\.\/fulfillment"\)\.warmLogo\(f\.logoUrl\)/, "the review card must start the fetch");
-  assert.match(review, /if \(!f\.logoFileId && f\.logoUrl\)/, "…only for an external url — an upload needs no warming");
+  // The review path is showReview → reviewPhoto; the property is that it
+  // starts the fetch for an external url, and that an upload short-circuits
+  // first. (It used to pin the literal `warmLogo(f.logoUrl)` inside showReview,
+  // which went red the day the card started uploading those bytes itself.)
+  const review = listing.slice(listing.indexOf("async function reviewPhoto"), listing.indexOf("async function editField"));
+  assert.match(review, /\.warmLogo\(url\)/, "the review card must start the fetch");
+  assert.match(review, /showReview[\s\S]*reviewPhoto\(f\)/, "…and showReview must go through it");
+  assert.ok(review.indexOf("if (f.logoFileId) return f.logoFileId") < review.indexOf(".warmLogo(url)"), "…only for an external url — an upload needs no warming");
   const ful = read("src/fulfillment.js");
   const listingPost = ful.slice(ful.indexOf("async function fulfillListing"), ful.indexOf("async function fulfillTrending"));
   // Through readArtwork now (a second pass, a second url — logoRepair.test.js),
