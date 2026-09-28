@@ -18,10 +18,10 @@
  * was never looked at again. The scanner was structurally blind to exactly the
  * tokens it exists for, with every light on the panel green.
  *
- * GeckoTerminal's `trending_pools` IS the question: the pools the market is
- * trading hardest right now, per network, with the market cap already on each
- * row. One request per chain per scan (scans are 25–90 min apart), so a handful
- * of GT requests an hour — against the ~30/min per-IP ceiling this box shares.
+ * So this source asks the question directly — which tokens on this chain are
+ * trading, with their market cap on each row: DexScreener's search by default,
+ * GeckoTerminal's `trending_pools` added when a GT key is set (see `askDs` /
+ * `askGt` below for why GT is not the default on a keyless box).
  *
  * ⚠️ THE CAP ON EACH ROW IS A HINT, NEVER A VERDICT. It is GT's `market_cap_usd`
  * or, far more often, its `fdv_usd` — and the auto-lister's gates are judged on
@@ -30,16 +30,17 @@
  * instead of behind forty minutes-old launches. Nothing is listed or refused on
  * GT's word.
  *
- * ONE GeckoTerminal client, the shared one (`group/gtPairs`), at background
- * priority behind the same 429 cooldown as everything else — the rule
- * `bigCoins.js` states for the same reason: a second client would have its own
- * idea of the quota and the buy bot would pay for it.
+ * When GT is asked, it is through ONE client, the shared one (`group/gtPairs`),
+ * behind the same 429 cooldown as everything else — a second client would have
+ * its own idea of the quota and the buy bot would pay for it.
  *
  * SAME CONTRACT as every other source here: `{ items, ok, why }`, never throws,
  * and `ok:false` is "we could not ask", never "nothing is moving".
  */
 const gt = require('../group/gtPairs');
 const { notAProject } = require('./bigCoins');
+const dsBig = require('./dsBigCoins');
+const { DS_CHAIN } = require('../dexscreener');
 const { loadJSONSync, saveJSON } = require('../helpers/persist');
 const log = require('../helpers/logger');
 
@@ -68,7 +69,9 @@ function chainsFor(scope) {
   // Only chains GT can be asked about. A chain with no network id is not
   // "nothing moving" — it is a chain this source cannot see, and it is skipped
   // rather than reported as empty.
-  return [...new Set(base)].filter((c) => gt.networkOf(c)).slice(0, MAX_CHAINS);
+  // Only chains one of the two sources can be asked about. A chain neither
+  // indexes is not "nothing moving" — it is a chain this source cannot see.
+  return [...new Set(base)].filter((c) => DS_CHAIN[c] || gt.networkOf(c)).slice(0, MAX_CHAINS);
 }
 
 /**
@@ -175,25 +178,64 @@ function store(chain, entry) {
   return writeQ;
 }
 
-/** Ask GT for one chain, once at a time. Resolves {ok, why}; never rejects. */
-function refresh(chain, get, now) {
-  if (inflight.has(chain)) return inflight.get(chain);
+/*
+ * ⚠️ DEXSCREENER BY DEFAULT; GECKOTERMINAL ONLY WITH A KEY.
+ *
+ * The first live run of the GT-only cut, on the box: `gtmovers → bsc: rate
+ * limited · robinhood: cooldown · base: cooldown …`, and in the SAME output
+ * `[buybot] GeckoTerminal backing off for 120s … Buy alerts are paused`. This
+ * box's keyless GT allowance (~30/min per IP, split with the website's charts)
+ * is already spent, and a 429 there pauses BUY ALERTS — so every request this
+ * source added was taken from the buy bot. "A price has two free sources; a
+ * candle has one" is this repo's oldest GT rule, and discovery is not a candle.
+ *
+ * DexScreener's search (`dsBigCoins.topByMcap`) answers the same question —
+ * tokens on this chain, market cap on each row — off a far higher ceiling that
+ * nothing time-critical here competes for. GeckoTerminal's `trending_pools` is
+ * the better "pumping today" signal and is ADDED when `GECKOTERMINAL_API_KEY`
+ * is set (a paid quota of its own), or `AUTOLIST_MOVERS_GT=1` forces it.
+ */
+const gtWanted = () =>
+  gt.hasApiKey() || /^(1|true|on|yes)$/i.test(String(process.env.AUTOLIST_MOVERS_GT || '').trim());
+
+async function askGt(chain, get) {
   const net = gt.networkOf(chain);
-  const p = Promise.resolve()
-    .then(() => get(`/networks/${net}/trending_pools`, { include: 'base_token', page: 1, duration: '24h' }))
-    .then(async (res) => {
-      if (!res || !res.ok) {
-        const why = (res && res.reason) || `HTTP ${res && res.status}`;
+  if (!net) return { ok: false, why: 'no GeckoTerminal network', items: [] };
+  const res = await get(`/networks/${net}/trending_pools`, { include: 'base_token', page: 1, duration: '24h' });
+  if (!res || !res.ok) return { ok: false, why: `GeckoTerminal ${(res && res.reason) || `HTTP ${res && res.status}`}`, items: [] };
+  return { ok: true, why: null, items: parsePools(res.body, chain) };
+}
+
+async function askDs(chain, dsTop) {
+  if (!DS_CHAIN[chain]) return { ok: false, why: 'no DexScreener chain id', items: [] };
+  // Floor well under the auto-lister's, so a token at 60% of $1M is on file
+  // too — the scan's own order decides what is near enough. Feeds OFF: the
+  // scan reads those three already, and asking twice is two requests for one list.
+  const r = await dsTop(chain, { limit: 40, minMcap: 250_000, feeds: false });
+  if (!r || !r.ok) return { ok: false, why: `DexScreener ${(r && r.why) || 'no answer'}`, items: [] };
+  return {
+    ok: true,
+    why: null,
+    items: (r.items || []).filter((t) => t && t.address).map((t) => ({ chain, address: String(t.address), mcapHint: Number(t.mcap) || null })),
+  };
+}
+
+/** Refresh one chain, once at a time. Resolves {ok, why}; never rejects. */
+function refresh(chain, get, now, dsTop = dsBig.topByMcap) {
+  if (inflight.has(chain)) return inflight.get(chain);
+  const p = Promise.all([askDs(chain, dsTop).catch((e) => ({ ok: false, why: e.message, items: [] })), gtWanted() ? askGt(chain, get).catch((e) => ({ ok: false, why: e.message, items: [] })) : null])
+    .then(async ([d, g]) => {
+      const answers = [g, d].filter(Boolean); // GT first: when it answered, its hint is the trending one
+      if (!answers.some((a) => a.ok)) {
+        const why = answers.map((a) => a.why).join('; ');
         lastErr.set(chain, why);
         return { ok: false, why };
       }
       lastErr.delete(chain);
-      await store(chain, { at: now, items: parsePools(res.body, chain) });
+      const byAddr = new Map();
+      for (const a of answers) for (const it of a.items) if (!byAddr.has(it.address.toLowerCase())) byAddr.set(it.address.toLowerCase(), it);
+      await store(chain, { at: now, items: [...byAddr.values()] });
       return { ok: true, why: null };
-    })
-    .catch((e) => {
-      lastErr.set(chain, e.message);
-      return { ok: false, why: e.message };
     })
     .finally(() => inflight.delete(chain));
   inflight.set(chain, p);
@@ -213,7 +255,7 @@ function within(p, ms) {
  * @param get       test seam for `gt.gtGet`
  * @param budgetMs  how long a caller with NOTHING on file may wait for GT
  */
-async function fetchMoversX({ chains = [], get = gt.gtGet, now = Date.now(), budgetMs = BUDGET_MS } = {}) {
+async function fetchMoversX({ chains = [], get = gt.gtGet, dsTop = dsBig.topByMcap, now = Date.now(), budgetMs = BUDGET_MS } = {}) {
   if (!enabled()) return { items: [], ok: true, why: 'AUTOLIST_MOVERS=0', chains: [] };
   const list = chainsFor(chains);
   if (!list.length) return { items: [], ok: true, why: 'no chain in scope has a GeckoTerminal network', chains: [] };
@@ -223,7 +265,7 @@ async function fetchMoversX({ chains = [], get = gt.gtGet, now = Date.now(), bud
   const started = new Map();
   for (const chain of list) {
     const c = cachedFor(chain);
-    if (!c || now - c.at >= FRESH_MS) started.set(chain, refresh(chain, get, now));
+    if (!c || now - c.at >= FRESH_MS) started.set(chain, refresh(chain, get, now, dsTop));
   }
   // Only a chain with nothing servable is waited on — and only within budget.
   const cold = list.filter((ch) => {
@@ -247,7 +289,7 @@ async function fetchMoversX({ chains = [], get = gt.gtGet, now = Date.now(), bud
     lists.push([]);
     // NAMED, per chain: "GT rate limited" sends an operator to a key, "no slot
     // yet" says the queue is long — and neither is a quiet market.
-    whys.push(`${chain}: ${lastErr.get(chain) || `no answer yet — the GeckoTerminal queue did not reach it within ${Math.round(budgetMs / 1000)}s (it will land for the next scan)`}`);
+    whys.push(`${chain}: ${lastErr.get(chain) || `no answer yet — the sources did not answer within ${Math.round(budgetMs / 1000)}s (it will land for the next scan)`}`);
   }
   // Interleaved across chains, for the reason `discovery.js` interleaves its
   // sources: the caller has a lookup budget, and concatenating would hand all
@@ -271,11 +313,11 @@ async function fetchMoversX({ chains = [], get = gt.gtGet, now = Date.now(), bud
 
 /** Start refreshes without waiting — the auto-lister's boot, so the first scan
  *  after a deploy already has an answer on file. */
-function warm(chains = [], { get = gt.gtGet, now = Date.now() } = {}) {
+function warm(chains = [], { get = gt.gtGet, dsTop = dsBig.topByMcap, now = Date.now() } = {}) {
   if (!enabled()) return;
   for (const chain of chainsFor(chains)) {
     const c = cachedFor(chain);
-    if (!c || now - c.at >= FRESH_MS) refresh(chain, get, now);
+    if (!c || now - c.at >= FRESH_MS) refresh(chain, get, now, dsTop);
   }
 }
 

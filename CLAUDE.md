@@ -2987,6 +2987,30 @@ Seven more MUTATION-TESTED: waiting on GT with an answer on file, no stale
 serving, the file never read, a stale answer never refreshed, no boot warm-up,
 the verdict back to "lower 🎯", and the movers failure hidden from the line.
 
+#### …and on the box, GeckoTerminal was already spent — so it is not the default
+
+The next `listing:check`: `gtmovers → bsc: rate limited · robinhood: cooldown …`,
+and in the SAME output `[buybot] GeckoTerminal backing off for 120s … Buy alerts
+are paused`. The keyless GT allowance on this IP (split with the website's
+charts) is already used up, and a 429 there pauses BUY ALERTS — every request
+the movers source added was taken from the buy bot. **"A price has two free
+sources; a candle has one"** is this repo's oldest GT rule, and discovery is not
+a candle.
+
+- **DexScreener search is the default** (`dsBigCoins.topByMcap`, feeds off —
+  the scan reads those already), off a ceiling nothing time-critical competes
+  for. **GeckoTerminal `trending_pools` is ADDED only with
+  `GECKOTERMINAL_API_KEY`** (its own paid quota) or `AUTOLIST_MOVERS_GT=1`.
+  Both answering: merged, the GT row's hint wins. Either answering is an
+  answer — a GT 429 must not blind the scan while DexScreener answers.
+- **`listing:check` §6 uses `watch.diagnose`** too, so its own "that is the
+  market — lower 🎯" sentence can no longer be printed over a blind sample; it
+  goes RED with the bot's diagnosis and prints the closest candidate.
+
+Five more MUTATION-TESTED: GT asked on a keyless box, DexScreener never asked,
+the DexScreener hint winning the merge, one refusal failing both, and the feeds
+asked twice.
+
 #### …and the alert that should have caught it gave the WRONG advice
 
 The ops line said *"Nothing is broken; lower 🎯/💧/📊 if the bar is higher than
@@ -3009,7 +3033,7 @@ see $1M tokens) need opposite answers.
   reported case itself. Moved to $900k, which is what a quiet market is.
 
 ```bash
-cd bot && node scripts/run-tests.js test/autoListerMovers.test.js   # 17 tests, no network
+cd bot && node scripts/run-tests.js test/autoListerMovers.test.js   # 19 tests, no network
 cd bot && npm run listing:check                                     # does gtmovers answer FROM THE BOX
 ```
 
@@ -3021,11 +3045,11 @@ watch: the blind branch removed, demoted to not-a-fault, the movers reason
 dropped, the scan never recording `nearest`, and keeping the first rather than
 the closest. Each fails between one and four tests.
 
-**Config a fix depends on:** nothing — it ships ON. `AUTOLIST_MOVERS=0` kills
-the source; `AUTOLIST_MOVER_CHAINS` (comma list) replaces the default chains
-when no scope is set. ⚠️ Whether GT answers this box is a property of its
-egress and the shared ~30/min per-IP ceiling; `GECKOTERMINAL_API_KEY` in
-`bot/.env` is the only thing that raises it. `bot/` only — ecosystem restart.
+**Config a fix depends on:** nothing — it ships ON, on DexScreener. `AUTOLIST_MOVERS=0`
+kills the source; `AUTOLIST_MOVER_CHAINS` (comma list) replaces the default
+chains when no scope is set; `GECKOTERMINAL_API_KEY` in `bot/.env` adds GT
+trending (and raises the ceiling the buy bot is hitting today). `bot/` only —
+ecosystem restart.
 
 ## A Top 3 that was not the top of the Top 5
 

@@ -50,6 +50,12 @@ const gtBody = (rows) => ({
 });
 
 // ── the source ──────────────────────────────────────────────────────────────
+//
+// The GT-mechanics tests below force GeckoTerminal ON and stub DexScreener as
+// refusing, so GT alone decides each answer. Whether GT is asked AT ALL on a
+// keyless box is its own test further down.
+process.env.AUTOLIST_MOVERS_GT = "1";
+const noDs = async () => ({ ok: false, why: "stubbed out", items: [] });
 
 test("parsePools: one candidate per BASE token, the money filtered out, fdv as the hint when cap is null", () => {
   const out = movers.parsePools(
@@ -67,6 +73,7 @@ test("fetchMoversX: one GT request per chain in scope, and a refusal is ok:false
   await movers._reset();
   const asked = [];
   const refusing = await movers.fetchMoversX({
+    dsTop: noDs,
     chains: ["solana", "bsc"],
     now,
     get: async (p) => {
@@ -77,16 +84,16 @@ test("fetchMoversX: one GT request per chain in scope, and a refusal is ok:false
   assert.strictEqual(asked.length, 2);
   assert.ok(asked.every((p) => /\/trending_pools$/.test(p)), asked.join());
   assert.strictEqual(refusing.ok, false, "a GT refusing us is not 'nothing is moving'");
-  assert.match(refusing.why, /solana: rate limited/);
+  assert.match(refusing.why, /solana: GeckoTerminal rate limited; DexScreener stubbed out/, "both sources named — a 429 and a DexScreener outage are different fixes");
 
   await movers._reset();
-  const answering = await movers.fetchMoversX({ chains: ["solana"], now, get: async () => ({ ok: true, body: gtBody([{ address: "So1A", mcap: 1.2 * M }]) }) });
+  const answering = await movers.fetchMoversX({ dsTop: noDs, chains: ["solana"], now, get: async () => ({ ok: true, body: gtBody([{ address: "So1A", mcap: 1.2 * M }]) }) });
   assert.strictEqual(answering.ok, true);
   assert.deepStrictEqual(answering.items, [{ chain: "solana", address: "So1A", mcapHint: 1.2 * M }]);
   // A second ask inside the TTL costs nothing — a scan and a 🔎 Test scan
   // minutes apart must not both spend a GT request per chain.
   let again = 0;
-  await movers.fetchMoversX({ chains: ["solana"], now: now + 60_000, get: async () => (again++, { ok: true, body: gtBody([]) }) });
+  await movers.fetchMoversX({ dsTop: noDs, chains: ["solana"], now: now + 60_000, get: async () => (again++, { ok: true, body: gtBody([]) }) });
   assert.strictEqual(again, 0);
 });
 
@@ -95,14 +102,14 @@ test("fetchMoversX: with nothing on file, a GT queue that will not answer costs 
   let release;
   const slow = new Promise((r) => (release = r));
   const t0 = Date.now();
-  const r = await movers.fetchMoversX({ chains: ["solana"], now, budgetMs: 1_000, get: () => slow });
+  const r = await movers.fetchMoversX({ dsTop: noDs, chains: ["solana"], now, budgetMs: 1_000, get: () => slow });
   assert.ok(Date.now() - t0 < 3_000, "the scan waited on the GT queue past its budget");
   assert.strictEqual(r.ok, false);
   assert.match(r.why, /solana: no answer yet/);
   release({ ok: true, body: gtBody([{ address: "So1Late", mcap: 1.1 * M }]) });
   await new Promise((r2) => setTimeout(r2, 20));
   let asked = 0;
-  const next = await movers.fetchMoversX({ chains: ["solana"], now: now + 60_000, get: async () => (asked++, { ok: false }) });
+  const next = await movers.fetchMoversX({ dsTop: noDs, chains: ["solana"], now: now + 60_000, get: async () => (asked++, { ok: false }) });
   assert.strictEqual(asked, 0, "the late answer did not land");
   assert.deepStrictEqual(next.items.map((c) => c.address), ["So1Late"]);
 });
@@ -114,34 +121,34 @@ test("fetchMoversX: with nothing on file, a GT queue that will not answer costs 
 // never wait on the queue for it.
 test("THE RUN-NOW BUG: with an answer on file, a GT queue that never answers costs the scan NOTHING", async () => {
   await movers._reset();
-  await movers.fetchMoversX({ chains: ["solana"], now, get: async () => ({ ok: true, body: gtBody([{ address: "So1Hot", mcap: 3 * M }]) }) });
+  await movers.fetchMoversX({ dsTop: noDs, chains: ["solana"], now, get: async () => ({ ok: true, body: gtBody([{ address: "So1Hot", mcap: 3 * M }]) }) });
   let refreshes = 0;
   const never = () => (refreshes++, new Promise(() => {}));
   const t0 = Date.now();
-  const r = await movers.fetchMoversX({ chains: ["solana"], now: now + 2 * HOUR, budgetMs: 60_000, get: never });
+  const r = await movers.fetchMoversX({ dsTop: noDs, chains: ["solana"], now: now + 2 * HOUR, budgetMs: 60_000, get: never });
   assert.ok(Date.now() - t0 < 1_000, `the scan waited on the GT queue with an answer on file (${Date.now() - t0}ms)`);
   assert.strictEqual(r.ok, true);
   assert.deepStrictEqual(r.items.map((c) => c.address), ["So1Hot"]);
   assert.strictEqual(refreshes, 1, "a stale answer must still start a refresh behind it");
   // …but not one older than the stale bound: a day-old trending list is not served.
   await movers._reset();
-  await movers.fetchMoversX({ chains: ["bsc"], now, get: async () => ({ ok: true, body: gtBody([{ address: "0xold", mcap: 3 * M }]) }) });
-  const old = await movers.fetchMoversX({ chains: ["bsc"], now: now + movers.STALE_MS + HOUR, budgetMs: 1_000, get: async () => ({ ok: false, reason: "rate limited" }) });
+  await movers.fetchMoversX({ dsTop: noDs, chains: ["bsc"], now, get: async () => ({ ok: true, body: gtBody([{ address: "0xold", mcap: 3 * M }]) }) });
+  const old = await movers.fetchMoversX({ dsTop: noDs, chains: ["bsc"], now: now + movers.STALE_MS + HOUR, budgetMs: 1_000, get: async () => ({ ok: false, reason: "rate limited" }) });
   assert.deepStrictEqual(old.items, []);
 });
 
 test("the answer is PERSISTED — a restart, or listing:check in its own process, warms the bot", async () => {
   await movers._reset();
-  await movers.fetchMoversX({ chains: ["base"], now, get: async () => ({ ok: true, body: gtBody([{ address: "0xpersist", mcap: 2 * M }]) }) });
+  await movers.fetchMoversX({ dsTop: noDs, chains: ["base"], now, get: async () => ({ ok: true, body: gtBody([{ address: "0xpersist", mcap: 2 * M }]) }) });
   movers._forgetMemory(); // a new process: memory gone, the file kept
-  const r = await movers.fetchMoversX({ chains: ["base"], now: now + 60_000, get: async () => ({ ok: false, reason: "should not be asked" }) });
+  const r = await movers.fetchMoversX({ dsTop: noDs, chains: ["base"], now: now + 60_000, get: async () => ({ ok: false, reason: "should not be asked" }) });
   assert.deepStrictEqual(r.items.map((c) => c.address), ["0xpersist"]);
 });
 
 test("warm() starts refreshes without waiting, and start() calls it at boot", async () => {
   await movers._reset();
   const asked = [];
-  movers.warm(["solana", "bsc"], { now, get: async (p) => (asked.push(p), { ok: true, body: gtBody([]) }) });
+  movers.warm(["solana", "bsc"], { dsTop: noDs, now, get: async (p) => (asked.push(p), { ok: true, body: gtBody([]) }) });
   await new Promise((r) => setTimeout(r, 10));
   assert.strictEqual(asked.length, 2);
   const src = require("node:fs").readFileSync(require.resolve("../src/services/autoLister"), "utf8");
@@ -152,19 +159,62 @@ test("warm() starts refreshes without waiting, and start() calls it at boot", as
 test("fetchMoversX: an empty scope asks the memecoin chains, never more than MAX_CHAINS; AUTOLIST_MOVERS=0 asks nothing", async () => {
   await movers._reset();
   const asked = [];
-  await movers.fetchMoversX({ chains: [], now, get: async (p) => (asked.push(p), { ok: true, body: gtBody([]) }) });
+  await movers.fetchMoversX({ dsTop: noDs, chains: [], now, get: async (p) => (asked.push(p), { ok: true, body: gtBody([]) }) });
   assert.strictEqual(asked.length, movers.chainsFor([]).length);
   assert.ok(asked.length > 0 && asked.length <= movers.MAX_CHAINS);
   process.env.AUTOLIST_MOVERS = "0";
   try {
     await movers._reset();
     let n = 0;
-    const r = await movers.fetchMoversX({ now, get: async () => (n++, { ok: true, body: gtBody([]) }) });
+    const r = await movers.fetchMoversX({ dsTop: noDs, now, get: async () => (n++, { ok: true, body: gtBody([]) }) });
     assert.strictEqual(n, 0);
     assert.strictEqual(r.ok, true);
   } finally {
     delete process.env.AUTOLIST_MOVERS;
   }
+});
+
+// ⚠️ THE BOX'S OWN STATE (2026-09-28): `gtmovers → bsc: rate limited ·
+// robinhood: cooldown …` beside `[buybot] GeckoTerminal backing off for 120s …
+// Buy alerts are paused`. Every GT request this source added was taken from the
+// buy bot, so on a keyless box it asks DexScreener and leaves GT alone.
+test("on a KEYLESS box GeckoTerminal is not asked at all — DexScreener answers, with the cap as the hint", async () => {
+  await movers._reset();
+  delete process.env.AUTOLIST_MOVERS_GT;
+  try {
+    let gtAsked = 0;
+    const r = await movers.fetchMoversX({
+      chains: ["solana"],
+      now,
+      get: async () => (gtAsked++, { ok: true, body: gtBody([]) }),
+      dsTop: async (chain, o) => {
+        assert.strictEqual(o.feeds, false, "the scan reads the feeds already — asking twice is two requests for one list");
+        return { ok: true, items: [{ address: "So1Ds", mcap: 1.3 * M, symbol: "DSMEME" }] };
+      },
+    });
+    assert.strictEqual(gtAsked, 0, "a keyless box's GT quota belongs to the buy bot");
+    assert.strictEqual(r.ok, true);
+    assert.deepStrictEqual(r.items, [{ chain: "solana", address: "So1Ds", mcapHint: 1.3 * M }]);
+  } finally {
+    process.env.AUTOLIST_MOVERS_GT = "1";
+  }
+});
+
+test("GT refusing while DexScreener answers is an ANSWER — and with both, the GT row wins the merge", async () => {
+  await movers._reset();
+  const ds = async () => ({ ok: true, items: [{ address: "So1Both", mcap: 0.9 * M }, { address: "So1DsOnly", mcap: 2 * M }] });
+  const refused = await movers.fetchMoversX({ chains: ["solana"], now, dsTop: ds, get: async () => ({ ok: false, reason: "rate limited" }) });
+  assert.strictEqual(refused.ok, true, "a GT 429 must not blind the scan while DexScreener answers");
+  assert.strictEqual(refused.items.length, 2);
+  await movers._reset();
+  const both = await movers.fetchMoversX({ chains: ["solana"], now, dsTop: ds, get: async () => ({ ok: true, body: gtBody([{ address: "So1Both", mcap: 1.4 * M }]) }) });
+  assert.deepStrictEqual(
+    both.items.map((c) => [c.address, c.mcapHint]),
+    [
+      ["So1Both", 1.4 * M],
+      ["So1DsOnly", 2 * M],
+    ],
+  );
 });
 
 test("discovery: the movers source is OPT-IN, leads the round-robin, and its hint survives the merge", async () => {

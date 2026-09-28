@@ -180,7 +180,7 @@ const faults = [];
         // visibility of launches before they graduate — not listings.
         if (src.name === "gtmovers") {
           note(`Without it the scan sees only DexScreener's "latest" feeds — minutes-old launches, almost never $1M yet.`);
-          note(`A GeckoTerminal rate limit is the usual cause; GECKOTERMINAL_API_KEY in bot/.env raises the ceiling.`);
+          note(`It asks DexScreener's search (and GeckoTerminal only when GECKOTERMINAL_API_KEY is set) — the reason above says which refused.`);
         } else if (src.name === "poolstrade") {
           note(`Costs pre-migration Robinhood launches only — those fail your liquidity/volume/age gates anyway,`);
           note(`and DexScreener indexes the chain now. Not why free listings would stop. \`npm run poolstrade:check\` digs in.`);
@@ -314,7 +314,19 @@ const faults = [];
         // NOT a fault. "Nothing qualifies in this sample" is the service working
         // correctly in a quiet market, and failing on it is how a check becomes
         // permanently red and therefore useless.
-        if (!qual) note(`Nothing in this sample clears your gates. That is the market, not a fault — lower 🎯/💧/📊 to widen it.`);
+        if (r.nearest) note(`closest to its trigger: $${r.nearest.sym || "?"} on ${r.nearest.chain} at ${fmtCap(r.nearest.mcap)} — ${Math.round(r.nearest.ratio * 100)}% of it`);
+        // ⚠️ THE BOT'S OWN DIAGNOSIS, never a sentence of this script's. The
+        // line that used to sit here said "that is the market — lower 🎯" over a
+        // sample whose closest token was a few % of $1M: the scan could not SEE
+        // $1M tokens, and lowering the trigger to meet it lists microcaps. The ops
+        // alert and the ⚡ Run now verdict read `watch.diagnose`; so does this.
+        if (!qual) {
+          const d = watch.diagnose(r);
+          if (d.code === "blind_discovery") {
+            bad(d.text);
+            faults.push("the scan cannot see $1M tokens — see section 3 (gtmovers)");
+          } else note(`Nothing in this sample clears your gates. That is the market, not a fault — lower 🎯/💧/📊 to widen it.`);
+        }
       }
     }
   } else if (has("--no-scan")) {
