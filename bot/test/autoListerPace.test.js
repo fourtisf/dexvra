@@ -61,6 +61,8 @@ function harness(addresses, { info = healthy } = {}) {
   // timer would hang the scan and the test with it.
   const realMovers = movers.fetchMoversX;
   movers.fetchMoversX = async () => ({ items: [], ok: true, why: null, chains: [] });
+  const realWarm = movers.warm;
+  movers.warm = () => {}; // start() warms the source at boot
   api.createListing = async (input) => {
     created.push(input);
     return { id: `id${created.length}`, ...input };
@@ -88,6 +90,7 @@ function harness(addresses, { info = healthy } = {}) {
       api.getListings = realGet;
       api.canCreate = realCan;
       movers.fetchMoversX = realMovers;
+      movers.warm = realWarm;
     },
   };
 }

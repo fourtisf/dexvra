@@ -40,6 +40,7 @@
  */
 const gt = require('../group/gtPairs');
 const { notAProject } = require('./bigCoins');
+const { loadJSONSync, saveJSON } = require('../helpers/persist');
 const log = require('../helpers/logger');
 
 const num = (x) => {
@@ -105,20 +106,101 @@ function parsePools(body, chain) {
   return [...best.values()].map(({ chain: c, address, mcapHint }) => ({ chain: c, address, mcapHint }));
 }
 
-// ⚠️ A BUDGET, because `gtGet` waits on `gtSlot`, which has NO DEADLINE OF ITS
-// OWN — the defect CLAUDE.md records for the listing form ("the form was queued
-// behind every timer job"). On the keyless tier a slot is seconds apart and the
-// buy bot's realtime reads jump the queue, so six chains could hold the scan —
-// and a ⚡ Run now waiting on it — for minutes. Past the budget a chain is
-// skipped with its reason; its request is left RUNNING and still fills the
-// cache, so the next scan gets it for free.
+// ⚠️ THE SCAN MUST NOT WAIT ON THE GT QUEUE — IT READS WHAT THE LAST REFRESH GOT.
+//
+// The first cut asked GT inside the scan, bounded at 25s, and cached answers
+// for 10 minutes. `listing:check` — a FRESH process with an EMPTY GT queue —
+// then printed `gtmovers → 53 candidate(s)` and "5 would be listed", while ⚡ Run
+// now in `dexvra-bot` answered "nothing qualified": there the same queue is
+// shared with the buy bot's realtime reads and nine background pipelines, one
+// slot every 12s on the keyless tier, so five chains never fit in 25s, every
+// chain was skipped, and the scan saw the microcap feeds again. The late
+// answers DID land — in a 10-minute cache that expired long before the next
+// scan 25–90 min later. A guard measured in a process that does not share the
+// production queue is `fonts:check`'s nine green ticks, one feature over.
+//
+// So the two questions are split:
+//   • a REFRESH asks GT, in the background, concurrently for every chain, with
+//     no deadline — it lands when the queue lets it, and is never awaited by a
+//     caller that has a cached answer;
+//   • a READ serves the newest answer on file, up to STALE_MS old. These rows
+//     only ORDER the lookup budget and every gate is judged on a live pricing
+//     read, so a trending list from two hours ago costs nothing but a slightly
+//     staler order — while no list at all costs the whole scan.
+// The answers are PERSISTED (DATA_DIR/marketMovers.json), so a restart, the
+// previous scan, or an operator's `listing:check` in its own process all warm
+// the cache the bot reads. A caller with NOTHING on file waits for its refresh,
+// bounded by `budgetMs` — the only time a scan can spend GT's time.
+const FRESH_MS = 10 * 60_000; // younger than this: do not even refresh
+const STALE_MS = 6 * 3_600_000; // older than this: not served
+const FILE = 'marketMovers.json';
 const BUDGET_MS = (() => {
   const raw = String(process.env.AUTOLIST_MOVERS_MS || '').trim();
   const n = raw === '' ? NaN : Number(raw); // blank is ABSENT — `Number('')` is 0
   return Number.isFinite(n) && n >= 1_000 ? n : 25_000;
 })();
 
-// Not unref'd: the scan is awaiting it. Cleared on the winning path, or a 25s
+const mem = new Map(); // chain → { at, items } — the newest answer this process holds
+const inflight = new Map(); // chain → Promise<{ok, why}> — one refresh per chain at a time
+let lastErr = new Map(); // chain → why the last refresh failed, for the report
+
+function readFile() {
+  const f = loadJSONSync(FILE, {});
+  return f && typeof f === 'object' ? f : {};
+}
+
+/** The newest answer for `chain` — memory or disk, whichever is newer. */
+function cachedFor(chain) {
+  const a = mem.get(chain);
+  const d = readFile()[chain];
+  const b = d && Array.isArray(d.items) && Number(d.at) > 0 ? { at: Number(d.at), items: d.items } : null;
+  if (!a) return b;
+  if (!b) return a;
+  return a.at >= b.at ? a : b;
+}
+
+// ONE WRITER AT A TIME. The chains refresh concurrently and each write is a
+// read-modify-write of one file, so two landing together would each drop the
+// other's chain — the lost update `setTemplate` is recorded as having.
+let writeQ = Promise.resolve();
+function store(chain, entry) {
+  mem.set(chain, entry);
+  writeQ = writeQ
+    .then(async () => {
+      const all = readFile();
+      all[chain] = entry;
+      await saveJSON(FILE, all);
+    })
+    .catch((e) => log.debug(`[movers] could not persist: ${e.message}`));
+  return writeQ;
+}
+
+/** Ask GT for one chain, once at a time. Resolves {ok, why}; never rejects. */
+function refresh(chain, get, now) {
+  if (inflight.has(chain)) return inflight.get(chain);
+  const net = gt.networkOf(chain);
+  const p = Promise.resolve()
+    .then(() => get(`/networks/${net}/trending_pools`, { include: 'base_token', page: 1, duration: '24h' }))
+    .then(async (res) => {
+      if (!res || !res.ok) {
+        const why = (res && res.reason) || `HTTP ${res && res.status}`;
+        lastErr.set(chain, why);
+        return { ok: false, why };
+      }
+      lastErr.delete(chain);
+      await store(chain, { at: now, items: parsePools(res.body, chain) });
+      return { ok: true, why: null };
+    })
+    .catch((e) => {
+      lastErr.set(chain, e.message);
+      return { ok: false, why: e.message };
+    })
+    .finally(() => inflight.delete(chain));
+  inflight.set(chain, p);
+  return p;
+}
+
+// Not unref'd: somebody is awaiting it. Cleared on the winning path, or a 25s
 // budget holds the loop open 25s past a 200ms answer.
 function within(p, ms) {
   let t;
@@ -126,62 +208,46 @@ function within(p, ms) {
   return Promise.race([p.then((v) => ({ v })), deadline]).finally(() => clearTimeout(t));
 }
 
-// A scan and a 🔎 Test scan minutes apart must not each spend a GT request per
-// chain on the same question. Short enough that a new mover is seen next scan.
-const TTL_MS = 10 * 60_000;
-const cache = new Map(); // chain → { at, items }
-
 /**
- * @param chains  the auto-lister's chain scope (empty = the defaults above)
- * @param get     test seam for `gt.gtGet`
+ * @param chains    the auto-lister's chain scope (empty = the defaults above)
+ * @param get       test seam for `gt.gtGet`
+ * @param budgetMs  how long a caller with NOTHING on file may wait for GT
  */
 async function fetchMoversX({ chains = [], get = gt.gtGet, now = Date.now(), budgetMs = BUDGET_MS } = {}) {
   if (!enabled()) return { items: [], ok: true, why: 'AUTOLIST_MOVERS=0', chains: [] };
   const list = chainsFor(chains);
   if (!list.length) return { items: [], ok: true, why: 'no chain in scope has a GeckoTerminal network', chains: [] };
+
+  // Every chain that is not fresh gets a refresh STARTED — concurrently, so the
+  // whole set enters the GT queue together instead of one behind the other.
+  const started = new Map();
+  for (const chain of list) {
+    const c = cachedFor(chain);
+    if (!c || now - c.at >= FRESH_MS) started.set(chain, refresh(chain, get, now));
+  }
+  // Only a chain with nothing servable is waited on — and only within budget.
+  const cold = list.filter((ch) => {
+    const c = cachedFor(ch);
+    return !c || now - c.at > STALE_MS;
+  });
+  if (cold.length && started.size) {
+    await within(Promise.all(cold.filter((ch) => started.has(ch)).map((ch) => started.get(ch))), budgetMs);
+  }
+
   const lists = [];
   const whys = [];
-  let answered = 0;
-  const started = Date.now();
+  let served = 0;
   for (const chain of list) {
-    const hit = cache.get(chain);
-    if (hit && now - hit.at < TTL_MS) {
-      lists.push(hit.items);
-      answered++;
+    const c = cachedFor(chain);
+    if (c && now - c.at <= STALE_MS) {
+      served++;
+      lists.push(c.items);
       continue;
     }
-    const left = budgetMs - (Date.now() - started);
-    if (left <= 0) {
-      whys.push(`${chain}: skipped — the GeckoTerminal queue used the whole ${Math.round(budgetMs / 1000)}s budget`);
-      lists.push([]);
-      continue;
-    }
-    const net = gt.networkOf(chain);
-    const req = Promise.resolve(get(`/networks/${net}/trending_pools`, { include: 'base_token', page: 1, duration: '24h' })).catch((e) => ({
-      ok: false,
-      status: 0,
-      reason: e.message,
-    }));
-    const r = await within(req, left);
-    if (r.late) {
-      // Left running: a late answer is still an answer for the NEXT scan.
-      req.then((res) => res && res.ok && cache.set(chain, { at: now, items: parsePools(res.body, chain) })).catch(() => {});
-      whys.push(`${chain}: no GeckoTerminal slot within ${Math.round(left / 1000)}s`);
-      lists.push([]);
-      continue;
-    }
-    const res = r.v;
-    if (!res || !res.ok) {
-      // NAMED, per chain: "GT rate limited" sends an operator to a key, a 404
-      // on one network sends them to its id — and neither is a quiet market.
-      whys.push(`${chain}: ${(res && res.reason) || `HTTP ${res && res.status}`}`);
-      lists.push([]);
-      continue;
-    }
-    answered++;
-    const items = parsePools(res.body, chain);
-    cache.set(chain, { at: now, items });
-    lists.push(items);
+    lists.push([]);
+    // NAMED, per chain: "GT rate limited" sends an operator to a key, "no slot
+    // yet" says the queue is long — and neither is a quiet market.
+    whys.push(`${chain}: ${lastErr.get(chain) || `no answer yet — the GeckoTerminal queue did not reach it within ${Math.round(budgetMs / 1000)}s (it will land for the next scan)`}`);
   }
   // Interleaved across chains, for the reason `discovery.js` interleaves its
   // sources: the caller has a lookup budget, and concatenating would hand all
@@ -193,20 +259,40 @@ async function fetchMoversX({ chains = [], get = gt.gtGet, now = Date.now(), bud
     for (const l of lists) {
       const c = l[i];
       if (!c) continue;
-      const k = `${c.chain}:${c.address.toLowerCase()}`;
+      const k = `${c.chain}:${String(c.address).toLowerCase()}`;
       if (seen.has(k)) continue;
       seen.add(k);
       out.push(c);
     }
   }
-  const ok = answered > 0;
   if (whys.length) log.debug(`[movers] ${whys.join(' · ')}`);
-  return { items: out, ok, why: whys.length ? whys.join(' · ') : null, chains: list };
+  return { items: out, ok: served > 0, why: whys.length ? whys.join(' · ') : null, chains: list };
 }
 
-/** Test seam. */
-function _reset() {
-  cache.clear();
+/** Start refreshes without waiting — the auto-lister's boot, so the first scan
+ *  after a deploy already has an answer on file. */
+function warm(chains = [], { get = gt.gtGet, now = Date.now() } = {}) {
+  if (!enabled()) return;
+  for (const chain of chainsFor(chains)) {
+    const c = cachedFor(chain);
+    if (!c || now - c.at >= FRESH_MS) refresh(chain, get, now);
+  }
 }
 
-module.exports = { fetchMoversX, parsePools, chainsFor, DEFAULT_CHAINS, MAX_CHAINS, _reset };
+/** Test seam: a NEW PROCESS — memory gone, the file kept. */
+function _forgetMemory() {
+  mem.clear();
+  inflight.clear();
+  lastErr = new Map();
+}
+
+/** Test seam: forget memory, in-flight refreshes and the file. */
+async function _reset() {
+  mem.clear();
+  inflight.clear();
+  lastErr = new Map();
+  await writeQ;
+  await saveJSON(FILE, {}).catch(() => {});
+}
+
+module.exports = { fetchMoversX, warm, parsePools, chainsFor, DEFAULT_CHAINS, MAX_CHAINS, FRESH_MS, STALE_MS, _reset, _forgetMemory };

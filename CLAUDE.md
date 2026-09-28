@@ -2928,17 +2928,16 @@ GeckoTerminal's `trending_pools` per chain, market cap already on each row.
   floor, ≤ the ceiling), the feed next, out-of-range hints last. Every gate is
   still judged on our own pricing read.
 - **Opt-in** (`fetchDiscoveryX({ movers: true })`): it spends GT requests — one
-  per chain in scope per scan (≤ 6; scope wins, else `solana,bsc,base,ethereum`),
-  cached 10 min so a 🔎 Test scan does not pay again. The scan, the Test scan
+  per chain in scope (≤ 6; scope wins, else `solana,bsc,base,ethereum`), at
+  most once per 10 min per chain. The scan, the Test scan
   and `listing:check` ask for it; nothing else pays by accident.
 - The shared GT client, at background priority behind the one 429 cooldown.
   A refusal is `ok:false` with the chain and reason — never "nothing moving".
-- ⚠️ **BOUNDED** (`AUTOLIST_MOVERS_MS`, 25s for all chains): `gtGet` waits on
-  `gtSlot`, which has no deadline of its own — the listing-form defect — and a
-  ⚡ Run now waits on this scan. A chain past the budget is skipped with its
-  reason and its request is left RUNNING, so a late answer fills the cache for
-  the next scan. Found because `autoListerPace`'s `start()` test stubs
-  `setTimeout`; its harness now stubs this source the way it stubs the site.
+- ⚠️ **BOUNDED** (`AUTOLIST_MOVERS_MS`, 25s): `gtGet` waits on `gtSlot`, which
+  has no deadline of its own — the listing-form defect. Found because
+  `autoListerPace`'s `start()` test stubs `setTimeout`; its harness now stubs
+  this source (and `warm`) the way it stubs the site. ⚠️ **The bound alone was
+  not enough — see the Run now section below.**
 
 **2. ⚠️ A TOKEN SEEN SMALL WAS NEVER LOOKED AT AGAIN.** The feed showed a future
 $1M project at $30k, `coolUntil` benched it 12h — and by then it had scrolled
@@ -2954,6 +2953,39 @@ often — 12h for one 40× below, every scan for one at 80%.
   of them is a field deleted (`resetAnnounceState`'s scar).
 - The scan line says both: `N already near the floor (market movers)` and
   `N re-checked from earlier scans`.
+
+#### "tombol run now juga not works" — the check was green in a process the bot is not
+
+`listing:check` printed `gtmovers → 53 candidate(s)` and "5 would be listed",
+and ⚡ Run now in `dexvra-bot` then listed nothing. **The check ran in a FRESH
+process with an EMPTY GeckoTerminal queue.** The bot's queue is shared with the
+buy bot's realtime reads and nine background pipelines, one slot every 12s on
+the keyless tier, so five chains never fit the 25s budget: every chain was
+skipped, the scan saw the microcap feeds again, and the verdict said "nothing
+qualified — Lower 🎯 From". The late answers DID land — in a 10-minute cache
+that expired long before the next scan 25–90 min later. **My own fix, and
+`fonts:check`'s nine green ticks one feature over: a guard is only honest while
+it measures the stack the caller actually runs.**
+
+- **The scan never waits on the GT queue for an answer it already has.** A
+  REFRESH asks GT in the background, every chain concurrently, no deadline; a
+  READ serves the newest answer on file up to `STALE_MS` (6h). The rows only
+  ORDER the lookup budget — every gate is a live pricing read — so a two-hour-old
+  trending list costs a slightly staler order, and no list costs the scan.
+  Only a chain with NOTHING on file is waited on, within `AUTOLIST_MOVERS_MS`.
+- **PERSISTED** (`DATA_DIR/marketMovers.json`), so a restart, the previous
+  scan, or an operator's `listing:check` in its own process all warm what the
+  bot reads — the check now HELPS the thing it measures instead of disagreeing
+  with it. One writer at a time: concurrent chain refreshes would otherwise
+  drop each other's entry (the `setTemplate` lost update).
+- **`start()` warms it at boot**, so the first scan after a deploy is not blind.
+- **The Run now verdict reads `listingWatch.diagnose`** — "the scan could not
+  see $1M tokens", never "Lower 🎯 From" — and the scan line leads with
+  `⚠️ market movers unavailable (…)` when the source gave nothing.
+
+Seven more MUTATION-TESTED: waiting on GT with an answer on file, no stale
+serving, the file never read, a stale answer never refreshed, no boot warm-up,
+the verdict back to "lower 🎯", and the movers failure hidden from the line.
 
 #### …and the alert that should have caught it gave the WRONG advice
 
@@ -2977,7 +3009,7 @@ see $1M tokens) need opposite answers.
   reported case itself. Moved to $900k, which is what a quiet market is.
 
 ```bash
-cd bot && node scripts/run-tests.js test/autoListerMovers.test.js   # 14 tests, no network
+cd bot && node scripts/run-tests.js test/autoListerMovers.test.js   # 17 tests, no network
 cd bot && npm run listing:check                                     # does gtmovers answer FROM THE BOX
 ```
 

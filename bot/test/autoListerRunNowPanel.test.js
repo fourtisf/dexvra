@@ -218,6 +218,31 @@ test("⚠️ a run that listed nothing says WHICH gate stopped it — never a ba
   }
 });
 
+// ⚠️ "tombol run now juga not works" (2026-09-28): the verdict for a scan that
+// could not SEE $1M tokens used to read "nothing qualified — Lower 🎯 From",
+// which would list microcaps. It is the ops alert's own diagnosis now.
+test("a run whose closest candidate was far below the floor says the scan was BLIND — never 'lower 🎯'", async () => {
+  const h = harness();
+  stubJob(
+    finished(
+      baseReport({
+        reasons: { "below its trigger": 12 },
+        nearest: { sym: "TINY", chain: "solana", mcap: 30_000, ratio: 0.03 },
+        sources: [{ name: "gtmovers", ok: false, n: 0, why: "solana: no answer yet" }],
+      }),
+    ),
+  );
+  try {
+    await h.tap("alrun");
+    const panel = h.edits().join("\n");
+    assert.match(panel, /could not see \$1M tokens/);
+    assert.match(panel, /market movers unavailable/, "the reason the movers source gave nothing must reach the panel");
+    assert.doesNotMatch(panel, /Lower <b>🎯 From<\/b> to widen it/, "the advice that lists microcaps");
+  } finally {
+    restore();
+  }
+});
+
 test("a tap that raced the scheduled scan says so, rather than looking like a dead button", async () => {
   const h = harness();
   stubJob({

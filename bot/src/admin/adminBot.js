@@ -17,6 +17,7 @@ const whaleConfig = require("../services/whaleConfig");
 const trendingBoard = require("../services/trendingBoard");
 const autoTrend = require("../services/autoTrend");
 const autoLister = require("../services/autoLister");
+const listingWatch = require("../services/listingWatch");
 const forcePost = require("./forcePost");
 const fpStore = require("../forcepost/store");
 const gainersMenu = require("./gainersMenu");
@@ -2148,7 +2149,15 @@ function alRunText(job) {
     );
   }
   const line = escapeHtml(autoLister.scanLine(r));
+  // ⚠️ "LOWER 🎯" IS THE WRONG ANSWER WHEN THE SCAN COULD NOT SEE $1M TOKENS. The
+  // closest candidate at 3% of its trigger is not a quiet market; lowering the
+  // trigger to meet it lists microcaps. `listingWatch.diagnose` is the one owner
+  // of telling the two apart — the ops alert and this verdict read the same.
   if (!r.listed) {
+    const d = listingWatch.diagnose(r);
+    if (d.code === "blind_discovery") {
+      return `⚡ <b>Ran — but the scan could not see $1M tokens</b>\n${line}\n\n<i>${escapeHtml(d.text)}</i>`;
+    }
     return (
       `⚡ <b>Ran — nothing qualified</b>\n${line}\n\n<i>The scan itself worked: no candidate is past its own trigger ` +
       `with enough liquidity and volume. Lower <b>🎯 From</b> to widen it.</i>`

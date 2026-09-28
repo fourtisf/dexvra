@@ -54,6 +54,7 @@ const { chainOf } = require("../config/chains");
 const { fmtCap } = require("../helpers/format");
 const { tierLabel } = require("../config/packages");
 const listingWatch = require("./listingWatch");
+const movers = require("./marketMovers");
 // The one owner of "is this the money rather than the project" — the same set
 // the market filler ranks against and the site ranks against.
 const { notAProject } = require("./bigCoins");
@@ -1732,6 +1733,11 @@ function scanLine(report) {
     .map(([r, n]) => `${r} ×${n}`)
     .join(" · ");
   if (why) parts.push(why);
+  // The movers source is what finds $1M tokens; a scan without it sees only
+  // minutes-old launches, and saying "below its trigger ×12" without saying so
+  // is exactly the line that hid this for 41 hours.
+  const mv = (report.sources || []).find((x) => x && x.name === "gtmovers");
+  if (mv && !mv.ok) parts.unshift(`⚠️ market movers unavailable (${String(mv.why || "no answer").slice(0, 120)})`);
   // HOW far below, not only that it was. The number that tells a quiet market
   // (closest at 90%) from a scan that is not seeing $1M tokens at all (3%).
   if (report.nearest && report.reasons && Object.keys(report.reasons).some((r) => /^below its trigger/.test(r))) {
@@ -2115,6 +2121,16 @@ function start(tg, { rng = Math.random } = {}) {
     }
     schedule();
   };
+  // Start the market-movers refresh NOW, not at the first scan: the scan never
+  // waits on the GT queue, it reads what a refresh already fetched — and this
+  // box is redeployed often enough that "the first scan after a deploy sees
+  // only microcaps" would be most scans. Fire-and-forget; a failure here costs
+  // nothing but a colder first scan.
+  try {
+    if (get().enabled) movers.warm(get().chains);
+  } catch (e) {
+    log.debug(`[autolist] movers warm-up: ${e.message}`);
+  }
   // Random boot delay for the same reason — a restart must not put every scan
   // back on the same clock.
   timer = setTimeout(run, (30 + rng() * 120) * 1000);

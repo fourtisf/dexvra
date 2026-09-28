@@ -64,7 +64,7 @@ test("parsePools: one candidate per BASE token, the money filtered out, fdv as t
 });
 
 test("fetchMoversX: one GT request per chain in scope, and a refusal is ok:false with the reason — never an empty market", async () => {
-  movers._reset();
+  await movers._reset();
   const asked = [];
   const refusing = await movers.fetchMoversX({
     chains: ["solana", "bsc"],
@@ -79,7 +79,7 @@ test("fetchMoversX: one GT request per chain in scope, and a refusal is ok:false
   assert.strictEqual(refusing.ok, false, "a GT refusing us is not 'nothing is moving'");
   assert.match(refusing.why, /solana: rate limited/);
 
-  movers._reset();
+  await movers._reset();
   const answering = await movers.fetchMoversX({ chains: ["solana"], now, get: async () => ({ ok: true, body: gtBody([{ address: "So1A", mcap: 1.2 * M }]) }) });
   assert.strictEqual(answering.ok, true);
   assert.deepStrictEqual(answering.items, [{ chain: "solana", address: "So1A", mcapHint: 1.2 * M }]);
@@ -90,33 +90,74 @@ test("fetchMoversX: one GT request per chain in scope, and a refusal is ok:false
   assert.strictEqual(again, 0);
 });
 
-test("fetchMoversX: a GT queue that will not answer costs the scan its budget, never the scan itself — and a late answer still fills the cache", async () => {
-  movers._reset();
+test("fetchMoversX: with nothing on file, a GT queue that will not answer costs the scan its budget — and the late answer is kept for the next scan", async () => {
+  await movers._reset();
   let release;
   const slow = new Promise((r) => (release = r));
   const t0 = Date.now();
-  const r = await movers.fetchMoversX({ chains: ["solana", "bsc"], now, budgetMs: 1_000, get: () => slow });
+  const r = await movers.fetchMoversX({ chains: ["solana"], now, budgetMs: 1_000, get: () => slow });
   assert.ok(Date.now() - t0 < 3_000, "the scan waited on the GT queue past its budget");
   assert.strictEqual(r.ok, false);
-  assert.match(r.why, /solana: no GeckoTerminal slot/);
-  assert.match(r.why, /bsc: skipped/);
+  assert.match(r.why, /solana: no answer yet/);
   release({ ok: true, body: gtBody([{ address: "So1Late", mcap: 1.1 * M }]) });
-  await new Promise((r2) => setImmediate(r2));
+  await new Promise((r2) => setTimeout(r2, 20));
   let asked = 0;
-  const next = await movers.fetchMoversX({ chains: ["solana"], now, get: async () => (asked++, { ok: false }) });
-  assert.strictEqual(asked, 0, "the late answer did not land in the cache");
+  const next = await movers.fetchMoversX({ chains: ["solana"], now: now + 60_000, get: async () => (asked++, { ok: false }) });
+  assert.strictEqual(asked, 0, "the late answer did not land");
   assert.deepStrictEqual(next.items.map((c) => c.address), ["So1Late"]);
 });
 
+// ⚠️ THE PRODUCTION FAILURE. `listing:check` (its own process, empty GT queue)
+// printed 53 movers and "5 would be listed"; ⚡ Run now in dexvra-bot — whose GT
+// queue is shared with the buy bot — could not get a slot in 25s, and the 10-min
+// cache expired before the next scan. The scan must read what is ON FILE and
+// never wait on the queue for it.
+test("THE RUN-NOW BUG: with an answer on file, a GT queue that never answers costs the scan NOTHING", async () => {
+  await movers._reset();
+  await movers.fetchMoversX({ chains: ["solana"], now, get: async () => ({ ok: true, body: gtBody([{ address: "So1Hot", mcap: 3 * M }]) }) });
+  let refreshes = 0;
+  const never = () => (refreshes++, new Promise(() => {}));
+  const t0 = Date.now();
+  const r = await movers.fetchMoversX({ chains: ["solana"], now: now + 2 * HOUR, budgetMs: 60_000, get: never });
+  assert.ok(Date.now() - t0 < 1_000, `the scan waited on the GT queue with an answer on file (${Date.now() - t0}ms)`);
+  assert.strictEqual(r.ok, true);
+  assert.deepStrictEqual(r.items.map((c) => c.address), ["So1Hot"]);
+  assert.strictEqual(refreshes, 1, "a stale answer must still start a refresh behind it");
+  // …but not one older than the stale bound: a day-old trending list is not served.
+  await movers._reset();
+  await movers.fetchMoversX({ chains: ["bsc"], now, get: async () => ({ ok: true, body: gtBody([{ address: "0xold", mcap: 3 * M }]) }) });
+  const old = await movers.fetchMoversX({ chains: ["bsc"], now: now + movers.STALE_MS + HOUR, budgetMs: 1_000, get: async () => ({ ok: false, reason: "rate limited" }) });
+  assert.deepStrictEqual(old.items, []);
+});
+
+test("the answer is PERSISTED — a restart, or listing:check in its own process, warms the bot", async () => {
+  await movers._reset();
+  await movers.fetchMoversX({ chains: ["base"], now, get: async () => ({ ok: true, body: gtBody([{ address: "0xpersist", mcap: 2 * M }]) }) });
+  movers._forgetMemory(); // a new process: memory gone, the file kept
+  const r = await movers.fetchMoversX({ chains: ["base"], now: now + 60_000, get: async () => ({ ok: false, reason: "should not be asked" }) });
+  assert.deepStrictEqual(r.items.map((c) => c.address), ["0xpersist"]);
+});
+
+test("warm() starts refreshes without waiting, and start() calls it at boot", async () => {
+  await movers._reset();
+  const asked = [];
+  movers.warm(["solana", "bsc"], { now, get: async (p) => (asked.push(p), { ok: true, body: gtBody([]) }) });
+  await new Promise((r) => setTimeout(r, 10));
+  assert.strictEqual(asked.length, 2);
+  const src = require("node:fs").readFileSync(require.resolve("../src/services/autoLister"), "utf8");
+  const startBody = src.slice(src.indexOf("function start(tg"));
+  assert.match(startBody.slice(0, 2500), /movers\.warm\(/, "start() no longer warms the movers source — the first scan after a deploy is blind again");
+});
+
 test("fetchMoversX: an empty scope asks the memecoin chains, never more than MAX_CHAINS; AUTOLIST_MOVERS=0 asks nothing", async () => {
-  movers._reset();
+  await movers._reset();
   const asked = [];
   await movers.fetchMoversX({ chains: [], now, get: async (p) => (asked.push(p), { ok: true, body: gtBody([]) }) });
   assert.strictEqual(asked.length, movers.chainsFor([]).length);
   assert.ok(asked.length > 0 && asked.length <= movers.MAX_CHAINS);
   process.env.AUTOLIST_MOVERS = "0";
   try {
-    movers._reset();
+    await movers._reset();
     let n = 0;
     const r = await movers.fetchMoversX({ now, get: async () => (n++, { ok: true, body: gtBody([]) }) });
     assert.strictEqual(n, 0);
