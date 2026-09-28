@@ -161,7 +161,10 @@ const faults = [];
   let candidates = [];
   let sources = [];
   try {
-    const d = await discovery.fetchDiscoveryX();
+    // `movers: true` — the scan asks for the market-movers source, so the check
+    // asks the same question the same way (a check with its own idea of the
+    // question is how `fonts:check` printed nine green ticks over boxes).
+    const d = await discovery.fetchDiscoveryX({ chains: autoLister.get().chains, movers: true });
     candidates = d.items || [];
     sources = d.sources || [];
     for (const src of sources) {
@@ -175,7 +178,10 @@ const faults = [];
         // minAgeHours by definition and could never have been free-listed
         // anyway. DexScreener carries the chain now, so what this costs is
         // visibility of launches before they graduate — not listings.
-        if (src.name === "poolstrade") {
+        if (src.name === "gtmovers") {
+          note(`Without it the scan sees only DexScreener's "latest" feeds — minutes-old launches, almost never $1M yet.`);
+          note(`A GeckoTerminal rate limit is the usual cause; GECKOTERMINAL_API_KEY in bot/.env raises the ceiling.`);
+        } else if (src.name === "poolstrade") {
           note(`Costs pre-migration Robinhood launches only — those fail your liquidity/volume/age gates anyway,`);
           note(`and DexScreener indexes the chain now. Not why free listings would stop. \`npm run poolstrade:check\` digs in.`);
         } else {

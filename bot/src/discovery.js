@@ -16,6 +16,7 @@ const ds = require("./dexscreener");
 const poolstrade = require("./poolstrade");
 const launchpads = require("./launchpads");
 const ponsChain = require("./ponsChain");
+const movers = require("./services/marketMovers");
 const log = require("./helpers/logger");
 const { bounded } = require("./helpers/bounded");
 
@@ -43,9 +44,22 @@ const { bounded } = require("./helpers/bounded");
  * Pre-migration data belongs in the MANUAL listing flow, where a project is
  * paying to be listed and the form needs prefilling — which is fetchTokenInfo.
  *
- * @returns {Promise<Array<{chain: string, address: string}>>}
+ * ── THE MARKET-MOVERS SOURCE (`{ movers: true }`) ─────────────────────────
+ * The two feeds above are "latest" SNAPSHOTS — who published a profile or paid
+ * for a boost in the last few minutes — so they hand the scan minutes-old
+ * microcaps and never the token that crossed $1M this afternoon. That is why a
+ * scan could report "below its trigger ×12" for two days straight while $1M+
+ * memecoins launched every day. See services/marketMovers.js.
+ *
+ * OPT-IN, because it spends GeckoTerminal requests (one per chain in scope):
+ * the auto-lister's scan and the operator's checks ask for it; nothing else
+ * pays for it by accident. Its items carry `mcapHint` — an ORDERING hint for
+ * the caller's lookup budget, never a verdict.
+ *
+ * @param {{chains?: string[], movers?: boolean}} [opts]
+ * @returns {Promise<Array<{chain: string, address: string, mcapHint?: number}>>}
  */
-async function fetchDiscoveryX() {
+async function fetchDiscoveryX({ chains = [], movers: withMovers = false } = {}) {
   const sources = [
     { name: "dexscreener", fn: () => ds.fetchDiscoveryX() },
     // ⚠️ This entry used to WRAP a plain `fetchDiscovery()` and assert
@@ -58,6 +72,9 @@ async function fetchDiscoveryX() {
     // keep is worse than no comment: it is the reassuring reading, written down.
     { name: "poolstrade", fn: () => poolstrade.fetchDiscoveryX() },
   ];
+  // FIRST in the list, so it leads the round-robin: its rows are the ones
+  // already known to be near the floor.
+  if (withMovers) sources.unshift({ name: "gtmovers", fn: () => movers.fetchMoversX({ chains }) });
   const answers = await Promise.all(
     sources.map(async (s) => {
       try {
@@ -84,7 +101,9 @@ async function fetchDiscoveryX() {
       const key = `${c.chain}:${String(c.address).toLowerCase()}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      out.push({ chain: c.chain, address: c.address });
+      // The hint travels, and only when a source had one — the long-standing
+      // `{chain, address}` shape is unchanged for everything else.
+      out.push(c.mcapHint ? { chain: c.chain, address: c.address, mcapHint: c.mcapHint } : { chain: c.chain, address: c.address });
     }
   }
   // ⚠️ "EVERY SOURCE EMPTY" AND "NO SOURCE ANSWERED" ARE DIFFERENT FACTS, and

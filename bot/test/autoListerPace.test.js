@@ -22,6 +22,7 @@ const assert = require("node:assert");
 
 const al = require("../src/services/autoLister");
 const api = require("../src/api/dexvra");
+const movers = require("../src/services/marketMovers");
 
 const M = 1_000_000;
 const MIN = 60_000;
@@ -54,6 +55,12 @@ function harness(addresses, { info = healthy } = {}) {
   // ⚠️ The WRITE PROBE too — 🔎 Test scan asks `api.canCreate()` now, and a stub
   // that leaves it out talks to the real site.
   api.canCreate = async () => ({ ok: true, status: 400, why: null });
+  // ⚠️ AND THE MARKET-MOVERS SOURCE. `start()` scans with the REAL discovery,
+  // which now asks GeckoTerminal through the shared queue — and the test below
+  // replaces setTimeout with a stub that never fires, so the queue's pacing
+  // timer would hang the scan and the test with it.
+  const realMovers = movers.fetchMoversX;
+  movers.fetchMoversX = async () => ({ items: [], ok: true, why: null, chains: [] });
   api.createListing = async (input) => {
     created.push(input);
     return { id: `id${created.length}`, ...input };
@@ -80,6 +87,7 @@ function harness(addresses, { info = healthy } = {}) {
       api.createListing = realCreate;
       api.getListings = realGet;
       api.canCreate = realCan;
+      movers.fetchMoversX = realMovers;
     },
   };
 }

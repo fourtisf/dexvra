@@ -388,6 +388,7 @@ async function resetState(now = Date.now()) {
     lastListAt: null,
     paceRoll: 0,
     watch: {},
+    seen: {},
     // When the operator cleared, so a scan already in flight cannot write its
     // pre-clear snapshot back over this. See fileReport.
     clearedAt: now,
@@ -460,6 +461,9 @@ const loadState = () => {
     // this service is redeployed far more often than it is quiet, and a watch
     // that reset on every restart could never reach its grace period.
     watch: obj(s.watch),
+    // The tokens discovery showed us SMALL — see `revisits()`. Whitelisted here
+    // because this reader is the shape every save writes back.
+    seen: obj(s.seen),
   };
 };
 
@@ -497,6 +501,12 @@ const blank = (now) => ({
   known: 0, // already on the site / already listed / in the never-relist ledger
   cooled: 0, // skipped by the rejection memo
   offChain: 0, // outside the operator's chain scope — costs no lookup
+  // Candidates the market-movers source already placed near the floor — the
+  // proof that the scan is looking where $1M projects actually are.
+  movers: 0,
+  // Tokens re-priced from `seen` — shown small by an earlier scan and gone from
+  // the feed since. See revisits().
+  revisited: 0,
   // ⚠️ A candidate on a chain `chainOf()` cannot resolve. Counted rather than
   // dropped in silence: discovery maps a feed entry back through DS_CHAIN, so
   // the only way to land here is a chain the two maps disagree about — which is
@@ -638,7 +648,7 @@ async function fileReport(report, state = loadState()) {
     // discard what the scan believed about the ledger.
     if (Number(fresh.value.clearedAt) > report.at) {
       const after = loadState();
-      for (const k of ["listed", "everListed", "cool", "day", "pkgTurn", "lastListAt", "paceRoll", "clearedAt"]) {
+      for (const k of ["listed", "everListed", "cool", "seen", "day", "pkgTurn", "lastListAt", "paceRoll", "clearedAt"]) {
         state[k] = after[k];
       }
     } else if (fresh.value.everListed) {
@@ -1027,6 +1037,80 @@ function tierFor(pkgKey, address) {
   return p.tier === null ? trendTier(address) : p.tier;
 }
 
+// ── Where the lookup budget goes ────────────────────────────────────────────
+//
+// "mengapa free listing not much work padahal setiap hari ada project memecoin
+// yang 1m ke atas mcnya" (2026-09-28): 41 hours of nothing, every scan reading
+// "priced 12 and none qualified — below its trigger ×12", while $1M memecoins
+// launched daily. Two holes, and both are about WHICH tokens reach pricing:
+//
+//   1. The feeds are "latest" snapshots — minutes-old microcaps. The market
+//      movers source (services/marketMovers.js) fixes the INPUT; this fixes the
+//      ORDER, because a candidate GT already places near the floor must not
+//      wait behind forty launches that are 40× below it.
+//   2. A token the feed showed us at $30k was turned down, cooled, and — once
+//      it scrolled off a "latest" feed — NEVER LOOKED AT AGAIN. The scanner saw
+//      every future $1M project while it was tiny and forgot it. `seen` is that
+//      memory, and `revisits()` puts it back in front of the pricing loop.
+
+/** Within striking distance of the floor, by the source's own hint. */
+const NEAR_FLOOR = 0.75;
+
+/**
+ * Stable three-way order: hinted near-the-floor first, unhinted (the feeds, in
+ * their own order) next, hinted out-of-range last. The hint only ever ORDERS —
+ * nothing is refused on it, because it is usually an fdv, not the cap our own
+ * read will judge.
+ */
+function orderCandidates(cands, cfg) {
+  const tier = (c) => {
+    const h = Number(c && c.mcapHint);
+    if (!(h > 0)) return 1;
+    return h >= cfg.minMcap * NEAR_FLOOR && h <= cfg.maxMcapHard ? 0 : 2;
+  };
+  return cands
+    .map((c, i) => ({ c, i, t: tier(c) }))
+    .sort((a, b) => a.t - b.t || a.i - b.i)
+    .map((x) => x.c);
+}
+
+const SEEN_TTL_MS = 7 * DAY_MS; // a token that has not grown in a week is not about to
+const MAX_SEEN = 2_000;
+
+/** Remember a token turned down for being too SMALL, so a later scan can ask again. */
+function rememberSeen(state, c, now) {
+  const key = keyOf(c.chain, c.address);
+  const prev = state.seen[key];
+  state.seen[key] = { c: c.chain, a: c.address, f: prev ? prev.f : now, t: now };
+}
+
+/** Expired entries out, and a bound so the file cannot grow without limit —
+ *  keeping the NEWEST first sightings, which have had the least time to grow. */
+function pruneSeen(seen, now) {
+  const live = Object.entries(seen).filter(([, v]) => v && v.c && v.a && now - Number(v.f) < SEEN_TTL_MS);
+  if (live.length <= MAX_SEEN) return Object.fromEntries(live);
+  return Object.fromEntries(live.sort((a, b) => Number(b[1].f) - Number(a[1].f)).slice(0, MAX_SEEN));
+}
+
+/**
+ * Remembered tokens worth pricing again this scan: not already a candidate, and
+ * their cool-off has run out (the memo still decides HOW OFTEN — a token 40×
+ * below its trigger is asked twice a day, one at 80% of it every scan). Least
+ * recently judged first, so the whole memory rotates instead of the same head
+ * being re-asked. Appended AFTER discovery: the feed's new tokens have never
+ * been priced at all, and they come first.
+ */
+function revisits(state, candidates, now) {
+  const inFeed = new Set(candidates.map((c) => keyOf(c.chain, c.address)));
+  return Object.entries(state.seen)
+    // The cool check here is not what stops a re-price — the loop's own cool
+    // check does that. It keeps a sleeping memory OUT of "N on cool-off", which
+    // would otherwise count up to two thousand sightings on every panel read.
+    .filter(([k]) => !inFeed.has(k) && !(Number(state.cool[k]) > now))
+    .sort((a, b) => Number(a[1].t) - Number(b[1].t))
+    .map(([, v]) => ({ chain: v.c, address: v.a, revisit: true }));
+}
+
 /**
  * Why this token is NOT getting listed, or null when it qualifies. A single
  * function so every rejection is one readable reason in the log — "nothing was
@@ -1167,7 +1251,7 @@ function seams(deps = {}) {
     deps.fetchDiscoveryX ||
     (deps.fetchDiscovery
       ? async () => ({ items: (await deps.fetchDiscovery()) || [], ok: true, why: null, sources: [] })
-      : ds.fetchDiscoveryX);
+      : (o) => ds.fetchDiscoveryX(o));
   const priceX =
     deps.fetchTokenInfoX ||
     (deps.fetchTokenInfo
@@ -1287,7 +1371,7 @@ async function scanOnce({ tg, now = Date.now(), deps = {}, rng = Math.random, fo
   let candidates;
   let sources = [];
   try {
-    const d = await discoverX();
+    const d = await discoverX({ chains: cfg.chains, movers: true });
     candidates = d.items || [];
     sources = d.sources || [];
   } catch (e) {
@@ -1380,6 +1464,11 @@ async function scanOnce({ tg, now = Date.now(), deps = {}, rng = Math.random, fo
   }
 
   state.cool = pruneCool(state.cool, now);
+  state.seen = pruneSeen(state.seen, now);
+  // Near-the-floor first, then the feeds, then what earlier scans saw small.
+  candidates = orderCandidates(candidates, cfg);
+  report.movers = candidates.filter((c) => Number(c.mcapHint) >= cfg.minMcap * NEAR_FLOOR && Number(c.mcapHint) <= cfg.maxMcapHard).length;
+  candidates = candidates.concat(revisits(state, candidates, now));
   // While pacing is on a scan lists AT MOST ONE token: `maxPerRun` says how big
   // a burst may be, and a paced feed has no bursts.
   const perRun = p.on ? 1 : cfg.maxPerRun;
@@ -1421,6 +1510,7 @@ async function scanOnce({ tg, now = Date.now(), deps = {}, rng = Math.random, fo
 
     lookups++;
     report.priced++;
+    if (c.revisit) report.revisited++;
     const ans = await priceX(c.chain, c.address).catch((e) => ({ info: null, ok: false, why: e.message }));
     // ⚠️ "WE COULD NOT ASK" IS NOT "THIS TOKEN HAS NO MARKET".
     //
@@ -1446,10 +1536,16 @@ async function scanOnce({ tg, now = Date.now(), deps = {}, rng = Math.random, fo
       report.reasons[bucket] = (report.reasons[bucket] || 0) + 1;
       const until = coolUntil(why, info, cfg, trigger, now);
       if (until > now) state.cool[key] = until;
+      // Too SMALL is the one refusal time can undo, so it is the one worth
+      // remembering. The rest either will not change (no ticker, no market)
+      // or already sits past the band (above the ceiling) — forgotten.
+      if (/^below its trigger|^thin liquidity|^low 24h volume|^too new/.test(why)) rememberSeen(state, c, now);
+      else delete state.seen[key];
       log.debug(`[autolist] skip ${c.chain}/${c.address}: ${why}`);
       continue;
     }
     delete state.cool[key];
+    delete state.seen[key];
 
     // Whose turn it is. Read fresh from `state` each time so several listings in
     // ONE scan still alternate instead of all taking the same package.
@@ -1595,6 +1691,8 @@ function scanLine(report) {
     `${report.candidates} candidates · ${report.priced} priced · ${report.listed} listed` +
     (report.known ? ` · ${report.known} already known` : "") +
     (report.cooled ? ` · ${report.cooled} on cool-off` : "") +
+    (report.movers ? ` · ${report.movers} already near the floor (market movers)` : "") +
+    (report.revisited ? ` · ${report.revisited} re-checked from earlier scans` : "") +
     (report.offChain ? ` · ${report.offChain} outside chain scope` : "") +
     // A chain the two halves of the DexScreener slug map disagree about. Named
     // here because it is the difference between "the market is quiet" and "a
@@ -1648,8 +1746,11 @@ async function dryRun({ now = Date.now(), deps = {} } = {}) {
   let candidates;
   let sources = [];
   try {
-    const d = await discoverX();
-    candidates = d.items || [];
+    const d = await discoverX({ chains: cfg.chains, movers: true });
+    // The SAME order the real scan prices in — a test scan that sampled the
+    // feed's microcaps first would report "below its trigger" about a market
+    // the real scan never looks at first.
+    candidates = orderCandidates(d.items || [], cfg);
     sources = d.sources || [];
   } catch (e) {
     report.blocker = `discovery failed: ${e.message}`;
@@ -2033,6 +2134,10 @@ module.exports = {
   configOk,
   scanLine,
   coolUntil,
+  orderCandidates,
+  revisits,
+  pruneSeen,
+  NEAR_FLOOR,
   stats,
   history,
   triggerMcap,
