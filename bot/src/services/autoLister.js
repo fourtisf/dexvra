@@ -504,6 +504,11 @@ const blank = (now) => ({
   // Candidates the market-movers source already placed near the floor — the
   // proof that the scan is looking where $1M projects actually are.
   movers: 0,
+  // The candidate that came CLOSEST to its trigger, as {sym, chain, mcap,
+  // ratio}. "below its trigger ×12" said nothing about HOW far below — and
+  // twelve tokens at 95% (a quiet market) and twelve at 3% (a scan that cannot
+  // see $1M tokens at all) need opposite answers. See listingWatch.
+  nearest: null,
   // Tokens re-priced from `seen` — shown small by an earlier scan and gone from
   // the feed since. See revisits().
   revisited: 0,
@@ -1053,6 +1058,16 @@ function tierFor(pkgKey, address) {
 //      every future $1M project while it was tiny and forgot it. `seen` is that
 //      memory, and `revisits()` puts it back in front of the pricing loop.
 
+/** Keep the closest-to-its-trigger rejection on the report. One owner, shared
+ *  by the scan and the 🔎 Test scan, so the two cannot measure it differently. */
+function noteNearest(report, c, info, trigger) {
+  const mcap = Number(info && info.mcap) || 0;
+  if (!(mcap > 0) || !(trigger > 0)) return;
+  const ratio = mcap / trigger;
+  if (report.nearest && report.nearest.ratio >= ratio) return;
+  report.nearest = { sym: sanitizeTicker(info.symbol) || null, chain: c.chain, mcap: Math.round(mcap), ratio: Math.round(ratio * 1000) / 1000 };
+}
+
 /** Within striking distance of the floor, by the source's own hint. */
 const NEAR_FLOOR = 0.75;
 
@@ -1534,6 +1549,7 @@ async function scanOnce({ tg, now = Date.now(), deps = {}, rng = Math.random, fo
     if (why) {
       const bucket = reasonBucket(why);
       report.reasons[bucket] = (report.reasons[bucket] || 0) + 1;
+      if (/^below its trigger/.test(why)) noteNearest(report, c, info, trigger);
       const until = coolUntil(why, info, cfg, trigger, now);
       if (until > now) state.cool[key] = until;
       // Too SMALL is the one refusal time can undo, so it is the one worth
@@ -1716,6 +1732,12 @@ function scanLine(report) {
     .map(([r, n]) => `${r} ×${n}`)
     .join(" · ");
   if (why) parts.push(why);
+  // HOW far below, not only that it was. The number that tells a quiet market
+  // (closest at 90%) from a scan that is not seeing $1M tokens at all (3%).
+  if (report.nearest && report.reasons && Object.keys(report.reasons).some((r) => /^below its trigger/.test(r))) {
+    const n = report.nearest;
+    parts.push(`closest ${n.sym ? `$${n.sym} ` : ""}${fmtCap(n.mcap)} = ${Math.round(n.ratio * 100)}% of its trigger`);
+  }
   return parts.length ? `${head} — ${parts.join(" · ")}` : head;
 }
 
@@ -1844,6 +1866,7 @@ async function dryRun({ now = Date.now(), deps = {} } = {}) {
     if (why) {
       const bucket = reasonBucket(why);
       report.reasons[bucket] = (report.reasons[bucket] || 0) + 1;
+      if (/^below its trigger/.test(why)) noteNearest(report, c, info, trigger);
       continue;
     }
     report.listed++; // what a real scan WOULD have listed

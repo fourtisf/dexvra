@@ -280,3 +280,50 @@ test("pruneSeen: a week-old sighting is dropped, and the memory is bounded", () 
   const seen = { a: { c: "solana", a: "A", f: now - 8 * 24 * HOUR, t: now }, b: { c: "solana", a: "B", f: now - HOUR, t: now } };
   assert.deepStrictEqual(Object.keys(al.pruneSeen(seen, now)), ["b"]);
 });
+
+// ── so it cannot go quiet unnoticed again ───────────────────────────────────
+// The reported alert said "Nothing is broken; lower 🎯". For THIS failure that
+// advice is wrong: the closest candidate was a fraction of $1M, and lowering
+// the trigger to meet it lists microcaps. The watch measures HOW FAR below.
+
+const watch = require("../src/services/listingWatch");
+
+test("THE REPORTED ALERT: ×12 below trigger with the closest at 3% is a BLIND discovery, not a quiet market", () => {
+  const scan = {
+    priced: 12,
+    reasons: { "below its trigger": 12 },
+    nearest: { sym: "PEPE2", chain: "solana", mcap: 34_000, ratio: 0.03 },
+    sources: [{ name: "gtmovers", ok: false, why: "solana: rate limited" }],
+    movers: 0,
+  };
+  const d = watch.diagnose(scan);
+  assert.strictEqual(d.code, "blind_discovery");
+  assert.strictEqual(d.fault, true, "a scan that cannot see $1M tokens is a fault, not 'the service is running correctly'");
+  assert.match(d.text, /3% of its trigger/);
+  assert.match(d.text, /rate limited/, "the reason the movers source failed must be named");
+  assert.doesNotMatch(d.text, /lower 🎯 if/, "the advice that would list microcaps must not be given here");
+});
+
+test("…but candidates sitting just under their triggers is still the market, and still says so", () => {
+  const d = watch.diagnose({ priced: 12, reasons: { "below its trigger": 12 }, nearest: { sym: "X", mcap: 950_000, ratio: 0.9 }, sources: [], movers: 3 });
+  assert.strictEqual(d.code, "nothing_qualified");
+  assert.strictEqual(d.fault, false);
+});
+
+test("a scan records the candidate CLOSEST to its trigger, and the scan line prints it", async () => {
+  await al.resetState(now - 10 * HOUR);
+  await al.set({ enabled: true, minMcap: 1 * M, maxMcap: 1.5 * M, paceListings: false, postChannel: false });
+  await withSite(async () => {
+    const caps = { So1A: 20_000, So1B: 400_000, So1C: 60_000 };
+    await al.runOnce({
+      now,
+      deps: {
+        fetchDiscoveryX: async () => ({ items: Object.keys(caps).map((a) => ({ chain: "solana", address: a })), ok: true, sources: [] }),
+        fetchTokenInfo: async (c, a) => healthy({ mcap: caps[a] }),
+      },
+    });
+  });
+  const s = al.lastScan();
+  assert.strictEqual(s.nearest && s.nearest.mcap, 400_000, `nearest: ${JSON.stringify(s.nearest)}`);
+  assert.match(al.scanLine(s), /closest \$MFROG \$400\.0K = \d+% of its trigger/);
+});

@@ -42,6 +42,11 @@ const GRACE_MS = Math.max(60 * 60_000, Number(process.env.LISTING_QUIET_GRACE_MS
 /** …and how often to say it again while it stays quiet. */
 const REPEAT_MS = Math.max(GRACE_MS, Number(process.env.LISTING_QUIET_REPEAT_MS) || 24 * 60 * 60_000);
 
+/** Below this fraction of its trigger for the CLOSEST candidate, "nothing
+ *  qualified" is a discovery that cannot see $1M tokens, not a quiet market.
+ *  0.4 is where `coolUntil` already stops expecting a token to cross soon. */
+const BLIND_RATIO = 0.4;
+
 /** The dominant entry of a `{text: count}` tally, or null. */
 function top(tally) {
   const rows = Object.entries(tally || {});
@@ -139,6 +144,34 @@ function diagnose(scan) {
     };
   }
   const why = top(scan.reasons);
+  // ⚠️ "NOTHING QUALIFIED" HAS TWO CAUSES, AND THE ADVICE FOR ONE IS WRONG FOR
+  // THE OTHER. The branch below says "lower 🎯 if the bar is higher than this
+  // market reaches" — right when the candidates sat at 80–95% of their
+  // triggers, and exactly wrong when the closest was at 3%: that is a scan that
+  // cannot SEE $1M tokens (2026-09-28 — 41h of "below its trigger ×12" while
+  // $1M memecoins launched daily, because discovery only read "latest" feeds
+  // of minutes-old launches). Lowering the trigger to $30k there lists
+  // microcaps. Measured off `nearest`, never inferred from the reason text.
+  if (why && /^below its trigger/.test(why.text) && scan.nearest && scan.nearest.ratio < BLIND_RATIO) {
+    const mv = (scan.sources || []).find((s) => s && s.name === 'gtmovers');
+    const n = scan.nearest;
+    return {
+      code: 'blind_discovery',
+      fault: true,
+      text:
+        `every token the last scan priced was far below the floor — the closest was ` +
+        `${n.sym ? `$${n.sym} ` : ''}at ${Math.round(n.ratio * 100)}% of its trigger. That is not a quiet market: ` +
+        `the scan is not seeing $1M tokens at all. ` +
+        (!mv
+          ? 'The market-movers source was not asked. '
+          : !mv.ok
+            ? `The market-movers source failed (${mv.why || 'no answer'}) — GECKOTERMINAL_API_KEY raises its ceiling. `
+            : !scan.movers
+              ? 'The market-movers source answered with nothing near the floor. '
+              : '') +
+        'Do NOT lower 🎯 — run `npm run listing:check`.',
+    };
+  }
   if (why) {
     return {
       code: 'nothing_qualified',
@@ -228,4 +261,4 @@ function evaluate(snap, prev = {}, { now = Date.now(), graceMs = GRACE_MS, repea
   };
 }
 
-module.exports = { evaluate, diagnose, GRACE_MS, REPEAT_MS };
+module.exports = { evaluate, diagnose, GRACE_MS, REPEAT_MS, BLIND_RATIO };

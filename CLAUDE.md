@@ -2955,16 +2955,39 @@ often — 12h for one 40× below, every scan for one at 80%.
 - The scan line says both: `N already near the floor (market movers)` and
   `N re-checked from earlier scans`.
 
+#### …and the alert that should have caught it gave the WRONG advice
+
+The ops line said *"Nothing is broken; lower 🎯/💧/📊 if the bar is higher than
+this market reaches."* For this failure that is exactly wrong: the closest
+candidate was a fraction of $1M, and lowering the trigger to meet it lists
+microcaps. "Below its trigger ×12" said THAT they were below and never HOW FAR,
+and twelve tokens at 90% (a quiet market) and twelve at 3% (a scan that cannot
+see $1M tokens) need opposite answers.
+
+- **`report.nearest`** records the candidate CLOSEST to its trigger
+  (`noteNearest`, one owner for the scan and the 🔎 Test scan), and the scan
+  line prints it: `closest $X $34.0K = 3% of its trigger`.
+- **`listingWatch` gained `blind_discovery`**: dominant reason "below its
+  trigger" AND the closest under `BLIND_RATIO` (40%, where `coolUntil` already
+  stops expecting a crossing) → a FAULT, naming the movers source's state and
+  saying *Do NOT lower 🎯*. Above 40% it is still `nothing_qualified`, still
+  not a fault. This watches the SYMPTOM, so a fourth discovery cause pages the
+  same way without anyone having to predict it.
+- `listingBlocked`'s "a quiet market" fixture was a $40k token — 4%, i.e. the
+  reported case itself. Moved to $900k, which is what a quiet market is.
+
 ```bash
-cd bot && node scripts/run-tests.js test/autoListerMovers.test.js   # 11 tests, no network
+cd bot && node scripts/run-tests.js test/autoListerMovers.test.js   # 14 tests, no network
 cd bot && npm run listing:check                                     # does gtmovers answer FROM THE BOX
 ```
 
 Ten guarantees are MUTATION-TESTED: revisits not appended, no reordering, the
 scan not asking for movers, sightings never recorded, `seen` not loaded, a
 clear keeping it, a cooled sighting offered anyway, discovery dropping the
-source, the hint lost in the merge, and the budget removed. Each fails between
-one and four tests.
+source, the hint lost in the merge, and the budget removed — plus five on the
+watch: the blind branch removed, demoted to not-a-fault, the movers reason
+dropped, the scan never recording `nearest`, and keeping the first rather than
+the closest. Each fails between one and four tests.
 
 **Config a fix depends on:** nothing — it ships ON. `AUTOLIST_MOVERS=0` kills
 the source; `AUTOLIST_MOVER_CHAINS` (comma list) replaces the default chains

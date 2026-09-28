@@ -306,7 +306,12 @@ test("the watch is folded into fileReport, so a scan that runs FINE and lists no
   // blocked-scan watchdog will never fire however long this lasts. That gap is
   // the entire reason the symptom watch exists — "it ran perfectly and could
   // never have published" was outside every alarm this service had.
-  const dull = healthy({ mcap: 40_000 }); // far below any trigger in the band
+  //
+  // ⚠️ JUST under the floor, not far below it. A market whose closest token is
+  // at 4% of its trigger is not a quiet market — it is a scan that cannot see
+  // $1M tokens (2026-09-28), and that pages as a fault now: `blind_discovery`
+  // in listingWatch, pinned in autoListerMovers.test.js.
+  const dull = healthy({ mcap: 900_000 }); // below every trigger in the $1M–$1.5M band, but close
   await scanOf(THREE, dull, now); // anchors the clock
   await scanOf(THREE, dull, now + HOURS(30)); // past the 12h grace
   const said = alerts.filter((a) => /Auto-Listing has published nothing/.test(a));
