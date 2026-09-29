@@ -3170,6 +3170,50 @@ so `npm run deploy` restarts all three bot processes. Whether GoPlus and
 RugCheck answer THIS box is a property of its egress: `listing:check` §6 and the
 scan line say so if they do not.
 
+#### "bagaimana agar masalah ini tidak terjadi lgi" — the gates guard the door; nothing looked at a listing twice
+
+Asked over a clean deploy of the two rounds above. Both answer at the DOOR, and
+two things never pass through it again: every row listed BEFORE the gates
+existed (the fake $SHIB was found by a person reading the channel), and a token
+that turns bad AFTER listing — an owner can raise the sell tax to 99% or pause
+transfers the day after. So the operator was still the detector.
+
+`bot/src/services/listingAudit.js` re-checks the BOT'S OWN listings on a timer
+(`LISTING_AUDIT_MS`, 30 min, `LISTING_AUDIT_BATCH` 15 per sweep, least-recently
+audited first) with the same two owners — `listingQuality` and `listingSafety`,
+called, never restated.
+
+- **Only bot-made rows**: FREE tier, or a row the scan picked
+  (`autoLister.autoListedKeys`). A purchase is never flagged over a heuristic.
+  ⚠️ A board-filler listing carries a real paid tier and is NOT in the scan's
+  `listed` map, so it is not audited — recorded, not an oversight.
+- **Transition only**: a newly bad row pages once (`log.alert`), naming every
+  offender and the cleanup command; a still-bad row says nothing; a row that
+  clears is dropped quietly; a row that left the site leaves the audit.
+- ⚠️ **"Could not ask" is never a flag** — an outage must not page as a wave of
+  scams; the row is left un-stamped so it is asked first next sweep.
+- **The row's own logo counts** (an upload is `/api/media/…`, absolutised
+  against `SITE_URL`), or "no logo" would be said about a row that renders one.
+- **`listings:nostables` reads the audit's flags** (`listingAudit.flagged()`),
+  so the one cleanup command removes honeypots too — no second idea of a scam.
+- ⚠️ **It never deletes.** `unseed.test.js` pins that no service may remove a
+  listing on its own — a listing is public and announced, and a false positive
+  should cost a glance, not a deletion. The first cut had an opt-in auto-delete
+  and that guard is what refused it. `LISTING_AUDIT=0` turns the sweep off.
+
+```bash
+cd bot && node scripts/run-tests.js test/listingAudit.test.js   # 9 tests, no network
+pm2 logs dexvra-bot --lines 300 --nostream | grep -F '[listingAudit]'
+```
+
+Ten guarantees are MUTATION-TESTED: paid rows audited, unapproved rows
+audited, the rotation dropped, a still-bad row paging every sweep, "could not
+ask" flagged, the quality check or the safety verdict ignored, a cleared row
+kept flagged, a departed row kept, and an uploaded logo read as none.
+
+**Config a fix depends on:** nothing. The page goes to the ops channel the
+health monitor already uses. `bot/` only — ecosystem restart.
+
 ## A Top 3 that was not the top of the Top 5
 
 Two banners, one minute apart, from the same admin panel:

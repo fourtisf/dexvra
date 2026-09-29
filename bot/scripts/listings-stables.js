@@ -25,6 +25,17 @@ require("../src/config/loadEnv").loadEnv();
 const api = require("../src/api/dexvra");
 const { notAProject } = require("../src/services/bigCoins");
 const { impersonates } = require("../src/services/listingQuality");
+// What the running bot's audit has flagged (listingAudit.js): honeypots, taxes
+// and the rest, which only a contract check can see. Read, never re-derived —
+// this script must not grow a second idea of "is it a scam".
+const auditFlags = (() => {
+  try {
+    return require("../src/services/listingAudit").flagged();
+  } catch {
+    return {};
+  }
+})();
+const keyOf = (chain, address) => `${chain}:${String(address).toLowerCase()}`;
 
 const args = process.argv.slice(2);
 const APPLY = args.includes("--apply");
@@ -68,13 +79,15 @@ const nameOf = (r) => String(r.name ?? "");
     if (notAProject(symOf(r), nameOf(r))) return "stablecoin/wrapper";
     const fake = impersonates(r.chain, r.address, symOf(r), nameOf(r));
     if (fake) return `copy of ${fake.name}`;
+    const flag = auditFlags[keyOf(r.chain, r.address)];
+    if (flag) return `audit: ${String(flag.why).slice(0, 40)}`;
     if (NO_LOGO && String(r.tier || "").toUpperCase() === "FREE" && !/^https?:\/\/|^\//.test(String(r.logoUrl || "")))
       return "free, no logo";
     return null;
   };
   const hits = rows.filter((r) => whyOf(r));
   console.log(
-    `${rows.length} listing(s) read · ${hits.length} match (stablecoins, wrappers, copies of major coins` +
+    `${rows.length} listing(s) read · ${hits.length} match (stablecoins, wrappers, copies of major coins, audit flags` +
       `${NO_LOGO ? ", free rows with no logo" : ""})\n`,
   );
   if (hits.length === 0) {
@@ -94,7 +107,7 @@ const nameOf = (r) => String(r.name ?? "");
     const tier = String(r.tier || "?").toUpperCase();
     console.log(
       `  ${tier === "FREE" ? " " : "⚠"} ${tier.padEnd(9)} ${String(r.chain || "?").padEnd(10)} ` +
-        `$${symOf(r).replace(/^\$/, "").padEnd(10)} ${nameOf(r).slice(0, 28).padEnd(28)} ${whyOf(r).padEnd(24)} ${r.id || ""}`,
+        `$${symOf(r).replace(/^\$/, "").padEnd(10)} ${nameOf(r).slice(0, 28).padEnd(28)} ${whyOf(r).padEnd(44)} ${r.id || ""}`,
     );
   }
   console.log("");

@@ -2250,6 +2250,10 @@ module.exports = {
   /** Has this token EVER been auto-listed? The filler must not re-list one the
    *  operator deleted, same rule the scan already follows. */
   wasEverListed: (chain, address) => !!loadState().everListed[keyOf(chain, address)],
+  // The listings THIS service made (the scan's own picks) — the audit's second
+  // way of telling a bot-made listing from a purchase, beside the FREE tier.
+  autoListedKeys: () => new Set(Object.keys(loadState().listed || {})),
+  keyOf,
   createFromInfo,
   start,
   runOnce,
