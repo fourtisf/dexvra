@@ -2253,6 +2253,11 @@ module.exports = {
   // The listings THIS service made (the scan's own picks) — the audit's second
   // way of telling a bot-made listing from a purchase, beside the FREE tier.
   autoListedKeys: () => new Set(Object.keys(loadState().listed || {})),
+  // key → the tier the auto-lister GAVE the row (its package rotation hands out
+  // XPRESS and the trending tiers too). Read by listings:nostables so a row the
+  // bot tiered itself is not reported as one somebody bought.
+  autoListedTiers: () =>
+    Object.fromEntries(Object.entries(loadState().listed || {}).map(([k, v]) => [k, String((v && v.tier) || "").toUpperCase()])),
   keyOf,
   createFromInfo,
   start,

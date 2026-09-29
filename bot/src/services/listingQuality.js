@@ -152,10 +152,23 @@ function impersonates(chain, address, symbol, name) {
   return { sym: major, name: shown };
 }
 
-// ── 3. Liquidity ≈ market cap ───────────────────────────────────────────────
+// ── 3. Liquidity ≈ market cap, AND NOBODY TRADING IT ─────────────────────────
 // Past this share of the cap, the pool is holding most of the supply. A real
 // $1M+ memecoin sits at 5–30%; the reported token sat at 95%.
+//
+// ⚠️ ON ITS OWN THAT IS NOT A SCAM SIGNAL, and the first live audit said so: it
+// flagged a dozen listings at 88–159% (Stonk Cat, Rich Debt, Copper Cat…).
+// A fair launch that put 100% of the supply in the pool, a PumpSwap pool just
+// after graduation and a curve DexScreener indexes as a pair all hold most of
+// the supply in the pool BY CONSTRUCTION — liquidity counts both sides, so a
+// pool holding nearly everything reads close to 2× the cap. What made the fake
+// $SHIB suspicious was a pool that big with almost nothing moving through it.
+// So the rule is the pair: the supply parked in the pool AND a day's volume
+// under LIQ_IDLE_TURNOVER of that pool. An active market at 98% passes; a
+// parked one is refused. A volume nobody published makes no claim, the same
+// rule as the flat-price check below.
 const LIQ_MCAP_MAX = 0.6;
+const LIQ_IDLE_TURNOVER = 0.1;
 
 // ── 4. A flat price under trading ───────────────────────────────────────────
 // Every window must be PUBLISHED and exactly 0 — an absent reading is not a
@@ -189,11 +202,19 @@ function qualityRefusal(chain, address, info) {
   if (!HTTP_LOGO.test(String(info.logoUrl || '').trim())) return 'no logo';
   const mcap = Number(info.mcap) || 0;
   const liq = Number(info.liq) || 0;
-  if (mcap > 0 && liq > 0 && liq / mcap > LIQ_MCAP_MAX) {
-    return `liquidity ≈ market cap (${Math.round((liq / mcap) * 100)}% — the pool holds the supply)`;
+  // ⚠️ Number(null) is 0, and 0 is finite — an unpublished volume would read
+  // as "nobody trades it". Absent becomes NaN, and NaN < anything is false, so
+  // an unpublished volume can never satisfy the idle test (seventh time in this repo).
+  const rawVol = info.vol24;
+  const vol = rawVol == null || String(rawVol).trim() === '' ? NaN : Number(rawVol);
+  if (mcap > 0 && liq > 0 && liq / mcap > LIQ_MCAP_MAX && vol / liq < LIQ_IDLE_TURNOVER) {
+    return (
+      `liquidity ≈ market cap (${Math.round((liq / mcap) * 100)}% of the cap parked in the pool, ` +
+      `24h volume ${Math.round((vol / liq) * 100)}% of it)`
+    );
   }
   if (isFlat(info)) return 'flat price (0.00% over 1h, 6h and 24h despite trades)';
   return null;
 }
 
-module.exports = { qualityRefusal, impersonates, isFlat, MAJORS, LIQ_MCAP_MAX, _foldSym: foldSym };
+module.exports = { qualityRefusal, impersonates, isFlat, MAJORS, LIQ_MCAP_MAX, LIQ_IDLE_TURNOVER, _foldSym: foldSym };

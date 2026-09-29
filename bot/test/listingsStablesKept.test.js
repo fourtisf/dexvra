@@ -56,6 +56,13 @@ test('keptBy mirrors the site DELETE route: source, then tier, then a trending s
   assert.match(script.keptBy(rows[1]), /paid tier GOLD/);
   assert.match(script.keptBy(rows[2]), /source "submission", not the bot/);
   assert.match(script.keptBy(rows[4]), /trending slot/);
+  // A tier the AUTO-LISTER gave (its package rotation) is not a purchase, and
+  // must not be printed as one. Still kept: the site cannot tell them apart.
+  const granted = { [`robinhood:${'0x' + '3'.repeat(40)}`]: 'XPRESS' };
+  assert.match(script.keptBy(rows[3], granted), /tier XPRESS given by the auto-lister, not bought/);
+  assert.doesNotMatch(script.keptBy(rows[3], granted), /paid/);
+  assert.match(script.keptBy(rows[1], granted), /paid tier GOLD/, 'a tier the bot never gave is still called paid');
+  assert.match(script.keptBy(rows[3], { [`robinhood:${'0x' + '3'.repeat(40)}`]: 'GOLD' }), /paid tier XPRESS/, 'a tier the bot gave differently was changed by a purchase');
   // The route's own three refusals, so the two cannot drift apart unnoticed.
   const route = fs.readFileSync(path.join(__dirname, '..', '..', 'src/app/api/internal/listings/[id]/route.ts'), 'utf8');
   assert.match(route, /row\.source !== "bot"/);

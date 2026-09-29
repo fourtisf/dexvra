@@ -3252,6 +3252,46 @@ Five guarantees are MUTATION-TESTED: every hit attempted again, each of the
 source and trending-slot rules dropped, and the double dollar back on the table
 row and on the failure line. Each fails between one and two tests.
 
+##### …and the dry run after it named two claims the audit could not back
+
+The next dry run listed twelve KEPT rows, and nine of them said
+`audit: liquidity ≈ market cap (88–159%)` beside `KEPT: paid tier XPRESS` or
+`GOLD` or `DIAMOND`. Both halves of that line were wrong.
+
+- ⚠️ **"PAID TIER" WAS FALSE.** The auto-lister's package rotation hands out
+  XPRESS and DIAMOND/GOLD/SILVER as well as FREE, so those rows were tiered by
+  the bot, and nobody bought them. The site still refuses them (it cannot tell
+  the two apart, and that guard stays), but the script now reads the tier the
+  auto-lister recorded (`autoListedTiers()`) and says `tier XPRESS given by the
+  auto-lister, not bought`. A tier that differs from the one the bot gave is
+  still called paid: a purchase changed it.
+- ⚠️ **"LIQUIDITY ≈ MARKET CAP" ON ITS OWN IS NOT A SCAM SIGNAL.** A fair launch
+  with 100% of the supply in the pool, a fresh PumpSwap graduation and a curve
+  DexScreener indexes as a pair all hold most of the supply in the pool BY
+  CONSTRUCTION. Liquidity counts both sides, so such a pool reads close to 2× the
+  cap. What made the fake $SHIB suspicious was that pool with almost nothing
+  moving through it. So the rule is the pair now: over 60% of the cap in the
+  pool AND a day's volume under `LIQ_IDLE_TURNOVER` (10%) of that pool.
+  - An active market at 98% passes.
+  - A parked one is refused.
+  - A volume nobody published makes no claim. ⚠️ `Number(null)` is 0, which would
+    have read "no volume published" as "nobody trades it", so absent is checked
+    first. That is the seventh time in this repo.
+- **The fake $SHIB is still refused**: impersonation, no logo and a flat price
+  each catch it on their own, and it was never this rule's case alone.
+- **The audit clears the flags by itself.** A flagged row that passes again is
+  dropped on its next sweep, within `ceil(n / 15)` sweeps.
+
+```bash
+cd bot && node scripts/run-tests.js test/listingQuality.test.js test/listingsStablesKept.test.js
+```
+
+Four guarantees are MUTATION-TESTED: the turnover ignored, a null volume read as
+0, a bot-given tier called paid, and any bot row called "given" regardless of
+its tier. Each fails a test. A fifth guard (a finiteness check on the volume) was
+DEAD, because `NaN < x` is already false, so it was removed rather than kept as a
+line claiming cover it did not provide.
+
 ## A Top 3 that was not the top of the Top 5
 
 Two banners, one minute apart, from the same admin panel:

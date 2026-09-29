@@ -101,10 +101,25 @@ test('a token with no logo is refused — the banner would draw the Dexvra mark 
 
 // ── 3. liquidity ≈ market cap ──────────────────────────────────────────────
 
-test('liquidity near the whole market cap is refused; a normal ratio is not', () => {
+test('liquidity near the whole market cap WITH NOTHING TRADING is refused; a normal ratio is not', () => {
+  // good()'s $250k a day through a $2.85M pool is under 10% turnover — parked.
   assert.match(q.qualityRefusal('solana', 'm', good({ liq: 2_850_000 })), /^liquidity ≈ market cap \(95%/);
   assert.equal(q.qualityRefusal('solana', 'm', good({ liq: 600_000 })), null, '20% is an ordinary pool');
   assert.equal(q.qualityRefusal('solana', 'm', good({ liq: 1_800_000 })), null, 'exactly the ceiling passes');
+});
+
+// "liat ini" — the first live audit flagged a dozen listings at 88–159%. A pool
+// holding most of the supply is what a fair launch or a fresh graduation IS;
+// only a pool that big with nobody trading it is the fake $SHIB's shape.
+test('⚠️ a pool holding the supply is NOT refused while the market is actually trading it', () => {
+  assert.equal(q.qualityRefusal('solana', 'm', good({ liq: 2_940_000, vol24: 900_000 })), null, '98% with 31% turnover');
+  assert.equal(q.qualityRefusal('robinhood', '0xz', good({ liq: 4_770_000, vol24: 600_000 })), null, '159% with 13% turnover');
+  assert.match(q.qualityRefusal('solana', 'm', good({ liq: 2_940_000, vol24: 100_000 })), /^liquidity ≈ market cap \(98%.*volume 3%/);
+});
+
+test('an unpublished volume makes no claim about idleness', () => {
+  assert.equal(q.qualityRefusal('solana', 'm', good({ liq: 2_940_000, vol24: undefined })), null);
+  assert.equal(q.qualityRefusal('solana', 'm', good({ liq: 2_940_000, vol24: null })), null);
 });
 
 test('an unpublished liquidity or cap makes no claim', () => {

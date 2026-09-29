@@ -45,6 +45,17 @@ const auditFlags = (() => {
   }
 })();
 const keyOf = (chain, address) => `${chain}:${String(address).toLowerCase()}`;
+// The tier the AUTO-LISTER gave each row it made. Its package rotation hands
+// out XPRESS and DIAMOND/GOLD/SILVER as well as FREE, so "not FREE" does not
+// mean "somebody paid" — and the first live run said "paid tier XPRESS" about
+// rows nobody bought. Read, never re-derived.
+const autoTiers = (() => {
+  try {
+    return require("../src/services/autoLister").autoListedTiers();
+  } catch {
+    return {};
+  }
+})();
 
 const args = process.argv.slice(2);
 const APPLY = args.includes("--apply");
@@ -72,10 +83,16 @@ const nameOf = (r) => String(r.name ?? "");
  * guessed differently would either attempt what the site refuses (a red ✗ over
  * a guard working) or skip what it would allow.
  */
-function keptBy(r) {
+function keptBy(r, granted = autoTiers) {
   if (r.source !== "bot") return `source "${r.source ?? "unknown"}", not the bot`;
   const tier = String(r.tier || "").toUpperCase();
-  if (tier !== "FREE") return `paid tier ${tier || "?"}`;
+  if (tier !== "FREE") {
+    // The site refuses either way (it cannot tell the two apart); what differs
+    // is whether "somebody paid" is TRUE, and printing it when it is not sends
+    // the operator to look for a customer who does not exist.
+    const byBot = tier && (granted || {})[keyOf(r.chain, r.address)] === tier;
+    return byBot ? `tier ${tier} given by the auto-lister, not bought` : `paid tier ${tier || "?"}`;
+  }
   if (r.trendingRank != null || r.trendExp) return "holds a trending slot";
   return null;
 }
@@ -134,8 +151,9 @@ async function main() {
   if (kept.length) {
     console.log(`Kept — the site protects these, and this script does not ask (${kept.length}):`);
     for (const r of kept) row(r, `${whyOf(r)} · KEPT: ${keptBy(r)}`);
-    console.log("  A purchase or a public submission is never removed in bulk. If one of these");
-    console.log("  really must go, an admin removes it by hand in the admin panel.\n");
+    console.log("  The site never deletes a non-FREE tier, a public submission or a live slot in");
+    console.log("  bulk — it cannot tell a tier the auto-lister gave from one a customer bought.");
+    console.log("  If one of these really must go, an admin removes it by hand in the admin panel.\n");
   }
   if (!doomed.length) {
     console.log("Nothing this script may remove.\n");
