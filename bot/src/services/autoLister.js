@@ -59,6 +59,7 @@ const movers = require("./marketMovers");
 // the market filler ranks against and the site ranks against.
 const { notAProject } = require("./bigCoins");
 const { qualityRefusal } = require("./listingQuality");
+const listingSafety = require("./listingSafety");
 const log = require("../helpers/logger");
 
 const FILE = "autoLister.json";
@@ -535,6 +536,11 @@ const blank = (now) => ({
   // DexScreener refusing this box read as a quiet market for as long as it did.
   unpriced: 0,
   unpricedWhy: {},
+  // A token that cleared every market gate and could not be SAFETY-checked
+  // (GoPlus/RugCheck did not answer). Its own counter: "could not be priced"
+  // would be false, and "potential scam" would be a claim nobody measured.
+  unchecked: 0,
+  uncheckedWhy: {},
   sources: [], // per discovery source: {name, n, ok, why}
   off: false, // the operator's own switch — a REPORTED state, never a silence
   capped: null, // "9/9" when the operator's own daily cap ended the scan
@@ -617,7 +623,14 @@ function loopHealth({ now = Date.now(), upMs = Infinity, cfg = get(), scan = las
 
 /** Rejection reasons carry live figures ("thin liquidity ($1,204)"), which would
  *  make every rejection its own bucket. Strip them for the tally. */
-const reasonBucket = (why) => String(why).replace(/\s*\([^)]*\)/g, "").trim();
+// Innermost parentheses first, repeatedly: a reason can quote a provider's own
+// words, and "potential scam (honeypot (can't sell))" stripped in one pass
+// leaves "potential scam)" — one bucket per token instead of one per reason.
+const reasonBucket = (why) => {
+  let t = String(why);
+  for (let i = 0; i < 4 && /\([^()]*\)/.test(t); i++) t = t.replace(/\s*\([^()]*\)/g, "");
+  return t.trim();
+};
 
 /**
  * Persist a scan report, and page the operator when scans stay BLOCKED.
@@ -1227,7 +1240,7 @@ function listingInput(chain, address, info, cfg = get(), now = Date.now(), pkgKe
  * Throws what the site threw: the caller decides whether one refusal ends its
  * run, and the two callers answer that differently.
  */
-async function createFromInfo(chain, address, info, { cfg = get(), now = Date.now(), pkgKey = 'free' } = {}) {
+async function createFromInfo(chain, address, info, { cfg = get(), now = Date.now(), pkgKey = 'free', safetyChecked = null } = {}) {
   // ⚠️ NEVER LIST THE MONEY — and it belongs HERE, not in the callers.
   //
   // "jangan pernah listing stable coin". `bigCoins.topByMcap` has filtered
@@ -1255,6 +1268,16 @@ async function createFromInfo(chain, address, info, { cfg = get(), now = Date.no
   const bad = qualityRefusal(chain, address, info);
   if (bad) {
     log.info(`[autolist] refused ${info.symbol} on ${chain}/${address} — ${bad}`);
+    return null;
+  }
+  // ⚠️ AND NEVER LIST A HONEYPOT. The contract check, at the same door for the
+  // same reason — the board filler and the chain seeder come through here and
+  // nowhere else. The scan runs it BEFORE this (so it can count the answer) and
+  // hands the verdict in rather than asking twice; every other door asks here.
+  // "Could not ask" refuses too: an unchecked token is not a safe one.
+  const safe = safetyChecked || (await listingSafety.checkX(chain, address).catch((e) => ({ ok: false, why: e.message })));
+  if (!safe.ok || safe.refusal) {
+    log.info(`[autolist] refused ${info.symbol} on ${chain}/${address} — ${safe.refusal || safe.why}`);
     return null;
   }
   const input = listingInput(chain, address, info, cfg, now, pkgKey);
@@ -1288,7 +1311,10 @@ function seams(deps = {}) {
     (deps.fetchTokenInfo
       ? async (c, a) => ({ info: await deps.fetchTokenInfo(c, a), ok: true, why: null })
       : ds.fetchTokenInfoX);
-  return { discoverX, priceX };
+  // The contract check (honeypot, tax, mint authority…) — see listingSafety.js.
+  // A seam like the other two: tests pass their own, production asks GoPlus/RugCheck.
+  const safetyX = deps.safetyX || ((c, a) => listingSafety.checkX(c, a));
+  return { discoverX, priceX, safetyX };
 }
 
 // ⚠️ ONE SCAN AT A TIME, IN THIS PROCESS.
@@ -1376,7 +1402,7 @@ async function scanOnce({ tg, now = Date.now(), deps = {}, rng = Math.random, fo
   // are different facts and this service used to render them identically. An
   // injected LEGACY dep is wrapped rather than refused: a stub that returns a
   // record or null is stating "it answered", which is exactly what a test means.
-  const { discoverX, priceX } = seams(deps);
+  const { discoverX, priceX, safetyX } = seams(deps);
 
   let state = loadState();
   if (!state._ok) {
@@ -1576,6 +1602,27 @@ async function scanOnce({ tg, now = Date.now(), deps = {}, rng = Math.random, fo
       log.debug(`[autolist] skip ${c.chain}/${c.address}: ${why}`);
       continue;
     }
+    // Asked only of a token that cleared every market gate — a safety read per
+    // candidate would spend the source on tokens that were never going to list.
+    const safe = await safetyX(c.chain, c.address).catch((e) => ({ ok: false, why: e.message }));
+    if (!safe.ok) {
+      // WE COULD NOT ASK: the upstream half of the report, with the pricing
+      // failures, and no cool-off — the next scan asks again. Never listed
+      // unchecked, never benched for twelve hours over somebody else's outage.
+      report.unchecked++;
+      const b = reasonBucket(safe.why || "safety check: no answer");
+      report.uncheckedWhy[b] = (report.uncheckedWhy[b] || 0) + 1;
+      log.info(`[autolist] ${sanitizeTicker(info.symbol)} (${c.chain}) not listed — ${safe.why}`);
+      continue;
+    }
+    if (safe.refusal) {
+      const bucket = reasonBucket(safe.refusal);
+      report.reasons[bucket] = (report.reasons[bucket] || 0) + 1;
+      state.cool[key] = now + 12 * HOUR_MS; // a contract does not stop being a honeypot in 25 minutes
+      delete state.seen[key];
+      log.info(`[autolist] refused ${sanitizeTicker(info.symbol)} (${c.chain}/${c.address}) — ${safe.refusal}`);
+      continue;
+    }
     delete state.cool[key];
     delete state.seen[key];
 
@@ -1584,7 +1631,7 @@ async function scanOnce({ tg, now = Date.now(), deps = {}, rng = Math.random, fo
     const { key: pkgKey } = nextPkg(cfg, state);
     let made;
     try {
-      made = await createFromInfo(c.chain, c.address, info, { cfg, now, pkgKey });
+      made = await createFromInfo(c.chain, c.address, info, { cfg, now, pkgKey, safetyChecked: safe });
     } catch (e) {
       // ON THE REPORT, not only in pm2. This token cleared every gate the
       // operator set and the site turned it down; "0 listed" with an empty
@@ -1690,6 +1737,16 @@ async function scanOnce({ tg, now = Date.now(), deps = {}, rng = Math.random, fo
       `could not price a single one of ${report.priced} candidate(s) — ` +
       `most common: ${why}${n < report.unpriced ? ` (×${n})` : ""}`;
     log.warn(`[autolist] ${report.blocker}`);
+  } else if (!listedNow && report.unchecked > 0) {
+    // These tokens QUALIFIED and could not be vouched for — the scan had
+    // something to list and did not, which is the refusal ladder's definition
+    // of a blocked scan. Paging for it is what stops a safety source that has
+    // gone dark from silently ending free listings.
+    const [why, n] = Object.entries(report.uncheckedWhy).sort((a, b) => b[1] - a[1])[0];
+    report.blocker =
+      `${report.unchecked} qualifying token(s) could not be safety-checked, so none were listed — ` +
+      `most common: ${why}${n < report.unchecked ? ` (×${n})` : ""}`;
+    log.warn(`[autolist] ${report.blocker}`);
   } else if (!listedNow && report.refused > 0) {
     const [why, n] = Object.entries(report.refusals).sort((a, b) => b[1] - a[1])[0];
     report.blocker =
@@ -1738,6 +1795,10 @@ function scanLine(report) {
     const t = Object.entries(report.unpricedWhy || {}).sort((a, b) => b[1] - a[1])[0];
     parts.push(`⚠️ ${report.unpriced} could not be priced${t ? ` (${t[0]})` : ""}`);
   }
+  if (report.unchecked) {
+    const t = Object.entries(report.uncheckedWhy || {}).sort((a, b) => b[1] - a[1])[0];
+    parts.push(`⚠️ ${report.unchecked} could not be safety-checked${t ? ` (${t[0]})` : ""}`);
+  }
   if (report.refused) {
     const top = Object.entries(report.refusals || {}).sort((a, b) => b[1] - a[1])[0];
     parts.push(`⚠️ ${report.refused} refused by the site${top ? ` (${top[0]})` : ""}`);
@@ -1782,7 +1843,7 @@ const DRY_LOOKUPS = 15;
 
 async function dryRun({ now = Date.now(), deps = {} } = {}) {
   const cfg = get();
-  const { discoverX, priceX } = seams(deps);
+  const { discoverX, priceX, safetyX } = seams(deps);
   const report = blank(now);
   const state = loadState();
 
@@ -1888,6 +1949,20 @@ async function dryRun({ now = Date.now(), deps = {} } = {}) {
       const bucket = reasonBucket(why);
       report.reasons[bucket] = (report.reasons[bucket] || 0) + 1;
       if (/^below its trigger/.test(why)) noteNearest(report, c, info, trigger);
+      continue;
+    }
+    // The same contract check the real scan makes, or 🔎 Test scan promises a
+    // listing the scan will refuse as a honeypot.
+    const safe = await safetyX(c.chain, c.address).catch((e) => ({ ok: false, why: e.message }));
+    if (!safe.ok) {
+      report.unchecked++;
+      const b = reasonBucket(safe.why || "safety check: no answer");
+      report.uncheckedWhy[b] = (report.uncheckedWhy[b] || 0) + 1;
+      continue;
+    }
+    if (safe.refusal) {
+      const bucket = reasonBucket(safe.refusal);
+      report.reasons[bucket] = (report.reasons[bucket] || 0) + 1;
       continue;
     }
     report.listed++; // what a real scan WOULD have listed

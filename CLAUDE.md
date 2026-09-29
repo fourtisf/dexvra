@@ -3115,6 +3115,61 @@ fails between one and two tests.
 **Config a fix depends on:** nothing — it ships ON and CHANGES what the free
 feed accepts on deploy, deliberately. `bot/` only — ecosystem restart.
 
+#### "tambahkan filter scam honeypot dll" — the CONTRACT, which no market record shows
+
+`listingQuality` reads what DexScreener publishes. A honeypot trades normally
+until somebody tries to SELL, and a 30% sell tax, a pausable transfer or an
+owner who can rewrite balances all look like an ordinary healthy pair there. The
+trade bot has asked exactly this before every buy since it was written — GoPlus
+on EVM, RugCheck on Solana — so **`goplus.js` and `rugcheck.js` moved to
+`shared/security/`** (the `tradebot/` files are now one-line shims, pinned by a
+test that they ARE the same module) and `bot/src/services/listingSafety.js`
+asks the same source. Two copies of "is this a honeypot" would come to disagree.
+
+- **The bar is STRICTER than the trade card's, deliberately.** The card warns
+  and lets a user decide with their own money; a free listing is Dexvra
+  vouching for the token to the channel. Refused: every GoPlus/RugCheck red flag
+  (honeypot, can't sell all, pausable, owner changes balances, hidden owner,
+  blacklist, freeze authority, rugged, RugCheck `danger` risks…) PLUS mintable
+  supply, an unverified contract, an upgradeable proxy, a trading cooldown, a
+  tax over 5%, Solana mint authority, top 10 holding ≥70%, and fewer than 100
+  holders (the fake $SHIB had 25; a null count makes no claim).
+- ⚠️ **"We could not ask" is neither safe nor a scam.** Both modules gained
+  `tokenSecurityX` → `{sec, ok, why}`; GoPlus's HTTP-200-with-`code` refusals
+  and "no record yet" are `ok:false`. The scan counts those as `unchecked` —
+  its own counter and sentence (`could not be safety-checked`), never "could not
+  be priced" — writes NO cool-off so the next scan asks again, and a scan whose
+  only qualifiers were unchecked is a BLOCKER, because a safety source gone dark
+  would otherwise end free listings silently.
+- **A chain no source covers PASSES** (Robinhood, Tron, Polygon…): refusing
+  would switch free listing off there over a check nobody can run.
+- **Asked only of a token that cleared every market gate**, at the one door
+  (`createFromInfo`) and in the scan and 🔎 Test scan; the scan hands its
+  verdict in (`safetyChecked`) rather than asking twice. A refused token is
+  cooled 12h.
+- ⚠️ **The providers' own words carry parentheses** (`honeypot (can’t sell)`),
+  which nested inside the reason broke `reasonBucket` into one bucket per token.
+  The flags are flattened, and `reasonBucket` now strips innermost-first.
+- `FREE_LISTING_SAFETY=0` turns it off. The TEST RUNNER sets that (no remote);
+  `listingSafety.test.js` turns it back on and pins that the production default
+  — unset or blank — is ON.
+
+```bash
+cd bot && node scripts/run-tests.js test/listingSafety.test.js   # 15 tests, no network
+cd bot && npm run listing:check                                  # §6 names an unreachable safety source as a fault
+```
+
+Thirteen guarantees are MUTATION-TESTED: the default off, each of mintable /
+holders / mint authority / top-10 dropped, "could not ask" read as safe, an
+unsupported chain refused, the `createFromInfo` gate removed, the scan's verdict
+not handed in (a second ask), no cool-off, no blocker, GoPlus's empty record read
+as an answer, and its `code` refusal ignored.
+
+**Config a fix depends on:** nothing — it ships ON. ⚠️ This touches `shared/`,
+so `npm run deploy` restarts all three bot processes. Whether GoPlus and
+RugCheck answer THIS box is a property of its egress: `listing:check` §6 and the
+scan line say so if they do not.
+
 ## A Top 3 that was not the top of the Top 5
 
 Two banners, one minute apart, from the same admin panel:

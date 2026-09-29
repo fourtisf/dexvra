@@ -43,6 +43,10 @@ const res = spawnSync(process.execPath, ["--test", ...files], {
     // queued upstream clear — against a REAL upstream. Every test stubs fetch,
     // so the pause is pure wall-clock; 0 still runs every attempt.
     POST_MARKET_PAUSE_MS: process.env.POST_MARKET_PAUSE_MS || "0",
+    // The free-listing contract check asks GoPlus/RugCheck, and there is no
+    // remote here. Off by default in the suite; listingSafety.test.js turns it
+    // back on and drives it, and pins that the PRODUCTION default is on.
+    FREE_LISTING_SAFETY: process.env.FREE_LISTING_SAFETY || "0",
   },
 });
 try {

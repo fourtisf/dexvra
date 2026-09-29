@@ -311,6 +311,14 @@ const faults = [];
         for (const q of (r.qualified || []).slice(0, 5)) note(`would list $${q.sym || q.address} on ${q.chain} at ${fmtCap(q.mcap)}`);
         const why = Object.entries(r.reasons || {}).sort((a, b) => b[1] - a[1]).slice(0, 5);
         for (const [text, n] of why) note(`${text} ×${n}`);
+        // ⚠️ "Could not safety-check" is a fault of OURS (GoPlus/RugCheck did not
+        // answer this box), never a verdict about the tokens — and it holds back
+        // tokens that otherwise qualify.
+        if (r.unchecked) {
+          const t = Object.entries(r.uncheckedWhy || {}).sort((a, b) => b[1] - a[1])[0];
+          bad(`${r.unchecked} qualifying token(s) could not be safety-checked${t ? ` — ${t[0]}` : ""}`);
+          faults.push("the free-listing safety check (GoPlus/RugCheck) is not answering this box");
+        }
         // NOT a fault. "Nothing qualifies in this sample" is the service working
         // correctly in a quiet market, and failing on it is how a check becomes
         // permanently red and therefore useless.
@@ -325,6 +333,11 @@ const faults = [];
           if (d.code === "blind_discovery") {
             bad(d.text);
             faults.push("the scan cannot see $1M tokens — see section 3 (gtmovers)");
+          } else if (why.length && /^(potential scam|impersonates|no logo|liquidity ≈|flat price)/.test(why[0][0])) {
+            // Lowering a size floor cannot help a token refused as a scam, and
+            // advising it would be the wrong-setting diagnosis this file exists
+            // to stop giving.
+            note(`Most of this sample was refused as scams or copies (listingQuality / listingSafety) — nothing to lower; the next real project lists.`);
           } else note(`Nothing in this sample clears your gates. That is the market, not a fault — lower 🎯/💧/📊 to widen it.`);
         }
       }
