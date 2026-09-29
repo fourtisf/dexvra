@@ -3051,6 +3051,70 @@ chains when no scope is set; `GECKOTERMINAL_API_KEY` in `bot/.env` adds GT
 trending (and raises the ceiling the buy bot is hitting today). `bot/` only —
 ecosystem restart.
 
+### "masa anda free listingkan token seperti ini … ini skem token" — size was the bait
+
+The movers source working is what surfaced this. The channel announced
+**Shiba Inu ($SHIB) on Solana** to 12,430 subscribers — drawn with the Dexvra
+diamond, because the token had no artwork — and its own DexScreener page read
+`MKT CAP $5.9M · LIQUIDITY $5.6M · 0% over 5m/1h/6h/24h · 7 traders · 25 holders`.
+
+**Every free-listing gate passed, because every one of them asks how BIG a token
+is** (cap, liquidity, volume, age) and none asks whether it is REAL. A token
+that exists to be mistaken for something else clears a size floor by
+construction. `bot/src/services/listingQuality.js` is the one owner of that
+second question, called from `createFromInfo` (every door: the scan, ⚡ Run now,
+the board filler, the chain seeder) and from `rejectReason` (so the scan COUNTS
+the refusal under its own reason). Four checks, each enough on its own:
+
+| check | the reported token |
+| --- | --- |
+| **impersonation** — a major's ticker or exact name, off that major's home contract | `SHIB` lives on Ethereum at one address |
+| **no logo** — no http(s) artwork | the banner drew the Dexvra mark |
+| **liquidity ≈ market cap** — liq over 60% of the cap means the pool holds the supply | 95% |
+| **flat price** — 0.00% over 1h, 6h AND 24h with volume | 0% on every window |
+
+- ⚠️ **`MAJORS` carries a HOME address only where it is certain.** A wrong one
+  refuses the real token (a missed free listing, the fail-safe direction); a
+  guessed one could wave a scam through. Tokens whose home is not written down
+  (SUN, BTT, WIN on Tron) are ABSENT rather than homeless, or the board filler —
+  which lists the real ones — would stop being able to. The genuine SHIB on
+  Ethereum, BONK on Solana, BRETT on Base still list.
+- **Names match EXACTLY, never as a prefix**: "Baby Shiba Inu" has its own
+  ticker and is pretending to be nothing.
+- ⚠️ **Base58 and Tron addresses are CASE-SENSITIVE**; only `0x` folds. A
+  lowercased mint is a different account.
+- ⚠️ **A missing reading never trips the last two.** They are claims about the
+  market, and a source that does not publish the field (GeckoTerminal
+  candidates, a launchpad record) made no claim. So DexScreener's `priceChange`
+  now travels RAW per window (`null` when unpublished) — `change24h` folds an
+  absent reading into 0 and would have refused every token with no window.
+- **The size gates are asked FIRST.** A microcap scam still reports "below its
+  trigger", which is the reason `listingWatch` reads to tell a quiet market from
+  a blind scan.
+- **Reasons keep their variable parts in parentheses**, so every impersonator is
+  ONE bucket on the scan line rather than one per coin.
+- Paid listings are untouched — this is the bar for what the BOT lists on its
+  own, never for what a customer may buy.
+
+**No gate reaches backwards.** `npm run listings:nostables` now also removes
+copies of major coins (dry run by default, `--apply` to delete, the reason and
+the TIER printed per row), and `--no-logo` adds FREE rows with no artwork —
+FREE only, because a missing logo is never a reason to take down a purchase.
+
+```bash
+cd bot && node scripts/run-tests.js test/listingQuality.test.js   # 15 tests, no network
+cd bot && npm run listings:nostables                              # what would go, and why
+```
+
+Ten guarantees are MUTATION-TESTED: the `createFromInfo` gate removed, the scan
+not asking, the home-address check dropped, base58 case-folded, an absent window
+read as flat, flatness without volume, the liquidity ceiling unreachable, the
+logo check removed, the name match dropped, and `priceChange` not parsed. Each
+fails between one and two tests.
+
+**Config a fix depends on:** nothing — it ships ON and CHANGES what the free
+feed accepts on deploy, deliberately. `bot/` only — ecosystem restart.
+
 ## A Top 3 that was not the top of the Top 5
 
 Two banners, one minute apart, from the same admin panel:

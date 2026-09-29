@@ -58,6 +58,7 @@ const movers = require("./marketMovers");
 // The one owner of "is this the money rather than the project" — the same set
 // the market filler ranks against and the site ranks against.
 const { notAProject } = require("./bigCoins");
+const { qualityRefusal } = require("./listingQuality");
 const log = require("../helpers/logger");
 
 const FILE = "autoLister.json";
@@ -1132,7 +1133,7 @@ function revisits(state, candidates, now) {
  * function so every rejection is one readable reason in the log — "nothing was
  * listed today" is otherwise impossible to explain.
  */
-function rejectReason(info, cfg, trigger, now = Date.now()) {
+function rejectReason(info, cfg, trigger, now = Date.now(), chain = '', address = '') {
   if (!info) return "no market data";
   if (!sanitizeTicker(info.symbol)) return "no usable ticker";
   if (!info.name) return "no name";
@@ -1145,7 +1146,10 @@ function rejectReason(info, cfg, trigger, now = Date.now()) {
   if (info.pairCreatedAt && now - info.pairCreatedAt < cfg.minAgeHours * 3_600_000) {
     return `too new (${Math.round((now - info.pairCreatedAt) / 3_600_000)}h old)`;
   }
-  return null;
+  // Size says nothing about whether a token is REAL — see listingQuality.js.
+  // Asked last so a token still too small reports the market reason, which is
+  // the one `listingWatch` reads to tell a quiet market from a blind scan.
+  return qualityRefusal(chain, address, info);
 }
 
 /**
@@ -1240,6 +1244,17 @@ async function createFromInfo(chain, address, info, { cfg = get(), now = Date.no
   // feed full of stablecoins does not read as a quiet market.
   if (notAProject(info.symbol, info.name)) {
     log.info(`[autolist] refused ${info.symbol} on ${chain} — the money, not a project (stablecoin/wrapper)`);
+    return null;
+  }
+  // ⚠️ AND NEVER LIST A FAKE. "masa anda free listingkan token seperti ini …
+  // ini skem token" — a Shiba Inu ($SHIB) on Solana, with no logo, liquidity at
+  // 95% of its cap and a price that had not moved in a day, announced to the
+  // whole channel with the Dexvra diamond drawn where its artwork belongs.
+  // Same door, same reason as the stablecoin rule above: every free listing
+  // comes through here, so the check cannot be forgotten by the next caller.
+  const bad = qualityRefusal(chain, address, info);
+  if (bad) {
+    log.info(`[autolist] refused ${info.symbol} on ${chain}/${address} — ${bad}`);
     return null;
   }
   const input = listingInput(chain, address, info, cfg, now, pkgKey);
@@ -1546,7 +1561,7 @@ async function scanOnce({ tg, now = Date.now(), deps = {}, rng = Math.random, fo
     }
     const info = ans.info;
     const trigger = triggerMcap(c.address, cfg);
-    const why = rejectReason(info, cfg, trigger, now);
+    const why = rejectReason(info, cfg, trigger, now, c.chain, c.address);
     if (why) {
       const bucket = reasonBucket(why);
       report.reasons[bucket] = (report.reasons[bucket] || 0) + 1;
@@ -1868,7 +1883,7 @@ async function dryRun({ now = Date.now(), deps = {} } = {}) {
     }
     const info = ans.info;
     const trigger = triggerMcap(c.address, cfg);
-    const why = rejectReason(info, cfg, trigger, now);
+    const why = rejectReason(info, cfg, trigger, now, c.chain, c.address);
     if (why) {
       const bucket = reasonBucket(why);
       report.reasons[bucket] = (report.reasons[bucket] || 0) + 1;

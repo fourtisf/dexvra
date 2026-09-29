@@ -55,6 +55,7 @@ function stubSeams({ candidates, info } = {}) {
     vol24: 300_000,
     priceUsd: 1,
     pairCreatedAt: Date.now() - 48 * 3600_000,
+    logoUrl: "https://dd.dexscreener.com/x.png",
   };
   ds.fetchDiscovery = async () => rows;
   ds.fetchDiscoveryX = async () => ({ items: rows, ok: true, why: null, sources: [] });

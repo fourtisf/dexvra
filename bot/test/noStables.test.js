@@ -42,7 +42,8 @@ const info = (symbol, name) => ({
   mcap: 5e9,
   liq: 1e7,
   vol24: 1e6,
-  logoUrl: null,
+  // A logo, or listingQuality refuses it for a reason this file is not about.
+  logoUrl: 'https://dd.dexscreener.com/x.png',
 });
 
 test('a stablecoin never reaches the site, whichever door it came through', async () => {
@@ -63,10 +64,12 @@ test('a stablecoin never reaches the site, whichever door it came through', asyn
 
 test('…and a real project still lists', async () => {
   await withCreate(async (seen) => {
-    const made = await autoLister.createFromInfo('bsc', '0x' + '2'.repeat(40), info('SHIB', 'Shiba Inu'));
+    // Not SHIB any more: a $SHIB off Ethereum is a COPY and listingQuality
+    // refuses it, which is a different rule from this file's.
+    const made = await autoLister.createFromInfo('bsc', '0x' + '2'.repeat(40), info('MOONX', 'Moon Project'));
     assert.ok(made, 'a project must still be listable');
     assert.equal(seen.length, 1);
-    assert.equal(seen[0].sym, 'SHIB');
+    assert.equal(seen[0].sym, 'MOONX');
   });
 });
 

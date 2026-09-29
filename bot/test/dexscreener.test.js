@@ -102,6 +102,15 @@ test("every field the gates read survives the parse — a rename fails here, not
   assert.strictEqual(info.pairCount, 2);
 });
 
+test("priceChange travels RAW per window — an unpublished window is null, never a flat 0", async (t) => {
+  // listingQuality refuses a price that did not move; `change24h` folds an
+  // absent reading into 0, so reading flatness off it would refuse every token
+  // DexScreener simply had no window for.
+  stubFetch(t, async () => reply(PAYLOAD));
+  const { info } = await ds.fetchTokenInfoX("solana", "So1Mint");
+  assert.deepStrictEqual(info.priceChange, { m5: null, h1: null, h6: null, h24: 18.4 });
+});
+
 test("…and that record passes the REAL gate — the two halves are pinned together", async (t) => {
   stubFetch(t, async () => reply(PAYLOAD));
   const { info } = await ds.fetchTokenInfoX("solana", "So1Mint");

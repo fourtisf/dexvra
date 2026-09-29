@@ -24,9 +24,14 @@
 require("../src/config/loadEnv").loadEnv();
 const api = require("../src/api/dexvra");
 const { notAProject } = require("../src/services/bigCoins");
+const { impersonates } = require("../src/services/listingQuality");
 
 const args = process.argv.slice(2);
 const APPLY = args.includes("--apply");
+// ⚠️ FREE rows only. A missing logo is a reason not to LIST a token for free,
+// never a reason to delete one somebody paid for — the site's resolver fills
+// artwork in the background, and a purchase is not ours to take down over it.
+const NO_LOGO = args.includes("--no-logo");
 const build = () => {
   try {
     return require("node:child_process").execSync("git rev-parse --short HEAD", { encoding: "utf8" }).trim();
@@ -42,7 +47,7 @@ const symOf = (r) => String(r.sym ?? r.symbol ?? "");
 const nameOf = (r) => String(r.name ?? "");
 
 (async () => {
-  console.log(`\nListed stablecoins & wrappers — build ${build()}\n`);
+  console.log(`\nListed stablecoins, wrappers & copies of major coins — build ${build()}\n`);
   let rows;
   try {
     rows = await api.getListings();
@@ -57,10 +62,23 @@ const nameOf = (r) => String(r.name ?? "");
     process.exit(1);
   }
 
-  const hits = rows.filter((r) => notAProject(symOf(r), nameOf(r)));
-  console.log(`${rows.length} listing(s) read · ${hits.length} match the money rule\n`);
+  // Why each row goes — printed beside it, because "stablecoin", "a copy of
+  // Shiba Inu" and "no artwork" are three different reasons to delete a listing.
+  const whyOf = (r) => {
+    if (notAProject(symOf(r), nameOf(r))) return "stablecoin/wrapper";
+    const fake = impersonates(r.chain, r.address, symOf(r), nameOf(r));
+    if (fake) return `copy of ${fake.name}`;
+    if (NO_LOGO && String(r.tier || "").toUpperCase() === "FREE" && !/^https?:\/\/|^\//.test(String(r.logoUrl || "")))
+      return "free, no logo";
+    return null;
+  };
+  const hits = rows.filter((r) => whyOf(r));
+  console.log(
+    `${rows.length} listing(s) read · ${hits.length} match (stablecoins, wrappers, copies of major coins` +
+      `${NO_LOGO ? ", free rows with no logo" : ""})\n`,
+  );
   if (hits.length === 0) {
-    console.log("Nothing to remove — the board carries no stablecoins or wrappers.\n");
+    console.log("Nothing to remove.\n");
     return;
   }
 
@@ -76,14 +94,14 @@ const nameOf = (r) => String(r.name ?? "");
     const tier = String(r.tier || "?").toUpperCase();
     console.log(
       `  ${tier === "FREE" ? " " : "⚠"} ${tier.padEnd(9)} ${String(r.chain || "?").padEnd(10)} ` +
-        `$${symOf(r).padEnd(10)} ${nameOf(r).slice(0, 28).padEnd(28)} ${r.status || ""} ${r.id || ""}`,
+        `$${symOf(r).replace(/^\$/, "").padEnd(10)} ${nameOf(r).slice(0, 28).padEnd(28)} ${whyOf(r).padEnd(24)} ${r.id || ""}`,
     );
   }
   console.log("");
 
   if (!APPLY) {
     console.log("Dry run — nothing was deleted. Re-run with --apply to remove them:");
-    console.log("  npm run listings:nostables -- --apply\n");
+    console.log(`  npm run listings:nostables -- ${NO_LOGO ? "--no-logo " : ""}--apply\n`);
     return;
   }
 

@@ -100,6 +100,15 @@ function resetBench() {
  *   ok:true,  info:null — it answered, and it has no pair for this token
  *   ok:false, info:null — we could not ask; `why` says what stopped us
  */
+const rawChanges = (pc) => {
+  const out = {};
+  for (const w of ['m5', 'h1', 'h6', 'h24']) {
+    const v = pc && pc[w];
+    out[w] = typeof v === 'number' && Number.isFinite(v) ? v : null;
+  }
+  return out;
+};
+
 async function fetchTokenInfoX(chain, address, { now = Date.now() } = {}) {
   const dsChain = DS_CHAIN[chain];
   // A chain DexScreener does not carry is an ANSWER, not a failure: the caller
@@ -142,6 +151,10 @@ async function fetchTokenInfoX(chain, address, { now = Date.now() } = {}) {
       liq: Number(p.liquidity && p.liquidity.usd) || 0,
       vol24: Number(p.volume && p.volume.h24) || 0,
       change24h: Number(p.priceChange && p.priceChange.h24) || 0,
+      // RAW, per window: `change24h` above folds an absent reading into 0, which
+      // is fine for a display and useless for asking "did the price not move?".
+      // A window DexScreener did not publish stays null — never a flat 0.
+      priceChange: rawChanges(p.priceChange),
       pairCreatedAt: Number(p.pairCreatedAt) || 0,
       pairCount: pairs.length,
     };

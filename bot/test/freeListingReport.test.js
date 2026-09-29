@@ -19,6 +19,7 @@ const al = require("../src/services/autoLister");
 const INFO = {
   symbol: "GOODCOIN", name: "Good Coin", mcap: 2_400_000, liq: 180_000, vol24: 95_000,
   priceUsd: 0.0024, pairCreatedAt: Date.now() - 5 * 3600_000,
+  logoUrl: "https://dd.dexscreener.com/x.png",
 };
 
 // ⚠️ A UNIQUE ADDRESS PER SCAN. `everListed` is the permanent ledger that stops

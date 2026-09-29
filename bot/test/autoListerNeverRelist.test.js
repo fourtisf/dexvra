@@ -36,6 +36,7 @@ const GOOD = {
   liq: 5_000_000,
   vol24: 5_000_000,
   pairCreatedAt: 0, // ancient
+  logoUrl: "https://dd.dexscreener.com/x.png",
 };
 
 /** Run one scan against a fixed candidate and a controllable site. */

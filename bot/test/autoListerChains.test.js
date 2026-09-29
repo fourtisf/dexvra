@@ -24,6 +24,7 @@ const healthy = (over = {}) => ({
   vol24: 300_000,
   priceUsd: 0.0012,
   pairCreatedAt: now - 48 * HOUR,
+  logoUrl: "https://dd.dexscreener.com/x.png", // no logo = refused (listingQuality)
   ...over,
 });
 
