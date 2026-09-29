@@ -3214,6 +3214,44 @@ kept flagged, a departed row kept, and an uploaded logo read as none.
 **Config a fix depends on:** nothing. The page goes to the ops channel the
 health monitor already uses. `bot/` only — ecosystem restart.
 
+#### "liat ini" — the cleanup worked, and then reported the guard that held as a failure
+
+The first live `listings:nostables -- --no-logo --apply` removed **48 of 51**
+and then printed three red lines:
+
+```
+✗ $$PEPE — … → 409: refused: tier is "GOLD" — somebody paid for that
+✗ $$PEPE — … → 409: refused: source is "submission", not "bot"
+✗ $$PEPE — … → 409: refused: tier is "XPRESS" — somebody paid for that
+```
+
+**The site was right every time.** The internal DELETE route refuses a paid
+tier, a row that did not come from the bot and a live trending slot, because a
+bulk script must never be able to take a purchase away. The script was wrong
+three ways: it ASKED anyway (its header even said `--apply` "removes all of
+them", which the route has never allowed), it reported the refusal as a ✗ and a
+non-zero exit (a guard holding, rendered as a cleanup that broke), and it wrote
+`` `$${sym}` `` over a stored `sym` that already carries the `$`. That is the
+`$$ORCHFLOWS` defect `format.ticker()` exists for, on an eighth surface.
+
+- **`keptBy` mirrors the route's three rules in the route's order**, and those
+  rows are listed as **KEPT** with the reason. They are never attempted and
+  never turn the exit code. A test reads the route's source so the two cannot
+  drift apart unnoticed.
+- **A real failure is still a ✗ and still exits 1.** Only the protected rows
+  moved.
+- **`ticker()` on every line.**
+- A paid or submitted row that really must go is an admin's decision in the
+  admin panel, and the script says so under the KEPT list.
+
+```bash
+cd bot && node scripts/run-tests.js test/listingsStablesKept.test.js   # 5 tests, no network
+```
+
+Five guarantees are MUTATION-TESTED: every hit attempted again, each of the
+source and trending-slot rules dropped, and the double dollar back on the table
+row and on the failure line. Each fails between one and two tests.
+
 ## A Top 3 that was not the top of the Top 5
 
 Two banners, one minute apart, from the same admin panel:

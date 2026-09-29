@@ -13,10 +13,18 @@
  * matters more here because a listing is gone for good and the site is public.
  *
  * ⚠️ AND IT PRINTS THE TIER. `FREE` is the tier the bot books itself and
- * nobody can buy; anything else was PAID FOR. The instruction was "all", so
- * `--apply` removes all of them — but a paid row can never leave without being
- * named on screen first, because that one is somebody's money and a refund
- * conversation, not a tidy-up.
+ * nobody can buy; anything else was PAID FOR.
+ *
+ * ⚠️ A ROW THE SITE PROTECTS IS "KEPT", NEVER A FAILURE. The internal DELETE
+ * route refuses a paid tier, a row that did not come from the bot (a public
+ * submission) and a live trending slot — correctly: a bulk script must never be
+ * able to take away something a customer bought. The first live run asked
+ * anyway and printed three red ✗ lines for $PEPE rows (GOLD, XPRESS, a
+ * submission) under "Removed 48 of 51", which reads as a cleanup that broke
+ * rather than a guard that held. `keptBy` mirrors the route's own three rules,
+ * so those rows are listed as KEPT with the reason, never attempted, and never
+ * turn the exit code. A human removes one of those by hand in the admin panel,
+ * which is a decision, not a bulk action.
  */
 // ⚠️ ORDER, not presence: loadEnv() runs BEFORE any repo require, because
 // config/constants.js freezes every value at require time — a script that
@@ -25,6 +33,7 @@ require("../src/config/loadEnv").loadEnv();
 const api = require("../src/api/dexvra");
 const { notAProject } = require("../src/services/bigCoins");
 const { impersonates } = require("../src/services/listingQuality");
+const { ticker } = require("../src/helpers/format");
 // What the running bot's audit has flagged (listingAudit.js): honeypots, taxes
 // and the rest, which only a contract check can see. Read, never re-derived —
 // this script must not grow a second idea of "is it a scam".
@@ -57,7 +66,21 @@ const build = () => {
 const symOf = (r) => String(r.sym ?? r.symbol ?? "");
 const nameOf = (r) => String(r.name ?? "");
 
-(async () => {
+/**
+ * Why the SITE would refuse to delete this row, or null. The same three rules,
+ * in the same order, as `DELETE /api/internal/listings/:id` — a script that
+ * guessed differently would either attempt what the site refuses (a red ✗ over
+ * a guard working) or skip what it would allow.
+ */
+function keptBy(r) {
+  if (r.source !== "bot") return `source "${r.source ?? "unknown"}", not the bot`;
+  const tier = String(r.tier || "").toUpperCase();
+  if (tier !== "FREE") return `paid tier ${tier || "?"}`;
+  if (r.trendingRank != null || r.trendExp) return "holds a trending slot";
+  return null;
+}
+
+async function main() {
   console.log(`\nListed stablecoins, wrappers & copies of major coins — build ${build()}\n`);
   let rows;
   try {
@@ -95,22 +118,29 @@ const nameOf = (r) => String(r.name ?? "");
     return;
   }
 
-  const paid = hits.filter((r) => String(r.tier || "").toUpperCase() !== "FREE");
-  if (paid.length)
-    console.log(
-      `⚠️  ${paid.length} of these is a PAID tier — somebody bought that listing.\n` +
-        "   It is included below because the instruction was to remove all of them.\n" +
-        "   Read the tier column before running --apply.\n",
-    );
+  const kept = hits.filter((r) => keptBy(r));
+  const doomed = hits.filter((r) => !keptBy(r));
 
-  for (const r of hits) {
-    const tier = String(r.tier || "?").toUpperCase();
+  const row = (r, note) =>
     console.log(
-      `  ${tier === "FREE" ? " " : "⚠"} ${tier.padEnd(9)} ${String(r.chain || "?").padEnd(10)} ` +
-        `$${symOf(r).replace(/^\$/, "").padEnd(10)} ${nameOf(r).slice(0, 28).padEnd(28)} ${whyOf(r).padEnd(44)} ${r.id || ""}`,
+      `  ${String(r.tier || "?").toUpperCase().padEnd(9)} ${String(r.chain || "?").padEnd(10)} ` +
+        `${ticker(symOf(r)).padEnd(11)} ${nameOf(r).slice(0, 28).padEnd(28)} ${note.padEnd(44)} ${r.id || ""}`,
     );
+  if (doomed.length) {
+    console.log(`To remove (${doomed.length}):`);
+    for (const r of doomed) row(r, whyOf(r));
+    console.log("");
   }
-  console.log("");
+  if (kept.length) {
+    console.log(`Kept — the site protects these, and this script does not ask (${kept.length}):`);
+    for (const r of kept) row(r, `${whyOf(r)} · KEPT: ${keptBy(r)}`);
+    console.log("  A purchase or a public submission is never removed in bulk. If one of these");
+    console.log("  really must go, an admin removes it by hand in the admin panel.\n");
+  }
+  if (!doomed.length) {
+    console.log("Nothing this script may remove.\n");
+    return;
+  }
 
   if (!APPLY) {
     console.log("Dry run — nothing was deleted. Re-run with --apply to remove them:");
@@ -120,26 +150,31 @@ const nameOf = (r) => String(r.name ?? "");
 
   let gone = 0;
   const failed = [];
-  for (const r of hits) {
+  for (const r of doomed) {
     try {
       const res = await api.deleteListing(r.id);
       // ⚠️ A CALL THAT RETURNED IS NOT A ROW THAT WENT. The route answers
       // `{deleted:false}` for an id it does not hold, and counting that as a
       // deletion is how a report says 7 removed over a board that still has 7.
-      if (res && res.deleted === false) failed.push(`$${symOf(r)} — the site does not hold that id`);
+      if (res && res.deleted === false) failed.push(`${ticker(symOf(r))} — the site does not hold that id`);
       else gone++;
     } catch (err) {
-      failed.push(`$${symOf(r)} — ${err?.message ?? err}`);
+      failed.push(`${ticker(symOf(r))} — ${err?.message ?? err}`);
     }
   }
-  console.log(`Removed ${gone} of ${hits.length}.`);
+  console.log(`Removed ${gone} of ${doomed.length}${kept.length ? ` · ${kept.length} kept (protected)` : ""}.`);
   for (const f of failed) console.log(`  ✗ ${f}`);
   console.log(
     "\nThey will not come back: `createFromInfo` refuses them at the one door\n" +
       "every listing goes through (the scan, the board filler and the seeder).\n",
   );
-  if (failed.length) process.exit(1);
-})().catch((err) => {
-  console.error("✗ " + (err?.stack || err));
-  process.exit(1);
-});
+  if (failed.length) process.exitCode = 1;
+}
+
+module.exports = { keptBy, main };
+
+if (require.main === module)
+  main().catch((err) => {
+    console.error("✗ " + (err?.stack || err));
+    process.exit(1);
+  });
