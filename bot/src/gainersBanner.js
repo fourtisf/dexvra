@@ -172,7 +172,12 @@ const TEMPLATES = {
     title: (n) => (n > 1 ? `Top ${n} Gainers` : "Top Gainer"),
   },
 };
-const TEMPLATE_IDS = Object.keys(TEMPLATES);
+// The classic eleven, captured BEFORE the premium set is merged in at the
+// bottom of this module. TEMPLATE_IDS (premium first, then classic) is
+// assigned there too, once every template exists.
+const CLASSIC_IDS = Object.keys(TEMPLATES);
+let TEMPLATE_IDS = CLASSIC_IDS;
+let PREMIUM_IDS = [];
 const DEFAULT_TEMPLATE = "list5";
 
 const specOf = (id) => TEMPLATES[id] || TEMPLATES[DEFAULT_TEMPLATE];
@@ -2206,6 +2211,25 @@ const LAYOUTS = {
   grid: layoutGridDense,
 };
 
+// ── the premium set ────────────────────────────────────────────────────────
+// Ten more stills, Top 1 → Top 10, drawn with THIS module's primitives and
+// merged into the same tables — so they go through the same render(), the
+// same showPct switch and every guard test that walks TEMPLATE_IDS. See
+// gainersPremium.js for why it is a factory rather than a second renderer.
+{
+  const premium = require("./gainersPremium")({
+    SITE, F, hexA, radial, roundRect, fitText, medalOf, metalGrad, sparkle,
+    surface, avatar, metalRing, medal, bigPct, pctChip, chip, microLabel,
+    sparkline, fmtCap, fmtPrice, REF_W, PAD, BAND_TOP, BAND_H,
+  });
+  Object.assign(TEMPLATES, premium.TEMPLATES);
+  Object.assign(LAYOUTS, premium.LAYOUTS);
+  Object.assign(MOODS, premium.MOODS);
+  Object.assign(PATTERNS, premium.PATTERNS);
+  PREMIUM_IDS = premium.IDS;
+  TEMPLATE_IDS = [...PREMIUM_IDS, ...CLASSIC_IDS];
+}
+
 // ── render ──────────────────────────────────────────────────────────────────
 /** Decode a coin's logo bytes once (async), attaching `img`. Never throws. */
 async function decodeLogos(cv, coins) {
@@ -2293,6 +2317,8 @@ async function render({ template = DEFAULT_TEMPLATE, coins = [], dateText = "", 
 module.exports = {
   TEMPLATES,
   TEMPLATE_IDS,
+  PREMIUM_IDS,
+  CLASSIC_IDS,
   DEFAULT_TEMPLATE,
   REF_W,
   REF_H,
@@ -2305,5 +2331,5 @@ module.exports = {
   render,
   available: () => !!canvasLib(),
   // exposed for tests / the preview script
-  _internals: { LAYOUTS, syntheticTrend, bannerTrend, jewelFor, monogramOf },
+  _internals: { LAYOUTS, MOODS, PATTERNS, syntheticTrend, bannerTrend, jewelFor, monogramOf },
 };

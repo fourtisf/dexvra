@@ -37,9 +37,10 @@ async function drainQueue() {
   for (const job of store.pending()) {
     if (!(await store.claim(job.id))) continue; // another tick got it
     try {
-      // A motion banner goes out through sendMedia as an ANIMATION (Telegram
-      // plays the MP4 as a looping GIF); a still keeps the sendPhoto path it
-      // has always used. A job queued before motion existed has no mediaType.
+      // Every board is a still now. The ANIMATION branch stays for one reason:
+      // a motion job queued by an admin bot that was still on the old code
+      // when this one deployed is a real file waiting to go out, and sending
+      // an MP4 through sendPhoto would fail it.
       const msg = job.mediaType === "animation"
         ? await post.sendMedia(job.channel, { type: "animation", source: job.imagePath }, job.caption, { pin: job.pin })
         : await post.sendPhoto(job.channel, { source: job.imagePath }, job.caption, { pin: job.pin });
@@ -69,7 +70,7 @@ async function drainQueue() {
 async function postNow({ template = null, by = "schedule" } = {}) {
   const cfg = cfgStore.get();
   if (!gr.available()) return { ok: false, reason: "canvas unavailable on this host" };
-  const id = gr.pickTemplate(template || cfg.template, { pool: cfg.pool, format: cfg.format });
+  const id = gr.pickTemplate(template || cfg.template, { pool: cfg.pool });
   const res = await gainers.topGainers({
     limit: gr.countOf(id),
     minGainPct: cfg.minGainPct,
@@ -93,9 +94,7 @@ async function postNow({ template = null, by = "schedule" } = {}) {
   // tweet, so a slow or unconfigured X costs the link and nothing else.
   const xUrl = await tweetGainers(res.coins, out.still, cfg);
   const caption = gainers.captionPayload(res.coins, { tz: cfg.tz, showMcap: cfg.showMcap, showPct: cfg.showPct, xUrl });
-  const msg = out.mediaType === "animation"
-    ? await post.sendMedia(channel, { type: "animation", source: out.media }, caption, { pin: cfg.pin })
-    : await post.sendPhoto(channel, { source: out.media }, caption, { pin: cfg.pin });
+  const msg = await post.sendPhoto(channel, { source: out.media }, caption, { pin: cfg.pin });
   if (!msg || !msg.message_id) return { ok: false, reason: `${channel} refused the post — is the bot an admin there?` };
   const symbols = res.coins.map((c) => c.symbol);
   log.info(`[gainers] daily ${id} → ${tmeLink(channel, msg.message_id)} (${symbols.join(", ")}) by ${by}`);

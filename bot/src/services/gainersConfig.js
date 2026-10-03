@@ -26,12 +26,10 @@ const DEFAULTS = {
   tz: "Asia/Jakarta",
   channel: "", // "" → CHANNELS.trending
   template: "random", // a template id, or "random" over `pool`
-  // VIDEO by default: "bukan gambar lgi" — the operator asked for the board as
-  // an animation. It decides what "random" rolls (a motion layout or a still);
-  // a concrete template id is honoured whatever this says. "image" is the
-  // old PNG board, one tap away under ⚙️.
-  format: "animated",
-  pool: [], // random rotation; [] → every template
+  // There is no `format` any more: the motion boards were removed
+  // ("hapus top gainer yang vidio", 2026-10-03) and every layout is a still. A
+  // stored `format` from before that is simply never read.
+  pool: [], // random rotation; [] → the premium set
   minGainPct: 1, // a "+0.02%" gainer is not a gainer
   minLiqUsd: 0, // liquidity floor (0 = off)
   // MARKET-CAP FLOOR, and it defaults ON at $1M.
@@ -68,7 +66,6 @@ const clampNum = (v, [lo, hi], fb) => {
 
 /** Template ids, resolved lazily so this module stays requirable without canvas. */
 const templateIds = () => require("../gainersRender").TEMPLATE_IDS;
-const FORMATS = ["animated", "image"];
 
 /** Current config: defaults, with every stored value validated. */
 function get() {
@@ -82,7 +79,6 @@ function get() {
   if (typeof c.channel === "string") g.channel = c.channel.trim();
   const ids = templateIds();
   if (c.template === "random" || ids.includes(c.template)) g.template = c.template;
-  if (FORMATS.includes(c.format)) g.format = c.format;
   if (Array.isArray(c.pool)) g.pool = [...new Set(c.pool.filter((t) => ids.includes(t)))];
   g.minGainPct = clampNum(c.minGainPct, HARD.minGainPct, DEFAULTS.minGainPct);
   g.minLiqUsd = clampNum(c.minLiqUsd, HARD.minLiqUsd, DEFAULTS.minLiqUsd);
@@ -130,10 +126,6 @@ async function set(patch = {}) {
     const t = String(patch.template);
     if (t !== "random" && !templateIds().includes(t)) throw new Error(`unknown template "${t}"`);
     next.template = t;
-  }
-  if (patch.format != null) {
-    if (!FORMATS.includes(String(patch.format))) throw new Error(`unknown format "${patch.format}" (animated or image)`);
-    next.format = String(patch.format);
   }
   if (Array.isArray(patch.pool)) next.pool = [...new Set(patch.pool.filter((x) => templateIds().includes(x)))];
   if (patch.minGainPct != null) next.minGainPct = clampNum(patch.minGainPct, HARD.minGainPct, DEFAULTS.minGainPct);

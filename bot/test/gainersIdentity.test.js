@@ -250,8 +250,10 @@ test("duel2 fills the gap in the layout ladder", () => {
   // day needs was the one missing.
   assert.ok(gb.isTemplate("duel2"));
   assert.strictEqual(gb.countOf("duel2"), 2);
-  assert.deepStrictEqual(gb.TEMPLATE_IDS.map((id) => gb.countOf(id)), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 10],
-    "the template ladder is out of order — the menu is built from this list");
+  // The CLASSIC ladder — the 🖼 Classic layouts screen is built from it. The
+  // premium set has its own ladder, pinned in gainersPremium.test.js.
+  assert.deepStrictEqual(gb.CLASSIC_IDS.map((id) => gb.countOf(id)), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 10],
+    "the classic template ladder is out of order — the menu is built from this list");
 });
 
 test("the duel keeps the podium's identity rule from day one", () => {
@@ -339,15 +341,17 @@ test("every template carries its OWN backdrop mood — 'backgroundnya juga beda-
   assert.ok(moods.every(Boolean), "a template with no mood falls back to the shared default");
   assert.strictEqual(new Set(moods).size, moods.length, "two templates share a mood: " + moods.join(", "));
   // …and every named mood exists — a typo would ALSO fall back to the default,
-  // with nothing anywhere saying so.
-  assert.match(BANNER, /const MOODS = \{/);
-  for (const m of moods) assert.ok(BANNER.includes(`\n  ${m}: {`), `mood "${m}" is not defined in MOODS`);
+  // with nothing anywhere saying so. Read off the MERGED tables, because the
+  // premium set (gainersPremium.js) brings its own moods and painters: a scan
+  // of this one source file stopped seeing half of them.
+  const { MOODS, PATTERNS } = gb._internals;
+  for (const m of moods) assert.ok(MOODS[m], `mood "${m}" is not defined in MOODS`);
   // …and every mood carries its own PATTERN — bloom positions alone were
   // re-read as "the same background", which is the report this exists to end.
-  const patterns = [...BANNER.matchAll(/pattern: "([a-z][A-Za-z]*)"/g)].map((m) => m[1]);
-  assert.strictEqual(patterns.length, moods.length, "a mood with no pattern falls back to a bare field");
+  const patterns = moods.map((m) => MOODS[m].pattern);
+  assert.ok(patterns.every(Boolean), "a mood with no pattern falls back to a bare field");
   assert.strictEqual(new Set(patterns).size, patterns.length, "two moods share a pattern: " + patterns.join(", "));
-  for (const pt of patterns) assert.ok(new RegExp(`\\n  ${pt}\\(ctx, W, H, S\\)`).test(BANNER), `pattern "${pt}" has no painter in PATTERNS`);
+  for (const pt of patterns) assert.strictEqual(typeof PATTERNS[pt], "function", `pattern "${pt}" has no painter in PATTERNS`);
 });
 
 test("the three new layouts delegate thin days like the spotlight does", () => {

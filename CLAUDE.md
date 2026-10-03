@@ -3511,46 +3511,62 @@ ladder share a silhouette:
   widest bar always belongs to rank 1 because gainers.js sorts by the same
   number. A drawn value follows the same rule as a printed one.
 
-### "versi gif atau vidio bukan gambar lgi" — ten MOTION boards, and every token draws its logo
+### "hapus top gainer yang vidio ganti ke foto banner aja" — the motion boards are GONE, and a premium still set took their place
 
-`bot/src/gainersMotion.js` renders the board as a ~6s looping MP4 (H.264, no
-audio) that Telegram plays as a GIF via `sendAnimation`: frames drawn with
-@napi-rs/canvas, piped to ffmpeg as raw RGBA. One layout per board size, each
-moving its own way — v1 Spotlight · v2 Face-off · v3 Podium Rise · v4 Card Flip
-· v5 Bar Race · v6 Orbit · v7 Stack · v8 Neon Grid · v9 Split-Flap · v10
-Bubbles — and a test fails if two share a layout or a backdrop.
+The ten MP4 layouts (`gainersMotion.js`, v1 Spotlight … v10 Bubbles) were
+**removed on the operator's call** (2026-10-03), with the ask that the front
+screen offer ten NEW premium still banners, Top 1 → Top 10, all different.
+`bot/src/gainersPremium.js` is that set:
 
-- **`gainersRender.js` is the ONE door** for the panel, the queue and the daily
-  poster: which layout, how many coins, what it renders to, how it is sent. A
-  second copy is how the preview would show a video while the daily post sends
-  a PNG. `format` (⚙️ → 🎬 Format) decides what 🎲 random and the daily post
-  roll; it **ships as video**, and a concrete layout id is honoured either way.
-- **A video that does not encode degrades to its own still frame as a photo**,
-  never to nothing, and says so. The tweet always gets the still (`stillPath`
-  travels beside the MP4 on the queued job).
-- ⚠️ **The count-up lands EXACTLY on `fmtPct(c.pct)`** and draws nothing before
-  it starts — a `0.0%` frame is a figure nobody measured. `Number(null)` is 0,
-  so absence is checked first (sixth time in this file).
-- **`showPct:false` removes every drawing of the figure** — the bar race's bar
-  and the bubble area included, and the split-flap's per-glyph `%`. Pinned by a
-  fillText spy with a vacuity check.
-- **The loop is seamless**: backdrop motion is periodic in the clip length and
-  the content fades back to the empty backdrop frame 0 builds from.
+| id | design |
+| --- | --- |
+| `p1_crest` 💎 | the champion inside a metal diamond, editorial column + stat strip beside it |
+| `p2_ticket` 🎟 | one notched, perforated admission ticket — gold winner stub, silver runner-up |
+| `p3_arc` 🏅 | three medallions on one sweeping gold arc, no cards, each on a pool of light |
+| `p4_hex` ⬡ | four hexagonal vault doors, the move pinned under each |
+| `p5_stairs` 📶 | five bars stepping in with rank — the ranking as a shape |
+| `p6_capsules` 💊 | six pill capsules in two columns, ghost rank numerals behind |
+| `p7_orbit` 🪐 | the champion as a planet, six satellites docked on gold filaments |
+| `p8_equalizer` 🎚 | eight meter columns, each gain a lit bar rising from the floor |
+| `p9_cover` 📰 | a magazine cover — lead story + an index of eight tiles |
+| `p10_hall` 🏛 | three podium plaques over a gallery of seven portrait frames |
+
+- **A FACTORY, not a second renderer.** It is called with gainersBanner's own
+  primitives and merged into the same `TEMPLATES` / `LAYOUTS` / `MOODS` /
+  `PATTERNS`, so it goes through the same `render()` — the same showPct switch,
+  the same never-throws, and every guard test that walks `TEMPLATE_IDS`
+  (unique mood, unique pattern, no `24H` heading, no figure when hidden).
+  `TEMPLATE_IDS` is premium first, then `CLASSIC_IDS`; the classic eleven are
+  one tap away under **🖼 Classic layouts**.
+- **A short board draws the design FOR THAT COUNT** (`ladder()`): Hall of Fame
+  handed three live gainers IS the Medal Arc. Pinned byte-for-byte — with a
+  background image the mood never paints, so a correct delegation renders
+  identically to the smaller template.
+- ⚠️ **The equalizer bar is the % as a LENGTH**, so it is drawn only while the
+  figure is; with the figure hidden the meter shows the price instead of
+  standing empty. Pinned as "two boards differing only in pct render
+  identically when hidden", with the positive control.
+- **🎲 random with an empty rotation rolls the premium set** — what an
+  untouched install publishes is what the operator asked for.
+- **There is no `format` setting any more.** A stored `format`, or a stored
+  `template` / `pool` entry naming a motion id (`v5`), is dropped by
+  gainersConfig's validation as an unknown id → 🎲 random, never a render
+  error on the daily post. The old ⚙️ Format button, still sitting on an
+  admin's old card, opens settings rather than spinning.
+- The poster's queued-job ANIMATION branch stays: a motion job queued by an
+  admin bot still on the old code when this deploys is a real file waiting to
+  go out. Everything rendered from now on is a `sendPhoto`.
 - **Every token draws its logo, three passes cheapest first**
-  (`gainers.resolveLogo`): the row's and the live read's urls + the DexScreener
-  CDN; then the same artwork through our own `/api/logo` (gateway failover —
-  an `ipfs://` logo used to be glued onto `SITE_URL` and 404); then
-  `services/tokenLogo.resolveLogo` bounded by `GAINERS_LOGO_RESOLVE_MS` (8s).
-  Only then the monogram — logged at INFO with the upstreams that refused.
+  (`gainers.resolveLogo`) — unchanged, it belongs to gainers.js, not to the
+  removed renderer.
 
 ```bash
-cd bot && node scripts/run-tests.js test/gainersMotion.test.js   # 15 tests, no network
+cd bot && node scripts/run-tests.js test/gainersPremium.test.js    # 8 tests, no network
+cd bot && node scripts/gainers-preview.js p1_crest p5_stairs        # LOOK at them; --no-pct for the hidden figure
 ```
 
-**Config a fix depends on:** nothing. `GAINERS_MOTION_FPS` / `_SECONDS` tune the
-clip; `FFMPEG_PATH` overrides the bundled binary. ⚠️ `bot/` only, so the deploy
-is the ecosystem restart (the admin bot renders the preview, the main bot
-publishes).
+**Config a fix depends on:** nothing. ⚠️ `bot/` only, so the deploy is the
+ecosystem restart (the admin bot renders the preview, the main bot publishes).
 
 ### The winner's NAME is not a ranking signal
 

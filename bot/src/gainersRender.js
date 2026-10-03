@@ -1,63 +1,52 @@
 "use strict";
-// One door onto the two Top-Gainers renderers: the still banners
-// (gainersBanner.js, PNG) and the motion banners (gainersMotion.js, MP4 that
-// Telegram plays as a looping GIF).
+// One door onto the Top-Gainers renderer (gainersBanner.js, PNG).
 //
 // The admin panel, the queue and the daily poster all ask the same four
 // questions — which layout, how many coins, what does it render to, and how is
 // it sent — and a second copy of the answer in each of them is how the preview
-// comes to show a video while the daily post sends a PNG. So they ask here.
+// comes to show one thing while the daily post sends another. So they ask here.
+//
+// ⚠️ THE MOTION BOARDS ARE GONE. "hapus top gainer yang vidio ganti ke foto
+// banner aja" (2026-10-03): the ten MP4 layouts were removed on the operator's
+// call and the PREMIUM still set (gainersPremium.js, one design per count,
+// Top 1 → Top 10) took their place on the panel's front screen. A stored
+// `template` / `pool` that still names a motion id is dropped by
+// gainersConfig's validation (an unknown id), so an install that was set to a
+// video layout falls back to 🎲 random over the premium set — never to a
+// render error on the daily post.
 const gb = require("./gainersBanner");
-const gm = require("./gainersMotion");
 const log = require("./helpers/logger");
 
-const FORMATS = ["animated", "image"];
-const MOTION_IDS = gm.TEMPLATE_IDS;
-const IMAGE_IDS = gb.TEMPLATE_IDS;
-const TEMPLATE_IDS = [...MOTION_IDS, ...IMAGE_IDS];
+const PREMIUM_IDS = gb.PREMIUM_IDS;
+const CLASSIC_IDS = gb.CLASSIC_IDS;
+const TEMPLATE_IDS = gb.TEMPLATE_IDS;
 
-const kindOf = (id) => (gm.isTemplate(id) ? "animated" : gb.isTemplate(id) ? "image" : null);
-const isTemplate = (id) => kindOf(id) !== null;
-const countOf = (id) => (gm.isTemplate(id) ? gm.countOf(id) : gb.countOf(id));
-const labelOf = (id) => (gm.isTemplate(id) ? gm.labelOf(id) : gb.labelOf(id));
-const idsOf = (format) => (format === "image" ? IMAGE_IDS : MOTION_IDS);
+const isTemplate = (id) => gb.isTemplate(id);
+const countOf = (id) => gb.countOf(id);
+const labelOf = (id) => gb.labelOf(id);
+const isPremium = (id) => PREMIUM_IDS.includes(id);
 
 /**
  * Resolve a template choice to a concrete id. A concrete id is honoured as
- * given (the admin picked it). "random" draws from the rotation `pool` — only
- * the part of it in the chosen FORMAT, so a video setting never rolls a still —
- * and from every layout of that format when the pool has none.
+ * given (the admin picked it). "random" draws from the rotation `pool`, and
+ * from the PREMIUM set when the pool is empty — the set the operator asked
+ * for is what an untouched install publishes.
  */
-function pickTemplate(id, { pool = [], format = "animated", rng = Math.random } = {}) {
+function pickTemplate(id, { pool = [], rng = Math.random } = {}) {
   if (isTemplate(id)) return id;
-  const want = FORMATS.includes(format) ? format : "animated";
-  const from = (Array.isArray(pool) ? pool : []).filter((t) => kindOf(t) === want);
-  const list = from.length ? from : idsOf(want);
+  const from = (Array.isArray(pool) ? pool : []).filter(isTemplate);
+  const list = from.length ? from : PREMIUM_IDS;
   return list[Math.floor(rng() * list.length) % list.length];
 }
 
 /**
  * Render a board. Never throws.
  *
- * @returns {Promise<null | {id, kind, media: Buffer, mediaType: "animation"|"photo", ext: "mp4"|"png", still: Buffer}>}
- *   `still` is always a PNG — the tweet and the fallback use it.
- *
- * A motion render that fails (no ffmpeg on the box, an encode error) degrades
- * to the SAME layout's final frame as a photo, and says so in the log: a
- * gainers post a day late is worse than one without motion.
+ * @returns {Promise<null | {id, kind:"image", media: Buffer, mediaType: "photo", ext: "png", still: Buffer}>}
+ *   `still` is the same PNG — the tweet reads it under that name.
  */
 async function render({ template, coins, dateText = "", showPct = true, bgPath = null }) {
   try {
-    if (gm.isTemplate(template)) {
-      const opts = { template, coins, dateText, showPct, bgPath };
-      const [media, still] = await Promise.all([gm.render(opts), gm.renderStill(opts)]);
-      if (media && still) return { id: template, kind: "animated", media, mediaType: "animation", ext: "mp4", still };
-      if (still) {
-        log.warn(`[gainers] motion ${template} did not encode — sending its still frame instead`);
-        return { id: template, kind: "image", media: still, mediaType: "photo", ext: "png", still };
-      }
-      return null;
-    }
     const png = await gb.render({ template, coins, dateText, showPct, bgPath });
     return png ? { id: template, kind: "image", media: png, mediaType: "photo", ext: "png", still: png } : null;
   } catch (e) {
@@ -67,12 +56,11 @@ async function render({ template, coins, dateText = "", showPct = true, bgPath =
 }
 
 module.exports = {
-  FORMATS,
-  MOTION_IDS,
-  IMAGE_IDS,
+  PREMIUM_IDS,
+  CLASSIC_IDS,
   TEMPLATE_IDS,
-  kindOf,
   isTemplate,
+  isPremium,
   countOf,
   labelOf,
   pickTemplate,

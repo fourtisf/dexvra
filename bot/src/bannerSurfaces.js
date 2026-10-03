@@ -94,17 +94,16 @@ const SURFACES = [
     }),
   },
   {
-    // The motion board draws every frame through the same code as its still;
-    // the still is the probe, because encoding a clip measures nothing more
-    // about which glyphs a frame can draw.
-    key: 'gainers-motion',
-    what: 'Top Gainers motion board (MP4)',
-    module: 'gainersMotion.js',
-    run: (coin) => require('./gainersMotion').renderStill({
-      template: 'v5',
+    // The premium set draws through gainersBanner's primitives but lays its
+    // own text out (gainersPremium.js), so it is probed on its own — a set of
+    // layouts nobody probes is how a renderer drifts outside the font chain.
+    key: 'gainers-premium',
+    what: 'Top Gainers premium board',
+    module: 'gainersPremium.js',
+    run: (coin) => require('./gainersBanner').render({
+      template: 'p1_crest',
       coins: [{ ...coin, symbol: coin.symbol, name: coin.name, pct: 42 }],
       dateText: '',
-      scale: 0.5,
     }),
   },
 ];

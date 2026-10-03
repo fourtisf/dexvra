@@ -16,9 +16,10 @@ const { Markup } = require("telegraf");
 const { promises: fs } = require("node:fs");
 const gainers = require("../gainers");
 const gb = require("../gainersBanner");
-const gm = require("../gainersMotion");
-// One owner of "which layout, how many coins, what it renders to" — the still
-// banners and the motion ones answer through it, here and in the poster alike.
+// One owner of "which layout, how many coins, what it renders to" — the panel
+// and the poster both answer through it. (The motion boards that used to sit
+// behind it were removed: "hapus top gainer yang vidio ganti ke foto banner
+// aja", 2026-10-03 — the PREMIUM still set took their place on this screen.)
 const gr = require("../gainersRender");
 const cfgStore = require("../services/gainersConfig");
 const store = require("../gainerspost/store");
@@ -39,7 +40,7 @@ const mark = (b) => (b ? ON : OFF);
 // ── panels ──────────────────────────────────────────────────────────────────
 function homeText() {
   const c = cfgStore.get();
-  const tplName = c.template === "random" ? `🎲 random${c.pool.length ? ` (${c.pool.length} in rotation)` : " (all)"}` : gr.labelOf(c.template);
+  const tplName = c.template === "random" ? `🎲 random${c.pool.length ? ` (${c.pool.length} in rotation)` : " (premium set)"}` : gr.labelOf(c.template);
   const filters = [
     `≥ +${c.minGainPct}%`,
     c.minMcapUsd ? `MC ≥ ${fmtCap(c.minMcapUsd)}` : null,
@@ -56,17 +57,14 @@ function homeText() {
     "",
     `📢 <b>Channel:</b> <code>${escapeHtml(cfgStore.targetChannel(c))}</code>`,
     `🖼 <b>Layout:</b> ${escapeHtml(tplName)}`,
-    `🎬 <b>Format:</b> ${fmtName(c.format)}`,
     `🎯 <b>Filters:</b> ${escapeHtml(filters)}`,
     `⏰ <b>Daily post:</b> ${c.daily ? `ON at <b>${c.dailyTime}</b> ${escapeHtml(c.tz)}` : "OFF"}`,
   ];
   if (hasBg()) lines.push("🎨 <b>Background:</b> custom artwork set");
   if (!gb.available()) lines.push("\n⚠️ <b>canvas is unavailable on this host</b> — banners cannot be rendered here.");
-  lines.push("", "Pick a layout to preview it with live data — 🎬 are videos (MP4, played as a looping GIF), one style per board size:");
+  lines.push("", "Pick a layout to preview it with live data — ✨ the premium set, one design per board size (Top 1 → Top 10):");
   return lines.join("\n");
 }
-
-const fmtName = (f) => (f === "image" ? "🖼 Image (PNG)" : "🎬 Video (MP4 · plays as a GIF)");
 
 /** Two layout buttons per row, labelled with the board size they draw. */
 function layoutRows(ids) {
@@ -78,10 +76,9 @@ function layoutRows(ids) {
 }
 
 function homeKb() {
-  const c = cfgStore.get();
-  const rows = layoutRows(gm.TEMPLATE_IDS);
-  rows.push([Markup.button.callback("🖼 Still image layouts", "gn_img")]);
-  rows.push([Markup.button.callback(`🎲 Random ${c.format === "image" ? "image" : "video"}`, "gn_t:random")]);
+  const rows = layoutRows(gr.PREMIUM_IDS);
+  rows.push([Markup.button.callback("🖼 Classic layouts", "gn_img")]);
+  rows.push([Markup.button.callback("🎲 Random", "gn_t:random")]);
   rows.push([Markup.button.callback("📡 Check live data", "gn_data"), Markup.button.callback("⚙️ Settings", "gn_set")]);
   rows.push([Markup.button.callback("⬅ Back to menu", "home")]);
   return Markup.inlineKeyboard(rows);
@@ -93,9 +90,8 @@ function setText() {
     "⚙️ <b>Top Gainers — settings</b>",
     "",
     `📢 <b>Channel:</b> <code>${escapeHtml(cfgStore.targetChannel(c))}</code>${c.channel ? "" : " <i>(default: trending)</i>"}`,
-    `🎬 <b>Format:</b> ${fmtName(c.format)} <i>— what 🎲 random and the daily post roll</i>`,
     `🖼 <b>Default layout:</b> ${escapeHtml(c.template === "random" ? "random" : gr.labelOf(c.template))}`,
-    `🎲 <b>Random rotation:</b> ${c.pool.length ? escapeHtml(c.pool.map((t) => gr.labelOf(t)).join(", ")) : "every layout of that format"}`,
+    `🎲 <b>Random rotation:</b> ${c.pool.length ? escapeHtml(c.pool.map((t) => gr.labelOf(t)).join(", ")) : "the premium set"}`,
     "",
     `⏰ <b>Daily auto-post:</b> ${c.daily ? "ON" : "OFF"} — <b>${c.dailyTime}</b> (${escapeHtml(c.tz)})`,
     `📌 <b>Pin the post:</b> ${c.pin ? "yes" : "no"}`,
@@ -116,7 +112,6 @@ function setKb() {
   const c = cfgStore.get();
   return Markup.inlineKeyboard([
     [Markup.button.callback("📢 Channel", "gn_ch"), Markup.button.callback("🖼 Default layout", "gn_tpl")],
-    [Markup.button.callback(c.format === "image" ? "🎬 Format: Image → switch to Video" : "🖼 Format: Video → switch to Image", "gn_fmt")],
     [Markup.button.callback(`⏰ Daily ${c.daily ? "ON → turn OFF" : "OFF → turn ON"}`, "gn_daily")],
     [Markup.button.callback("🕘 Post time", "gn_time"), Markup.button.callback("🌍 Timezone", "gn_tz")],
     [Markup.button.callback("🎯 Min gain %", "gn_min"), Markup.button.callback("🏦 Min market cap", "gn_mc")],
@@ -230,7 +225,7 @@ const SAMPLE_TTL_MS = 3 * 60 * 1000;
  */
 async function sendPreview(ctx, template, { fresh = true, note = "" } = {}) {
   const cfg = cfgStore.get();
-  const id = gr.pickTemplate(template, { pool: cfg.pool, format: cfg.format });
+  const id = gr.pickTemplate(template, { pool: cfg.pool });
   const need = gr.countOf(id);
   const sess = ctx.session.gn;
   let coins;
@@ -292,13 +287,7 @@ async function sendPreview(ctx, template, { fresh = true, note = "" } = {}) {
   // emoji ride as entities), and the controls card below it is admin-only chrome.
   // Merging them would make the admin approve a caption they never saw clean.
   const capExtra = { caption: shown.text, ...(shown.entities && shown.entities.length ? { caption_entities: shown.entities } : {}) };
-  // The preview is sent the way the channel will get it: a motion banner as an
-  // ANIMATION (a still of it would approve something nobody has seen move).
-  if (out.mediaType === "animation") {
-    await ctx.replyWithAnimation({ source: out.media, filename: "dexvra-top-gainers.mp4" }, capExtra);
-  } else {
-    await ctx.replyWithPhoto({ source: out.media }, capExtra);
-  }
+  await ctx.replyWithPhoto({ source: out.media }, capExtra);
   const short = coins.length < need ? `\n⚠️ Only <b>${coins.length}</b> live gainer(s) passed the filters — the layout adapted to fit.` : "";
   // THE POOL, ON THE SCREEN. topGainers has always measured and returned it, and
   // nothing ever printed it — so when the board's live rows collapsed from many
@@ -326,7 +315,7 @@ async function sendPreview(ctx, template, { fresh = true, note = "" } = {}) {
     hOn(hx.notListed).length ? `\n🔗 <i>Not in the listing store: ${escapeHtml(hOn(hx.notListed).map((s) => `$${s}`).join(", "))} — on the site board but never listed through the bot.</i>` : "",
   ].join("");
   await ctx.reply(
-    `👀 <b>Preview — ${escapeHtml(gr.labelOf(id))}</b>${out.mediaType === "animation" ? " · 🎬 video" : gm.isTemplate(id) ? " · ⚠️ the video did not encode, this is its still frame" : ""}\n` +
+    `👀 <b>Preview — ${escapeHtml(gr.labelOf(id))}</b>${gr.isPremium(id) ? " · ✨ premium" : ""}\n` +
       `📡 Data: <b>${escapeHtml(source)}</b> · ${escapeHtml(coins.map((c) => `$${c.symbol}`).join(", "))}` +
       (cfg.showPct ? "" : "\n📈 <b>Percentage gain: hidden</b> — the ranking is published without the figures. Tap 📈 below to show them.") +
       poolLine +
@@ -364,11 +353,8 @@ async function waitForJob(id, { tries = 14, gapMs = 1500 } = {}) {
   return store.get(id);
 }
 
-/** A video takes a few seconds to encode; say so, or the tap reads as dead. */
-const buildingNote = (arg) =>
-  gm.isTemplate(arg) || (arg === "random" && cfgStore.get().format !== "image")
-    ? "⏳ Rendering the video preview… (a few seconds)"
-    : "⏳ Building the preview…";
+/** Said before the render, or the tap reads as dead while it draws. */
+const buildingNote = () => "⏳ Building the preview…";
 
 // ── registration ────────────────────────────────────────────────────────────
 /**
@@ -404,14 +390,13 @@ function register(bot, deps) {
   bot.action("gn_bg", cb((ctx) => edit(ctx, bgText(), bgKb())));
   bot.action("gn_img", cb((ctx) => edit(
     ctx,
-    "🖼 <b>Still image layouts</b>\n\nThe original PNG banners. Pick one to preview it with live data.",
-    Markup.inlineKeyboard([...layoutRows(gb.TEMPLATE_IDS), [Markup.button.callback("⬅ Back", "gn")]]),
+    "🖼 <b>Classic layouts</b>\n\nThe original PNG banners. Pick one to preview it with live data.",
+    Markup.inlineKeyboard([...layoutRows(gr.CLASSIC_IDS), [Markup.button.callback("⬅ Back", "gn")]]),
   )));
-  bot.action("gn_fmt", cb(async (ctx) => {
-    const next = await cfgStore.set({ format: cfgStore.get().format === "image" ? "animated" : "image" });
-    log.info(`[adminbot] gainers format → ${next.format} by @${ctx.from.username || ctx.from.id}`);
-    await edit(ctx, setText(), setKb());
-  }));
+  // The old 🎬/🖼 Format switch. Its button can still be sitting on a settings
+  // card in an admin's chat; with no handler the tap would spin for ever, which
+  // reads as a broken panel. It opens settings, where there is nothing to pick.
+  bot.action("gn_fmt", cb((ctx) => edit(ctx, setText(), setKb())));
 
   // ── preview / publish ──
   // Picking a layout RE-SLICES the sample already taken. Re-sampling here is

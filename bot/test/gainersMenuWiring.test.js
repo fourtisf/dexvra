@@ -384,9 +384,10 @@ test("📈 a tap on a card whose sample is gone still flips the switch and takes
     await h.tap("gn_pvpct");
     assert.strictEqual(cfg.get().showPct, false, "the tap did not reach the store");
     assert.strictEqual(samples, 1, "nothing was sampled — the tap rendered from a sample that does not exist");
-    // "random" rolls the configured FORMAT, which ships as video — the preview
-    // is a sendAnimation then, and a sendPhoto for a still layout.
-    const photos = h.calls.filter((c) => c.method === "sendPhoto" || c.method === "sendAnimation");
+    // Every layout is a still now — the preview is always a sendPhoto, and a
+    // sendAnimation would mean the removed motion path is back.
+    assert.ok(!h.calls.some((c) => c.method === "sendAnimation"), "a preview went out as a video");
+    const photos = h.calls.filter((c) => c.method === "sendPhoto");
     assert.strictEqual(photos.length, 1, "no preview was rendered");
     assert.doesNotMatch(String(photos[0].payload.caption || ""), /%/);
   } finally {
