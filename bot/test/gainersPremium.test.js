@@ -140,3 +140,30 @@ test("the panel's front screen is the premium set, with the classic stills one t
   assert.ok(!set.includes("gn_fmt"), "the settings card still offers the format switch");
   assert.ok(!/Format:/.test(menu._panels.setText()));
 });
+
+test("the premium set draws on its OWN page — black and gold, not the classic chrome", async () => {
+  if (!gb.available()) return;
+  // "buat lebih premium lagi bannernya": the first cut shared the classic
+  // header (mint title, mint keyline) and read as the classic board with new
+  // cards in it. Measured by what the renderer actually DRAWS: the premium
+  // lockup says "Premium board", the classic one says "Discovery".
+  const CV = kit.canvasLib();
+  const proto = Object.getPrototypeOf(CV.createCanvas(4, 4).getContext("2d"));
+  const real = proto.fillText;
+  const texts = [];
+  proto.fillText = function (t, ...rest) { texts.push(String(t)); return real.call(this, t, ...rest); };
+  const run = async (id) => {
+    texts.length = 0;
+    await gb.render({ template: id, coins: many(gb.countOf(id)), dateText: "" });
+    return texts.filter((t) => [...t].length === 1).join("");
+  };
+  try {
+    const premium = await run("p5_stairs");
+    const classic = await run("list5");
+    assert.ok(premium.includes("PREMIUM BOARD"), "the premium page did not draw its own lockup");
+    assert.ok(!premium.includes("DISCOVERY"), "the premium page drew the classic lockup");
+    assert.ok(classic.includes("DISCOVERY") && !classic.includes("PREMIUM BOARD"), "the classic page changed — the control is vacuous");
+  } finally {
+    proto.fillText = real;
+  }
+});

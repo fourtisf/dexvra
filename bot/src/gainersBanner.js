@@ -178,6 +178,8 @@ const TEMPLATES = {
 const CLASSIC_IDS = Object.keys(TEMPLATES);
 let TEMPLATE_IDS = CLASSIC_IDS;
 let PREMIUM_IDS = [];
+// The premium set's own page (black and gold) — see gainersPremium.js.
+let PREMIUM_CHROME = null;
 const DEFAULT_TEMPLATE = "list5";
 
 const specOf = (id) => TEMPLATES[id] || TEMPLATES[DEFAULT_TEMPLATE];
@@ -2220,13 +2222,15 @@ const LAYOUTS = {
   const premium = require("./gainersPremium")({
     SITE, F, hexA, radial, roundRect, fitText, medalOf, metalGrad, sparkle,
     surface, avatar, metalRing, medal, bigPct, pctChip, chip, microLabel,
-    sparkline, fmtCap, fmtPrice, REF_W, PAD, BAND_TOP, BAND_H,
+    sparkline, fmtCap, fmtPrice, REF_W, REF_H, PAD, BAND_TOP, BAND_H,
+    drawBrandMark, trackedCenter, grain, drawCover,
   });
   Object.assign(TEMPLATES, premium.TEMPLATES);
   Object.assign(LAYOUTS, premium.LAYOUTS);
   Object.assign(MOODS, premium.MOODS);
   Object.assign(PATTERNS, premium.PATTERNS);
   PREMIUM_IDS = premium.IDS;
+  PREMIUM_CHROME = premium.chrome;
   TEMPLATE_IDS = [...PREMIUM_IDS, ...CLASSIC_IDS];
 }
 
@@ -2302,10 +2306,11 @@ async function render({ template = DEFAULT_TEMPLATE, coins = [], dateText = "", 
     await decodeLogos(cv, list);
     const bg = await loadBackground(cv, bgPath);
 
-    backdrop(cv, ctx, S, spec, bg);
-    header(ctx, S, spec, { n: list.length, dateText });
+    const chrome = spec.premium && PREMIUM_CHROME ? PREMIUM_CHROME : { backdrop, header, footer };
+    chrome.backdrop(cv, ctx, S, spec, bg);
+    chrome.header(ctx, S, spec, { n: list.length, dateText });
     (LAYOUTS[spec.layout] || layoutList)(ctx, S, spec, list);
-    footer(ctx, S);
+    chrome.footer(ctx, S);
 
     return toSendBuffer(canvas);
   } catch (e) {

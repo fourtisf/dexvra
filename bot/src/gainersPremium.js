@@ -32,8 +32,9 @@
 module.exports = function premiumKit(k) {
   const {
     SITE, F, hexA, radial, roundRect, fitText, medalOf, metalGrad, sparkle,
-    surface, avatar, metalRing, medal, bigPct, pctChip, chip, microLabel,
-    sparkline, fmtCap, fmtPrice, REF_W, PAD, BAND_TOP, BAND_H,
+    surface, avatar, metalRing, medal, bigPct, chip, microLabel,
+    sparkline, fmtCap, fmtPrice, REF_W, REF_H, PAD, BAND_TOP, BAND_H,
+    drawBrandMark, trackedCenter, grain, drawCover,
   } = k;
 
   const X0 = PAD;
@@ -42,74 +43,235 @@ module.exports = function premiumKit(k) {
   const Y0 = BAND_TOP;
   const BH = BAND_H; // 518
 
+  // ── the premium palette ──────────────────────────────────────────────────
+  // Gold, silver and bronze for the podium, PLATINUM after it — never the
+  // brand mint, which is reserved for the one thing that is green on purpose:
+  // the gain. A board where every border is mint reads as the classic set
+  // recoloured; black, gold and platinum is what reads as "premium".
+  const PLAT = "#C9D2DF";
+  const METAL = {
+    1: medalOf(1),
+    2: medalOf(2),
+    3: medalOf(3),
+    plat: { light: "#FFFFFF", mid: "#C9D2DF", dark: "#566074", glow: "#AEB8CC" },
+  };
+  const metalOf = (rank) => (rank >= 1 && rank <= 3 ? METAL[rank] : METAL.plat);
+  const toneOf = (rank) => (rank === 1 ? SITE.gold : rank === 2 ? "#D6DEE2" : rank === 3 ? "#E38A3C" : PLAT);
+
+  /** Gold FOIL — a vertical metallic ramp with a dark band through the middle,
+   *  which is what makes flat type read as stamped metal rather than yellow. */
+  function foil(ctx, y0, y1) {
+    const g = ctx.createLinearGradient(0, y0, 0, y1);
+    g.addColorStop(0, "#FFF8E0");
+    g.addColorStop(0.3, "#F7D987");
+    g.addColorStop(0.52, "#C38F2E");
+    g.addColorStop(0.58, "#B27D24");
+    g.addColorStop(0.8, "#F2D27F");
+    g.addColorStop(1, "#FFF0C0");
+    return g;
+  }
+
   // ── premium furniture ────────────────────────────────────────────────────
-  /** The premium card: a deeper two-stop fill than the classic `surface`, a
-   *  metal-gradient border in the card's TONE, and a top sheen. It is what
-   *  makes this set read as its own family next to the classic stills. */
-  function luxe(ctx, x, y, w, h, r, S, { tone = SITE.gold, glow = 0, path = null } = {}) {
+  /** The premium card: smoked glass over the field, a soft light pooled under
+   *  its top edge, a METAL border in the card's rank (gold / silver / bronze /
+   *  platinum) and a second hairline inset inside it — the double frame every
+   *  luxury plaque carries. */
+  function luxe(ctx, x, y, w, h, r, S, { tone = SITE.gold, glow = 0, path = null, rank = 0 } = {}) {
     const shape = path || (() => roundRect(ctx, x, y, w, h, r));
+    const metal = rank ? metalOf(rank) : tone === SITE.gold ? METAL[1] : METAL.plat;
     if (glow) {
       ctx.save();
       shape();
-      ctx.shadowColor = hexA(tone, 0.45 * glow);
-      ctx.shadowBlur = 54 * S;
-      ctx.fillStyle = hexA(tone, 0.06);
+      ctx.shadowColor = hexA(tone, 0.5 * glow);
+      ctx.shadowBlur = 60 * S;
+      ctx.fillStyle = hexA(tone, 0.05);
       ctx.fill();
       ctx.restore();
     }
     ctx.save();
     shape();
-    ctx.shadowColor = "rgba(0,0,0,.55)";
-    ctx.shadowBlur = 38 * S;
-    ctx.shadowOffsetY = 16 * S;
+    ctx.shadowColor = "rgba(0,0,0,.7)";
+    ctx.shadowBlur = 44 * S;
+    ctx.shadowOffsetY = 18 * S;
     const g = ctx.createLinearGradient(x, y, x, y + h);
-    g.addColorStop(0, "#151C2C");
-    g.addColorStop(1, "#0A0E17");
+    g.addColorStop(0, "rgba(24,27,37,.94)");
+    g.addColorStop(1, "rgba(8,9,13,.96)");
     ctx.fillStyle = g;
     ctx.fill();
     ctx.restore();
     ctx.save();
     shape();
     ctx.clip();
+    // light pooled under the top edge
+    ctx.save();
+    ctx.translate(x + w / 2, y);
+    ctx.scale(1, Math.min(1, (h * 0.9) / Math.max(w, 1)));
+    radial(ctx, 0, 0, w * 0.62, tone, 0.13);
+    ctx.restore();
     const wash = ctx.createLinearGradient(x, y, x + w, y + h);
-    wash.addColorStop(0, hexA(tone, 0.13));
-    wash.addColorStop(0.45, hexA(tone, 0.02));
-    wash.addColorStop(1, "rgba(0,0,0,0)");
+    wash.addColorStop(0, hexA(tone, 0.08));
+    wash.addColorStop(0.5, "rgba(255,255,255,0)");
+    wash.addColorStop(1, hexA(tone, 0.04));
     ctx.fillStyle = wash;
     ctx.fillRect(x, y, w, h);
-    const sheen = ctx.createLinearGradient(0, y, 0, y + Math.min(h, 90 * S));
-    sheen.addColorStop(0, "rgba(255,255,255,.07)");
-    sheen.addColorStop(1, "rgba(255,255,255,0)");
-    ctx.fillStyle = sheen;
-    ctx.fillRect(x, y, w, Math.min(h, 90 * S));
+    // diagonal glass sheen
+    const sh = ctx.createLinearGradient(x, y, x + w * 0.6, y + h * 0.6);
+    sh.addColorStop(0, "rgba(255,255,255,.06)");
+    sh.addColorStop(0.35, "rgba(255,255,255,.015)");
+    sh.addColorStop(0.36, "rgba(255,255,255,0)");
+    ctx.fillStyle = sh;
+    ctx.fillRect(x, y, w, h);
     ctx.restore();
+    // the metal frame
     ctx.save();
     shape();
-    const b = ctx.createLinearGradient(x, y, x + w, y + h);
-    b.addColorStop(0, hexA(tone, 0.85));
-    b.addColorStop(0.5, "rgba(255,255,255,.10)");
-    b.addColorStop(1, hexA(tone, 0.5));
-    ctx.lineWidth = Math.max(1.2, 1.6 * S);
-    ctx.strokeStyle = b;
+    ctx.lineWidth = Math.max(1.4, 2 * S);
+    ctx.strokeStyle = metalGrad(ctx, x + w / 2, y + h / 2, Math.max(w, h) / 2, metal);
+    ctx.globalAlpha = rank > 3 || (!rank && tone !== SITE.gold) ? 0.55 : 0.95;
     ctx.stroke();
     ctx.restore();
+    // the inset hairline — only where the shape is a plain rounded box
+    if (!path && w > 40 * S && h > 40 * S) {
+      const i = 7 * S;
+      ctx.save();
+      roundRect(ctx, x + i, y + i, w - 2 * i, h - 2 * i, Math.max(2, r - i));
+      ctx.lineWidth = Math.max(1, 1 * S);
+      ctx.strokeStyle = hexA(tone, 0.12);
+      ctx.stroke();
+      ctx.restore();
+    }
   }
 
-  /** The tone a rank wears: gold / silver / bronze on the podium, the set's
-   *  mint after that. */
-  const toneOf = (rank) => (rank === 1 ? SITE.gold : rank === 2 ? "#C9D4E4" : rank === 3 ? SITE.orange : SITE.mint);
+  /** A token as a minted COIN: drop shadow, a metal bezel in its rank, the
+   *  logo (or the site's jewel monogram) as the face, a glass gloss over the
+   *  top and a lit arc on the bezel. Same face the classic avatar draws — only
+   *  the setting changes. */
+  function coin(ctx, img, cx, cy, d, symbol, S, rank, { glow = true } = {}) {
+    const m = metalOf(rank);
+    const bz = Math.max(3, d * 0.075);
+    const R = d / 2 + bz;
+    if (glow) radial(ctx, cx, cy, d * 1.0, m.glow, rank <= 3 ? 0.22 : 0.1);
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, R, 0, Math.PI * 2);
+    ctx.fillStyle = "#06070A";
+    ctx.shadowColor = "rgba(0,0,0,.65)";
+    ctx.shadowBlur = Math.max(10, d * 0.22);
+    ctx.shadowOffsetY = Math.max(3, d * 0.06);
+    ctx.fill();
+    ctx.restore();
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, d / 2 + bz / 2, 0, Math.PI * 2);
+    ctx.lineWidth = bz;
+    ctx.strokeStyle = metalGrad(ctx, cx, cy, R, m);
+    ctx.stroke();
+    // lit arc on the bezel, top-left
+    ctx.beginPath();
+    ctx.arc(cx, cy, d / 2 + bz / 2, Math.PI * 1.05, Math.PI * 1.45);
+    ctx.lineWidth = bz * 0.34;
+    ctx.lineCap = "round";
+    ctx.strokeStyle = "rgba(255,255,255,.6)";
+    ctx.stroke();
+    ctx.restore();
+    avatar(ctx, img, cx, cy, d, symbol, S);
+    // glass gloss over the face
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, d / 2, 0, Math.PI * 2);
+    ctx.clip();
+    const gl = ctx.createLinearGradient(0, cy - d / 2, 0, cy + d * 0.05);
+    gl.addColorStop(0, "rgba(255,255,255,.22)");
+    gl.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = gl;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy - d * 0.24, d * 0.44, d * 0.3, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // inner shadow at the rim, so the face sits INSIDE the bezel
+    const ig = ctx.createRadialGradient(cx, cy, d * 0.36, cx, cy, d / 2);
+    ig.addColorStop(0, "rgba(0,0,0,0)");
+    ig.addColorStop(1, "rgba(0,0,0,.35)");
+    ctx.fillStyle = ig;
+    ctx.fillRect(cx - d / 2, cy - d / 2, d, d);
+    ctx.restore();
+    void metalRing;
+  }
 
-  /** `$SYMBOL`, fitted. Returns the width actually drawn. */
+  /** `$SYMBOL`, fitted, in Sora ExtraBold — heavier than the classic set's
+   *  Space Grotesk, which is half of what makes these read as headlines.
+   *  Returns the width actually drawn. */
   function sym(ctx, c, x, y, maxW, size, S, { align = "left", min = 12, color = SITE.text } = {}) {
     ctx.save();
     ctx.textBaseline = "alphabetic";
     ctx.textAlign = align;
     ctx.fillStyle = color;
-    const t = fitText(ctx, `$${c.symbol}`, maxW, { weight: 700, size, min: min * S, family: F.d7 });
-    if (size >= 30 * S) ctx.letterSpacing = `${(-0.015 * size).toFixed(1)}px`;
+    const t = fitText(ctx, `$${c.symbol}`, maxW, { weight: 800, size, min: min * S, family: F.x });
+    if (size >= 30 * S) ctx.letterSpacing = `${(-0.02 * size).toFixed(1)}px`;
+    ctx.shadowColor = "rgba(0,0,0,.55)";
+    ctx.shadowBlur = 10 * S;
+    ctx.shadowOffsetY = 2 * S;
     ctx.fillText(t, x, y);
     const w = ctx.measureText(t).width;
     ctx.letterSpacing = "0px";
+    ctx.restore();
+    return w;
+  }
+
+  /** The premium gain pill: smoked glass, an emerald hairline and an emerald
+   *  figure — the classic board's solid mint pill shouts on a black-and-gold
+   *  field. Draws NOTHING for an empty label (the showPct switch), exactly as
+   *  pctChip does, and the figure is ONE fillText without its sign, so
+   *  gainersPct.test sees it the same way. */
+  function gainPill(ctx, x, y, text, size, S, { align = "c" } = {}) {
+    if (!text) return 0;
+    const up = !String(text).startsWith("-");
+    const t = String(text).replace(/^[+-]/, "");
+    const col = up ? "#4DFFA6" : SITE.red;
+    ctx.save();
+    ctx.font = `800 ${size}px ${F.m8}`;
+    const tw = ctx.measureText(t).width;
+    const tri = size * 0.5;
+    const gap = size * 0.34;
+    const padX = size * 0.72;
+    const padY = size * 0.52;
+    const w = padX * 2 + tri + gap + tw;
+    const h = size + padY * 2;
+    const left = align === "l" ? x : align === "r" ? x - w : x - w / 2;
+    const top = y - h / 2;
+    roundRect(ctx, left, top, w, h, h / 2);
+    ctx.shadowColor = hexA(col, 0.28);
+    ctx.shadowBlur = 18 * S;
+    const bg = ctx.createLinearGradient(0, top, 0, top + h);
+    bg.addColorStop(0, hexA(col, 0.2));
+    bg.addColorStop(1, hexA(col, 0.07));
+    ctx.fillStyle = "rgba(6,10,9,.85)";
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = bg;
+    ctx.fill();
+    ctx.lineWidth = Math.max(1, 1.3 * S);
+    ctx.strokeStyle = hexA(col, 0.65);
+    ctx.stroke();
+    const tx = left + padX;
+    const ty = y + size * 0.04;
+    ctx.fillStyle = col;
+    ctx.beginPath();
+    if (up) {
+      ctx.moveTo(tx + tri / 2, ty - tri * 0.62);
+      ctx.lineTo(tx + tri, ty + tri * 0.38);
+      ctx.lineTo(tx, ty + tri * 0.38);
+    } else {
+      ctx.moveTo(tx + tri / 2, ty + tri * 0.62);
+      ctx.lineTo(tx + tri, ty - tri * 0.38);
+      ctx.lineTo(tx, ty - tri * 0.38);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.shadowColor = hexA(col, 0.5);
+    ctx.shadowBlur = 10 * S;
+    ctx.fillText(t, tx + tri + gap, ty);
     ctx.restore();
     return w;
   }
@@ -202,8 +364,7 @@ module.exports = function premiumKit(k) {
     ctx.restore();
     const d = 200 * S;
     radial(ctx, cx, cy, d * 0.95, SITE.gold, 0.2);
-    avatar(ctx, c.img, cx, cy, d, c.symbol, S);
-    metalRing(ctx, cx, cy, d, 1, S);
+    coin(ctx, c.img, cx, cy, d, c.symbol, S, 1);
     sparkle(ctx, cx, cy - R, 13 * S, "#FFF1C2");
     sparkle(ctx, cx + R, cy, 8 * S, "#FFF1C2");
     sparkle(ctx, cx - R, cy, 8 * S, "#FFF1C2");
@@ -306,8 +467,7 @@ module.exports = function premiumKit(k) {
       const acx = hx + 64 * S + d / 2;
       const acy = y + h / 2 + 34 * S;
       radial(ctx, acx, acy, d, tone, 0.14);
-      avatar(ctx, c.img, acx, acy, d, c.symbol, S);
-      metalRing(ctx, acx, acy, d, rank, S);
+      coin(ctx, c.img, acx, acy, d, c.symbol, S, rank);
       medal(ctx, acx + d * 0.38, acy - d * 0.38, 22 * S, rank, S);
       const tx = acx + d / 2 + 34 * S;
       const tw = hx + hw - 50 * S - tx;
@@ -357,25 +517,13 @@ module.exports = function premiumKit(k) {
       radial(ctx, 0, 0, d * 1.05, tone, 0.32);
       ctx.restore();
       radial(ctx, x, y, d * 1.15, tone, rank === 1 ? 0.22 : 0.14);
-      // medallion rim
-      ctx.save();
-      ctx.beginPath();
-      ctx.arc(x, y, d / 2 + 16 * S, 0, Math.PI * 2);
-      ctx.fillStyle = "#0B0F18";
-      ctx.shadowColor = "rgba(0,0,0,.6)";
-      ctx.shadowBlur = 30 * S;
-      ctx.fill();
-      ctx.lineWidth = Math.max(3, 7 * S);
-      ctx.strokeStyle = metalGrad(ctx, x, y, d / 2 + 16 * S, medalOf(rank));
-      ctx.stroke();
-      ctx.restore();
-      avatar(ctx, c.img, x, y, d, c.symbol, S);
+      coin(ctx, c.img, x, y, d, c.symbol, S, rank, { glow: false });
       medal(ctx, x, y - d / 2 - 14 * S, (rank === 1 ? 24 : 20) * S, rank, S);
       if (rank === 1) sparkle(ctx, x + d * 0.55, y - d * 0.42, 12 * S, "#FFF1C2");
       const ty = y + d / 2 + 64 * S;
       sym(ctx, c, x, ty, 380 * S, (rank === 1 ? 44 : 36) * S, S, { align: "center", min: 18 });
       nameLine(ctx, c, x, ty + 28 * S, 360 * S, 16 * S, S, { align: "center" });
-      pctChip(ctx, x, ty + 72 * S, c.pctLabel, (rank === 1 ? 24 : 20) * S, S);
+      gainPill(ctx, x, ty + 72 * S, c.pctLabel, (rank === 1 ? 24 : 20) * S, S);
       if (!c.pctLabel) microLabel(ctx, x, ty + 76 * S, facts(c, { price: false }), { size: 12 * S, color: SITE.muted, align: "center" });
     }
   }
@@ -402,22 +550,21 @@ module.exports = function premiumKit(k) {
       const rank = i + 1;
       const tone = toneOf(rank);
       const cx = (REF_W * S - rowW) / 2 + hw / 2 + i * (hw + gap);
-      luxe(ctx, cx - hw / 2, cy - R, hw, 2 * R, 0, S, { tone, glow: rank === 1 ? 1 : 0.3, path: path(cx) });
+      luxe(ctx, cx - hw / 2, cy - R, hw, 2 * R, 0, S, { tone, rank, glow: rank === 1 ? 1 : 0.3, path: path(cx) });
       ctx.save();
       path(cx)();
       ctx.lineWidth = Math.max(2, 3 * S);
-      ctx.strokeStyle = rank <= 3 ? metalGrad(ctx, cx, cy, R, medalOf(rank)) : hexA(SITE.mint, 0.5);
+      ctx.strokeStyle = metalGrad(ctx, cx, cy, R, metalOf(rank));
       ctx.stroke();
       ctx.restore();
       const d = 112 * S;
       const ay = cy - 34 * S;
       radial(ctx, cx, ay, d, tone, 0.16);
-      avatar(ctx, c.img, cx, ay, d, c.symbol, S);
-      metalRing(ctx, cx, ay, d, rank, S);
+      coin(ctx, c.img, cx, ay, d, c.symbol, S, rank);
       sym(ctx, c, cx, cy + 66 * S, hw - 70 * S, 30 * S, S, { align: "center", min: 15 });
       nameLine(ctx, c, cx, cy + 92 * S, hw - 96 * S, 14 * S, S, { align: "center" });
       rankTag(ctx, cx, cy - R + 2 * S, rank, S, { size: 13, align: "center" });
-      pctChip(ctx, cx, cy + R + 50 * S, c.pctLabel, 22 * S, S);
+      gainPill(ctx, cx, cy + R + 50 * S, c.pctLabel, 22 * S, S);
       microLabel(ctx, cx, cy + R + (c.pctLabel ? 104 : 56) * S, facts(c), { size: 11.5 * S, track: 0.12, color: SITE.muted, align: "center" });
     });
   }
@@ -438,7 +585,7 @@ module.exports = function premiumKit(k) {
       const w = X1 * S - x;
       const y = y0 + i * (bh + gap);
       const cy = y + bh / 2;
-      luxe(ctx, x, y, w, bh, 18 * S, S, { tone, glow: rank === 1 ? 1 : 0 });
+      luxe(ctx, x, y, w, bh, 18 * S, S, { tone, rank, glow: rank === 1 ? 1 : 0 });
       // the rank block
       const bw = bh;
       ctx.save();
@@ -458,14 +605,13 @@ module.exports = function premiumKit(k) {
       ctx.textBaseline = "middle";
       const ng = ctx.createLinearGradient(0, y, 0, y + bh);
       ng.addColorStop(0, "#FFFFFF");
-      ng.addColorStop(1, rank <= 3 ? medalOf(rank).light : SITE.mint);
+      ng.addColorStop(1, metalOf(rank).mid);
       ctx.fillStyle = ng;
       ctx.fillText(String(rank).padStart(2, "0"), x + bw / 2, cy + 2 * S);
       ctx.restore();
       const d = bh * 0.66;
       const ax = x + bw + 26 * S + d / 2;
-      avatar(ctx, c.img, ax, cy, d, c.symbol, S);
-      metalRing(ctx, ax, cy, d, rank, S);
+      coin(ctx, c.img, ax, cy, d, c.symbol, S, rank);
       const tx = ax + d / 2 + 20 * S;
       const right = X1 * S - 26 * S;
       // the % sits right; facts take the middle when there is room for them
@@ -476,7 +622,7 @@ module.exports = function premiumKit(k) {
       nameLine(ctx, c, tx, cy + 22 * S, nameW, 14 * S, S);
       const f = facts(c);
       if (f) microLabel(ctx, fx, cy + 5 * S, f, { size: 12.5 * S, track: 0.12, color: SITE.muted, align: "right" });
-      pctChip(ctx, right, cy, c.pctLabel, (rank === 1 ? 24 : 21) * S, S, { align: "r" });
+      gainPill(ctx, right, cy, c.pctLabel, (rank === 1 ? 24 : 21) * S, S, { align: "r" });
     });
   }
 
@@ -500,7 +646,7 @@ module.exports = function premiumKit(k) {
       const x = X0 * S + col * (cw + gx);
       const y = y0 + row * (ch + gy);
       const cy = y + ch / 2;
-      luxe(ctx, x, y, cw, ch, ch / 2, S, { tone, glow: rank === 1 ? 0.9 : 0 });
+      luxe(ctx, x, y, cw, ch, ch / 2, S, { tone, rank, glow: rank === 1 ? 0.9 : 0 });
       ctx.save();
       roundRect(ctx, x, y, cw, ch, ch / 2);
       ctx.clip();
@@ -513,8 +659,7 @@ module.exports = function premiumKit(k) {
       const d = ch - 30 * S;
       const ax = x + 15 * S + d / 2;
       radial(ctx, ax, cy, d * 0.85, tone, 0.14);
-      avatar(ctx, c.img, ax, cy, d, c.symbol, S);
-      metalRing(ctx, ax, cy, d, rank, S);
+      coin(ctx, c.img, ax, cy, d, c.symbol, S, rank);
       const tx = ax + d / 2 + 26 * S;
       // the % stops short of the ghost numeral so the two never overprint
       const right = x + cw - ch * 0.72;
@@ -590,8 +735,7 @@ module.exports = function premiumKit(k) {
     ctx.restore();
     const d = 124 * S;
     const ay = cy - 82 * S;
-    avatar(ctx, c.img, cx, ay, d, c.symbol, S);
-    metalRing(ctx, cx, ay, d, 1, S);
+    coin(ctx, c.img, cx, ay, d, c.symbol, S, 1);
     medal(ctx, cx + d * 0.42, ay - d * 0.36, 20 * S, 1, S);
     sym(ctx, c, cx, cy + 32 * S, R * 1.5, 40 * S, S, { align: "center", min: 18 });
     nameLine(ctx, c, cx, cy + 58 * S, R * 1.4, 15 * S, S, { align: "center" });
@@ -602,18 +746,17 @@ module.exports = function premiumKit(k) {
       const b = satBox(k);
       const rank = k + 2;
       const tone = toneOf(rank);
-      luxe(ctx, b.x, b.y, sw, sh, 20 * S, S, { tone });
+      luxe(ctx, b.x, b.y, sw, sh, 20 * S, S, { tone, rank });
       const scy = b.y + sh / 2;
       const dd = Math.min(70 * S, sh - 40 * S);
       const ax = b.x + 30 * S + dd / 2;
-      avatar(ctx, s.img, ax, scy, dd, s.symbol, S);
-      metalRing(ctx, ax, scy, dd, rank, S);
+      coin(ctx, s.img, ax, scy, dd, s.symbol, S, rank);
       const tx = ax + dd / 2 + 18 * S;
       const tw = sw - (tx - b.x) - 26 * S;
       rankTag(ctx, tx, scy - 30 * S, rank, S, { size: 10.5 });
       sym(ctx, s, tx, scy + 8 * S, tw - (s.pctLabel ? 120 * S : 0), 24 * S, S, { min: 12 });
       nameLine(ctx, s, tx, scy + 32 * S, tw, 12.5 * S, S);
-      pctChip(ctx, b.x + sw - 22 * S, scy - 28 * S, s.pctLabel, 16 * S, S, { align: "r" });
+      gainPill(ctx, b.x + sw - 22 * S, scy - 28 * S, s.pctLabel, 16 * S, S, { align: "r" });
     });
   }
 
@@ -634,12 +777,11 @@ module.exports = function premiumKit(k) {
       const tone = toneOf(rank);
       const x = X0 * S + i * (cw + gap);
       const mx = x + cw / 2;
-      luxe(ctx, x, y, cw, h, 20 * S, S, { tone, glow: rank === 1 ? 0.8 : 0 });
+      luxe(ctx, x, y, cw, h, 20 * S, S, { tone, rank, glow: rank === 1 ? 0.8 : 0 });
       rankTag(ctx, mx, y + 34 * S, rank, S, { size: 11.5, align: "center" });
       const d = Math.min(76 * S, cw - 50 * S);
       const ay = y + 70 * S + d / 2;
-      avatar(ctx, c.img, mx, ay, d, c.symbol, S);
-      metalRing(ctx, mx, ay, d, rank, S);
+      coin(ctx, c.img, mx, ay, d, c.symbol, S, rank);
       sym(ctx, c, mx, ay + d / 2 + 34 * S, cw - 22 * S, 21 * S, S, { align: "center", min: 11 });
       nameLine(ctx, c, mx, ay + d / 2 + 54 * S, cw - 24 * S, 11.5 * S, S, { align: "center", min: 8.5 });
       // the meter
@@ -705,8 +847,7 @@ module.exports = function premiumKit(k) {
     const d = 150 * S;
     const ay = y + 92 * S + d / 2;
     radial(ctx, mx, ay, d * 1.1, SITE.gold, 0.18);
-    avatar(ctx, c.img, mx, ay, d, c.symbol, S);
-    metalRing(ctx, mx, ay, d, 1, S);
+    coin(ctx, c.img, mx, ay, d, c.symbol, S, 1);
     medal(ctx, mx + d * 0.4, ay + d * 0.36, 20 * S, 1, S);
     sym(ctx, c, mx, ay + d / 2 + 58 * S, lw - 60 * S, 46 * S, S, { align: "center", min: 20 });
     nameLine(ctx, c, mx, ay + d / 2 + 86 * S, lw - 70 * S, 16 * S, S, { align: "center" });
@@ -727,15 +868,14 @@ module.exports = function premiumKit(k) {
       const tx = ix + (k % cols) * (tw + gx);
       const ty = y + Math.floor(k / cols) * (th + gx);
       const tcx = tx + tw / 2;
-      luxe(ctx, tx, ty, tw, th, 18 * S, S, { tone });
+      luxe(ctx, tx, ty, tw, th, 18 * S, S, { tone, rank });
       rankTag(ctx, tx + 18 * S, ty + 30 * S, rank, S, { size: 11 });
       const dd = Math.min(72 * S, th * 0.3);
       const ay2 = ty + 50 * S + dd / 2;
-      avatar(ctx, s.img, tcx, ay2, dd, s.symbol, S);
-      metalRing(ctx, tcx, ay2, dd, rank, S);
+      coin(ctx, s.img, tcx, ay2, dd, s.symbol, S, rank);
       sym(ctx, s, tcx, ay2 + dd / 2 + 32 * S, tw - 26 * S, 22 * S, S, { align: "center", min: 11 });
       nameLine(ctx, s, tcx, ay2 + dd / 2 + 52 * S, tw - 28 * S, 11.5 * S, S, { align: "center", min: 8.5 });
-      pctChip(ctx, tcx, ty + th - 36 * S, s.pctLabel, 16 * S, S);
+      gainPill(ctx, tcx, ty + th - 36 * S, s.pctLabel, 16 * S, S);
       if (!s.pctLabel && s.mcap) microLabel(ctx, tcx, ty + th - 30 * S, `MC ${fmtCap(s.mcap)}`, { size: 11 * S, color: SITE.muted, align: "center" });
     });
   }
@@ -754,7 +894,7 @@ module.exports = function premiumKit(k) {
       const rank = i + 1;
       const tone = toneOf(rank);
       const x = X0 * S + i * (pw + gap);
-      luxe(ctx, x, y, pw, topH, 22 * S, S, { tone, glow: rank === 1 ? 1 : 0.25 });
+      luxe(ctx, x, y, pw, topH, 22 * S, S, { tone, rank, glow: rank === 1 ? 1 : 0.25 });
       // metal crown-bar along the top edge
       ctx.save();
       roundRect(ctx, x, y, pw, topH, 22 * S);
@@ -766,8 +906,7 @@ module.exports = function premiumKit(k) {
       const acx = x + 34 * S + d / 2;
       const acy = y + topH / 2 + 6 * S;
       radial(ctx, acx, acy, d, tone, 0.16);
-      avatar(ctx, c.img, acx, acy, d, c.symbol, S);
-      metalRing(ctx, acx, acy, d, rank, S);
+      coin(ctx, c.img, acx, acy, d, c.symbol, S, rank);
       medal(ctx, acx + d * 0.4, acy + d * 0.38, 19 * S, rank, S);
       const tx = acx + d / 2 + 26 * S;
       const tw = x + pw - 26 * S - tx;
@@ -785,14 +924,14 @@ module.exports = function premiumKit(k) {
       const rank = k + 4;
       const x = X0 * S + k * (fw + 14 * S);
       const mx = x + fw / 2;
-      luxe(ctx, x, by, fw, bh, 18 * S, S, { tone: SITE.mint });
+      luxe(ctx, x, by, fw, bh, 18 * S, S, { tone: toneOf(rank), rank });
       microLabel(ctx, mx, by + 30 * S, `No. ${String(rank).padStart(2, "0")}`, { size: 11 * S, track: 0.28, color: SITE.faint, align: "center" });
       const d = Math.min(62 * S, fw - 50 * S);
       const ay = by + 48 * S + d / 2;
-      avatar(ctx, c.img, mx, ay, d, c.symbol, S);
+      coin(ctx, c.img, mx, ay, d, c.symbol, S, rank);
       sym(ctx, c, mx, ay + d / 2 + 30 * S, fw - 20 * S, 19 * S, S, { align: "center", min: 10 });
       nameLine(ctx, c, mx, ay + d / 2 + 50 * S, fw - 24 * S, 11.5 * S, S, { align: "center", min: 8.5 });
-      pctChip(ctx, mx, by + bh - 52 * S, c.pctLabel, 14 * S, S);
+      gainPill(ctx, mx, by + bh - 52 * S, c.pctLabel, 14 * S, S);
       if (c.mcap) microLabel(ctx, mx, by + bh - 18 * S, `MC ${fmtCap(c.mcap)}`, { size: 10 * S, track: 0.08, color: SITE.muted, align: "center" });
     });
   }
@@ -813,11 +952,11 @@ module.exports = function premiumKit(k) {
     p1_crest: T("p1_crest", "💎 Diamond Crest", "The champion set inside a metal diamond, its move at billboard size beside it.", 1, "aurum", SITE.gold),
     p2_ticket: T("p2_ticket", "🎟 Golden Ticket", "One notched admission ticket — the winner's gold stub against the runner-up's silver.", 2, "ticket", SITE.gold),
     p3_arc: T("p3_arc", "🏅 Medal Arc", "Three medallions on one sweeping gold arc, each in its own pool of light.", 3, "arena", SITE.gold),
-    p4_hex: T("p4_hex", "⬡ Hex Vault", "Four hexagonal vault doors, the move pinned beneath each.", 4, "hive", SITE.mint),
+    p4_hex: T("p4_hex", "⬡ Hex Vault", "Four hexagonal vault doors, the move pinned beneath each.", 4, "hive", SITE.gold),
     p5_stairs: T("p5_stairs", "📶 Grand Staircase", "Five bars stepping down with rank — the ranking as a shape.", 5, "ascent", SITE.gold),
     p6_capsules: T("p6_capsules", "💊 Glass Capsules", "Six pill capsules in two columns, ghost rank numerals behind.", 6, "flow", SITE.cyan),
     p7_orbit: T("p7_orbit", "🪐 Orbit Seven", "The champion as a planet, six satellites docked around it.", 7, "cosmos", SITE.gold),
-    p8_equalizer: T("p8_equalizer", "🎚 Equalizer", "Eight meter columns — each gain as a lit bar rising from the floor.", 8, "studio", SITE.mint),
+    p8_equalizer: T("p8_equalizer", "🎚 Equalizer", "Eight meter columns — each gain as a lit bar rising from the floor.", 8, "studio", SITE.gold),
     p9_cover: T("p9_cover", "📰 Cover Story", "A magazine cover: the champion as the lead story, eight more as the index.", 9, "press", SITE.gold),
     p10_hall: T("p10_hall", "🏛 Hall of Fame", "Three podium plaques over a gallery of seven portrait frames.", 10, "gala", SITE.gold),
   };
@@ -890,7 +1029,7 @@ module.exports = function premiumKit(k) {
       ctx.save();
       const r = 46 * S;
       const hw = r * Math.sqrt(3);
-      ctx.strokeStyle = hexA(SITE.mint, 0.05);
+      ctx.strokeStyle = hexA(SITE.gold, 0.045);
       ctx.lineWidth = Math.max(1, 1.1 * S);
       for (let row = -1, y = 0; y < H + r * 2; row++, y = row * r * 1.5) {
         for (let x = (row % 2 ? hw / 2 : 0) - hw; x < W + hw; x += hw) {
@@ -954,7 +1093,7 @@ module.exports = function premiumKit(k) {
       ctx.save();
       for (let y = H * 0.32; y < H * 0.9; y += 40 * S) {
         for (let x = 40 * S; x < W - 40 * S; x += 22 * S) {
-          ctx.fillStyle = hexA(SITE.mint, 0.05);
+          ctx.fillStyle = hexA(PLAT, 0.05);
           ctx.fillRect(x, y, 10 * S, Math.max(1, 1.2 * S));
         }
       }
@@ -977,7 +1116,7 @@ module.exports = function premiumKit(k) {
       ctx.restore();
     },
     confetti(ctx, W, H, S) {
-      const toks = [SITE.gold, SITE.mint, SITE.violet, SITE.cyan];
+      const toks = [SITE.gold, "#FFF0C0", PLAT, "#E38A3C"];
       // a celebration falling from the top edge: dense at the ceiling,
       // thinning out before it reaches the plaques
       for (let i = 0; i < 90; i++) {
@@ -999,5 +1138,231 @@ module.exports = function premiumKit(k) {
     },
   };
 
-  return { TEMPLATES, LAYOUTS, MOODS, PATTERNS, IDS: Object.keys(TEMPLATES) };
+  // ── the premium CHROME: backdrop, header, footer ───────────────────────
+  // The classic set's page is the site's page (mint keyline, mint title). This
+  // set gets its own — black and gold, a stamped-foil title, a framed poster
+  // edge — because a premium board that shares the classic chrome reads as the
+  // classic board with different cards in it. The brand lockup, the LIVE · 24H
+  // chip and the dexvra.io CTA all stay: it is a Dexvra poster either way.
+  // (The kicker and the chip keep their exact wording — gainersPct.test counts
+  // the "24H" mentions every template's header makes.)
+
+  /** Deterministic bokeh — out-of-focus lights in the field. */
+  function bokeh(ctx, W, H, S) {
+    const toks = [SITE.gold, "#FFF0C0", "#E38A3C", PLAT];
+    for (let i = 0; i < 26; i++) {
+      const h = ((i + 7) * 2246822519) >>> 0;
+      const x = ((h % 1013) / 1013) * W;
+      const y = (((h >>> 10) % 911) / 911) * H;
+      const r = (10 + ((h >>> 20) % 9) * 6) * S;
+      radial(ctx, x, y, r, toks[i % toks.length], 0.05 + ((h >>> 6) % 4) * 0.02, 0);
+      ctx.beginPath();
+      ctx.arc(x, y, r * 0.55, 0, Math.PI * 2);
+      ctx.lineWidth = Math.max(1, 0.8 * S);
+      ctx.strokeStyle = hexA(toks[i % toks.length], 0.035);
+      ctx.stroke();
+    }
+  }
+
+  function backdrop(cv, ctx, S, spec, bg) {
+    const W = REF_W * S;
+    const H = REF_H * S;
+    if (bg) {
+      drawCover(ctx, bg, 0, 0, W, H);
+      const scrim = ctx.createLinearGradient(0, 0, 0, H);
+      scrim.addColorStop(0, "rgba(5,6,9,.86)");
+      scrim.addColorStop(0.5, "rgba(5,6,9,.72)");
+      scrim.addColorStop(1, "rgba(5,6,9,.9)");
+      ctx.fillStyle = scrim;
+      ctx.fillRect(0, 0, W, H);
+    } else {
+      const base = ctx.createRadialGradient(W / 2, H * 0.42, 0, W / 2, H * 0.42, W * 0.75);
+      base.addColorStop(0, "#151821");
+      base.addColorStop(0.55, "#0A0B10");
+      base.addColorStop(1, "#040406");
+      ctx.fillStyle = base;
+      ctx.fillRect(0, 0, W, H);
+      const mood = MOODS[spec.mood];
+      if (mood) {
+        for (const [bx, by, br, tok, a] of mood.blooms) radial(ctx, W * bx, H * by, W * br, SITE[tok] || SITE.gold, a * 0.85);
+        if (mood.pattern && PATTERNS[mood.pattern]) {
+          ctx.save();
+          PATTERNS[mood.pattern](ctx, W, H, S);
+          ctx.restore();
+        }
+      }
+      bokeh(ctx, W, H, S);
+    }
+    // the gold spotlight the title sits in
+    ctx.save();
+    ctx.translate(W / 2, H * 0.17);
+    ctx.scale(1, 0.42);
+    radial(ctx, 0, 0, W * 0.4, SITE.gold, 0.14);
+    ctx.restore();
+    grain(cv, ctx, W, H, S);
+    // deep vignette — the luxury falls away into black at the corners
+    const vg = ctx.createRadialGradient(W / 2, H * 0.46, H * 0.42, W / 2, H / 2, H * 1.05);
+    vg.addColorStop(0, "rgba(0,0,0,0)");
+    vg.addColorStop(1, "rgba(0,0,0,.62)");
+    ctx.fillStyle = vg;
+    ctx.fillRect(0, 0, W, H);
+    // the poster edge: a gold double frame with bright corner brackets
+    const fx = 22 * S;
+    const fr = ctx.createLinearGradient(0, 0, W, H);
+    fr.addColorStop(0, hexA(SITE.gold, 0.6));
+    fr.addColorStop(0.5, hexA(SITE.gold, 0.14));
+    fr.addColorStop(1, hexA(SITE.gold, 0.6));
+    roundRect(ctx, fx, fx, W - 2 * fx, H - 2 * fx, 6 * S);
+    ctx.lineWidth = Math.max(1, 1.4 * S);
+    ctx.strokeStyle = fr;
+    ctx.stroke();
+    roundRect(ctx, fx + 7 * S, fx + 7 * S, W - 2 * fx - 14 * S, H - 2 * fx - 14 * S, 4 * S);
+    ctx.lineWidth = Math.max(1, 0.8 * S);
+    ctx.strokeStyle = hexA(SITE.gold, 0.12);
+    ctx.stroke();
+    const L = 46 * S;
+    const bx = 14 * S;
+    ctx.save();
+    ctx.lineWidth = Math.max(2, 2.6 * S);
+    ctx.lineCap = "square";
+    ctx.strokeStyle = foil(ctx, 0, H);
+    for (const [cx0, cy0, dx, dy] of [[bx, bx, 1, 1], [W - bx, bx, -1, 1], [bx, H - bx, 1, -1], [W - bx, H - bx, -1, -1]]) {
+      ctx.beginPath();
+      ctx.moveTo(cx0, cy0 + dy * L);
+      ctx.lineTo(cx0, cy0);
+      ctx.lineTo(cx0 + dx * L, cy0);
+      ctx.stroke();
+    }
+    ctx.restore();
+    // gold keyline across the very top
+    const kl = ctx.createLinearGradient(0, 0, W, 0);
+    kl.addColorStop(0, hexA(SITE.gold, 0));
+    kl.addColorStop(0.5, hexA("#FFF0C0", 0.9));
+    kl.addColorStop(1, hexA(SITE.gold, 0));
+    ctx.fillStyle = kl;
+    ctx.fillRect(0, 0, W, Math.max(2, 3 * S));
+  }
+
+  /** A small rotated-square jewel — the ornament's centre stone. */
+  function gem(ctx, cx, cy, r, S) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - r);
+    ctx.lineTo(cx + r, cy);
+    ctx.lineTo(cx, cy + r);
+    ctx.lineTo(cx - r, cy);
+    ctx.closePath();
+    ctx.fillStyle = foil(ctx, cy - r, cy + r);
+    ctx.shadowColor = hexA(SITE.gold, 0.7);
+    ctx.shadowBlur = 12 * S;
+    ctx.fill();
+    ctx.restore();
+  }
+
+  /** The ornament rule: two gold hairlines fading outward, a centre stone. */
+  function ornament(ctx, cx, y, half, S) {
+    for (const dir of [-1, 1]) {
+      const g = ctx.createLinearGradient(cx + dir * 22 * S, 0, cx + dir * half, 0);
+      g.addColorStop(0, hexA(SITE.gold, 0.9));
+      g.addColorStop(1, hexA(SITE.gold, 0));
+      ctx.fillStyle = g;
+      const x0 = dir < 0 ? cx - half : cx + 22 * S;
+      ctx.fillRect(x0, y - 0.75 * S, half - 22 * S, Math.max(1, 1.5 * S));
+      ctx.beginPath();
+      ctx.arc(cx + dir * 15 * S, y, 2 * S, 0, Math.PI * 2);
+      ctx.fillStyle = SITE.gold;
+      ctx.fill();
+    }
+    gem(ctx, cx, y, 6.5 * S, S);
+  }
+
+  function header(ctx, S, spec, { n, dateText }) {
+    const W = REF_W * S;
+    const x = PAD * S;
+    const right = W - PAD * S;
+    drawBrandMark(ctx, x, 46 * S, 56 * S);
+    ctx.save();
+    ctx.font = `700 ${32 * S}px ${F.d7}`;
+    ctx.fillStyle = SITE.text;
+    ctx.textBaseline = "alphabetic";
+    ctx.fillText("Dexvra", x + 72 * S, 82 * S);
+    ctx.restore();
+    microLabel(ctx, x + 74 * S, 104 * S, "Premium board", { size: 10.5 * S, color: SITE.gold, track: 0.3 });
+
+    let rx = right;
+    if (dateText) rx -= chip(ctx, rx, 74 * S, dateText, 12.5 * S, S, { align: "right", color: "#D9C8A0", border: hexA(SITE.gold, 0.22), bg: "rgba(255,255,255,.02)" }) + 14 * S;
+    const liveW = chip(ctx, rx, 74 * S, "   Live · 24H", 12.5 * S, S, {
+      align: "right", color: SITE.gold, border: hexA(SITE.gold, 0.5), bg: hexA(SITE.gold, 0.08),
+    });
+    const dotX = rx - liveW + 17 * S;
+    radial(ctx, dotX, 71.5 * S, 12 * S, SITE.mint, 0.55);
+    ctx.beginPath();
+    ctx.arc(dotX, 71.5 * S, 3.4 * S, 0, Math.PI * 2);
+    ctx.fillStyle = SITE.mint;
+    ctx.fill();
+
+    const cx = W / 2;
+    microLabel(ctx, cx, 150 * S, "Ranked by 24h change · live from dexvra.io", { size: 12 * S, color: "#D9C8A0", track: 0.3, align: "center" });
+
+    // the title, stamped in gold foil
+    const title = String(spec.title(n) || "").toUpperCase();
+    let size = 78 * S;
+    const track = () => size * 0.09;
+    const runW = () => {
+      ctx.font = `800 ${size}px ${F.x}`;
+      return ctx.measureText(title).width + track() * Math.max(0, title.length - 1);
+    };
+    while (size > 40 * S && runW() > W - 2 * PAD * S - 120 * S) size -= 2 * S;
+    const baseline = 232 * S;
+    ctx.save();
+    ctx.font = `800 ${size}px ${F.x}`;
+    ctx.textBaseline = "alphabetic";
+    ctx.fillStyle = "rgba(0,0,0,.65)";
+    trackedCenter(ctx, cx + 2 * S, baseline + 4 * S, title, track());
+    ctx.fillStyle = "#6E4A12";
+    trackedCenter(ctx, cx, baseline + 2 * S, title, track());
+    ctx.fillStyle = foil(ctx, baseline - size * 0.8, baseline + size * 0.05);
+    ctx.shadowColor = hexA(SITE.gold, 0.45);
+    ctx.shadowBlur = 26 * S;
+    const tw = trackedCenter(ctx, cx, baseline, title, track());
+    ctx.restore();
+    ornament(ctx, cx, 256 * S, Math.min(tw * 0.62, W * 0.3), S);
+  }
+
+  function footer(ctx, S) {
+    const W = REF_W * S;
+    const x = PAD * S;
+    const y = 820 * S;
+    const frameBottom = (REF_H - 22) * S;
+    const rg = ctx.createLinearGradient(x, 0, W - x, 0);
+    rg.addColorStop(0, hexA(SITE.gold, 0));
+    rg.addColorStop(0.5, hexA(SITE.gold, 0.35));
+    rg.addColorStop(1, hexA(SITE.gold, 0));
+    ctx.fillStyle = rg;
+    ctx.fillRect(x, y, W - 2 * PAD * S, Math.max(1, 1 * S));
+    const midY = (y + frameBottom) / 2;
+    const bw0 = microLabel(ctx, x, midY + 4.5 * S, "Dexvra · Premium", { size: 12 * S, color: SITE.faint, track: 0.24 });
+    microLabel(ctx, x + bw0 + 24 * S, midY + 4.5 * S, "Find the next Moonshot", { size: 12 * S, color: "#D9C8A0", track: 0.24 });
+    const label = "dexvra.io";
+    ctx.save();
+    ctx.font = `800 ${16 * S}px ${F.x}`;
+    const tw = ctx.measureText(label).width;
+    const bh = 40 * S;
+    const bw = tw + 52 * S;
+    const bx = W - PAD * S - bw;
+    const by = midY - bh / 2;
+    roundRect(ctx, bx, by, bw, bh, bh / 2);
+    ctx.fillStyle = foil(ctx, by, by + bh);
+    ctx.shadowColor = hexA(SITE.gold, 0.35);
+    ctx.shadowBlur = 14 * S;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = "#1C1305";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(label, bx + bw / 2, by + bh / 2 + 1 * S);
+    ctx.restore();
+  }
+
+  return { TEMPLATES, LAYOUTS, MOODS, PATTERNS, IDS: Object.keys(TEMPLATES), chrome: { backdrop, header, footer } };
 };

@@ -3531,6 +3531,17 @@ screen offer ten NEW premium still banners, Top 1 → Top 10, all different.
 | `p9_cover` 📰 | a magazine cover — lead story + an index of eight tiles |
 | `p10_hall` 🏛 | three podium plaques over a gallery of seven portrait frames |
 
+- ⚠️ **"buat lebih premium lagi bannernya" — the first cut shared the CLASSIC
+  chrome** (mint title, mint keyline, the site's page) and read as the classic
+  board with new cards in it. The set now has its own page (`chrome` in
+  gainersPremium.js): black field with gold bokeh and a gold spotlight, a
+  stamped gold-FOIL title in Sora ExtraBold over an ornament rule, a gold
+  double frame with corner brackets, a gold CTA. Cards are smoked glass in a
+  METAL frame by rank (gold / silver / bronze / platinum — never mint), tokens
+  sit in a minted COIN (metal bezel, gloss, inner shadow), and the gain is a
+  dark glass pill with an emerald hairline rather than the solid mint pill.
+  Green is reserved for the gain. The header keeps the classic one's exact
+  `24H` wording because gainersPct.test counts those mentions.
 - **A FACTORY, not a second renderer.** It is called with gainersBanner's own
   primitives and merged into the same `TEMPLATES` / `LAYOUTS` / `MOODS` /
   `PATTERNS`, so it goes through the same `render()` — the same showPct switch,
