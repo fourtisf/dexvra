@@ -3540,7 +3540,13 @@ screen offer ten NEW premium still banners, Top 1 → Top 10, all different.
   METAL frame by rank (gold / silver / bronze / platinum — never mint), tokens
   sit in a minted COIN (metal bezel, gloss, inner shadow), and the gain is a
   dark glass pill with an emerald hairline rather than the solid mint pill.
-  Green is reserved for the gain. The header keeps the classic one's exact
+  Green is reserved for the gain. A second pass ("buatkan lebih premium
+  lagii"): a token with no logo gets a STRUCK coin face (dark metal field,
+  reeded edge, raised monogram) instead of the classic jewel disc — a real
+  logo is never covered by it, pinned by a test; tickers are stamped in gold
+  foil for #1 and platinum after; the move is a cut-emerald figure; gold
+  god-rays sit behind each champion; the podium plaques carry art-deco
+  corners. The header keeps the classic one's exact
   `24H` wording because gainersPct.test counts those mentions.
 - **A FACTORY, not a second renderer.** It is called with gainersBanner's own
   primitives and merged into the same `TEMPLATES` / `LAYOUTS` / `MOODS` /

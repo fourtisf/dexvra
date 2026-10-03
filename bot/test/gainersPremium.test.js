@@ -167,3 +167,27 @@ test("the premium set draws on its OWN page — black and gold, not the classic 
     proto.fillText = real;
   }
 });
+
+test("a token WITH a logo shows its logo — the engraved coin face is only for tokens without one", async () => {
+  if (!gb.available()) return;
+  const CV = kit.canvasLib();
+  const lc = CV.createCanvas(64, 64);
+  const lx = lc.getContext("2d");
+  lx.fillStyle = "#FF00AA";
+  lx.fillRect(0, 0, 64, 64);
+  const logo = await lc.encode("png");
+  const proto = Object.getPrototypeOf(CV.createCanvas(4, 4).getContext("2d"));
+  const real = proto.fillText;
+  const texts = [];
+  proto.fillText = function (t, ...rest) { texts.push(String(t)); return real.call(this, t, ...rest); };
+  try {
+    texts.length = 0;
+    await gb.render({ template: "p1_crest", coins: [coin(1, { symbol: "ZORB" })], dateText: "" });
+    assert.ok(texts.includes("ZO"), "no logo → the coin face carries the struck monogram");
+    texts.length = 0;
+    await gb.render({ template: "p1_crest", coins: [coin(1, { symbol: "ZORB", logo })], dateText: "" });
+    assert.ok(!texts.includes("ZO"), "a real logo was covered by the engraved monogram");
+  } finally {
+    proto.fillText = real;
+  }
+});
