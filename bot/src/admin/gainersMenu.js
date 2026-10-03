@@ -49,6 +49,8 @@ function homeText() {
     // rendered without a single figure, and an admin who forgot the toggle
     // (or inherited it) would read that as the numbers having gone missing.
     c.showPct ? null : "% hidden",
+    c.bannerMcap ? null : "MC hidden",
+    c.bannerPrice ? null : "price hidden",
   ].filter(Boolean).join(" · ");
   const lines = [
     "📊 <b>Banner Top Gainers</b>",
@@ -101,6 +103,8 @@ function setText() {
     `💧 <b>Minimum liquidity:</b> ${c.minLiqUsd ? fmtCap(c.minLiqUsd) : "off"}`,
     `🗓 <b>Date line on the banner:</b> ${c.showDate ? "yes" : "no"}`,
     `📈 <b>Percentage gain (banner + caption):</b> ${c.showPct ? "yes" : "no — the board ranks by it, but no figure is printed"}`,
+    `🏦 <b>Market cap on the banner:</b> ${c.bannerMcap ? "yes" : "no"}`,
+    `💲 <b>Price on the banner:</b> ${c.bannerPrice ? "yes" : "no"}`,
     `🏦 <b>Market cap in the caption:</b> ${c.showMcap ? "yes" : "no"}`,
     `🎨 <b>Background artwork:</b> ${hasBg() ? "custom" : "built-in gradient"}`,
     "",
@@ -121,6 +125,10 @@ function setKb() {
       Markup.button.callback(`${mark(c.showMcap)} MC in caption`, "gn_mcap"),
     ],
     [Markup.button.callback(`${mark(c.showPct)} % gain on banner + caption`, "gn_pct")],
+    [
+      Markup.button.callback(`${mark(c.bannerMcap)} MC on banner`, "gn_bmc"),
+      Markup.button.callback(`${mark(c.bannerPrice)} Price on banner`, "gn_bpr"),
+    ],
     [Markup.button.callback(`${mark(c.pin)} Pin the post`, "gn_pin"), Markup.button.callback("🎨 Background", "gn_bg")],
     [Markup.button.callback("♻️ Reset settings", "gn_reset")],
     [Markup.button.callback("⬅ Back", "gn")],
@@ -174,6 +182,12 @@ function previewKb(template) {
     // the tap re-renders THIS sample (never re-samples — one sample per
     // sitting is the rule the whole preview is built on).
     [Markup.button.callback(c.showPct ? "📈 % gain: ON → hide" : "📈 % gain: OFF → show", "gn_pvpct")],
+    // MC and price get the same switch on the same card, for the same reason:
+    // the preview is where the decision is made.
+    [
+      Markup.button.callback(c.bannerMcap ? "🏦 MC: ON → hide" : "🏦 MC: OFF → show", "gn_pvmc"),
+      Markup.button.callback(c.bannerPrice ? "💲 Price: ON → hide" : "💲 Price: OFF → show", "gn_pvpr"),
+    ],
     [Markup.button.callback("🖼 Another layout", "gn"), Markup.button.callback("❌ Cancel", "gn_cancel")],
   ]);
 }
@@ -270,6 +284,8 @@ async function sendPreview(ctx, template, { fresh = true, note = "" } = {}) {
     coins,
     dateText: cfg.showDate ? gainers.dateText(cfg.tz) : "",
     showPct: cfg.showPct,
+    showMcap: cfg.bannerMcap,
+    showPrice: cfg.bannerPrice,
     bgPath: bgForRender(),
   });
   if (!out) {
@@ -318,6 +334,8 @@ async function sendPreview(ctx, template, { fresh = true, note = "" } = {}) {
     `👀 <b>Preview — ${escapeHtml(gr.labelOf(id))}</b>${gr.isPremium(id) ? " · ✨ premium" : ""}\n` +
       `📡 Data: <b>${escapeHtml(source)}</b> · ${escapeHtml(coins.map((c) => `$${c.symbol}`).join(", "))}` +
       (cfg.showPct ? "" : "\n📈 <b>Percentage gain: hidden</b> — the ranking is published without the figures. Tap 📈 below to show them.") +
+      (cfg.bannerMcap ? "" : "\n🏦 <b>Market cap: hidden</b> on the banner. Tap 🏦 below to show it.") +
+      (cfg.bannerPrice ? "" : "\n💲 <b>Price: hidden</b> on the banner. Tap 💲 below to show it.") +
       poolLine +
       xLine +
       short +
@@ -433,6 +451,23 @@ function register(bot, deps) {
     });
   }));
 
+  // 🏦 / 💲 on the preview card: the same rule as 📈 — flip, then redraw THIS
+  // sample, never a new one.
+  const previewFlip = (key, what) =>
+    cb(async (ctx) => {
+      const next = await cfgStore.set({ [key]: !cfgStore.get()[key] });
+      log.info(`[adminbot] gainers ${what} on banner ${next[key] ? "shown" : "hidden"} by @${ctx.from.username || ctx.from.id}`);
+      const sess = ctx.session.gn;
+      const template = (sess && sess.template) || next.template;
+      await ctx.reply(`⏳ Re-rendering ${next[key] ? "with" : "without"} the ${what}…`, HTML).catch(() => {});
+      await sendPreview(ctx, template, {
+        fresh: sess && sess.coins && sess.coins.length ? false : true,
+        note: `<i>${what[0].toUpperCase() + what.slice(1)} on the banner switched <b>${next[key] ? "ON" : "OFF"}</b>. Same setting as ⚙️ Settings.</i>`,
+      });
+    });
+  bot.action("gn_pvmc", previewFlip("bannerMcap", "market cap"));
+  bot.action("gn_pvpr", previewFlip("bannerPrice", "price"));
+
   bot.action("gn_cancel", cb(async (ctx) => {
     ctx.session.gn = null;
     ctx.session.awaitingGn = null;
@@ -453,6 +488,8 @@ function register(bot, deps) {
       coins,
       dateText: cfg.showDate ? gainers.dateText(cfg.tz) : "",
       showPct: cfg.showPct,
+      showMcap: cfg.bannerMcap,
+      showPrice: cfg.bannerPrice,
       bgPath: bgForRender(),
     });
     if (!out) return ctx.reply("⚠️ The banner didn't render — nothing was posted.", HTML);
@@ -583,6 +620,8 @@ function register(bot, deps) {
   bot.action("gn_date", toggle("showDate"));
   bot.action("gn_mcap", toggle("showMcap"));
   bot.action("gn_pct", toggle("showPct"));
+  bot.action("gn_bmc", toggle("bannerMcap"));
+  bot.action("gn_bpr", toggle("bannerPrice"));
   bot.action("gn_pin", toggle("pin"));
 
   bot.action(/^gn_dt:(.+)$/, cb(async (ctx) => {

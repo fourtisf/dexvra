@@ -3723,6 +3723,26 @@ the switch, the caption builder ignoring it, `set()` not persisting it, the
 button wired to nothing, and the switch defaulting to hidden. Each fails
 between one and two tests.
 
+#### "ga hanya gainers bisa di on off tpi mc dan price juga" — MC and price get the same switch
+
+- **`bannerMcap` / `bannerPrice`** (ship ON — what every board drew before)
+  are on the preview card (🏦 / 💲, redrawing THIS sample like 📈) and under
+  ⚙️ Settings. They are the ARTWORK's switches; `showMcap` is still the
+  CAPTION's and still ships off — one flag for two surfaces with opposite
+  defaults would change what an existing install publishes.
+- **Decided once, in `gb.render`**, by drawing from COPIES with the hidden
+  figure set to null. Every layout already drops a cell whose figure is
+  missing, so a hidden figure takes the path a missing one always has, and a
+  layout added later cannot forget it. The copies also stop the render writing
+  onto the caller's coins (the caption reads them next). Board headings over a
+  hidden MC column are gated like the 24h heading.
+- Measured across every template with fillText wrapped, with positive and
+  vacuity controls; every render site in both processes is counted.
+
+```bash
+cd bot && node scripts/run-tests.js test/gainersMcPrice.test.js   # 5 tests, no network
+```
+
 ```bash
 cd bot && node scripts/run-tests.js test/gainersPct.test.js test/gainersMenuWiring.test.js   # 22 tests, no network
 cd bot && node scripts/gainers-preview.js --no-pct                                            # every layout as the OFF setting publishes it

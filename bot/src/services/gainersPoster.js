@@ -83,6 +83,8 @@ async function postNow({ template = null, by = "schedule" } = {}) {
     coins: res.coins,
     dateText: cfg.showDate ? gainers.dateText(cfg.tz) : "",
     showPct: cfg.showPct,
+    showMcap: cfg.bannerMcap,
+    showPrice: cfg.bannerPrice,
     bgPath: cfgStore.bgForRender(),
   });
   if (!out) return { ok: false, reason: "banner render failed" };

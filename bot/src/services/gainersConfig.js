@@ -50,6 +50,13 @@ const DEFAULTS = {
   // the figures. One flag for both surfaces, or the banner says +2163% under a
   // caption that says nothing, and a reader is left deciding which is true.
   showPct: true,
+  // The MARKET CAP and the PRICE on the artwork — switchable like the %, and
+  // ON by default, which is what every board drew before the switches
+  // existed. Separate from `showMcap`, which has always meant the CAPTION and
+  // ships off: one flag for two surfaces with opposite defaults would change
+  // what an existing install publishes.
+  bannerMcap: true,
+  bannerPrice: true,
   pin: false,
 };
 
@@ -71,7 +78,7 @@ const templateIds = () => require("../gainersRender").TEMPLATE_IDS;
 function get() {
   const c = loadJSONSync(FILE, {}) || {};
   const g = { ...DEFAULTS };
-  for (const k of ["daily", "showDate", "showMcap", "showPct", "pin"]) {
+  for (const k of ["daily", "showDate", "showMcap", "showPct", "bannerMcap", "bannerPrice", "pin"]) {
     if (typeof c[k] === "boolean") g[k] = c[k];
   }
   if (TIME_RE.test(String(c.dailyTime || ""))) g.dailyTime = normalizeTime(c.dailyTime);
@@ -110,7 +117,7 @@ function validTz(tz) {
  *  show them what was wrong instead of silently storing the default. */
 async function set(patch = {}) {
   const next = { ...get() };
-  for (const k of ["daily", "showDate", "showMcap", "showPct", "pin"]) {
+  for (const k of ["daily", "showDate", "showMcap", "showPct", "bannerMcap", "bannerPrice", "pin"]) {
     if (typeof patch[k] === "boolean") next[k] = patch[k];
   }
   if (patch.dailyTime != null) {

@@ -1196,7 +1196,7 @@ function layoutList(ctx, S, spec, coins) {
         { x: x + 52 * S, label: "#", align: "right" },
         { x: x + 78 * S, label: "Token" },
         ...(showPct ? [{ x: (barL + barR) / 2, label: "24h gain", align: "center" }] : []),
-        { x: cMcap, label: "Market cap", align: "right" },
+        ...(spec.showMcap !== false ? [{ x: cMcap, label: "Market cap", align: "right" }] : []),
         ...(showPct ? [{ x: cChg, label: "24h", align: "right" }] : []),
       ],
     },
@@ -1341,7 +1341,7 @@ function layoutGridDense(ctx, S, spec, coins) {
       head: [
         { x: x + 50 * S, label: "#", align: "right" },
         { x: x + 74 * S, label: "Token" },
-        { x: cMcap, label: "MCap", align: "right" },
+        ...(spec.showMcap !== false ? [{ x: cMcap, label: "MCap", align: "right" }] : []),
         // no heading over a column that is not drawn (see layoutList)
         ...(spec.showPct !== false ? [{ x: cChg, label: "24h", align: "right" }] : []),
       ],
@@ -1406,7 +1406,7 @@ function rankedPanel(ctx, S, spec, coins, { x, y, w, h, rank0, cap = 128 }) {
       head: [
         { x: x + 46 * S, label: "#", align: "right" },
         { x: x + 70 * S, label: "Token" },
-        { x: cMcap, label: "MCap", align: "right" },
+        ...(spec.showMcap !== false ? [{ x: cMcap, label: "MCap", align: "right" }] : []),
         // no heading over a column that is not drawn (see layoutList)
         ...(spec.showPct !== false ? [{ x: cChg, label: "24h", align: "right" }] : []),
       ],
@@ -1730,7 +1730,7 @@ function layoutSpotlight(ctx, S, spec, coins) {
       head: [
         { x: px + 46 * S, label: "#", align: "right" },
         { x: px + 70 * S, label: "Token" },
-        { x: cMcap, label: "MCap", align: "right" },
+        ...(spec.showMcap !== false ? [{ x: cMcap, label: "MCap", align: "right" }] : []),
         // no heading over a column that is not drawn (see layoutList)
         ...(spec.showPct !== false ? [{ x: cChg, label: "24h", align: "right" }] : []),
       ],
@@ -2271,19 +2271,32 @@ async function loadBackground(cv, bgPath) {
  * @param {Array}  o.coins      gainers.js coins (each may carry a `logo` Buffer)
  * @param {string} o.dateText   date line, or "" to hide it
  * @param {boolean} o.showPct   false → no percentage figure anywhere on the artwork
+ * @param {boolean} o.showMcap  false → no market cap anywhere on the artwork
+ * @param {boolean} o.showPrice false → no price anywhere on the artwork
  * @param {string} o.bgPath     optional admin-uploaded background artwork
  * @param {number} o.scale      output scale (1 = 1600×900)
  * @returns {Promise<Buffer|null>} PNG/JPEG buffer, or null on ANY failure
  */
-async function render({ template = DEFAULT_TEMPLATE, coins = [], dateText = "", showPct = true, bgPath = "", scale = 1 } = {}) {
+async function render({ template = DEFAULT_TEMPLATE, coins = [], dateText = "", showPct = true, showMcap = true, showPrice = true, bgPath = "", scale = 1 } = {}) {
   const cv = canvasLib();
   if (!cv) return null;
   // A COPY, carrying the switch: the shipped spec objects are shared by every
   // render, and two posts rendering concurrently with different settings
   // must not see each other's flag. Every layout and every board helper
   // already receives `spec`, so this is the one place the toggle is decided.
-  const spec = { ...specOf(template), showPct: showPct !== false };
-  const list = (coins || []).filter(Boolean).slice(0, spec.n);
+  const spec = { ...specOf(template), showPct: showPct !== false, showMcap: showMcap !== false, showPrice: showPrice !== false };
+  // "ga hanya gainers bisa di on off tpi mc dan price juga" (2026-10-03): the
+  // market cap and the price get the % switch's treatment — decided ONCE,
+  // here, by drawing from COPIES with the hidden figure removed. Every layout
+  // already draws a price or a cap only when it exists (a token with no cap
+  // simply loses that cell), so a hidden figure goes through exactly the path
+  // a missing one always has, and a layout added later cannot forget it. The
+  // copies also stop this render writing onto the caller's coins.
+  const list = (coins || []).filter(Boolean).slice(0, spec.n).map((c) => ({
+    ...c,
+    ...(spec.showMcap ? {} : { mcap: null }),
+    ...(spec.showPrice ? {} : { price: null }),
+  }));
   if (!list.length) return null; // nothing real to show → the caller posts nothing
   try {
     const S = Math.max(0.5, Math.min(2, Number(scale) || 1));

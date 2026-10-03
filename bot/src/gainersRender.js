@@ -45,9 +45,9 @@ function pickTemplate(id, { pool = [], rng = Math.random } = {}) {
  * @returns {Promise<null | {id, kind:"image", media: Buffer, mediaType: "photo", ext: "png", still: Buffer}>}
  *   `still` is the same PNG — the tweet reads it under that name.
  */
-async function render({ template, coins, dateText = "", showPct = true, bgPath = null }) {
+async function render({ template, coins, dateText = "", showPct = true, showMcap = true, showPrice = true, bgPath = null }) {
   try {
-    const png = await gb.render({ template, coins, dateText, showPct, bgPath });
+    const png = await gb.render({ template, coins, dateText, showPct, showMcap, showPrice, bgPath });
     return png ? { id: template, kind: "image", media: png, mediaType: "photo", ext: "png", still: png } : null;
   } catch (e) {
     log.warn(`[gainers] render ${template} failed: ${e.message}`);
