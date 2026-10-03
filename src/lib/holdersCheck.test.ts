@@ -1,0 +1,88 @@
+// holders:check is DRIVEN against a stub web app: `node --check` proves syntax,
+// and the thing worth knowing is what it prints and what it exits with.
+import test from "node:test";
+import assert from "node:assert/strict";
+import { createServer } from "node:http";
+import { execFile } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
+
+const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "../../scripts/holders-check.mjs");
+
+function stub(holders: (chain: string) => unknown) {
+  const srv = createServer((req, res) => {
+    const u = new URL(req.url ?? "/", "http://x");
+    res.setHeader("content-type", "application/json");
+    if (u.pathname === "/api/tokens")
+      return res.end(JSON.stringify({ build: "abc1234", tokens: [
+        { chain: "robinhood", address: "0x0a574aae41da077713ba32aa05ca151c8759e2f6", symbol: "$SFX", mcap: 1_160_000 },
+        { chain: "solana", address: "So11111111111111111111111111111111111111112", symbol: "SOLX", mcap: 5 },
+      ] }));
+    if (u.pathname === "/api/holders") return res.end(JSON.stringify({ build: "abc1234", ...(holders(u.searchParams.get("chain") ?? "") as object) }));
+    res.statusCode = 404; res.end("{}");
+  });
+  return new Promise<{ base: string; close: () => void }>((ok) =>
+    srv.listen(0, "127.0.0.1", () => ok({ base: `http://127.0.0.1:${(srv.address() as { port: number }).port}`, close: () => srv.close() })));
+}
+
+const run = (base: string, args: string[] = []) =>
+  new Promise<{ code: number; out: string }>((ok) =>
+    execFile(process.execPath, [SCRIPT, ...args], { env: { ...process.env, BASE_URL: base } }, (err, stdout, stderr) =>
+      ok({ code: err ? ((err as { code?: number }).code ?? 1) : 0, out: stdout + stderr })));
+
+test("it names the count AND the host that gave it, and a miss prints every source's reason", async () => {
+  const s = await stub((c) => (c === "robinhood"
+    ? { count: 1570, source: "blockscout", via: "explorer.mainnet.chain.robinhood.com", why: null }
+    : { count: null, source: null, via: null, why: "dexscreener: io.dexscreener.com 403" }));
+  try {
+    const r = await run(s.base);
+    assert.equal(r.code, 0, "a partial answer is not a broken box");
+    assert.match(r.out, /1,570 holders · blockscout via explorer\.mainnet\.chain\.robinhood\.com/);
+    assert.match(r.out, /no count — dexscreener: io\.dexscreener\.com 403/);
+    assert.match(r.out, /build abc1234/);
+    assert.match(r.out, /\$SFX robinhood\//, "one dollar sign, never two");
+  } finally { s.close(); }
+});
+
+test("⚠️ no source answering anything exits non-zero", async () => {
+  const s = await stub(() => ({ count: null, source: null, via: null, why: "robinhoodchain.blockscout.com unreachable (ENOTFOUND)" }));
+  try {
+    const r = await run(s.base, ["robinhood", "0x0a574aae41da077713ba32aa05ca151c8759e2f6"]);
+    assert.equal(r.code, 1);
+    assert.match(r.out, /unreachable \(ENOTFOUND\)/);
+  } finally { s.close(); }
+});
+
+test("a GeckoTerminal-starved chain names the two keys that fix IT, on its own row — described, not a line with a blank", async () => {
+  const s = await stub(() => ({ count: null, source: null, via: null, why: "geckoterminal: over this process's GeckoTerminal budget (5/min)" }));
+  try {
+    const r = await run(s.base, ["bsc", "0x444045b0ee1ee319a660a5e3d604ca0ffa35acaa"]);
+    assert.match(r.out, /GECKOTERMINAL_API_KEY/);
+    assert.match(r.out, /MORALIS_API_KEY/);
+    assert.doesNotMatch(r.out, /<[a-z-]+>/i);
+  } finally { s.close(); }
+});
+
+test("⚠️ each failing row names ITS OWN fix: Tron → TRONSCAN_API_KEY, and Moralis only where it covers the chain", async () => {
+  const s = await stub((c) => (c === "robinhood"
+    ? { count: null, source: null, via: null, why: "geckoterminal: rate limited — cooling down for 113s" }
+    : { count: null, source: null, via: null, why: "tronscan: apilist.tronscanapi.com 429; geckoterminal: over this process's GeckoTerminal budget" }));
+  try {
+    const tron = await run(s.base, ["tron", "TUPM7K8REVzD2UdV4R5fe5M8XbnR2DdoJ6"]);
+    assert.match(tron.out, /fix: TRONSCAN_API_KEY/);
+    assert.doesNotMatch(tron.out, /MORALIS_API_KEY/, "Moralis does not count Tron holders — naming it is a key that fixes nothing");
+    const rh = await run(s.base, ["robinhood", "0x0a574aae41da077713ba32aa05ca151c8759e2f6"]);
+    assert.match(rh.out, /fix: GECKOTERMINAL_API_KEY/);
+    assert.doesNotMatch(rh.out, /MORALIS_API_KEY/);
+  } finally { s.close(); }
+});
+
+test("the script's Moralis chain list is a PORT of the provider's and stays equal to it", async () => {
+  const { readFileSync } = await import("node:fs");
+  const script = readFileSync(SCRIPT, "utf8");
+  const port = JSON.parse(script.match(/const MORALIS_CHAINS = (\[[^\]]*\])/)![1]);
+  const prov = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "providers/holders.ts"), "utf8");
+  const block = prov.match(/const MORALIS_CHAIN: Record<string, string> = \{([^}]*)\}/)![1];
+  const keys = [...block.matchAll(/(\w+):/g)].map((m) => m[1]);
+  assert.deepEqual([...port].sort(), [...keys, "solana"].sort());
+});
