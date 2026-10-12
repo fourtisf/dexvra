@@ -256,3 +256,39 @@ test("⚠️ the production collaborator EXISTS — fulfillment exports fetchLog
       tl.resolveLogo = orig.r;
     }
   }));
+
+// ── inspectRow — what listing:check measures on the box ─────────────────────
+
+test("inspectRow is READ-ONLY: it says what the heal would do and keeps nothing", () =>
+  withLogo("1", async () => {
+    const { deps, calls } = seams({ art: { "https://wormhole.com/token.png": guarded, "https://dd.dexscreener.com/ok.png": proxied } });
+    const fix = await ll.inspectRow({ chain: "solana", address: "W", logoUrl: "https://wormhole.com/token.png" }, { deps });
+    assert.deepStrictEqual([fix.state, fix.source, fix.via], ["fixable", "row", "guarded"]);
+    const fine = await ll.inspectRow({ chain: "solana", address: "X", logoUrl: "https://dd.dexscreener.com/ok.png" }, { deps });
+    assert.strictEqual(fine.state, "renders");
+    assert.strictEqual(calls.uploaded.length, 0, "a diagnostic that uploads changes the thing it measures");
+  }));
+
+test("inspectRow names every state the check prints — and checks that OUR OWN file is really there", () =>
+  withLogo("1", async () => {
+    const OURS = "/api/media/" + "e".repeat(24) + ".png";
+    const there = seams({ art: { [OURS]: { bytes: PNG, reached: true, status: 200, source: "upload" } } });
+    assert.strictEqual((await ll.inspectRow({ logoUrl: OURS }, { deps: there.deps })).state, "ours");
+    const gone = seams({ art: { [OURS]: { bytes: null, reached: true, status: 404 } } });
+    assert.strictEqual((await ll.inspectRow({ logoUrl: OURS }, { deps: gone.deps })).state, "ours-missing");
+    const none = seams({ ladder: { cands: [], ok: true } });
+    assert.strictEqual((await ll.inspectRow({ chain: "solana", address: "N", logoUrl: "https://x.example.com/404.png" }, { deps: none.deps })).state, "none");
+    const unasked = seams({ ladder: { cands: [], ok: false } });
+    assert.strictEqual((await ll.inspectRow({ chain: "solana", address: "U", logoUrl: "https://x.example.com/404.png" }, { deps: unasked.deps })).state, "undecided");
+    assert.strictEqual((await ll.inspectRow({ logoUrl: "" }, { deps: none.deps })).state, "blank");
+  }));
+
+test("listing:check measures with the bot's OWN predicate, and goes red only when NOT ONE listing could be asked", () => {
+  const fs = require("node:fs");
+  const src = fs.readFileSync(path.join(__dirname, "..", "scripts", "listing-check.js"), "utf8").replace(/^\s*\/\/.*$/gm, "");
+  assert.match(src, /listingLogo\.inspectRow\(/, "a check with its own idea of the question is how fonts:check printed green over boxes");
+  const fault = src.match(/if \(mine\.length && seen\.every\(\(v\) => v\.state === "undecided"\)\) \{\s*faults\.push/);
+  assert.ok(fault, "the one fault: every inspected row undecided — new listings would all be held back");
+  const sec = src.slice(src.indexOf("7 · Artwork"), src.indexOf("── Verdict"));
+  assert.strictEqual((sec.match(/faults\.push/g) || []).length, 1, "no other artwork state may turn the exit code — a check that is always red trains the reader to ignore red");
+});

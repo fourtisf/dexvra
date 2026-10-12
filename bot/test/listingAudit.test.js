@@ -162,3 +162,29 @@ test('production wiring: the sweep\'s real collaborators include the heal, and i
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'listingAudit.js'), 'utf8').replace(/\/\/.*$/gm, '');
   assert.match(src, /healLogo:\s*\(row\)\s*=>\s*listingLogo\.healRow\(row\)/);
 });
+
+test('"bagaimana agar tidak terjadi lgi": a live row whose logo CANNOT be fixed is FLAGGED once — removable, and cleared when a source finally has one', async () => {
+  const d = deps({ rows: [row('nologo', { sym: '$NOLOGO', logoUrl: 'https://dead.example.com/x.png' })] });
+  let state = 'none';
+  d.healLogo = async () => (state === 'none' ? { state: 'none', why: 'none of 6 candidate(s) served an image' } : { state: 'healed', url: '/api/media/' + 'd'.repeat(24) + '.png', was: 'https://dead.example.com/x.png', source: 'coingecko' });
+  await audit.runOnce({ now: 1000, deps: d });
+  const flag = audit.flagged()['solana:nologo'];
+  assert.ok(flag, 'a listing nobody can draw a logo for must not be a debug line');
+  assert.match(flag.why, /^no logo \(the stored url cannot be drawn/);
+  const page = d.alerts.find((a) => /\$NOLOGO/.test(a));
+  assert.ok(page && /listings:nostables/.test(page), 'paged once, naming the command that removes it');
+
+  await audit.runOnce({ now: 2000, deps: d });
+  assert.equal(d.alerts.filter((a) => /\$NOLOGO/.test(a) && /fail the free-listing checks/.test(a)).length, 1, 'transition only');
+
+  state = 'healed';
+  await audit.runOnce({ now: 3000, deps: d });
+  assert.equal(audit.flagged()['solana:nologo'], undefined, 'healed → the flag clears by itself');
+});
+
+test('…but a heal that could not ASK is never a flag — an outage must not page as a wave of logo-less listings', async () => {
+  const d = deps({ rows: [row('flaky')] });
+  d.healLogo = async () => ({ state: 'undecided', why: 'coingecko: HTTP 429' });
+  await audit.runOnce({ now: 1000, deps: d });
+  assert.equal(audit.flagged()['solana:flaky'], undefined);
+});

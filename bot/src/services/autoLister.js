@@ -1773,7 +1773,7 @@ async function scanOnce({ tg, now = Date.now(), deps = {}, rng = Math.random, fo
     // de-duplicated: two listings that look alike are two real listings, and
     // collapsing them would hide the feed. A failure to post must never cost
     // the listing, which has already happened.
-    reportFreeListing(c, info, input, pkgKey, { today, cap: cfg.maxPerDay });
+    reportFreeListing(c, info, input, pkgKey, { today, cap: cfg.maxPerDay, art });
   }
   report.listed = listedNow;
   // ⚠️ EVERY CREATE REFUSED IS A BLOCKED SCAN, not a quiet market.
@@ -2128,7 +2128,30 @@ function badgeFor(tier) {
  * Never throws: it runs after the listing is already live, and a channel that
  * is unreachable must not turn a successful listing into a failed scan.
  */
-function reportFreeListing(c, info, input, pkgKey, { today, cap } = {}) {
+/**
+ * The logo line of the free-listing report — what the listing went out WITH.
+ *
+ * "bagaimana agar masalah ini tidak terjadi lgi". `$W`'s report in this very
+ * channel read like every healthy listing while its banner drew the Dexvra
+ * mark; the only trace was a separate warn line two messages up. A report that
+ * states the artwork makes a listing without one visible in the line the
+ * operator already reads, instead of in a screenshot of the channel.
+ */
+function logoLine(art) {
+  const host = (u) => {
+    try {
+      return new URL(u).hostname;
+    } catch {
+      return String(u || "?").slice(0, 60);
+    }
+  };
+  if (!art || !art.url) return "⚠️ Logo: NONE — this listing has no artwork";
+  if (art.off) return `🖼 Logo: ${host(art.url)} — unchecked (FREE_LISTING_LOGO=0)`;
+  if (art.pinned) return `🖼 Logo: our own copy — from ${art.source || "?"} (${host(art.from)})`;
+  return `🖼 Logo: ${host(art.url)} — not copied, drawn through /api/logo`;
+}
+
+function reportFreeListing(c, info, input, pkgKey, { today, cap, art } = {}) {
   try {
     const pkg = pkgOf(pkgKey);
     const esc = (v) => String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -2140,6 +2163,7 @@ function reportFreeListing(c, info, input, pkgKey, { today, cap } = {}) {
         `Package: <b>${esc(pkg.label)}</b>${input.tier && input.tier !== "FREE" ? ` · tier <b>${esc(input.tier)}</b>` : ""}` +
         `${input.trendExp != null ? " · <b>on the Trending board</b>" : ""}\n` +
         `Cap ${money(info.mcap)} · Liq ${money(info.liq)} · 24h vol ${money(info.vol24)}\n` +
+        `${esc(logoLine(art))}\n` +
         `<a href="${esc(SITE_URL)}/token/${esc(c.chain)}/${esc(c.address)}">Open on dexvra.io</a>` +
         `${Number.isFinite(Number(today)) ? ` · ${esc(today)}/${esc(cap)} free listings today` : ""}\n` +
         `<code>${esc(c.address)}</code>`,
@@ -2425,6 +2449,7 @@ module.exports = {
   rejectReason,
   listingInput,
   announce,
+  logoLine,
   tweetListing,
   PACKAGES,
   pkgOf,

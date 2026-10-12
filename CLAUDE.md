@@ -3415,6 +3415,53 @@ token with no drawable artwork on any source is no longer listed. `$W`'s live
 row is healed by the first audit sweep that picks it, within
 `ceil(rows / 15)` sweeps of 30 min.
 
+#### "bagaimana agar masalah ini tidak terjadi lgi" — the operator was the detector again
+
+Asked straight after the fix above. It is the right question for the same
+reason it was right on the trending board: **`$W` was found by a person reading
+the channel.** The causes will keep changing — a host the proxy refuses today,
+a CID no gateway holds tomorrow — so what is watched is the PROMISE: *every
+free listing draws its logo.* Three holes were left, and each was a place where
+only a human could see the symptom:
+
+| hole | now |
+| --- | --- |
+| a live row the heal **cannot** fix (its url will not draw, every source answered empty) was a `log.debug` | a **flag** on the audit's own transition machinery: paged once, removable by `listings:nostables`, cleared by itself when a source finally has artwork |
+| the visitor-channel report for a listing **without** its logo read exactly like a healthy one | every free-listing report carries a `🖼 Logo:` line — our copy and where it came from, or `⚠️ Logo: NONE` |
+| whether the proxy, the guarded fetch and the logo sources answer **from this box** was never measured | `listing:check` §7 runs `listingLogo.inspectRow` (read-only: nothing kept, nothing written) on the bot's newest listings |
+
+- ⚠️ **"Could not ask" is never a flag.** An undecided heal stays a debug line,
+  or one rate-limited source would page as a wave of logo-less listings.
+- **§7 has exactly ONE fault: not one inspected listing could be asked.** That
+  is the state in which every new free listing would also be held back
+  (`artUnread`), so free listings cannot go out, which is what this script's
+  exit code reports. A pre-gate row with no artwork is printed red and does
+  **not** turn the code. A check that is always red teaches its reader to ignore
+  it, which is the `chart:preview` scar. A test asserts the section can push no
+  other fault.
+- **`inspectRow` uses the bot's own question, never a copy of it.** It is
+  `healRow` with `pin:false` and no CAS, the `fonts:check` rule.
+- The audit page's header named only scams, so it now reads *"a scam, a copy,
+  or a logo nobody can draw"*. A page that names the wrong cause sends the
+  operator to the wrong place.
+
+```bash
+cd bot && npm run listing:check        # §7: do the bot's own listings draw their logo, from THIS box
+cd bot && npm run listings:nostables   # the audit's flags, logo included — dry run first
+```
+
+Eight more guarantees are MUTATION-TESTED rather than argued. Each mutant
+fails a test:
+
+- the unfixable-logo flag removed;
+- "could not ask" flagged;
+- the report line not printed;
+- the report not handed the verdict;
+- `NONE` not said loudly;
+- `inspectRow` uploading;
+- our own file not verified;
+- §7 going red on one unreadable row.
+
 ## A Top 3 that was not the top of the Top 5
 
 Two banners, one minute apart, from the same admin panel:

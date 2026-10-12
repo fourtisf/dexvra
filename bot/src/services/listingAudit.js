@@ -143,12 +143,25 @@ async function runOnce({ now = Date.now(), deps = realDeps() } = {}) {
       // the row onto our own copy of artwork that loads (a CAS — an admin who
       // changed the logo meanwhile wins). Independent of the market read
       // below: a token we cannot price today still deserves its picture.
+      let h = null;
       if (deps.healLogo) {
-        const h = await deps.healLogo(r).catch((e) => ({ state: 'undecided', why: e.message }));
+        h = await deps.healLogo(r).catch((e) => ({ state: 'undecided', why: e.message }));
         if (h && h.state === 'healed') out.healed.push({ sym: symOf(r), chain: r.chain, address: r.address, was: h.was, url: h.url, source: h.source });
-        else if (h && (h.state === 'none' || h.state === 'undecided')) log.debug(`[listingAudit] logo ${r.chain}/${r.address}: ${h.state} — ${h.why || ''}`);
+        else if (h && h.state === 'undecided') log.debug(`[listingAudit] logo ${r.chain}/${r.address}: undecided — ${h.why || ''}`);
       }
       const v = await judge(r, deps);
+      // ⚠️ A LOGO NOBODY CAN DRAW IS A FLAG, NOT A DEBUG LINE. "bagaimana agar
+      // masalah ini tidak terjadi lgi": the heal fixes what it can, and the
+      // row it CANNOT fix — its stored url will not draw, and every source
+      // answered with nothing — used to be one line at a level production does
+      // not print. That is the operator as the detector again, reading the
+      // channel. It rides the audit's own transition machinery: paged once,
+      // removable by `listings:nostables` (which reads these flags), and
+      // cleared by itself the sweep a source finally has artwork. Only when the
+      // rest of the audit ANSWERED (`v.ok`) — "could not ask" is never a flag.
+      if (v.ok && !v.why && h && h.state === 'none') {
+        v.why = `no logo (the stored url cannot be drawn, and ${h.why || 'no source has artwork'})`;
+      }
       if (!v.ok) {
         out.unasked++;
         log.debug(`[listingAudit] ${r.chain}/${r.address}: could not check — ${v.why}`);
@@ -175,7 +188,7 @@ async function runOnce({ now = Date.now(), deps = realDeps() } = {}) {
         .map((f) => `• <b>$${esc(f.sym)}</b> (${esc(f.chain)}) — ${esc(f.why)}`);
       const more = out.newlyBad.length > 12 ? `\n…and ${out.newlyBad.length - 12} more` : '';
       const tail = 'Review, then remove them with:\n<code>cd /opt/dexvra/bot &amp;&amp; npm run listings:nostables</code>\n(dry run first — add <code>--apply</code> to delete)';
-      deps.alert(`🚩 <b>Free listing audit</b> — ${out.newlyBad.length} listed token(s) now fail the scam checks\n${lines.join('\n')}${more}\n\n${tail}`);
+      deps.alert(`🚩 <b>Free listing audit</b> — ${out.newlyBad.length} listed token(s) now fail the free-listing checks (a scam, a copy, or a logo nobody can draw)\n${lines.join('\n')}${more}\n\n${tail}`);
     }
     // A RECOVERY IS AN ALERT TOO — a logo that was broken and is now fixed,
     // said once, or the operator cannot tell a repaired listing from one

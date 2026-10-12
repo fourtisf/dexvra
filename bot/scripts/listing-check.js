@@ -44,7 +44,7 @@ const poolstrade = require("../src/poolstrade");
 const api = require("../src/api/dexvra");
 const { chainOf, CHAINS, DEXSCREENER_SLUG } = require("../src/config/chains");
 const build = require("../src/helpers/build");
-const { fmtCap } = require("../src/helpers/format");
+const { fmtCap, ticker } = require("../src/helpers/format");
 
 const G = "\x1b[32m", R = "\x1b[31m", Y = "\x1b[33m", D = "\x1b[2m", B = "\x1b[1m", X = "\x1b[0m";
 const ok = (s) => console.log(`  ${G}✓${X} ${s}`);
@@ -54,6 +54,9 @@ const note = (s) => console.log(`    ${D}${s}${X}`);
 
 const args = process.argv.slice(2);
 const has = (f) => args.includes(f);
+// How many of the bot's newest listings section 7 inspects. Each can walk the
+// whole logo ladder (paced CoinGecko included), so this is a sample, said so.
+const ART_SAMPLE = 6;
 const ago = (ms) => (ms < 90_000 ? `${Math.round(ms / 1000)}s ago` : ms < 5_400_000 ? `${Math.round(ms / 60_000)} min ago` : `${(ms / 3_600_000).toFixed(1)}h ago`);
 
 /** Reasons free listings cannot happen. Anything pushed here turns the exit
@@ -352,6 +355,60 @@ const faults = [];
   } else if (has("--no-scan")) {
     console.log(`\n${B}6 · The gates${X}`);
     note(`skipped (--no-scan)`);
+  }
+
+  // ── 7 · the artwork ───────────────────────────────────────────────────────
+  //
+  // "bagaimana agar masalah ini tidak terjadi lgi". `$W` was free-listed with a
+  // logo url our image proxy refuses and went out drawing the Dexvra mark —
+  // with every section above green, because none of them asked about the
+  // picture. Whether the proxy, the guarded fetch and the logo sources answer
+  // is a property of THIS box's egress, so it is measured here, through the
+  // bot's own `listingLogo.inspectRow` (read-only: nothing kept, nothing
+  // written), on the newest listings the bot made.
+  if (!has("--no-art")) {
+    console.log(`\n${B}7 · Artwork — do the bot's own listings draw their logo?${X}`);
+    const listingLogo = require("../src/services/listingLogo");
+    const safeImage = require("../src/helpers/safeImage");
+    if (listingLogo.enabled()) ok(`artwork lookup ON — every new free listing is born with its logo kept on our disk`);
+    else warn(`FREE_LISTING_LOGO is OFF — new free listings take discovery's url unchecked (the $W defect is back)`);
+    if (!safeImage.enabled()) warn(`LOGO_GUARDED_FETCH is OFF — a logo on a host /api/logo refuses (wormhole.com was one) cannot be read`);
+    if (rows && listingLogo.enabled()) {
+      const mine = require("../src/services/listingAudit")
+        .auditable(rows, autoLister.autoListedKeys())
+        .sort((a, b) => (Number(b.listedAt) || 0) - (Number(a.listedAt) || 0))
+        .slice(0, ART_SAMPLE);
+      if (!mine.length) note(`no listing made by the bot is on the site yet — nothing to measure`);
+      const seen = await Promise.all(mine.map((r) => listingLogo.inspectRow(r).catch((e) => ({ state: "undecided", why: e.message }))));
+      const host = (u) => {
+        try {
+          return new URL(u).hostname;
+        } catch {
+          return String(u || "");
+        }
+      };
+      mine.forEach((r, i) => {
+        const v = seen[i];
+        const who = `${ticker(r.sym || r.symbol)} ${r.chain}`;
+        if (v.state === "ours") ok(`${who} — our own copy`);
+        else if (v.state === "renders") ok(`${who} — draws through /api/logo (${host(r.logoUrl)})`);
+        else if (v.state === "fixable")
+          warn(`${who} — the site cannot draw ${host(r.logoUrl)}; the audit moves it onto our copy from ${v.source}${v.via === "guarded" ? " (its own host, read directly)" : ""}`);
+        else if (v.state === "none") bad(`${who} — no artwork anywhere; the audit flags it and \`npm run listings:nostables\` removes it`);
+        else if (v.state === "ours-missing") warn(`${who} — our own file is gone (${v.why}); the site clears it and re-resolves`);
+        else if (v.state === "blank") warn(`${who} — no logo url stored`);
+        else warn(`${who} — could not be checked: ${String(v.why || "no answer").slice(0, 160)}`);
+      });
+      // ⚠️ THE ONE FAULT: not one listing could be asked. Then every NEW free
+      // listing would be held back too (the scan counts it as `artUnread`), so
+      // free listings cannot go out — which is what this script's exit code is
+      // about. A single unreadable row, or a pre-gate row with no artwork, is
+      // not that, and turning the code red over it would make a check that is
+      // always red: the state `chart:preview` sat in for weeks.
+      if (mine.length && seen.every((v) => v.state === "undecided")) {
+        faults.push("the artwork lookup could not reach /api/logo or any logo source from this box — see section 7");
+      }
+    }
   }
 
   // ── Verdict ───────────────────────────────────────────────────────────────

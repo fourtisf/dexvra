@@ -272,4 +272,34 @@ async function healRow(row, { deps: over = {}, pinLogo } = {}) {
   return moved ? { state: 'healed', url: r.url, from: r.from, source: r.source, was: cur } : { state: 'kept' };
 }
 
-module.exports = { resolveX, healRow, enabled, RESOLVE_MS, _artFor: artFor, _flakyWhy: flakyWhy };
+/**
+ * WHAT WOULD THE HEAL FIND — read-only, for `listing:check`.
+ *
+ * "bagaimana agar masalah ini tidak terjadi lgi". The fix for `$W` was written
+ * where no logo host could be reached, so whether the guarded fetch, the
+ * proxy and the logo sources actually answer is a property of the SERVER's
+ * egress — and the only honest place to learn it is on the box, with the same
+ * code the bot runs. This is `healRow` with nothing kept and nothing written
+ * (`pin:false`, no CAS), so the check measures the bot's own question rather
+ * than a second copy of it — the `fonts:check` scar.
+ *
+ * States: ours · ours-missing · renders · fixable (the heal would move it,
+ * from `source`) · none · undecided · blank · off.
+ */
+async function inspectRow(row, { deps: over = {} } = {}) {
+  const cur = String((row && row.logoUrl) || '').trim();
+  if (!enabled()) return { state: 'off' };
+  if (!cur) return { state: 'blank' };
+  if (mediaPath(cur)) {
+    const a = await artFor(cur, realDeps(over));
+    return a.bytes ? { state: 'ours' } : { state: 'ours-missing', why: a.why };
+  }
+  if (!/^https?:\/\//i.test(cur)) return { state: 'blank', why: 'not an http(s) url' };
+  const r = await resolveX(row.chain, row.address, {}, { prefer: cur, keepRenderable: true, pin: false, deps: over });
+  if (!r.ok) return { state: 'undecided', why: r.why };
+  if (r.renders) return { state: 'renders' };
+  if (!r.url) return { state: 'none', why: r.why };
+  return { state: 'fixable', source: r.source, from: r.from, via: r.via };
+}
+
+module.exports = { resolveX, healRow, inspectRow, enabled, RESOLVE_MS, _artFor: artFor, _flakyWhy: flakyWhy };

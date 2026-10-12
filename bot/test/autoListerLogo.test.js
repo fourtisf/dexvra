@@ -272,3 +272,17 @@ test("⚠️ a listing whose logo did not load at post time is QUEUED FOR REPAIR
   assert.ok(job.posts.length >= 2, "the listing card AND the announcement are edited in place");
   for (const p of job.posts) assert.ok(p.caption && p.message_id, "the caption travels — an edit without it wipes the card");
 });
+
+test("the visitor-channel report says WHICH logo the listing went out with — and says it loudly when there is none", () => {
+  assert.match(al.logoLine({ ok: true, url: OURS, from: WORMHOLE, source: "discovery", pinned: true }), /our own copy — from discovery \(wormhole\.com\)/);
+  assert.match(al.logoLine({ ok: true, url: WORMHOLE, off: true }), /unchecked \(FREE_LISTING_LOGO=0\)/);
+  assert.match(al.logoLine(null), /^⚠️ Logo: NONE/);
+  assert.match(al.logoLine({ ok: true, url: null }), /^⚠️ Logo: NONE/);
+});
+
+test("…and the scan hands the artwork verdict to that report", () => {
+  const src = fss.readFileSync(path.join(__dirname, "..", "src", "services", "autoLister.js"), "utf8");
+  assert.match(src, /reportFreeListing\(c, info, input, pkgKey, \{ today, cap: cfg\.maxPerDay, art \}\)/);
+  const fn = src.slice(src.indexOf("function reportFreeListing("), src.indexOf("async function announce("));
+  assert.match(fn, /logoLine\(art\)/, "the report must print the line, not merely receive the verdict");
+});
