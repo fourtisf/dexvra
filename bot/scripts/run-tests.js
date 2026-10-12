@@ -47,6 +47,14 @@ const res = spawnSync(process.execPath, ["--test", ...files], {
     // remote here. Off by default in the suite; listingSafety.test.js turns it
     // back on and drives it, and pins that the PRODUCTION default is on.
     FREE_LISTING_SAFETY: process.env.FREE_LISTING_SAFETY || "0",
+    // The free-listing artwork lookup (services/listingLogo) asks the image
+    // proxy and five logo sources, and uploads what it finds — none of which
+    // exists here. Off by default in the suite, exactly like the safety check;
+    // listingLogo.test.js turns it back on with stubbed sources.
+    FREE_LISTING_LOGO: process.env.FREE_LISTING_LOGO || "0",
+    // …and the guarded direct fetch of a host the proxy refuses must never make
+    // a real request to a stranger from a test. Its own tests inject `request`.
+    LOGO_GUARDED_FETCH: process.env.LOGO_GUARDED_FETCH || "0",
   },
 });
 try {

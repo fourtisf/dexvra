@@ -60,6 +60,8 @@ const movers = require("./marketMovers");
 const { notAProject } = require("./bigCoins");
 const { qualityRefusal } = require("./listingQuality");
 const listingSafety = require("./listingSafety");
+const listingLogo = require("./listingLogo");
+const logoRepair = require("./logoRepair");
 const log = require("../helpers/logger");
 
 const FILE = "autoLister.json";
@@ -541,6 +543,12 @@ const blank = (now) => ({
   // would be false, and "potential scam" would be a claim nobody measured.
   unchecked: 0,
   uncheckedWhy: {},
+  // A token that cleared every gate and whose ARTWORK could not be settled — a
+  // source, the image proxy or the project's own host did not answer. Not "no
+  // logo" (a claim nobody measured), and never cooled: the next scan asks
+  // again. See services/listingLogo.
+  artUnread: 0,
+  artUnreadWhy: {},
   sources: [], // per discovery source: {name, n, ok, why}
   off: false, // the operator's own switch — a REPORTED state, never a silence
   capped: null, // "9/9" when the operator's own daily cap ended the scan
@@ -1146,7 +1154,7 @@ function revisits(state, candidates, now) {
  * function so every rejection is one readable reason in the log — "nothing was
  * listed today" is otherwise impossible to explain.
  */
-function rejectReason(info, cfg, trigger, now = Date.now(), chain = '', address = '') {
+function rejectReason(info, cfg, trigger, now = Date.now(), chain = '', address = '', { artPending = false } = {}) {
   if (!info) return "no market data";
   if (!sanitizeTicker(info.symbol)) return "no usable ticker";
   if (!info.name) return "no name";
@@ -1162,7 +1170,7 @@ function rejectReason(info, cfg, trigger, now = Date.now(), chain = '', address 
   // Size says nothing about whether a token is REAL — see listingQuality.js.
   // Asked last so a token still too small reports the market reason, which is
   // the one `listingWatch` reads to tell a quiet market from a blind scan.
-  return qualityRefusal(chain, address, info);
+  return qualityRefusal(chain, address, info, { artPending });
 }
 
 /**
@@ -1240,7 +1248,7 @@ function listingInput(chain, address, info, cfg = get(), now = Date.now(), pkgKe
  * Throws what the site threw: the caller decides whether one refusal ends its
  * run, and the two callers answer that differently.
  */
-async function createFromInfo(chain, address, info, { cfg = get(), now = Date.now(), pkgKey = 'free', safetyChecked = null } = {}) {
+async function createFromInfo(chain, address, info, { cfg = get(), now = Date.now(), pkgKey = 'free', safetyChecked = null, artChecked = null } = {}) {
   // ⚠️ NEVER LIST THE MONEY — and it belongs HERE, not in the callers.
   //
   // "jangan pernah listing stable coin". `bigCoins.topByMcap` has filtered
@@ -1265,7 +1273,9 @@ async function createFromInfo(chain, address, info, { cfg = get(), now = Date.no
   // whole channel with the Dexvra diamond drawn where its artwork belongs.
   // Same door, same reason as the stablecoin rule above: every free listing
   // comes through here, so the check cannot be forgotten by the next caller.
-  const bad = qualityRefusal(chain, address, info);
+  // The logo half is asked below of EVERY source (`artPending`), so a record
+  // with no url is not refused before the others have been asked.
+  const bad = qualityRefusal(chain, address, info, { artPending: listingLogo.enabled() });
   if (bad) {
     log.info(`[autolist] refused ${info.symbol} on ${chain}/${address} — ${bad}`);
     return null;
@@ -1280,7 +1290,26 @@ async function createFromInfo(chain, address, info, { cfg = get(), now = Date.no
     log.info(`[autolist] refused ${info.symbol} on ${chain}/${address} — ${safe.refusal || safe.why}`);
     return null;
   }
+  // ⚠️ AND NEVER LIST WITHOUT ITS ARTWORK — at the same door, so the board
+  // filler and the chain seeder carry it too. Asked after safety, so nothing
+  // is uploaded for a token the contract check refuses; the scan asks first
+  // (so it can count the answer) and hands the verdict in. A url that renders
+  // is kept on our own disk and the row is born pointing at it — see
+  // listingLogo.js for why "an http string exists" was never the question.
+  const art = artChecked || (await listingLogo.resolveX(chain, address, info).catch((e) => ({ ok: false, url: null, why: e.message })));
+  if (!art.ok || !art.url) {
+    log.info(
+      `[autolist] refused ${info.symbol} on ${chain}/${address} — ` +
+        (art.ok ? `no logo (${art.why || "no source has artwork"})` : `its artwork could not be checked: ${art.why}`),
+    );
+    return null;
+  }
   const input = listingInput(chain, address, info, cfg, now, pkgKey);
+  // Not through `siteUrl`: our own upload is RELATIVE (`/api/media/…`), which
+  // is the one shape the site's LOGO_RE and every consumer are built around,
+  // and `siteUrl` would drop it as "not a url".
+  input.logoUrl = art.url;
+  if (art.pinned) log.info(`[autolist] ${input.sym} artwork from ${art.source} kept on our disk: ${art.from} → ${art.url}`);
   const listing = await api.createListing(input);
   if (!listing) return null;
   await rememberListed({ chain, address }, now);
@@ -1314,7 +1343,10 @@ function seams(deps = {}) {
   // The contract check (honeypot, tax, mint authority…) — see listingSafety.js.
   // A seam like the other two: tests pass their own, production asks GoPlus/RugCheck.
   const safetyX = deps.safetyX || ((c, a) => listingSafety.checkX(c, a));
-  return { discoverX, priceX, safetyX };
+  // The artwork — found across every source and checked the way the renderer
+  // draws it, then kept on our own disk. See listingLogo.js.
+  const logoX = deps.logoX || ((c, a, info, o) => listingLogo.resolveX(c, a, info, o));
+  return { discoverX, priceX, safetyX, logoX };
 }
 
 // ⚠️ ONE SCAN AT A TIME, IN THIS PROCESS.
@@ -1402,7 +1434,7 @@ async function scanOnce({ tg, now = Date.now(), deps = {}, rng = Math.random, fo
   // are different facts and this service used to render them identically. An
   // injected LEGACY dep is wrapped rather than refused: a stub that returns a
   // record or null is stating "it answered", which is exactly what a test means.
-  const { discoverX, priceX, safetyX } = seams(deps);
+  const { discoverX, priceX, safetyX, logoX } = seams(deps);
 
   let state = loadState();
   if (!state._ok) {
@@ -1587,7 +1619,10 @@ async function scanOnce({ tg, now = Date.now(), deps = {}, rng = Math.random, fo
     }
     const info = ans.info;
     const trigger = triggerMcap(c.address, cfg);
-    const why = rejectReason(info, cfg, trigger, now, c.chain, c.address);
+    // `artPending`: with the artwork lookup on, a discovery record carrying no
+    // logo is not yet a refusal — every other source is asked below, once the
+    // token has cleared the gates that cost nothing.
+    const why = rejectReason(info, cfg, trigger, now, c.chain, c.address, { artPending: listingLogo.enabled() });
     if (why) {
       const bucket = reasonBucket(why);
       report.reasons[bucket] = (report.reasons[bucket] || 0) + 1;
@@ -1623,6 +1658,34 @@ async function scanOnce({ tg, now = Date.now(), deps = {}, rng = Math.random, fo
       log.info(`[autolist] refused ${sanitizeTicker(info.symbol)} (${c.chain}/${c.address}) — ${safe.refusal}`);
       continue;
     }
+    // ⚠️ EVERY FREE LISTING CARRIES ITS LOGO — or it is not made.
+    //
+    // "saya ingin bot setiap free listing harus ada logonya cari di sumber2
+    // lain". `$W` was listed with `wormhole.com/token.png`, a url our own image
+    // proxy refuses, and went out drawing the Dexvra mark. This asks every
+    // source the way the renderer draws it and keeps the winner on our disk, so
+    // the row is BORN pointing at artwork that loads. Asked last of the gates,
+    // after safety, so nothing is uploaded for a token that was never going to
+    // list.
+    const art = await logoX(c.chain, c.address, info).catch((e) => ({ ok: false, url: null, why: e.message }));
+    if (!art.ok) {
+      // WE COULD NOT ASK — the `unchecked` rule: no cool-off, the next scan asks
+      // again, and never "no logo", which would be a claim nobody measured.
+      report.artUnread++;
+      const b = reasonBucket(art.why || "artwork: no answer");
+      report.artUnreadWhy[b] = (report.artUnreadWhy[b] || 0) + 1;
+      log.info(`[autolist] ${sanitizeTicker(info.symbol)} (${c.chain}) not listed — its artwork could not be checked: ${art.why}`);
+      continue;
+    }
+    if (!art.url) {
+      const noArt = `no logo (${art.why || "no source has artwork"})`;
+      report.reasons[reasonBucket(noArt)] = (report.reasons[reasonBucket(noArt)] || 0) + 1;
+      const until = coolUntil(noArt, info, cfg, trigger, now);
+      if (until > now) state.cool[key] = until;
+      delete state.seen[key];
+      log.info(`[autolist] refused ${sanitizeTicker(info.symbol)} (${c.chain}/${c.address}) — ${noArt}`);
+      continue;
+    }
     delete state.cool[key];
     delete state.seen[key];
 
@@ -1631,7 +1694,7 @@ async function scanOnce({ tg, now = Date.now(), deps = {}, rng = Math.random, fo
     const { key: pkgKey } = nextPkg(cfg, state);
     let made;
     try {
-      made = await createFromInfo(c.chain, c.address, info, { cfg, now, pkgKey, safetyChecked: safe });
+      made = await createFromInfo(c.chain, c.address, info, { cfg, now, pkgKey, safetyChecked: safe, artChecked: art });
     } catch (e) {
       // ON THE REPORT, not only in pm2. This token cleared every gate the
       // operator set and the site turned it down; "0 listed" with an empty
@@ -1747,6 +1810,16 @@ async function scanOnce({ tg, now = Date.now(), deps = {}, rng = Math.random, fo
       `${report.unchecked} qualifying token(s) could not be safety-checked, so none were listed — ` +
       `most common: ${why}${n < report.unchecked ? ` (×${n})` : ""}`;
     log.warn(`[autolist] ${report.blocker}`);
+  } else if (!listedNow && report.artUnread > 0) {
+    // Same definition as above: these QUALIFIED and the scan could not settle
+    // their artwork, so it had something to list and did not. An image proxy
+    // that has gone dark (or every logo source refusing this box) must not end
+    // free listings silently.
+    const [why, n] = Object.entries(report.artUnreadWhy).sort((a, b) => b[1] - a[1])[0];
+    report.blocker =
+      `${report.artUnread} qualifying token(s) could not have their artwork checked, so none were listed — ` +
+      `most common: ${why}${n < report.artUnread ? ` (×${n})` : ""}`;
+    log.warn(`[autolist] ${report.blocker}`);
   } else if (!listedNow && report.refused > 0) {
     const [why, n] = Object.entries(report.refusals).sort((a, b) => b[1] - a[1])[0];
     report.blocker =
@@ -1799,6 +1872,10 @@ function scanLine(report) {
     const t = Object.entries(report.uncheckedWhy || {}).sort((a, b) => b[1] - a[1])[0];
     parts.push(`⚠️ ${report.unchecked} could not be safety-checked${t ? ` (${t[0]})` : ""}`);
   }
+  if (report.artUnread) {
+    const t = Object.entries(report.artUnreadWhy || {}).sort((a, b) => b[1] - a[1])[0];
+    parts.push(`⚠️ ${report.artUnread} — artwork could not be checked${t ? ` (${t[0]})` : ""}`);
+  }
   if (report.refused) {
     const top = Object.entries(report.refusals || {}).sort((a, b) => b[1] - a[1])[0];
     parts.push(`⚠️ ${report.refused} refused by the site${top ? ` (${top[0]})` : ""}`);
@@ -1843,7 +1920,7 @@ const DRY_LOOKUPS = 15;
 
 async function dryRun({ now = Date.now(), deps = {} } = {}) {
   const cfg = get();
-  const { discoverX, priceX, safetyX } = seams(deps);
+  const { discoverX, priceX, safetyX, logoX } = seams(deps);
   const report = blank(now);
   const state = loadState();
 
@@ -1944,7 +2021,10 @@ async function dryRun({ now = Date.now(), deps = {} } = {}) {
     }
     const info = ans.info;
     const trigger = triggerMcap(c.address, cfg);
-    const why = rejectReason(info, cfg, trigger, now, c.chain, c.address);
+    // `artPending`: with the artwork lookup on, a discovery record carrying no
+    // logo is not yet a refusal — every other source is asked below, once the
+    // token has cleared the gates that cost nothing.
+    const why = rejectReason(info, cfg, trigger, now, c.chain, c.address, { artPending: listingLogo.enabled() });
     if (why) {
       const bucket = reasonBucket(why);
       report.reasons[bucket] = (report.reasons[bucket] || 0) + 1;
@@ -1965,6 +2045,21 @@ async function dryRun({ now = Date.now(), deps = {} } = {}) {
       report.reasons[bucket] = (report.reasons[bucket] || 0) + 1;
       continue;
     }
+    // The artwork check the real scan makes — VERIFY ONLY (`pin:false`): a test
+    // scan must never write anything, and an upload is a write. Without it the
+    // button would promise a listing the scan then refuses as "no logo".
+    const art = await logoX(c.chain, c.address, info, { pin: false }).catch((e) => ({ ok: false, url: null, why: e.message }));
+    if (!art.ok) {
+      report.artUnread++;
+      const b = reasonBucket(art.why || "artwork: no answer");
+      report.artUnreadWhy[b] = (report.artUnreadWhy[b] || 0) + 1;
+      continue;
+    }
+    if (!art.url) {
+      const b = reasonBucket(`no logo (${art.why || "no source has artwork"})`);
+      report.reasons[b] = (report.reasons[b] || 0) + 1;
+      continue;
+    }
     report.listed++; // what a real scan WOULD have listed
     if (report.qualified.length < 5) {
       report.qualified.push({ chain: c.chain, sym: sanitizeTicker(info.symbol), mcap: Math.round(info.mcap), trigger });
@@ -1975,23 +2070,22 @@ async function dryRun({ now = Date.now(), deps = {} } = {}) {
 
 /** The banner/artwork for one of the two cards — same pipeline a paid listing
  *  uses, so an auto listing looks like every other post. */
-function postMediaFor(kind, c, info, input) {
+function postMediaFor(kind, c, info, input, logoBytes = null) {
   const { postMedia } = require("../fulfillment");
-  return postMedia(
-    kind,
-    {
-      symbol: input.sym,
-      name: input.name,
-      chain: String(chainOf(c.chain) ? chainOf(c.chain).label : c.chain).toUpperCase(),
-      price: info.priceUsd ? `$${Number(info.priceUsd).toPrecision(4)}` : "TBA",
-      mcap: info.mcap ? `$${Math.round(info.mcap).toLocaleString("en-US")}` : null,
-      links: { website: input.website, twitter: input.twitter, telegram: input.telegram },
-    },
-    null,
-    null,
-    input.logoUrl || "",
-    badgeFor(input.tier),
-  );
+  return postMedia(kind, bannerCoinFor(c, info, input), logoBytes || null, null, input.logoUrl || "", badgeFor(input.tier));
+}
+
+/** The values the banner draws — one owner, because a logo repair rebuilds the
+ *  SAME banner later and a second copy of this shape would draw a different one. */
+function bannerCoinFor(c, info, input) {
+  return {
+    symbol: input.sym,
+    name: input.name,
+    chain: String(chainOf(c.chain) ? chainOf(c.chain).label : c.chain).toUpperCase(),
+    price: info.priceUsd ? `$${Number(info.priceUsd).toPrecision(4)}` : "TBA",
+    mcap: info.mcap ? `$${Math.round(info.mcap).toLocaleString("en-US")}` : null,
+    links: { website: input.website, twitter: input.twitter, telegram: input.telegram },
+  };
 }
 
 /** The artwork's tier badge, worded exactly as fulfillment.js words it for a
@@ -2075,18 +2169,30 @@ async function announce(tg, c, info, input, cfg = get()) {
     siteUrl: `${SITE_URL}/token/${c.chain}/${c.address}`,
   };
   try {
+    // THE ARTWORK, READ ONCE. The listing was born pointing at our own copy
+    // (listingLogo), so this is a file on this disk read over localhost — and
+    // the same bytes then feed the emoji, the banner and the tweet, instead of
+    // three separate fetches that could each disagree about whether there is
+    // a logo. `ensureFromUrl` could not have read a RELATIVE /api/media url at
+    // all: `fetch("/api/media/…")` throws.
+    const art = input.logoUrl
+      ? await require("../fulfillment").fetchLogoUrlX(input.logoUrl).catch(() => null)
+      : null;
+    const logoBytes = (art && art.bytes) || null;
     // Same as a paid listing: create the token's animated custom emoji BEFORE
     // the card is rendered, or the post shows the plain fallback char where the
     // logo belongs (fmt.listingPost reads the pack id synchronously).
-    await require("../tokenEmoji")
-      .ensureFromUrl({ chain: c.chain, address: c.address, symbol: input.sym }, input.logoUrl)
-      .catch(() => null);
-    const media = await postMediaFor("listing", c, info, input).catch(() => null);
+    if (logoBytes) {
+      await require("../tokenEmoji")
+        .ensureTokenEmoji({ chain: c.chain, address: c.address, symbol: input.sym }, logoBytes)
+        .catch(() => null);
+    }
+    const media = await postMediaFor("listing", c, info, input, logoBytes).catch(() => null);
     // Tweet BEFORE the channel post, exactly like fulfillment.js, so the card
     // can carry its "Announce On X" link. Timeboxed: a hung X API delays the
     // channel post by at most X_POST_TIMEOUT_MS, and the tweet id is still
     // recorded whenever it lands, so a later pump/rank-up alert can quote it.
-    await tweetListing(coin, c, input, media);
+    await tweetListing(coin, c, input, media, logoBytes);
     const msg = await post.sendMedia(CHANNELS.listing, media, fmt.listingPost(coin), { pin: true });
     if (msg) log.info(`[autolist] posted ${input.sym} → ${CHANNELS.listing}/${msg.message_id}`);
     await post.mirrorToGroup(CHANNELS.listing, msg, { label: "auto-listing" });
@@ -2115,10 +2221,33 @@ async function announce(tg, c, info, input, cfg = get()) {
       // only in the listing channel — one channel short of where its card is.
       annMsgId: annMsg && annMsg.message_id,
     }).catch(() => {});
+    let tMsg = null;
     if (isTrending) {
-      const tMedia = await postMediaFor("trending", c, info, input).catch(() => null);
-      const tMsg = await post.sendMedia(CHANNELS.trending, tMedia, fmt.trendingPost(coin));
+      const tMedia = await postMediaFor("trending", c, info, input, logoBytes).catch(() => null);
+      tMsg = await post.sendMedia(CHANNELS.trending, tMedia, fmt.trendingPost(coin));
       if (tMsg) log.info(`[autolist] posted ${input.sym} → ${CHANNELS.trending}/${tMsg.message_id}`);
+    }
+    // ⚠️ A LISTING THAT HAS A LOGO AND WENT OUT WITHOUT IT IS REPAIRED, NOT LEFT.
+    // The paid path has queued this since `$DLYN`; the free path never did, so
+    // a banner that drew the Dexvra mark here stayed that way for ever. With
+    // the artwork kept on our disk at creation this should not fire — which is
+    // exactly why it must not be silent when it does (the web app mid-deploy
+    // the moment the post was built). The posts are edited IN PLACE when the
+    // artwork loads (services/logoRepair.js).
+    if (input.logoUrl && !logoBytes) {
+      const badge = badgeFor(input.tier);
+      const caption = fmt.listingPost(coin);
+      await logoRepair.enqueue({
+        kind: "listing", chain: c.chain, address: c.address, sym: input.sym, name: input.name,
+        urls: [input.logoUrl, info.logoUrl],
+        pinFrom: null, // already ours, or a url the row does not hold — nothing to move
+        bannerCoin: bannerCoinFor(c, info, input),
+        posts: [
+          repairPost(CHANNELS.listing, msg, "listing", badge, caption),
+          repairPost(CHANNELS.announce, annMsg, "listing", badge, caption),
+          repairPost(CHANNELS.trending, tMsg, "trending", badge, fmt.trendingPost(coin)),
+        ].filter(Boolean),
+      });
     }
   } catch (e) {
     log.warn(`[autolist] post ${input.sym}: ${e.message}`);
@@ -2128,10 +2257,10 @@ async function announce(tg, c, info, input, cfg = get()) {
 /** Tweet an auto listing and hang the resulting url on `coin.xUrl` (mutates, so
  *  the caller's already-built coin object carries it into the channel card).
  *  Never throws and never blocks longer than the timeout. */
-async function tweetListing(coin, c, input, media) {
+async function tweetListing(coin, c, input, media, logoBytes = null) {
   if (!X_AUTOLIST_ENABLED || !x.enabled()) return null;
   // Same artwork the channel card uses; the logo is only the fallback.
-  const logo = await fetchLogo(input.logoUrl);
+  const logo = logoBytes || (await fetchLogo(input.logoUrl));
   const tweetP = x.postListing(coin, media, logo).catch(() => null);
   tweetP
     .then((id) => (id ? postids.set(c.chain, c.address, { listingTweetId: id }) : null))
@@ -2142,6 +2271,13 @@ async function tweetListing(coin, c, input, media) {
     log.info(`[autolist] tweeted ${input.sym} → ${coin.xUrl}`);
   }
   return id;
+}
+
+/** One post a logo repair may edit later — the shape logoRepair.enqueue takes
+ *  (fulfillment's `repairPost`, for the same reason: the caption is re-sent). */
+function repairPost(channel, msg, media, badge, caption) {
+  if (!msg || !msg.message_id) return null;
+  return { channel, message_id: msg.message_id, via: msg.via || null, media, badge: badge || null, caption };
 }
 
 /** The token logo as a Buffer for the tweet's media, or null. Best-effort. */

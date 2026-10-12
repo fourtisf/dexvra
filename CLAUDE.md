@@ -3292,6 +3292,129 @@ its tier. Each fails a test. A fifth guard (a finiteness check on the volume) wa
 DEAD, because `NaN < x` is already false, so it was removed rather than kept as a
 line claiming cover it did not provide.
 
+### "mengapa bot free listing without logo pdahl tokenya ada logonya" — the gate checked for a URL, not for a picture
+
+`$W` (Wormhole Token, Solana, `85VBFQZC9TZkfaptBWjvUw7YbZjy52A6mjtPGjstQAmQ`)
+was free-listed to 12,406 subscribers drawing the **Dexvra mark**. gmgn and
+DexScreener showed its logo in the same minute, and the visitor channel said why:
+
+```
+⚠️ [fulfil] logo unusable — proxy answered HTTP 400; banner falls back to the
+Dexvra mark: https://wormhole.com/token.png
+```
+
+That URL is the project's **own** file, and it serves a normal PNG. `/api/logo`
+answered 400 because `wormhole.com` is not on its image-host allowlist. There
+were three gaps, and each one is a pattern this file already records:
+
+1. ⚠️ **The gate checked whether a URL existed, not whether it could be drawn.**
+   `listingQuality`'s `no logo` passes any http string. So the row was created
+   holding a URL its own page can never draw. The site shows a monogram there
+   for ever: `pickLogo` ranks a stored URL first, so the site's resolver never
+   queues it. This is `fonts:check`'s green ticks over a broken banner again,
+   one feature over.
+2. **One source was the whole answer.** A discovery record with no logo was
+   refused outright, and one with an unusable logo was listed with it.
+   Meanwhile `tokenLogo.js` already knew seven other sources, and nothing on
+   this path asked them.
+3. **Nothing kept the bytes** — the `$GG` lesson again.
+
+**`services/listingLogo.js` owns "the artwork a free listing is born with".**
+
+- **Candidate order:** the URL a live row already carries (for a heal), then the
+  URL discovery found, then `tokenLogo.resolveLogo`'s whole ladder.
+- **Each candidate is fetched the way the renderer fetches it.** It goes through
+  `fulfillment.fetchLogoUrlX`, and `resolveLogo` is given that check as its
+  verifier. So "found a logo" can only mean "found one we can draw".
+- **The winning bytes are uploaded to `/api/media`.** The listing is created
+  pointing at our copy, so the site, the banner, the tweet and every later post
+  read a file on this disk.
+- **Three answers:**
+  - `{ok, url}` — artwork found and kept.
+  - `{ok, url:null}` — every source answered and none has artwork. The token is
+    refused as `no logo` and cooled for 12h.
+  - `{ok:false}` — a source, the proxy or a host could not be asked. It has its
+    own counter (`artUnread`), is never cooled, and is a blocker when it held
+    back every qualifier. This is the `unchecked` rule.
+- **Every door goes through it:** the scan, ⚡ Run now, the board filler and the
+  chain seeder, through `createFromInfo`.
+  - 🔎 Test scan asks the same question with `pin:false`, so it never writes.
+  - With the lookup on, a record with no URL is not refused before the other
+    sources are asked (`artPending` in `qualityRefusal`).
+
+**`helpers/safeImage.js` is the guarded direct fetch, used for a host the proxy
+refuses by its allowlist.** The allowlist is right to refuse: `/api/logo` is a
+public endpoint, and the allowlist stops it being anyone's image proxy. A
+one-time, server-side copy of a token's own declared artwork, kept on our disk,
+is a different thing. These rules make it safe; dropping any one of them opens
+an SSRF hole:
+
+- https only, on the default port, with no credentials in the URL;
+- **public addresses only**, enforced inside the connection by a custom
+  `lookup`. The address we vetted is the one the socket uses, so DNS rebinding
+  has nothing to rebind;
+- an IP-literal host is checked directly, because Node never calls `lookup` for
+  one;
+- every redirect hop is re-checked;
+- the body is capped at the upload route's 3 MB, and the type is read from the
+  bytes. SVG is refused.
+
+`fetchLogoUrlX` now reads an allowlist refusal (400, no reason) through this
+guard, never with a raw fetch. That fixes the paid-post banner, `logoRepair` and
+`post:check` too. An answer about the file itself (a 404 from every gateway)
+does not trigger it.
+
+**Rows already live are healed.** `listingAudit` now asks `listingLogo.healRow`
+about every bot-made row it picks:
+
+- A stored URL that the proxy cannot draw is moved onto our copy through the pin
+  CAS. An admin who changed the logo in the meantime wins.
+- A URL that already renders is left alone.
+- A heal is a recovery, so it is reported to the ops channel once.
+- ⚠️ **What it cannot reach:** channel posts that were already published. A
+  post's caption figures were measured when it went out, so rebuilding them
+  later would misstate them. The free-listing announcement now queues a
+  `logoRepair` job (edit in place) when its banner did not get the artwork, the
+  same as the paid path has done since `$DLYN`.
+
+- ⚠️ **The first cut called `fulfillment.fetchLogoUrlX`, which was only exported
+  as `_fetchLogoUrlX`.** Every test passed, because a stub ADDS a missing
+  export. A driven test caught it. The tests now read the real export before
+  anything stubs it.
+- **`FREE_LISTING_LOGO=0`** restores the old behaviour exactly (discovery's URL,
+  unchecked). **`LOGO_GUARDED_FETCH=0`** turns the direct fetch off. The test
+  runner sets both; blank means ON. `FREE_LISTING_LOGO_MS` (60s) bounds one
+  lookup.
+
+```bash
+cd bot && node scripts/run-tests.js test/safeImage.test.js test/listingLogo.test.js test/autoListerLogo.test.js test/logoGuarded.test.js test/listingAudit.test.js   # no network
+pm2 logs dexvra-bot --lines 300 --nostream | grep -F 'kept on our disk'
+```
+
+Twenty-two guarantees are MUTATION-TESTED rather than argued. Each mutant fails
+between one and seven tests:
+
+- **guarded fetch:** private addresses not filtered on connect, redirect hops
+  not re-checked, IP literals not checked, bytes not sniffed, the size cap
+  dropped;
+- **`fetchLogoUrlX`:** the guarded fallback removed, a refusal fetched raw, a
+  probe not quiet;
+- **resolver:** the other sources never asked, the artwork never kept, a flaky
+  miss read as a verdict, a guard-only URL used without a copy, a heal rewriting
+  a URL that renders;
+- **listing door:** the resolved URL not carried, a token with no artwork
+  listed anyway, `artPending` not passed;
+- **scan report:** an undecided token cooled, the blocker never raised, the test
+  scan uploading;
+- **announcement and audit:** the repair not queued, the banner not drawn from
+  the bytes it read, the audit not healing.
+
+**Config a fix depends on:** nothing. This is `bot/` only, so the deploy is the
+ecosystem restart. ⚠️ It ships on and **changes the free feed on deploy:** a
+token with no drawable artwork on any source is no longer listed. `$W`'s live
+row is healed by the first audit sweep that picks it, within
+`ceil(rows / 15)` sweeps of 30 min.
+
 ## A Top 3 that was not the top of the Top 5
 
 Two banners, one minute apart, from the same admin panel:

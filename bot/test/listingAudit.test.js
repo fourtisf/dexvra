@@ -122,3 +122,43 @@ test('it is WIRED: attach starts it, and the cleanup script reads its flags', ()
   assert.match(strip('scripts/listings-stables.js'), /require\("\.\.\/src\/services\/listingAudit"\)\.flagged\(\)/);
   assert.match(strip('scripts/listings-stables.js'), /auditFlags\[keyOf\(r\.chain, r\.address\)\]/);
 });
+
+// ── The logo, looked at twice ───────────────────────────────────────────────
+// `$W` (Wormhole Token) went live holding `https://wormhole.com/token.png`, a
+// url /api/logo refuses by its allowlist, and the site draws its monogram
+// there for ever — no gate at the door reaches backwards. The sweep asks
+// listingLogo.healRow of every bot-made row it picks.
+
+test('THE REPORTED CASE: a live row whose logo the site cannot draw is healed, and the recovery is SAID once', async () => {
+  const d = deps({ rows: [row('wormhole', { sym: '$W', logoUrl: 'https://wormhole.com/token.png' }), row('fine')] });
+  const asked = [];
+  d.healLogo = async (r) => {
+    asked.push(r.address);
+    return r.address === 'wormhole'
+      ? { state: 'healed', url: '/api/media/' + 'c'.repeat(24) + '.png', was: r.logoUrl, source: 'row' }
+      : { state: 'renders' };
+  };
+  const out = await audit.runOnce({ now: 1000, deps: d });
+  assert.deepEqual(asked.sort(), ['fine', 'wormhole'], 'every picked row is asked');
+  assert.equal(out.healed.length, 1);
+  const alert = d.alerts.find((a) => /logos repaired/.test(a));
+  assert.ok(alert, 'a repaired logo is a recovery, and a recovery nobody hears about reads like an outage nobody fixed');
+  assert.match(alert, /\$W/);
+  assert.match(alert, /wormhole\.com\/token\.png/);
+  assert.doesNotMatch(alert, /\$\$/, 'a doubled dollar sign');
+});
+
+test('a heal that throws never costs the audit — the scam checks still run', async () => {
+  const d = deps({ rows: [row('a')] });
+  d.healLogo = async () => {
+    throw new Error('boom');
+  };
+  const out = await audit.runOnce({ now: 1000, deps: d });
+  assert.equal(out.audited, 1);
+  assert.equal(out.healed.length, 0);
+});
+
+test('production wiring: the sweep\'s real collaborators include the heal, and it is listingLogo.healRow', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'listingAudit.js'), 'utf8').replace(/\/\/.*$/gm, '');
+  assert.match(src, /healLogo:\s*\(row\)\s*=>\s*listingLogo\.healRow\(row\)/);
+});

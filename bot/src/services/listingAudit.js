@@ -44,6 +44,7 @@ const api = require('../api/dexvra');
 const discovery = require('../discovery');
 const { qualityRefusal } = require('./listingQuality');
 const listingSafety = require('./listingSafety');
+const listingLogo = require('./listingLogo');
 
 const FILE = 'listingAudit.json'; // under DATA_DIR, shared by both bot processes
 
@@ -113,6 +114,7 @@ function realDeps() {
     priceX: (c, a) => discovery.fetchTokenInfoX(c, a),
     safetyX: (c, a) => listingSafety.checkX(c, a),
     autoKeys: () => require('./autoLister').autoListedKeys(),
+    healLogo: (row) => listingLogo.healRow(row),
     alert: (html) => log.alert(html),
   };
 }
@@ -131,9 +133,21 @@ async function runOnce({ now = Date.now(), deps = realDeps() } = {}) {
     for (const k of Object.keys(state.flagged)) if (!live.has(k)) delete state.flagged[k];
     for (const k of Object.keys(state.checked)) if (!live.has(k)) delete state.checked[k];
 
-    const out = { audited: 0, unasked: 0, newlyBad: [], cleared: [] };
+    const out = { audited: 0, unasked: 0, newlyBad: [], cleared: [], healed: [] };
     for (const r of pick(rows, state)) {
       const k = keyOf(r.chain, r.address);
+      // ⚠️ THE LOGO, LOOKED AT TWICE. `$W` went live holding a url our own
+      // image proxy refuses, and the site draws its monogram there for ever:
+      // `pickLogo` ranks a stored url first, so the site's resolver never
+      // queues it, and no gate at the door reaches backwards. The heal moves
+      // the row onto our own copy of artwork that loads (a CAS — an admin who
+      // changed the logo meanwhile wins). Independent of the market read
+      // below: a token we cannot price today still deserves its picture.
+      if (deps.healLogo) {
+        const h = await deps.healLogo(r).catch((e) => ({ state: 'undecided', why: e.message }));
+        if (h && h.state === 'healed') out.healed.push({ sym: symOf(r), chain: r.chain, address: r.address, was: h.was, url: h.url, source: h.source });
+        else if (h && (h.state === 'none' || h.state === 'undecided')) log.debug(`[listingAudit] logo ${r.chain}/${r.address}: ${h.state} — ${h.why || ''}`);
+      }
       const v = await judge(r, deps);
       if (!v.ok) {
         out.unasked++;
@@ -163,10 +177,24 @@ async function runOnce({ now = Date.now(), deps = realDeps() } = {}) {
       const tail = 'Review, then remove them with:\n<code>cd /opt/dexvra/bot &amp;&amp; npm run listings:nostables</code>\n(dry run first — add <code>--apply</code> to delete)';
       deps.alert(`🚩 <b>Free listing audit</b> — ${out.newlyBad.length} listed token(s) now fail the scam checks\n${lines.join('\n')}${more}\n\n${tail}`);
     }
+    // A RECOVERY IS AN ALERT TOO — a logo that was broken and is now fixed,
+    // said once, or the operator cannot tell a repaired listing from one
+    // nobody looked at.
+    if (out.healed.length) {
+      for (const h of out.healed) log.info(`[listingAudit] logo healed: $${h.sym} ${h.chain}/${h.address} ${h.was} → ${h.url} (from ${h.source})`);
+      const lines = out.healed.slice(0, 12).map((h) => `• <b>$${esc(h.sym)}</b> (${esc(h.chain)}) — was <code>${esc(String(h.was).slice(0, 80))}</code>, now our own copy (from ${esc(h.source || '?')})`);
+      const more = out.healed.length > 12 ? `\n…and ${out.healed.length - 12} more` : '';
+      deps.alert(
+        `🖼✅ <b>Free listing logos repaired</b> — ${out.healed.length} listed token(s) held a logo the site could not draw\n` +
+          `${lines.join('\n')}${more}\n` +
+          'The site and every later post now read the copy on our own disk. Channel posts already published keep their picture.',
+      );
+    }
     for (const f of out.cleared) log.info(`[listingAudit] $${f.sym} (${f.chain}) passes again — flag cleared`);
     log.info(
       `[listingAudit] sweep: ${out.audited} checked · ${out.unasked} could not be asked · ` +
-        `${Object.keys(state.flagged).length} flagged of ${rows.length} bot-made listing(s)`,
+        `${Object.keys(state.flagged).length} flagged of ${rows.length} bot-made listing(s)` +
+        (out.healed.length ? ` · ${out.healed.length} logo(s) healed` : ''),
     );
     return out;
   } finally {

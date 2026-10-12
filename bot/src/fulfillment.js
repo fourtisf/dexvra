@@ -29,6 +29,9 @@ const bannerRender = require("./bannerRender");
 const bannerTemplate = require("./bannerTemplate");
 const { bounded } = require("./helpers/bounded");
 const { mediaPath } = require("./helpers/mediaUrl");
+// The MODULE, not a destructured fetchImage: tests replace it to keep the
+// suite offline and to drive the refused-host path.
+const safeImage = require("./helpers/safeImage");
 const tokenEmoji = require("./tokenEmoji");
 const tpl = require("./templates");
 const postFigures = require("./postFigures");
@@ -301,6 +304,14 @@ function coinFrom(row, live) {
  * fetching: same box, no public round trip. `photoSource` needs the public
  * origin instead, because Telegram fetches that one.
  */
+const hostOf = (u) => {
+  try {
+    return new URL(u).hostname;
+  } catch {
+    return "its host";
+  }
+};
+
 function proxiedLogo(base, logoUrl) {
   return `${base}/api/logo?u=${encodeURIComponent(logoUrl)}`;
 }
@@ -335,7 +346,7 @@ const LOGO_PROXY_MS = 15_000;
  * fallback. "A value nobody can read is the same as no value" — and until now
  * the only reader of x-logo-why in the repo was logos:check.
  */
-async function fetchLogoUrlX(logoUrl) {
+async function fetchLogoUrlX(logoUrl, opts = {}) {
   const none = { bytes: null, reached: false, status: 0, why: null, via: null, source: null };
   if (!logoUrl) return none;
   // An upload is our own file on our own disk — nothing to fail over to, no
@@ -350,12 +361,33 @@ async function fetchLogoUrlX(logoUrl) {
 
   const viaProxy = await readImage(proxiedLogo(DEXVRA_API_BASE, logoUrl), LOGO_PROXY_MS);
   if (viaProxy.bytes) return { ...viaProxy, source: "proxy" };
-  // ⚠️ A REFUSAL BY THE PROXY IS AN ANSWER AND IS NOT RETRIED DIRECTLY: it
-  // means neither the site nor this banner may render that url, and drawing it
-  // here would put a picture in the channel that the token's own page cannot
-  // show. Only the proxy being UNREACHABLE falls through — a web app mid-deploy
-  // must not cost every listing its artwork, and a direct read is exactly what
-  // this function did before.
+  // ⚠️ A REFUSAL BY OUR OWN ALLOWLIST IS FETCHED THROUGH THE GUARD — never raw.
+  //
+  // `$W` (Wormhole Token, Solana) was free-listed drawing the Dexvra mark over
+  // `https://wormhole.com/token.png`, the project's OWN file: the proxy answers
+  // 400 for a host missing from its allowlist, and this used to stop there on
+  // the reasoning that drawing it would put a picture in the channel the
+  // token's own page cannot show. That reasoning was about a url nobody would
+  // ever COPY. Every caller that draws a post now pins the bytes it drew from
+  // to /api/media (pinLogo, logoRepair, services/listingLogo), so the token's
+  // page renders the very same copy — and the allowlist's real job, keeping the
+  // PUBLIC route from being anyone's image proxy, is untouched: that route
+  // still refuses. helpers/safeImage is what makes fetching a creator-typed url
+  // safe (https only, public addresses only, every redirect re-checked, image
+  // bytes only). A raw `fetch(logoUrl)` is still never made for a refusal.
+  let guarded = null;
+  if (viaProxy.reached && postFigures.artFailure(viaProxy).cls === "refused-by-us") {
+    guarded = await safeImage.fetchImage(logoUrl).catch((e) => ({ bytes: null, why: e && e.message ? e.message : String(e), flaky: true }));
+    if (guarded && guarded.bytes) {
+      return {
+        bytes: guarded.bytes, reached: true, status: 200, why: null, ext: guarded.ext, mime: guarded.mime,
+        via: `${hostOf(logoUrl)} (direct, guarded)`, source: "guarded",
+      };
+    }
+  }
+  // Only the proxy being UNREACHABLE falls through to a plain read — a web app
+  // mid-deploy must not cost every listing its artwork, and a direct read is
+  // exactly what this function did before.
   //
   // `reached` travels back with the bytes rather than living in a module-level
   // flag: several logos are fetched concurrently here (a listing and its
@@ -371,16 +403,26 @@ async function fetchLogoUrlX(logoUrl) {
     // wrong-layer diagnosis this file keeps paying for.
     // The proxy's own per-gateway verdict travels on the line, or a 400 from
     // our allowlist and a CID nobody has pinned read as the same event.
-    const detail = viaProxy.why ? ` — ${viaProxy.why}` : viaProxy.status ? ` — proxy answered HTTP ${viaProxy.status}` : "";
-    log.warn(
+    const detail =
+      (viaProxy.why ? ` — ${viaProxy.why}` : viaProxy.status ? ` — proxy answered HTTP ${viaProxy.status}` : "") +
+      (guarded && guarded.why ? ` (its own host, fetched directly: ${guarded.why})` : "");
+    // `quiet` is for a caller PROBING candidates (services/listingLogo): one
+    // url failing there is not a banner falling back, and this line mirrors to
+    // the ops channel.
+    if (!opts.quiet) log.warn(
       viaProxy.reached
         ? `[fulfil] logo unusable${detail}; banner falls back to the Dexvra mark: ${logoUrl}`
         : `[fulfil] logo unreadable — /api/logo did not answer in ${LOGO_PROXY_MS}ms (is the web app up?), banner falls back to the Dexvra mark: ${logoUrl}`,
     );
   }
   // The proxy's facts travel back — reached/status/why are ITS answer; the raw
-  // fallback that also failed adds nothing an operator can act on.
-  return { ...viaProxy, bytes: null, source: viaProxy.reached ? "proxy" : "direct" };
+  // fallback that also failed adds nothing an operator can act on. The guarded
+  // fetch's verdict rides beside them, because "its own host is down" and "its
+  // own host is not serving an image" decide whether asking again can help.
+  return {
+    ...viaProxy, bytes: null, source: viaProxy.reached ? "proxy" : "direct",
+    guardedWhy: guarded ? guarded.why || null : null, guardedFlaky: guarded ? !!guarded.flaky : false,
+  };
 }
 
 /**
@@ -1431,6 +1473,9 @@ module.exports = {
   // url. See bannerLogo.test.js.
   _fetchLogoUrl: fetchLogoUrl,
   _fetchLogoUrlX: fetchLogoUrlX,
+  // Public as well: the free-listing artwork lookup and the auto-lister's
+  // announcement read logos through it (services/listingLogo, autoLister).
+  fetchLogoUrlX,
   // The review card warms the artwork before payment; the post reads it back.
   warmLogo,
   // Read by the listing review card too (handlers/listing reviewPhoto), so the

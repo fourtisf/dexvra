@@ -319,6 +319,13 @@ const faults = [];
           bad(`${r.unchecked} qualifying token(s) could not be safety-checked${t ? ` — ${t[0]}` : ""}`);
           faults.push("the free-listing safety check (GoPlus/RugCheck) is not answering this box");
         }
+        // The artwork check, same rule: "could not check its logo" is a source
+        // or our image proxy not answering, never a verdict about the token.
+        if (r.artUnread) {
+          const t = Object.entries(r.artUnreadWhy || {}).sort((a, b) => b[1] - a[1])[0];
+          bad(`${r.artUnread} qualifying token(s) could not have their artwork checked${t ? ` — ${t[0]}` : ""}`);
+          faults.push("the free-listing artwork check could not reach a logo source or /api/logo");
+        }
         // NOT a fault. "Nothing qualifies in this sample" is the service working
         // correctly in a quiet market, and failing on it is how a check becomes
         // permanently red and therefore useless.

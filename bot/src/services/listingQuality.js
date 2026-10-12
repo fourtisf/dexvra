@@ -191,7 +191,7 @@ const HTTP_LOGO = /^https?:\/\/\S+$/i;
  * `liquidity ≈`, `flat price`) because the scan's report tallies reasons by
  * their text and `coolUntil` decides from it how long to leave a token alone.
  */
-function qualityRefusal(chain, address, info) {
+function qualityRefusal(chain, address, info, { artPending = false } = {}) {
   if (!info) return null;
   const fake = impersonates(chain, address, info.symbol, info.name);
   if (fake) {
@@ -199,7 +199,11 @@ function qualityRefusal(chain, address, info) {
     // parenthesised figures stripped, so every impersonator is ONE bucket.
     return `impersonates a major coin ($${fake.sym} ${fake.name}, not its contract on ${chain})`;
   }
-  if (!HTTP_LOGO.test(String(info.logoUrl || '').trim())) return 'no logo';
+  // `artPending`: the caller asks the artwork question itself, of EVERY source
+  // and the way the renderer draws it (services/listingLogo) — so a missing url
+  // on the discovery record is not yet a verdict, and the checks below still
+  // run. Without it this is the old string test, which passes any http url.
+  if (!artPending && !HTTP_LOGO.test(String(info.logoUrl || '').trim())) return 'no logo';
   const mcap = Number(info.mcap) || 0;
   const liq = Number(info.liq) || 0;
   // ⚠️ Number(null) is 0, and 0 is finite — an unpublished volume would read
