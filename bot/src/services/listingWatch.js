@@ -143,6 +143,27 @@ function diagnose(scan) {
         'Nothing new has appeared in the feeds — 🧹 Clear history only if you have also wiped the site.',
     };
   }
+  // ⚠️ TOKENS QUALIFIED AND WERE HELD BACK — not the market. Their artwork
+  // could not be checked (services/listingLogo), so the scan had something to
+  // list and did not. Above the market branches, because "lower 🎯" is wrong
+  // advice for a token that already cleared every gate. Reached only after the
+  // grace period of silence, which is what makes a GeckoTerminal 429 — this
+  // box's ordinary state — worth a page here and not on every scan.
+  if (scan.artUnread && !scan.listed) {
+    const t = top(scan.artUnreadWhy);
+    const gt = t && /geckoterminal/i.test(t.text);
+    return {
+      code: 'art_unread',
+      fault: true,
+      text:
+        `${scan.artUnread} token(s) cleared every gate and were held back because their artwork could not be checked` +
+        (t ? ` — ${t.text}` : '') +
+        '. That is not the market: ' +
+        (gt
+          ? 'GeckoTerminal is rate-limiting this box and is the only logo source left for them — GECKOTERMINAL_API_KEY in bot/.env raises the limit.'
+          : '`npm run listing:check` §7 measures the logo sources on this box.'),
+    };
+  }
   const why = top(scan.reasons);
   // ⚠️ "NOTHING QUALIFIED" HAS TWO CAUSES, AND THE ADVICE FOR ONE IS WRONG FOR
   // THE OTHER. The branch below says "lower 🎯 if the bar is higher than this

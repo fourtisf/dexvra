@@ -292,3 +292,35 @@ test("listing:check measures with the bot's OWN predicate, and goes red only whe
   const sec = src.slice(src.indexOf("7 · Artwork"), src.indexOf("── Verdict"));
   assert.strictEqual((sec.match(/faults\.push/g) || []).length, 1, "no other artwork state may turn the exit code — a check that is always red trains the reader to ignore red");
 });
+
+test("systemicWhy: only our own image proxy going dark stops every listing — a metered source's 429 does not", () => {
+  assert.strictEqual(ll.systemicWhy("discovery x.com: /api/logo did not answer — is the web app up?"), true);
+  for (const w of ["geckoterminal: rate limited", "coingecko: HTTP 429", "the artwork lookup passed 60000ms", "", null]) {
+    assert.strictEqual(ll.systemicWhy(w), false, String(w));
+  }
+});
+
+test("inspectRow carries WHY the row's own url could not be used — the next question after 'fixable from coingecko'", () =>
+  withLogo("1", async () => {
+    const { deps } = seams({
+      art: {
+        "https://wormhole.com/token.png": { bytes: null, reached: true, status: 400, guardedWhy: "wormhole.com: HTTP 403", guardedFlaky: false },
+        "https://assets.coingecko.com/w.png": proxied,
+      },
+      ladder: { cands: [["coingecko", "https://assets.coingecko.com/w.png"]], ok: true },
+    });
+    const v = await ll.inspectRow({ chain: "solana", address: "W", logoUrl: "https://wormhole.com/token.png" }, { deps });
+    assert.strictEqual(v.state, "fixable");
+    assert.strictEqual(v.source, "coingecko");
+    assert.match(v.rowWhy, /wormhole\.com: wormhole\.com: HTTP 403/);
+  }));
+
+test("listing:check §6 is a FAULT only when the artwork path itself is down — the same predicate the scan's blocker reads", () => {
+  const fs = require("node:fs");
+  const src = fs.readFileSync(path.join(__dirname, "..", "scripts", "listing-check.js"), "utf8").replace(/^\s*\/\/.*$/gm, "");
+  const s6 = src.slice(src.indexOf("if (r.artUnread) {"), src.indexOf("closest to its trigger"));
+  assert.match(s6, /\.every\(listingLogo\.systemicWhy\)\) \{\s*bad\([^]*?faults\.push/, "the fault sits inside the systemic branch");
+  assert.strictEqual((s6.match(/faults\.push/g) || []).length, 1, "and nowhere else in the artwork branch");
+  assert.ok(!/could not reach a logo source or \/api\/logo/.test(src), "the wrong-cause sentence must not come back");
+});
+

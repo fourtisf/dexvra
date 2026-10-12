@@ -105,19 +105,44 @@ test("$W: the listing is BORN pointing at our own copy of its artwork, not at th
   }
 });
 
-test("⚠️ an artwork lookup that could not ASK is not 'no logo' — counted on its own, never cooled, and a blocker when it held back every qualifier", async () => {
-  const h = harness({ logo: { ok: false, url: null, why: "coingecko: HTTP 429" } });
+test("⚠️ an artwork lookup that could not ASK is not 'no logo' — counted on its own and never cooled", async () => {
+  const h = harness({ logo: { ok: false, url: null, why: "geckoterminal: rate limited" } });
   try {
     await fresh();
     await al.runOnce({ deps: h.deps, now, rng: () => 0.5 });
     assert.strictEqual(h.created.length, 0);
     const scan = al.lastScan();
     assert.strictEqual(scan.artUnread, 1);
-    assert.ok(Object.keys(scan.artUnreadWhy).some((k) => /coingecko/.test(k)));
-    assert.match(scan.blocker || "", /could not have their artwork checked/);
+    assert.ok(Object.keys(scan.artUnreadWhy).some((k) => /geckoterminal/.test(k)));
     assert.ok(!Object.keys(scan.reasons).some((r) => /^no logo/.test(r)), "a source we could not ask must never read as a token with no logo");
     const st = JSON.parse(fss.readFileSync(path.join(process.env.BOT_DATA_DIR, "autoListerState.json"), "utf8"));
     assert.deepStrictEqual(Object.keys(st.cool || {}), [], "no cool-off — the next scan asks again");
+    assert.match(al.scanLine(scan), /artwork could not be checked \(geckoterminal: rate limited\)/, "said on the scan line");
+  } finally {
+    h.restore();
+  }
+});
+
+test("⚠️ ONE token waiting on GeckoTerminal is NOT a blocked scan — the reported false alarm", async () => {
+  // listing:check printed "Free listings cannot go out" over exactly this,
+  // directly above section 7 proving /api/logo answers. A 429 from a metered
+  // source is this box's ordinary state; the token is asked again next scan.
+  const h = harness({ logo: { ok: false, url: null, why: "geckoterminal: rate limited" } });
+  try {
+    await fresh();
+    await al.runOnce({ deps: h.deps, now, rng: () => 0.5 });
+    assert.strictEqual(al.lastScan().blocker, null);
+  } finally {
+    h.restore();
+  }
+});
+
+test("…but our IMAGE PROXY not answering IS a blocker — then every new listing fails the same way", async () => {
+  const h = harness({ logo: { ok: false, url: null, why: "discovery cdn.dexscreener.com: /api/logo did not answer — is the web app up?" } });
+  try {
+    await fresh();
+    await al.runOnce({ deps: h.deps, now, rng: () => 0.5 });
+    assert.match(al.lastScan().blocker || "", /could not have their artwork checked/);
   } finally {
     h.restore();
   }

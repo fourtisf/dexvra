@@ -322,12 +322,26 @@ const faults = [];
           bad(`${r.unchecked} qualifying token(s) could not be safety-checked${t ? ` — ${t[0]}` : ""}`);
           faults.push("the free-listing safety check (GoPlus/RugCheck) is not answering this box");
         }
-        // The artwork check, same rule: "could not check its logo" is a source
-        // or our image proxy not answering, never a verdict about the token.
+        // The artwork check: "could not check its logo" is never a verdict about
+        // the token. ⚠️ And it is a FAULT only when the artwork path itself is
+        // down (our image proxy not answering) — the scan's own blocker rule,
+        // read from the same predicate. The first cut made ONE token waiting on
+        // GeckoTerminal print "Free listings cannot go out — could not reach a
+        // logo source or /api/logo", directly above section 7 proving /api/logo
+        // answers: a wrong verdict AND a wrong cause.
         if (r.artUnread) {
+          const listingLogo = require("../src/services/listingLogo");
           const t = Object.entries(r.artUnreadWhy || {}).sort((a, b) => b[1] - a[1])[0];
-          bad(`${r.artUnread} qualifying token(s) could not have their artwork checked${t ? ` — ${t[0]}` : ""}`);
-          faults.push("the free-listing artwork check could not reach a logo source or /api/logo");
+          if (Object.keys(r.artUnreadWhy || {}).every(listingLogo.systemicWhy)) {
+            bad(`${r.artUnread} qualifying token(s) could not have their artwork checked${t ? ` — ${t[0]}` : ""}`);
+            faults.push("the image proxy (/api/logo) is not answering — no new free listing can have its artwork checked");
+          } else {
+            warn(`${r.artUnread} qualifying token(s) held back for now — artwork not checked yet${t ? ` (${t[0]})` : ""}; the next scan asks again`);
+            if (t && /geckoterminal/i.test(t[0])) {
+              note(`GeckoTerminal is rate-limiting this box, and for that token it is the only logo source left (no DexScreener or CoinGecko artwork).`);
+              note(`GECKOTERMINAL_API_KEY in bot/.env raises the limit. Not a fault: the bot pages by itself if this holds every listing back for ${Math.round(watch.GRACE_MS / 3_600_000)}h.`);
+            }
+          }
         }
         // NOT a fault. "Nothing qualifies in this sample" is the service working
         // correctly in a quiet market, and failing on it is how a check becomes
@@ -348,6 +362,11 @@ const faults = [];
             // advising it would be the wrong-setting diagnosis this file exists
             // to stop giving.
             note(`Most of this sample was refused as scams or copies (listingQuality / listingSafety) — nothing to lower; the next real project lists.`);
+          } else if (r.artUnread || r.unchecked) {
+            // Something DID clear the gates and was held back (above). Saying
+            // "nothing clears your gates — lower 🎯" here is the wrong-setting
+            // advice this file exists to stop giving.
+            note(`${(r.artUnread || 0) + (r.unchecked || 0)} token(s) cleared your gates and were held back (above) — nothing to lower.`);
           } else note(`Nothing in this sample clears your gates. That is the market, not a fault — lower 🎯/💧/📊 to widen it.`);
         }
       }
@@ -392,9 +411,16 @@ const faults = [];
         const who = `${ticker(r.sym || r.symbol)} ${r.chain}`;
         if (v.state === "ours") ok(`${who} — our own copy`);
         else if (v.state === "renders") ok(`${who} — draws through /api/logo (${host(r.logoUrl)})`);
-        else if (v.state === "fixable")
+        else if (v.state === "fixable") {
           warn(`${who} — the site cannot draw ${host(r.logoUrl)}; the audit moves it onto our copy from ${v.source}${v.via === "guarded" ? " (its own host, read directly)" : ""}`);
-        else if (v.state === "none") bad(`${who} — no artwork anywhere; the audit flags it and \`npm run listings:nostables\` removes it`);
+          // Why its OWN url could not be used — never discarded. A host
+          // refusing this box, an HTML page and a dead socket need different
+          // answers, and "moves it from coingecko" says none of them.
+          if (v.source !== "row" && v.rowWhy) note(`its own url: ${String(v.rowWhy).slice(0, 160)}`);
+        } else if (v.state === "none") {
+          bad(`${who} — no artwork anywhere; the audit flags it and \`npm run listings:nostables\` removes it`);
+          if (v.rowWhy) note(`its own url: ${String(v.rowWhy).slice(0, 160)}`);
+        }
         else if (v.state === "ours-missing") warn(`${who} — our own file is gone (${v.why}); the site clears it and re-resolves`);
         else if (v.state === "blank") warn(`${who} — no logo url stored`);
         else warn(`${who} — could not be checked: ${String(v.why || "no answer").slice(0, 160)}`);

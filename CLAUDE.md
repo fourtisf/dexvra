@@ -3462,6 +3462,54 @@ fails a test:
 - our own file not verified;
 - §7 going red on one unreadable row.
 
+#### "mengapa seperti ini" — the check called one waiting token a dead feed
+
+The first `listing:check` after the deploy: §7 was green except for `$W`, which
+it reported as fixable from CoinGecko. The verdict under it was red:
+
+```
+✗ 1 qualifying token(s) could not have their artwork checked — geckoterminal: rate limited
+Free listings cannot go out. 1 blocking reason(s):
+  · the free-listing artwork check could not reach a logo source or /api/logo
+```
+
+**Both halves of that were wrong, and the code was mine.** One token, most
+likely on Robinhood, had no artwork on DexScreener. GeckoTerminal was the only
+source left for it, and the box's shared GT budget was spent (the `[buybot] …
+HTTP 429` line is in the same output). The lookup honestly answered "could not
+ask". §6 then turned any `artUnread` into a fault, and the scan raised a blocker
+for the same thing. Section 7 proved `/api/logo` answers three lines further
+down.
+
+- **`listingLogo.systemicWhy` is the line, with one owner.** Only our own image
+  proxy not answering stops every listing, so only that is a blocker in the scan
+  and a fault in the check. A metered source's 429 is this box's ordinary state
+  and is about one token. That token is held back, named on the scan line, and
+  asked again on the next scan.
+- **Persistence still pages.** If held-back tokens are what keeps the feed
+  empty for the grace period, `listingWatch.diagnose` answers `art_unread`.
+  The page says *"not the market"*, never "lower 🎯", and names
+  `GECKOTERMINAL_API_KEY` only when GeckoTerminal is the cause.
+- **§6 no longer says "Nothing in this sample clears your gates"** when
+  something cleared them and was held back. That is the wrong-setting advice.
+- **§7 prints why the row's own url failed** (`its own url: …`).
+  "Moves it from coingecko" could not say whether `wormhole.com` refused the
+  box, served HTML or never answered. ⚠️ This sandbox could not learn it either:
+  `curl` to wormhole.com got `CONNECT tunnel failed, response 403` from the
+  sandbox's own egress proxy, which is a fact about this sandbox and not about
+  wormhole. The next run on the box answers it.
+
+Eight more guarantees are MUTATION-TESTED rather than argued:
+
+- a GeckoTerminal wait as a blocker;
+- a dead proxy not a blocker;
+- `systemicWhy` always true;
+- the watch branch removed;
+- the watch firing on a scan that listed;
+- GT advice given for every source;
+- the check faulting on any `artUnread`;
+- the row's own reason dropped.
+
 ## A Top 3 that was not the top of the Top 5
 
 Two banners, one minute apart, from the same admin panel:

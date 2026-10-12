@@ -1810,11 +1810,14 @@ async function scanOnce({ tg, now = Date.now(), deps = {}, rng = Math.random, fo
       `${report.unchecked} qualifying token(s) could not be safety-checked, so none were listed — ` +
       `most common: ${why}${n < report.unchecked ? ` (×${n})` : ""}`;
     log.warn(`[autolist] ${report.blocker}`);
-  } else if (!listedNow && report.artUnread > 0) {
-    // Same definition as above: these QUALIFIED and the scan could not settle
-    // their artwork, so it had something to list and did not. An image proxy
-    // that has gone dark (or every logo source refusing this box) must not end
-    // free listings silently.
+  } else if (!listedNow && report.artUnread > 0 && Object.keys(report.artUnreadWhy).every(listingLogo.systemicWhy)) {
+    // A BLOCKER ONLY WHEN THE ARTWORK PATH ITSELF IS DOWN — our image proxy not
+    // answering, so every candidate fails the same way and nothing can be
+    // listed. ⚠️ NOT for one token waiting on GeckoTerminal: a 429 there is
+    // this box's ordinary state, the token is asked again next scan, and
+    // paging "blocked" over it (after three scans) would be a monitor crying
+    // wolf. That case is on the scan line, and if it persists until nothing has
+    // been listed for the grace period, listingWatch names it (`art_unread`).
     const [why, n] = Object.entries(report.artUnreadWhy).sort((a, b) => b[1] - a[1])[0];
     report.blocker =
       `${report.artUnread} qualifying token(s) could not have their artwork checked, so none were listed — ` +

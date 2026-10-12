@@ -230,6 +230,24 @@ async function resolveX(chain, address, info = {}, opts = {}) {
   return bounded(work, RESOLVE_MS, () => ({ ok: false, url: null, why: `the artwork lookup passed ${RESOLVE_MS}ms`, tried, misses }));
 }
 
+/**
+ * Is a "could not ask" about the WHOLE artwork path rather than about one
+ * token's sources? Only our own image proxy not answering is: then every
+ * candidate of every token fails the same way, and no free listing can be
+ * checked. One metered source being busy (GeckoTerminal's 429 is this box's
+ * ordinary state) is about one token, and the next scan asks again.
+ *
+ * ⚠️ This is the line between "a scan held one token back" and "free listings
+ * cannot go out". The first cut had none: `listing:check` printed "Free
+ * listings cannot go out — could not reach a logo source or /api/logo" over one
+ * Robinhood token waiting on GeckoTerminal, three lines above section 7
+ * proving /api/logo answers. A check that is red for an ordinary state is one
+ * its reader learns to ignore.
+ */
+function systemicWhy(why) {
+  return /\/api\/logo did not answer/i.test(String(why || ''));
+}
+
 /** A recorded miss that is about US or a bad minute, not about the url. */
 function flakyMiss(m) {
   return flakyWhy(m) || /did not answer|could not reach|no answer/i.test(m);
@@ -296,10 +314,15 @@ async function inspectRow(row, { deps: over = {} } = {}) {
   }
   if (!/^https?:\/\//i.test(cur)) return { state: 'blank', why: 'not an http(s) url' };
   const r = await resolveX(row.chain, row.address, {}, { prefer: cur, keepRenderable: true, pin: false, deps: over });
-  if (!r.ok) return { state: 'undecided', why: r.why };
+  // WHY the row's own url failed — never discarded. "the audit moves it from
+  // coingecko" without it cannot say whether the project's host refused us,
+  // served HTML, or was never reachable, and that is the next question.
+  const own = (r.misses || []).find((m) => /^row /.test(m));
+  const rowWhy = own ? own.replace(/^row /, '') : null;
+  if (!r.ok) return { state: 'undecided', why: r.why, rowWhy };
   if (r.renders) return { state: 'renders' };
-  if (!r.url) return { state: 'none', why: r.why };
-  return { state: 'fixable', source: r.source, from: r.from, via: r.via };
+  if (!r.url) return { state: 'none', why: r.why, rowWhy };
+  return { state: 'fixable', source: r.source, from: r.from, via: r.via, rowWhy };
 }
 
-module.exports = { resolveX, healRow, inspectRow, enabled, RESOLVE_MS, _artFor: artFor, _flakyWhy: flakyWhy };
+module.exports = { resolveX, healRow, inspectRow, systemicWhy, enabled, RESOLVE_MS, _artFor: artFor, _flakyWhy: flakyWhy };
