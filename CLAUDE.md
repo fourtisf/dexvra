@@ -608,6 +608,46 @@ blank read as OFF, and on the guarded document fetch: HTML accepted, a non-objec
 accepted, the hop re-check dropped, and the size bound lifted. Each fails between
 one and three tests; two SURVIVED their first run, and both were test gaps.
 
+#### The first live run: green, and it named two things the check itself got wrong
+
+`launchpads:check` on the box for BINWISE, straight after the deploy:
+
+```
+✓ on-chain metadata   BINWISE ($BWS) — website yes, X yes, Telegram no
+    document: https://pump.mypinata.cloud/ipfs/bafkreif3gpo6w6zy…
+    website   https://binwise.org/
+    X         https://x.com/binwiselp
+    overview  Binwise is an autonomous LP agent for Solana. It finds the p…
+    from      launchpad:jupiter+solana-meta
+```
+
+The form fills now — from the mint's own document, through pump.fun's pin, the
+second rung of the ladder. Telegram is blank because the creator wrote none,
+which the line above says rather than leaving to a guess. Two defects in the
+CHECK, both mine:
+
+- ⚠️ **TWO SECTIONS CONTRADICTED EACH OTHER.** The pad-only section was still
+  titled *"what listing autofill would prefill"* and printed `website —`
+  directly above the form's own section printing the website. It is titled as
+  what it is now — what the launchpads alone know, one input to the form.
+- ⚠️ **DEXSCREENER VANISHED FROM THE PROVENANCE.** Its record carries no
+  `source`, and `mergeInfo` builds the chain from the first source that has one,
+  so `launchpad:jupiter+solana-meta` sat over a record whose price came from
+  DexScreener. The merge names it now (`dexscreener+…`); nothing reads `source`
+  but the check and the form's log line.
+- **And `pumpfun — answered: never heard of it`, about a pump.fun mint, could
+  not say WHO answered.** A pad keeps its retired host behind its current one and
+  the client sticks to whichever answered last, so that 404 is a fact about the
+  token from `frontend-api-v3.pump.fun` and possibly nothing at all from a
+  retired host that 404s everything. The answering host travels with the lookup
+  now (`tried[].base`, cached with the answer) and the check prints it. ⚠️ No
+  behaviour was changed on the strength of it: which host said 404 is measured on
+  the next run, not assumed.
+
+Four guarantees are MUTATION-TESTED: the host not recorded, not carried to
+`tried`, not cached with the answer, and DexScreener dropped from the
+provenance. Each fails a test.
+
 **Config a fix depends on:** nothing — it ships ON and blank means on.
 `SOLANA_META=0` in `bot/.env` turns the on-chain read off; it uses the bot's own
 Solana RPC list (`RPC_SOLANA_URLS` / `RPC_SOLANA`) and the same `IPFS_GATEWAYS`

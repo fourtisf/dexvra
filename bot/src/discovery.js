@@ -270,7 +270,11 @@ async function fetchTokenInfoX(chain, address, opts = {}) {
   }
   if (!extras.length) return dsP;
   const [dsAns, ...rest] = await Promise.all([dsP, ...extras]);
-  let info = dsAns.info;
+  // Named, or the provenance `mergeInfo` builds starts at the first source
+  // that HAS a name and DexScreener's contribution vanishes from it:
+  // `launchpad:jupiter+solana-meta` over a record whose price came from
+  // DexScreener, on the check that exists to say where each field came from.
+  let info = dsAns.info ? { source: "dexscreener", ...dsAns.info } : null;
   for (const e of rest) info = mergeInfo(info, e);
   // Which sources missed the clock, at INFO: "the form asked for the name" has
   // four causes and only this line separates a slow pad from a token nobody

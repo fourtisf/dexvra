@@ -172,10 +172,10 @@ function _cacheSet(k, v) {
 async function padToken(pad, chain, address, now) {
   const key = pad.key + ':' + chain + ':' + N.addrKey(chain, address);
   const cached = _cacheGet(key, now);
-  if (cached) return { pad: pad.key, ok: cached.ok, why: cached.why, status: cached.status, rec: cached.rec, cached: true };
+  if (cached) return { pad: pad.key, ok: cached.ok, why: cached.why, status: cached.status, rec: cached.rec, base: cached.base || null, cached: true };
 
   const c = CLIENTS.get(pad.key);
-  const out = { pad: pad.key, ok: false, why: '', status: 0, rec: null, cached: false };
+  const out = { pad: pad.key, ok: false, why: '', status: 0, rec: null, base: null, cached: false };
   if (!c) { out.why = 'pad not built'; return out; }
 
   const bench = benched(pad.key, now);
@@ -220,13 +220,19 @@ async function padToken(pad, chain, address, now) {
     return out;
   }
   out.status = r.status;
+  // WHICH HOST answered. A pad's base list is current-first with the retired
+  // host kept behind it, and the client sticks to whichever answered last —
+  // so "pump.fun: never heard of it" is a fact about the token from the
+  // current host and possibly nothing at all from a retired one that 404s
+  // everything. The check prints this; without it the two read identically.
+  out.base = baseHost(r.base);
   if (!r.ok) {
     // Every spelling answered 404: the launchpad has never heard of this token
     // — a fact about the token, not about the host.
     if (r.status === 404) {
       noteOk(pad.key);
       out.ok = true;
-      _cacheSet(key, { at: now, rec: null, ok: true, why: '', status: 404 });
+      _cacheSet(key, { at: now, rec: null, ok: true, why: '', status: 404, base: out.base });
       return out;
     }
     out.why = `${pad.label}: ${r.why}`;
@@ -255,8 +261,14 @@ async function padToken(pad, chain, address, now) {
       out.rec = (rec && (!named || N.sameAddress(chain, rec.address, address))) ? { ...rec, address } : null;
     } catch (e) { out.rec = null; out.why = `${pad.label}: unreadable response (${(e && e.message) || 'parse failed'})`; }
   }
-  _cacheSet(key, { at: now, rec: out.rec, ok: true, why: out.why, status: r.status });
+  _cacheSet(key, { at: now, rec: out.rec, ok: true, why: out.why, status: r.status, base: out.base });
   return out;
+}
+
+/** `https://frontend-api-v3.pump.fun/coins` → `frontend-api-v3.pump.fun`. */
+function baseHost(b) {
+  if (!b) return null;
+  try { return new URL(b).host; } catch (_) { return null; }
 }
 
 // ── merge ────────────────────────────────────────────────────────────────────
@@ -348,7 +360,7 @@ async function tokenRecord(chain, address, opts) {
     // that shows a blank row.
     pad: p.key, ok: false, why: `${p.label}: ${(e && e.message) || 'failed'}`, status: 0, rec: null,
   }))));
-  out.tried = results.map((r) => ({ pad: r.pad, ok: r.ok, why: r.why, status: r.status, found: !!r.rec, cached: !!r.cached, skipped: !!r.skipped }));
+  out.tried = results.map((r) => ({ pad: r.pad, ok: r.ok, why: r.why, status: r.status, base: r.base || null, found: !!r.rec, cached: !!r.cached, skipped: !!r.skipped }));
   out.ok = results.some((r) => r.ok);
   if (!out.ok) out.why = results.map((r) => r.why).filter(Boolean).join('; ') || 'no launchpad answered';
   out.record = merge(results.map((r) => r.rec));

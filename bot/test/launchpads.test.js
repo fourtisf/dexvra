@@ -238,3 +238,34 @@ test("both processes read ONE pad table", () => {
   assert.match(bases, /shared\/launchpads/, "tradebot/solana.js hardcodes pump.fun hosts again");
   assert.ok(lp.basesOf("pumpfun").length >= 2, "the legacy pump.fun host was dropped");
 });
+
+// "· pumpfun — answered: never heard of it", on the box, about a pump.fun mint.
+// A pad keeps its RETIRED host behind its current one and the client sticks to
+// whichever answered last, so that sentence is a fact about the token from the
+// current host and possibly nothing at all from a retired one that 404s
+// everything. The check could not say which — the answering host travels now.
+test("the host that answered a lookup is recorded, so 'never heard of it' says WHO never heard of it", async () => {
+  lp.reload();
+  // The current host refuses the connection; the retired one answers 404.
+  global.fetch = async (url) => {
+    const u = String(url);
+    if (u.startsWith("https://frontend-api-v3.pump.fun/")) {
+      const e = new TypeError("fetch failed");
+      e.cause = { code: "ECONNRESET" };
+      throw e;
+    }
+    if (u.startsWith("https://frontend-api.pump.fun/")) return { ok: false, status: 404, text: async () => "", json: async () => ({}) };
+    const e = new TypeError("fetch failed");
+    e.cause = { code: "ENOTFOUND" };
+    throw e;
+  };
+  const r = await lp.tokenRecord("solana", MINT);
+  const pump = r.tried.find((t) => t.pad === "pumpfun");
+  assert.ok(pump, JSON.stringify(r.tried));
+  assert.strictEqual(pump.status, 404);
+  assert.strictEqual(pump.base, "frontend-api.pump.fun", "the retired host's 404 must be distinguishable from the current host's");
+  // …and the cached answer remembers it too, or a second look loses the host.
+  const again = await lp.tokenRecord("solana", MINT);
+  assert.strictEqual(again.tried.find((t) => t.pad === "pumpfun").base, "frontend-api.pump.fun");
+  lp.reload();
+});

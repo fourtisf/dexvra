@@ -143,7 +143,7 @@ test("⚠️ the indexer keeps precedence — the chain only fills what it left 
   assert.strictEqual(info.twitter, "https://x.com/binwise_profile");
   assert.strictEqual(info.priceUsd, 0.0001, "the market fields are DexScreener's");
   assert.strictEqual(info.website, "https://binwise.xyz", "…and the hole is filled from the chain");
-  assert.match(info.source, /solana-meta/);
+  assert.match(info.source, /^dexscreener\+.*solana-meta$/, "every contributor is named — DexScreener's part used to vanish from the provenance");
 });
 
 test("⚠️ OPT-IN: the auto-lister and the audit (no `chainMeta`) never pay for an RPC read", async () => {

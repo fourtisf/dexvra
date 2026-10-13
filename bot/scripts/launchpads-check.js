@@ -124,12 +124,16 @@ async function checkToken(address, chain) {
   for (const t of r.tried) {
     const p = pads.find((x) => x.key === t.pad) || { key: t.pad, label: t.pad, enabled: true, verified: true };
     const mark = t.skipped ? Y("•") : t.found ? G("✓") : t.ok ? D("·") : R("✗");
+    // The host that ANSWERED, because a pad keeps a retired host behind its
+    // current one: "never heard of it" from the current host is a fact about
+    // the token, and from a retired host that 404s everything it is nothing.
+    const via = t.base ? ` (${t.base})` : "";
     const note = t.skipped
       ? Y(t.why)
       : t.found
-        ? G("knows it")
+        ? G(`knows it${via}`)
         : t.ok
-          ? D(t.status === 404 ? "answered: never heard of it" : "answered, no record")
+          ? D((t.status === 404 ? "answered: never heard of it" : "answered, no record") + via)
           : R(t.why);
     console.log(`  ${mark} ${padHeader(p)}\n      ${note}`);
   }
@@ -140,7 +144,11 @@ async function checkToken(address, chain) {
   }
   // The listing form's own view: this is exactly what autofill would put in it.
   const info = await launchpads.fetchTokenInfo(chain, address);
-  console.log("\n  " + G("what listing autofill would prefill") + "\n");
+  // ⚠️ NOT what the form prefills — one INPUT to it. This header used to read
+  // "what listing autofill would prefill", and with the form's own section
+  // printed below it the two contradicted each other: website "—" here,
+  // website filled there, on one screen.
+  console.log("\n  " + G("what the launchpads alone know (one input to the form — the form's own view is below)") + "\n");
   const row = (k, v) => console.log(`    ${k.padEnd(12)} ${v === null || v === undefined || v === "" || v === 0 ? D("—") : v}`);
   row("name", info.name);
   row("ticker", info.symbol);
