@@ -221,7 +221,14 @@ function curveState(rec, { graduated, progressApi, progressDerived, migratedPool
   const api = pct(progressApi);
   if (api != null) { rec.progressPct = api; rec.progressSource = 'api'; }
   else {
-    const d = pct(progressDerived);
+    // ⚠️ NOT through `pct()`. That helper reads anything in (0, 1] as a
+    // FRACTION and multiplies it by 100, which is right for an API value of
+    // unknown scale and wrong for this one: WE computed it, on a 0–100 scale.
+    // Through `pct()` a token 0.4% along its curve printed "40% to
+    // graduation" — every pump.fun launch in its first moments, which is the
+    // window a "still bonding" line exists for. Found by the on-chain curve
+    // test (solanaMeta.test.js), feeding a real 0.4% through this parser.
+    const d = Number.isFinite(progressDerived) ? Math.max(0, Math.min(100, progressDerived)) : null;
     if (d != null) { rec.progressPct = d; rec.progressSource = 'derived'; }
   }
   // Only now can onCurve be stated. A pad that said nothing about graduation
@@ -602,5 +609,11 @@ function build() {
 module.exports = {
   build, blank, common, curveState, rows, one, fill, padOn, basesFor, vol24,
   LIST_KEYS, ID_KEYS,
+  // A PRODUCTION export, not a test seam: bot/src/solanaMeta.js reads a
+  // pump.fun curve's reserves off the chain and hands them to this parser, so
+  // the curve constants and the progress derivation have ONE owner. Two copies
+  // of "what fraction of the curve is sold" would drift the day pump.fun moves
+  // its parameters — which `LAUNCHPAD_PUMPFUN_CURVE_TOKENS` exists for.
+  pumpfunParse,
   _parsers: { pumpfunParse, jupiterParse },
 };

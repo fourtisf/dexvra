@@ -80,11 +80,18 @@ const realDeps = { ...sm._deps };
 const realLookups = { ...listing._lookups };
 const realBlock = listedGuard.blockIfListed;
 let reads = 0;
-function chainAnswers(ok = true) {
+/** pump.fun's BondingCurve account with `sold` of the curve gone. */
+function curve(sold) {
+  const b = Buffer.alloc(8 + 40 + 1 + 32);
+  Buffer.from(sm._test.PUMP_CURVE_DISC).copy(b, 0);
+  b.writeBigUInt64LE(BigInt(Math.round(793100000000000 * (1 - sold))), 24);
+  return { owner: sm.PUMP_PROGRAM, data: b };
+}
+function chainAnswers(ok = true, curveAcct = null) {
   sm._deps.readAccounts = async () => {
     reads++;
     if (!ok) throw Object.assign(new Error("fetch failed"), { cause: { code: "ECONNREFUSED" } });
-    return [{ owner: sm.METADATA_PROGRAM, data: metaplex() }, null];
+    return [{ owner: sm.METADATA_PROGRAM, data: metaplex() }, null, curveAcct];
   };
   sm._deps.fetchJson = async () => ({ json: DOC, why: null, flaky: false });
 }
@@ -131,6 +138,19 @@ test("BINWISE: the review card gets its website, X, Telegram and overview from t
   assert.strictEqual(f.sym, "BWS");
   assert.strictEqual(reads, 1);
   assert.ok(asked.ds >= 1 && asked.pads >= 1, "the third parties are still asked first");
+});
+
+test("the review card says the token is still bonding — from the CURVE, while pump.fun's API says nothing", async () => {
+  // The box: `pumpfun answered: never heard of it (frontend-api-v3.pump.fun)`
+  // and "phase unknown — no pad said". The chain states the phase anyway.
+  chainAnswers(true, curve(0.25));
+  const ctx = ctxWith({ type: "xpress_listing", form: form(), awaitingField: "address" }, MINT);
+  await listing.handleText(ctx);
+  const b = ctx.session.form.bonding;
+  assert.ok(b, "no bonding line — the pads were silent and the chain was not consulted for the phase");
+  assert.ok(Math.abs(b.progressPct - 25) < 1e-6, `25% sold read as ${b.progressPct}`);
+  assert.strictEqual(b.launchpad, "pump.fun");
+  assert.strictEqual(reads, 1, "the curve rode the metadata request — no second RPC call");
 });
 
 test("⚠️ the indexer keeps precedence — the chain only fills what it left blank", async () => {

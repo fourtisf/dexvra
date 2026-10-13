@@ -310,6 +310,18 @@ test('pump.fun raised/target is carried as a fact, the percentage as an estimate
   assert.ok(m.progressPct > 45 && m.progressPct < 55);
 });
 
+test('⚠️ a token under 1% along its curve reads as under 1% — never as a fraction ×100', async () => {
+  // 0.4% sold. `pct()` reads (0, 1] as a fraction, which is right for an API
+  // value of unknown scale; this one is OURS, on 0–100, and through `pct()`
+  // it printed "40% to graduation" for every launch in its first moments.
+  reset({ LAUNCHPAD_JUPITER: '0' });
+  serve({ 'pump.fun': pumpBody({ real_token_reserves: Math.round(793100000000000 * 0.996) }) });
+  const m = (await lp.tokenRecord('solana', MINT)).record;
+  assert.equal(m.progressSource, 'derived');
+  assert.ok(m.progressPct > 0.3 && m.progressPct < 0.5, `0.4% read as ${m.progressPct}%`);
+  assert.equal(m.onCurve, true);
+});
+
 test('nonsense reserves produce no percentage rather than a wrong one', async () => {
   reset({ LAUNCHPAD_JUPITER: '0' });
   serve({ 'pump.fun': pumpBody({ real_token_reserves: 99999999999999999, real_sol_reserves: -5 }) });

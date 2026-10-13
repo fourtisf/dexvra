@@ -655,6 +655,74 @@ override as the site. ⚠️ Whether the RPC and a gateway answer FROM THE BOX i
 property of its egress today — this sandbox reaches neither — so the check above
 is the measurement. `bot/` only, so the deploy is the ecosystem restart.
 
+#### The second run measured it: pump.fun's CURRENT host 404s its own token
+
+`launchpads:check` on `a73dc34`, with the answering host now printed:
+
+```
+· pumpfun   answered: never heard of it (frontend-api-v3.pump.fun)
+· phase     unknown — no pad said
+```
+
+…about a mint whose pump.fun page was open in the operator's browser. So it is
+NOT the retired host: the current one answers 404. Whether that is a moved path
+or a datacenter block dressed as a 404 cannot be learned from here, **and it
+does not have to be.** The curve pump.fun's API reports on is an account on the
+chain we were already reading, in the request we were already making. A third
+party's silence was standing in for a fact the chain states — the Pons lesson
+and the BINWISE lesson, a third time, now for the PHASE.
+
+- **The bonding-curve PDA (`["bonding-curve", mint]` under
+  `6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P`) rides the same
+  `getMultipleAccounts`** — three accounts, one request, nothing extra.
+- ⚠️ **BELIEVED ONLY FROM ITS OWN PROGRAM, WITH ITS DISCRIMINATOR.** The PDA pins
+  the mint; the owner and the Anchor discriminator (sha256("account:BondingCurve"),
+  first 8 bytes — COMPUTED, not pasted) say it really is a curve. `complete` must
+  be exactly 0 or 1: a mis-parse may not become "graduated".
+- **The reserves go through the registry's OWN `pumpfunParse`** — exported as a
+  production function now, not only as the `_parsers` test seam — so the curve
+  constants and the "% sold" derivation have ONE owner, and
+  `LAUNCHPAD_PUMPFUN_CURVE_TOKENS` moves both reads at once.
+- **`progressSource: "chain"`**, so the check says the percentage was divided
+  out of the curve itself rather than out of an API's copy of it.
+- ⚠️ **THE CURVE PHASE IS TAKEN WHOLE FROM ONE SOURCE in `mergeInfo` now.** The
+  merge fills holes field by field, so with a second source able to answer the
+  phase, "graduated" from a pad and "40%" from the chain could have merged into a
+  review card contradicting itself — the rule the registry already states for
+  its pads, applied one layer up. The first source that says anything about the
+  phase owns all of it.
+- **Still display state, still opt-in.** No gate field is added (a test asserts
+  `liq` / `vol24` / `pairCreatedAt` stay ABSENT), and only the listing form pays
+  for the read.
+
+⚠️ **AND THE TEST FOR IT FOUND A LIVE DEFECT IN THE REGISTRY.**
+`curveState` passed the DERIVED percentage through `pct()`, which reads any
+value in (0, 1] as a FRACTION and multiplies it by 100 — right for an API value
+of unknown scale, wrong for a number WE computed on 0–100. So every pump.fun
+launch under 1% along its curve read as `40% to graduation` instead of `0.4%`:
+the first moments of a launch, which is exactly the window the "🚀 Still bonding"
+line exists for. The derived value is clamped, never rescaled. ⚠️ An API-stated
+percentage still goes through `pct()` and so still carries that ambiguity for a
+pad that states a percent under 1 — deliberately NOT changed without knowing each
+pad's scale, and recorded so it is not rediscovered as an oversight.
+
+```bash
+cd bot && node scripts/run-tests.js test/solanaMeta.test.js test/listingSocials.test.js test/launchpads.test.js
+cd tradebot && SKIP_DOTENV=1 node --test launchpads.test.js
+```
+
+Ten guarantees are MUTATION-TESTED: the curve dropped from the request, the
+owner unchecked, the discriminator unchecked, `complete` not bounded to 0/1, the
+curve never attached, the source not relabelled, the merge mixing the phase,
+the derived percentage back through `pct()` (in both packages' tests), and the
+wrong reserve read. Each fails between one and three tests.
+
+**Config a fix depends on:** nothing. ⚠️ This touches `shared/`, so
+`npm run deploy` restarts all three bot processes. ⚠️ And the 404 itself is
+still pump.fun's: it costs nothing the form needs any more, but the
+`description` and the pad-sourced socials still come from the chain document,
+not from pump.fun.
+
 ## The banner drew "$???" to 12,607 subscribers
 
 A token listed as **牛来 ($牛来)** went out on the listing card as `$???` and again

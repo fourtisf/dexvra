@@ -81,6 +81,13 @@ async function checkFeeds() {
  * on chain, and that is precisely the case "no socials on the review card"
  * is about.
  */
+/** One spelling of a curve phase for both sections, so they cannot disagree. */
+function phaseText(i) {
+  if (i.onCurve === true) return `bonding · ${i.progressPct != null ? i.progressPct.toFixed(1) + "%" : "?"} (${i.progressSource || "?"})`;
+  if (i.graduated === true) return "graduated";
+  return Y("unknown");
+}
+
 async function checkForm(address, chain) {
   console.log(`\n── what the listing form would prefill (its own lookup) ──────\n`);
   let metaOk = false;
@@ -92,6 +99,10 @@ async function checkForm(address, chain) {
       ? `${m.info.name || "?"} ($${String(m.info.symbol || "?").replace(/^\$+/, "")}) — website ${m.info.website ? G("yes") : D("no")}, X ${m.info.twitter ? G("yes") : D("no")}, Telegram ${m.info.telegram ? G("yes") : D("no")}`
       : D("no record");
     console.log(`  ${mark} on-chain metadata   ${said}`);
+    // The curve, read in the SAME request — so "no pad said" above and a
+    // phase here are not a contradiction: the chain answered what the pads
+    // could not, and this is the line that says which one did.
+    if (m.info && (m.info.onCurve != null || m.info.graduated != null)) console.log(`      pump.fun curve: ${phaseText(m.info)}`);
     if (m.docUrl) console.log(D(`      document: ${m.docUrl}`));
     if (m.why) console.log(`      ${m.ok ? D(m.why) : R(m.why)}`);
   } else if (chain === "solana") {
@@ -108,6 +119,8 @@ async function checkForm(address, chain) {
   row("X", info.twitter);
   row("telegram", info.telegram);
   row("overview", info.description ? info.description.slice(0, 60) + "…" : null);
+  row("launchpad", info.launchpad);
+  row("phase", info.onCurve != null || info.graduated != null ? phaseText(info) : null);
   row("from", info.source || (r.info ? "dexscreener" : null));
   if (!r.ok) console.log(`\n  ${Y("DexScreener could not be asked: " + (r.why || "?"))}`);
   if (!info.website && !info.twitter && !info.telegram) {
@@ -160,9 +173,7 @@ async function checkToken(address, chain) {
   row("market cap", money(info.mcap));
   row("liquidity", money(info.liq));
   row("launchpad", info.launchpad);
-  row("phase", info.onCurve === true
-    ? `bonding · ${info.progressPct != null ? info.progressPct.toFixed(1) + "%" : "?"} (${info.progressSource || "?"})`
-    : info.graduated === true ? "graduated" : Y("unknown — no pad said"));
+  row("phase", info.onCurve === true || info.graduated === true ? phaseText(info) : Y("unknown — no pad said"));
   row("from", info.source);
   if (r.record.progressDisagreement) console.log(`\n  ${Y("pads disagree on progress: " + r.record.progressDisagreement)}`);
   return true;

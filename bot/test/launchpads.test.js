@@ -119,6 +119,23 @@ test("the indexer wins on numbers, the launchpad fills the holes", () => {
   assert.equal(m.telegram, null, "a field neither source had was invented");
 });
 
+test("⚠️ the curve phase is taken WHOLE from the first source that says anything about it", () => {
+  // A pad saying "graduated" and the chain saying "bonding, 40%" must not
+  // merge into a card reading "◆ graduated · 40% to graduation".
+  const pad = { name: "A", graduated: true, onCurve: false, progressPct: 100, progressSource: "graduated" };
+  const chain = { onCurve: true, graduated: false, progressPct: 40, progressSource: "chain", launchpad: "pump.fun", website: "https://a.example" };
+  const m = discovery.mergeInfo(pad, chain);
+  assert.deepEqual([m.graduated, m.onCurve, m.progressPct, m.progressSource], [true, false, 100, "graduated"], "the phase was assembled from two sources");
+  assert.equal(m.website, "https://a.example", "…while every other hole still fills");
+  // A source that said NOTHING about the phase leaves it to the next one — whole.
+  const silent = { name: "A", onCurve: null, graduated: null, progressPct: null };
+  const n = discovery.mergeInfo(silent, chain);
+  assert.deepEqual([n.graduated, n.onCurve, n.progressPct, n.progressSource], [false, true, 40, "chain"]);
+  // A partial phase (only `graduated: false`) still owns it: no chain percentage glued on.
+  const half = discovery.mergeInfo({ graduated: false }, chain);
+  assert.equal(half.progressPct, undefined, "a percentage from one source was glued onto another's phase");
+});
+
 test("either source alone still answers", () => {
   assert.deepEqual(discovery.mergeInfo(null, { name: "A" }), { name: "A" });
   assert.equal(discovery.mergeInfo({ name: "A" }, null).name, "A");

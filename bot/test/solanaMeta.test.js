@@ -194,8 +194,79 @@ test("BINWISE: one RPC request for both accounts, then the document across the l
     [Buffer.from("metadata"), new PublicKey(sm.METADATA_PROGRAM).toBuffer(), mintKey.toBuffer()],
     new PublicKey(sm.METADATA_PROGRAM),
   );
-  assert.deepStrictEqual(asked.addrs, [pda.toBase58(), MINT]);
+  assert.deepStrictEqual(asked.addrs, [pda.toBase58(), MINT, curvePda().toBase58()], "the pump.fun curve rides the same request");
   assert.deepStrictEqual(asked.urls.slice(0, 2), ladder.slice(0, 2), "the uri's own gateway first, pump.fun's pin next");
+});
+
+// ── The pump.fun curve, read off the chain ───────────────────────────────────
+// launchpads:check on the box: `pumpfun answered: never heard of it
+// (frontend-api-v3.pump.fun)` — the CURRENT host, 404, about its own token —
+// and "phase unknown — no pad said". The curve is an account on the chain we
+// are already reading, so the phase stops depending on a third party.
+
+const PUMP_CURVE_TOKENS = 793100000000000;
+function curvePda(mint = mintKey) {
+  return PublicKey.findProgramAddressSync([Buffer.from("bonding-curve"), mint.toBuffer()], new PublicKey(sm.PUMP_PROGRAM))[0];
+}
+/** A BondingCurve account: discriminator · 5 × u64 · complete · creator. */
+function curveAccount({ sold = 0.4, complete = 0, disc = sm._test.PUMP_CURVE_DISC, owner = sm.PUMP_PROGRAM, len = 8 + 40 + 1 + 32 } = {}) {
+  const b = Buffer.alloc(len);
+  Buffer.from(disc).copy(b, 0);
+  const u64 = (off, v) => off + 8 <= len && b.writeBigUInt64LE(BigInt(Math.round(v)), off);
+  u64(8, 1_073_000_000_000_000);
+  u64(16, 30_000_000_000);
+  u64(24, PUMP_CURVE_TOKENS * (1 - sold)); // real token reserves LEFT on the curve
+  u64(32, 12_500_000_000); // real SOL raised (12.5 SOL)
+  u64(40, 1_000_000_000_000_000);
+  if (len > 48) b[48] = complete;
+  return { owner, data: b };
+}
+
+test("a pump.fun curve is read for its phase — through the registry's own parser, so the constants have one owner", () => {
+  const c = sm._test.parsePumpCurve(curveAccount({ sold: 0.4 }), MINT);
+  assert.strictEqual(c.onCurve, true);
+  assert.strictEqual(c.graduated, false);
+  assert.ok(Math.abs(c.progressPct - 40) < 1e-6, `40% sold should read as 40%, got ${c.progressPct}`);
+  assert.strictEqual(c.progressSource, "chain", "the check says WHERE the number came from");
+  assert.strictEqual(c.launchpad, "pump.fun");
+  assert.strictEqual(c.launchUrl, `https://pump.fun/coin/${MINT}`);
+  const done = sm._test.parsePumpCurve(curveAccount({ complete: 1, sold: 1 }), MINT);
+  assert.deepStrictEqual([done.graduated, done.onCurve, done.progressPct], [true, false, 100], "a completed curve is a FACT, not a reading");
+});
+
+test("⚠️ a curve is believed only from pump.fun's program, with its discriminator, and a `complete` that is 0 or 1", () => {
+  assert.strictEqual(sm._test.parsePumpCurve(curveAccount({ owner: "11111111111111111111111111111111" }), MINT), null, "another program's bytes");
+  assert.strictEqual(sm._test.parsePumpCurve(curveAccount({ disc: Buffer.alloc(8, 7) }), MINT), null, "not a BondingCurve");
+  assert.strictEqual(sm._test.parsePumpCurve(curveAccount({ complete: 2 }), MINT), null, "a mis-parse must not become 'graduated'");
+  assert.strictEqual(sm._test.parsePumpCurve(curveAccount({ len: 40 }), MINT), null, "too short to hold the reserves");
+  assert.strictEqual(sm._test.parsePumpCurve(null, MINT), null, "no account at the PDA: not a pump.fun token");
+  // The discriminator is COMPUTED, and it is Anchor's: sha256("account:BondingCurve")[0..8].
+  assert.strictEqual(Buffer.from(sm._test.PUMP_CURVE_DISC).toString("hex"), require("node:crypto").createHash("sha256").update("account:BondingCurve").digest().subarray(0, 8).toString("hex"));
+});
+
+test("BINWISE: the curve's phase lands beside the socials, from the SAME request", async () => {
+  const asked = stubDeps({ accounts: [META, PLAIN_MINT, curveAccount({ sold: 0.004 })], docs: { [URI]: { json: PUMP_DOC } } });
+  const r = await sm.fetchTokenInfoX("solana", MINT);
+  assert.strictEqual(r.ok, true, r.why);
+  assert.strictEqual(asked.reads, 1);
+  assert.strictEqual(r.info.twitter, "https://x.com/binwise_sol", "the socials are untouched");
+  assert.strictEqual(r.info.onCurve, true);
+  assert.ok(r.info.progressPct < 1, "a token at the start of its curve reads as such");
+  assert.strictEqual(r.info.launchpad, "pump.fun");
+  for (const k of ["priceUsd", "mcap", "liq", "vol24", "pairCreatedAt"]) {
+    assert.ok(!(k in r.info), `${k} — a gate field — must stay ABSENT; the curve is display state`);
+  }
+});
+
+test("a curve with no metadata record still answers its phase — and a token with neither answers nothing", async () => {
+  stubDeps({ accounts: [null, PLAIN_MINT, curveAccount({ sold: 0.5 })] });
+  const r = await sm.fetchTokenInfoX("solana", MINT);
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.info.onCurve, true);
+  assert.strictEqual(r.info.source, "solana-meta");
+  sm._reset();
+  stubDeps({ accounts: [null, PLAIN_MINT, null] });
+  assert.strictEqual((await sm.fetchTokenInfoX("solana", MINT)).info, null);
 });
 
 test("a Token-2022 mint's own metadata outranks a Metaplex record", async () => {

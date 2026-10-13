@@ -35,9 +35,14 @@
  * one gateway's 404 is a fact about that gateway.
  *
  * ⚠️ DISPLAY METADATA ONLY, the contract ponsChain, poolstrade and the
- * launchpad registry carry. No price, no liquidity, no curve — the fields the
+ * launchpad registry carry. No price and no liquidity — the fields the
  * auto-lister's gates read are deliberately ABSENT, so `mergeInfo` can only
  * ever fill a social hole with this and never a market one.
+ *
+ * The one market-shaped thing it DOES answer is a pump.fun token's curve PHASE
+ * (bonding / graduated, and how far along), read off the curve account in the
+ * same request — see `parsePumpCurve`. That is what the review card's
+ * "🚀 Still bonding" line renders, and it is no gate input.
  *
  * ⚠️ OPT-IN (`discovery.fetchTokenInfoX(…, { chainMeta: true })`), and only the
  * listing form opts in. The auto-lister and the listing audit call the same
@@ -49,6 +54,7 @@ const safeImage = require('./helpers/safeImage');
 const ipfs = require('./helpers/ipfsGateways');
 const { httpsLogo } = require('./helpers/httpsLogo');
 const { safeUrl, socialUrl, description: cleanDescription, str } = require('../../shared/launchpads/normalize');
+const { pumpfunParse } = require('../../shared/launchpads/pads');
 const log = require('./helpers/logger');
 
 const METADATA_PROGRAM = 'metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s';
@@ -63,6 +69,18 @@ const ACCOUNT_TYPE_OFFSET = 165;
 const ACCOUNT_TYPE_MINT = 1;
 // Metaplex `Key::MetadataV1`.
 const METAPLEX_METADATA_V1 = 4;
+
+// pump.fun's bonding-curve program, and the account it keeps per mint at the
+// PDA ["bonding-curve", mint]. Anchor prefixes every account with the first 8
+// bytes of sha256("account:<Name>") — COMPUTED here rather than pasted, so the
+// one thing that says "this really is a BondingCurve" is not a constant
+// somebody could get wrong by a byte.
+const PUMP_PROGRAM = '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P';
+const PUMP_CURVE_DISC = require('crypto').createHash('sha256').update('account:BondingCurve').digest().subarray(0, 8);
+// discriminator(8) · virtual token(8) · virtual sol(8) · real token(8) · real
+// sol(8) · total supply(8) · complete(1). Newer curves append the creator; the
+// fields read here sit in front of it and have never moved.
+const PUMP_CURVE_MIN = 8 + 5 * 8 + 1;
 
 /** `SOLANA_META=0` turns the source off. Blank is ON (the raid/sourceFlag rule). */
 const enabled = () => !/^(0|false|off|no)$/i.test(String(process.env.SOLANA_META == null ? '' : process.env.SOLANA_META).trim());
@@ -81,6 +99,50 @@ function lib() {
 }
 
 // ── Parsing ──────────────────────────────────────────────────────────────────
+
+/**
+ * A pump.fun token's curve phase, read off its own curve account.
+ *
+ * ⚠️ WHY THIS EXISTS: `launchpads:check` on the box, for $BWS — a mint whose
+ * pump.fun page was open in the operator's browser — printed `pumpfun answered:
+ * never heard of it (frontend-api-v3.pump.fun)`: the CURRENT host, 404, about
+ * its own token. Whether that is a moved path or a datacenter block dressed as
+ * a 404 cannot be measured from here, and it does not have to be: the curve
+ * the API reports on is an account on the chain we are already reading, in
+ * the request we are already making. The pad's "phase unknown — no pad said"
+ * was a third party's silence standing in for a fact the chain states.
+ *
+ * Believed only if the PROGRAM owns it (the PDA pins the mint) and the Anchor
+ * discriminator says BondingCurve. The reserves go through the registry's OWN
+ * `pumpfunParse` — the shape pump.fun's API returns the same numbers in — so
+ * the curve constants and the "% sold" derivation have one owner.
+ *
+ * `complete` must be exactly 0 or 1: anything else is a mis-parse, and a
+ * mis-parse must not become "graduated".
+ */
+function parsePumpCurve(acct, mint) {
+  if (!acct || acct.owner !== PUMP_PROGRAM) return null;
+  const buf = acct.data;
+  if (!Buffer.isBuffer(buf) || buf.length < PUMP_CURVE_MIN || !buf.subarray(0, 8).equals(PUMP_CURVE_DISC)) return null;
+  const done = buf[48];
+  if (done !== 0 && done !== 1) return null;
+  const rec = pumpfunParse({ key: 'pumpfun', label: 'pump.fun' }, 'solana', {
+    mint,
+    real_token_reserves: Number(buf.readBigUInt64LE(24)),
+    real_sol_reserves: Number(buf.readBigUInt64LE(32)),
+    complete: done === 1,
+  }, Date.now());
+  return {
+    graduated: rec.graduated,
+    onCurve: rec.onCurve,
+    progressPct: rec.progressPct,
+    // "derived" is a percentage divided out of an API's reserve figures; this
+    // one was divided out of the curve itself, and the check prints which.
+    progressSource: rec.progressSource === 'derived' ? 'chain' : rec.progressSource,
+    launchpad: 'pump.fun',
+    launchUrl: rec.launchUrl,
+  };
+}
 
 /** A borsh String (u32 LE length + UTF-8), or null when it does not fit. */
 function readString(buf, off) {
@@ -258,7 +320,7 @@ async function rpcPost(url, method, params, timeoutMs) {
   return j && j.result;
 }
 
-/** Both accounts in ONE request — the metadata PDA and the mint itself. */
+/** Every account in ONE request — the metadata PDA, the mint, the pump.fun curve. */
 async function readAccounts(addrs, { timeoutMs, budgetMs }) {
   const { value } = await rpcRead(
     'solana',
@@ -346,10 +408,12 @@ async function read(mint, budgetMs) {
   if (!w) return { ok: false, why: '@solana/web3.js is not installed', info: null };
   let mintKey;
   let pda;
+  let curvePda;
   try {
     mintKey = new w.PublicKey(mint);
     const prog = new w.PublicKey(METADATA_PROGRAM);
     [pda] = w.PublicKey.findProgramAddressSync([Buffer.from('metadata'), prog.toBuffer(), mintKey.toBuffer()], prog);
+    [curvePda] = w.PublicKey.findProgramAddressSync([Buffer.from('bonding-curve'), mintKey.toBuffer()], new w.PublicKey(PUMP_PROGRAM));
   } catch {
     // Not a key at all is an ANSWER about the paste, not a failure to ask.
     return { ok: true, why: 'not a Solana address', info: null };
@@ -361,15 +425,20 @@ async function read(mint, budgetMs) {
 
   let accts;
   try {
-    accts = await _deps.readAccounts([pda.toBase58(), mintKey.toBase58()], { timeoutMs: rpcTimeout, budgetMs: rpcBudget });
+    // THREE accounts, ONE request: the curve rides along for nothing.
+    accts = await _deps.readAccounts([pda.toBase58(), mintKey.toBase58(), curvePda.toBase58()], { timeoutMs: rpcTimeout, budgetMs: rpcBudget });
   } catch (e) {
     // undici hides the syscall in `err.cause` — "fetch failed" alone cannot
     // tell a dead DNS from a refused socket, and the operator needs which.
     const code = e && e.cause && e.cause.code ? ` (${e.cause.code})` : '';
     return { ok: false, why: `could not read the token's accounts from the Solana RPC (${str((e && e.message) || e, 120)}${code})`, info: null };
   }
-  const [metaAcct, mintAcct] = accts;
+  const [metaAcct, mintAcct, curveAcct] = accts;
   const mintBytes = mintKey.toBuffer();
+  // No account at the PDA is an ANSWER — not a pump.fun token — so it is
+  // simply absent, never "could not ask".
+  const curve = parsePumpCurve(curveAcct, mintKey.toBase58());
+  const withCurve = (info) => (curve ? { ...(info || { source: 'solana-meta' }), ...curve } : info);
   // The mint's OWN metadata extension first — it is the authority on itself;
   // the Metaplex account is what every other mint has.
   const onchain =
@@ -379,9 +448,9 @@ async function read(mint, budgetMs) {
   if (!onchain) {
     // The chain ANSWERED: no metadata account, no extension. A token nobody
     // gave a name to has no socials to find either.
-    return { ok: true, why: mintAcct ? 'the mint carries no metadata' : 'no such mint on Solana', info: null };
+    return { ok: true, why: mintAcct ? 'the mint carries no metadata' : 'no such mint on Solana', info: withCurve(null) };
   }
-  const base = extract(null, onchain);
+  const base = withCurve(extract(null, onchain));
   if (!onchain.uri) return { ok: true, why: 'the metadata names no document', info: base };
 
   const left = B ? B - (Date.now() - started) - 250 : 10_000;
@@ -393,7 +462,7 @@ async function read(mint, budgetMs) {
     // and "the project wrote no socials" send an operator different places.
     return { ok: !doc.flaky, why: `metadata document ${doc.flaky ? 'could not be read' : 'is unusable'}: ${str(doc.why, 200)}`, info: base };
   }
-  return { ok: true, why: null, info: extract(doc.json, onchain), docUrl: doc.url };
+  return { ok: true, why: null, info: withCurve(extract(doc.json, onchain)), docUrl: doc.url };
 }
 
 /**
@@ -455,7 +524,8 @@ module.exports = {
   lastWhy,
   METADATA_PROGRAM,
   TOKEN_2022,
+  PUMP_PROGRAM,
   _deps,
   _reset,
-  _test: { parseMetaplex, parseToken2022, extract, readDocument, readString, webUrl, labelledUrl, rpcPost },
+  _test: { parseMetaplex, parseToken2022, parsePumpCurve, PUMP_CURVE_DISC, extract, readDocument, readString, webUrl, labelledUrl, rpcPost },
 };

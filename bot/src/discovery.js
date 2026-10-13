@@ -140,14 +140,24 @@ async function fetchDiscovery() {
  * numbers could overwrite a real 0 from DexScreener the auto-lister would be
  * scoring a gate against a different source than the one it thinks it is
  * reading. Only null/undefined/'' are treated as missing.
+ *
+ * ⚠️ THE CURVE STATE IS TAKEN WHOLE FROM ONE SOURCE, never field by field.
+ * `graduated` from one source and `42%` from another is a review card
+ * contradicting itself — the rule the launchpad registry already states for
+ * its pads ("curve state is taken WHOLE from one pad"), applied one layer up
+ * now that the chain answers it too. So the first source that says ANYTHING
+ * about the phase owns all of it, and a later one fills none of it.
  */
+const CURVE_FIELDS = ["graduated", "onCurve", "progressPct", "progressSource", "migratedPool"];
+const said = (v) => v !== null && v !== undefined && v !== "";
 function mergeInfo(base, extra) {
   if (!extra) return base;
   if (!base) return extra;
   const out = { ...base };
+  const phaseTaken = CURVE_FIELDS.some((k) => said(base[k]));
   for (const [k, v] of Object.entries(extra)) {
-    const have = out[k];
-    if (have === null || have === undefined || have === "") out[k] = v;
+    if (phaseTaken && CURVE_FIELDS.includes(k)) continue;
+    if (!said(out[k])) out[k] = v;
   }
   // Provenance, so a caller (and a log line) can tell a merged record from a
   // plain DexScreener one without guessing from which fields are populated.
