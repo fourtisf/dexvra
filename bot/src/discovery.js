@@ -16,6 +16,7 @@ const ds = require("./dexscreener");
 const poolstrade = require("./poolstrade");
 const launchpads = require("./launchpads");
 const ponsChain = require("./ponsChain");
+const solanaMeta = require("./solanaMeta");
 const movers = require("./services/marketMovers");
 const log = require("./helpers/logger");
 const { bounded } = require("./helpers/bounded");
@@ -246,6 +247,27 @@ async function fetchTokenInfoX(chain, address, opts = {}) {
       ),
     );
   }
+  // The token's OWN metadata on Solana — the record a pump.fun mint carries,
+  // whose document holds the website, X and Telegram the creator typed in.
+  // LAST for the reason the Pons read is: it only ever fills holes, so an
+  // indexer's or a pad's answer keeps precedence, and on a token those third
+  // parties refused us about, it is the one source left that cannot refuse.
+  // ⚠️ OPT-IN (`chainMeta`): only the listing form renders socials. The
+  // auto-lister and the listing audit call this merge for every candidate on
+  // every scan and would pay an RPC request and a gateway fetch per token for
+  // fields they never read. See solanaMeta.js.
+  if (opts && opts.chainMeta && solanaMeta.covers(chain)) {
+    extras.push(
+      timed(
+        solanaMeta.fetchTokenInfo(chain, address, { budgetMs: budget }).catch((e) => {
+          log.debug(`[discovery] solana-meta ${chain}/${address}: ${e.message}`);
+          return null;
+        }),
+        "solana-meta",
+        null,
+      ),
+    );
+  }
   if (!extras.length) return dsP;
   const [dsAns, ...rest] = await Promise.all([dsP, ...extras]);
   let info = dsAns.info;
@@ -268,4 +290,14 @@ async function fetchTokenInfo(chain, address, opts) {
   return (await fetchTokenInfoX(chain, address, opts)).info;
 }
 
-module.exports = { fetchDiscovery, fetchDiscoveryX, fetchTokenInfo, fetchTokenInfoX, mergeInfo };
+/**
+ * Why the token's own on-chain metadata could not fill the form, or null —
+ * for the line the form logs when it comes back with no socials. "The chain
+ * could not be asked" and "the creator wrote no socials" are different facts,
+ * and only this module knows which source to ask about.
+ */
+function chainMetaWhy(chain, address) {
+  return solanaMeta.covers(chain) ? solanaMeta.lastWhy(address) : null;
+}
+
+module.exports = { fetchDiscovery, fetchDiscoveryX, fetchTokenInfo, fetchTokenInfoX, mergeInfo, chainMetaWhy };

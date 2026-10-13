@@ -161,11 +161,14 @@ function sniff(b) {
 }
 const MIME = { png: 'image/png', jpg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp' };
 
+/** 3 MB, or 256 KB — never "0 MB" for a bound under a megabyte. */
+const sizeLabel = (n) => (n >= 1048576 ? `${Math.round(n / 1048576)} MB` : `${Math.round(n / 1024)} KB`);
+
 /** A status that says nothing permanent about the file. */
 const flakyStatus = (s) => s === 401 || s === 403 || s === 408 || s === 425 || s === 429 || s >= 500;
 
 /** One request, no redirects followed. Resolves; never rejects. */
-function once(u, { request, lookup, timeoutMs, maxBytes }) {
+function once(u, { request, lookup, timeoutMs, maxBytes, accept = 'image/*', refuseType = /^text\/|html|json/ }) {
   return new Promise((resolve) => {
     let settled = false;
     let req = null;
@@ -190,7 +193,7 @@ function once(u, { request, lookup, timeoutMs, maxBytes }) {
           // Its own socket, never a pooled one: a pooled socket was connected
           // by whoever opened it, and this module vouches only for its own.
           agent: false,
-          headers: { 'user-agent': 'Mozilla/5.0 (compatible; DexvraLogo/1.0)', accept: 'image/*' },
+          headers: { 'user-agent': 'Mozilla/5.0 (compatible; DexvraLogo/1.0)', accept },
         },
         (res) => {
           const status = res.statusCode || 0;
@@ -204,21 +207,21 @@ function once(u, { request, lookup, timeoutMs, maxBytes }) {
           }
           const type = String(res.headers['content-type'] || '').toLowerCase();
           // A 200 carrying HTML is a CDN's way of not admitting a miss.
-          if (/^text\/|html|json/.test(type)) {
+          if (refuseType.test(type)) {
             res.resume();
             return done({ fail: `served ${type.split(';')[0]}`, flaky: false });
           }
           const declared = Number(res.headers['content-length']);
           if (Number.isFinite(declared) && declared > maxBytes) {
             res.resume();
-            return done({ fail: `larger than ${Math.round(maxBytes / 1048576)} MB`, flaky: false });
+            return done({ fail: `larger than ${sizeLabel(maxBytes)}`, flaky: false });
           }
           const chunks = [];
           let size = 0;
           res.on('data', (c) => {
             size += c.length;
             if (size > maxBytes) {
-              done({ fail: `larger than ${Math.round(maxBytes / 1048576)} MB`, flaky: false });
+              done({ fail: `larger than ${sizeLabel(maxBytes)}`, flaky: false });
               res.destroy();
               return;
             }
@@ -241,18 +244,17 @@ function once(u, { request, lookup, timeoutMs, maxBytes }) {
 }
 
 /**
- * Fetch one image, guarded. See the header.
- *
- * @param {string} raw the url
- * @param {object} [opts] `request` / `lookup` are the test seams (https.request,
- *   dns.lookup); `timeoutMs` bounds EACH hop and `deadlineMs` the whole fetch.
+ * Walk one url's redirects under the guard, and hand the final body to
+ * `finish(bytes, url)`. The ONE hop loop: an image and a metadata document are
+ * fetched under exactly the same rules, and a second copy of this loop is how
+ * one of them would come to skip the per-hop re-check.
  */
-async function fetchImage(raw, opts = {}) {
+async function guarded(raw, opts, kind, finish) {
   const request = opts.request || https.request;
   const lookup = opts.lookup || dns.lookup;
   const timeoutMs = Number.isFinite(opts.timeoutMs) ? opts.timeoutMs : TIMEOUT_MS;
-  const maxBytes = Number.isFinite(opts.maxBytes) ? opts.maxBytes : MAX_BYTES;
-  const fail = (why, flaky) => ({ bytes: null, ext: null, mime: null, url: null, why, flaky: !!flaky });
+  const maxBytes = Number.isFinite(opts.maxBytes) ? opts.maxBytes : kind.maxBytes;
+  const fail = (why, flaky) => ({ ...kind.empty, url: null, why, flaky: !!flaky });
   if (!opts.request && !enabled()) return fail('the guarded fetch is off (LOGO_GUARDED_FETCH=0)', false);
   let u;
   try {
@@ -267,7 +269,7 @@ async function fetchImage(raw, opts = {}) {
     const bad = refusal(u);
     if (bad) return fail(bad, false);
     const left = Math.max(250, timeoutMs * (MAX_HOPS + 1) - (Date.now() - started));
-    const r = await once(u, { request, lookup, timeoutMs: Math.min(timeoutMs, left), maxBytes });
+    const r = await once(u, { request, lookup, timeoutMs: Math.min(timeoutMs, left), maxBytes, accept: kind.accept, refuseType: kind.refuseType });
     if (r.redirect) {
       try {
         u = new URL(r.redirect, u);
@@ -277,11 +279,64 @@ async function fetchImage(raw, opts = {}) {
       continue;
     }
     if (!r.bytes) return fail(`${u.hostname}: ${r.fail}`, r.flaky);
-    const ext = sniff(r.bytes);
-    if (!ext) return fail(`${u.hostname}: not a PNG, JPG, GIF or WEBP image`, false);
-    return { bytes: r.bytes, ext, mime: MIME[ext], url: u.toString(), why: null, flaky: false };
+    return finish(r.bytes, u, fail);
   }
   return fail(`more than ${MAX_HOPS} redirects`, false);
 }
 
-module.exports = { fetchImage, isPublicAddress, guardedLookup, refusal, sniff, enabled, MIME, MAX_BYTES, MAX_HOPS };
+const IMAGE = {
+  accept: 'image/*',
+  refuseType: /^text\/|html|json/,
+  maxBytes: MAX_BYTES,
+  empty: { bytes: null, ext: null, mime: null },
+};
+
+/**
+ * Fetch one image, guarded. See the header.
+ *
+ * @param {string} raw the url
+ * @param {object} [opts] `request` / `lookup` are the test seams (https.request,
+ *   dns.lookup); `timeoutMs` bounds EACH hop and `deadlineMs` the whole fetch.
+ */
+async function fetchImage(raw, opts = {}) {
+  return guarded(raw, opts, IMAGE, (bytes, u, fail) => {
+    const ext = sniff(bytes);
+    if (!ext) return fail(`${u.hostname}: not a PNG, JPG, GIF or WEBP image`, false);
+    return { bytes, ext, mime: MIME[ext], url: u.toString(), why: null, flaky: false };
+  });
+}
+
+/**
+ * A token's METADATA DOCUMENT — the JSON its `uri` names — under the same
+ * guard. It is exactly as much a stranger's url as a logo is: anyone can mint
+ * a token on a permissionless launchpad and point its uri at
+ * `http://169.254.169.254/`, so it gets every rule above and nothing less.
+ *
+ * Only HTML is refused by type. Gateways serve a metadata file as
+ * `application/json`, `text/plain` and `application/octet-stream` alike, and
+ * the PARSE is the real test: anything that is not a JSON object is an answer
+ * about the file (not flaky), never a bad minute. 256 KB — a launchpad's
+ * metadata is a few hundred bytes, and a document a thousand times that is
+ * not one.
+ */
+const JSON_DOC = {
+  accept: 'application/json, text/plain;q=0.9, */*;q=0.1',
+  refuseType: /html/,
+  maxBytes: 256 * 1024,
+  empty: { json: null },
+};
+
+async function fetchJson(raw, opts = {}) {
+  return guarded(raw, opts, JSON_DOC, (bytes, u, fail) => {
+    let json = null;
+    try {
+      json = JSON.parse(bytes.toString('utf8').replace(/^\uFEFF/, ''));
+    } catch {
+      return fail(`${u.hostname}: not a JSON document`, false);
+    }
+    if (!json || typeof json !== 'object' || Array.isArray(json)) return fail(`${u.hostname}: not a JSON object`, false);
+    return { json, url: u.toString(), why: null, flaky: false };
+  });
+}
+
+module.exports = { fetchImage, fetchJson, isPublicAddress, guardedLookup, refusal, sniff, enabled, MIME, MAX_BYTES, MAX_HOPS };

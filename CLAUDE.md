@@ -502,6 +502,119 @@ cd /opt/dexvra && npm run pons:check    # §6 is the one that measures the app
 bot rewrites to; `IPFS_GATEWAYS` is the site proxy's own list, and it already
 fails over.
 
+### "bot tidak detect socials nya pdahal tokenya ada website dan x" — the Solana half of the same lesson
+
+Reported with BINWISE ($BWS, a pump.fun mint): the review card read
+`Website: not set · X: not set · Telegram: not set` over the auto-written
+overview, beside the token's own pump.fun page showing its X and its website.
+
+**The form was not wrong; it copies whatever the merge hands it, and every
+source the merge had on Solana is a third party over HTTP** — each with a way
+to answer with no socials that is not a fact about the token:
+
+| source | why it came back empty |
+| --- | --- |
+| DexScreener | socials exist only for a token whose project PAID for a profile; an ordinary pump.fun pair has an empty `info` |
+| pump.fun pad | blocks datacenter IP ranges, which is what the box is; the breaker then benches it |
+| Jupiter pad | rate-limited per IP, shared with the trade bot |
+
+**And the one source that cannot be refused was never asked.** A pump.fun mint
+(and a LetsBonk one, and anything the standard tools mint) carries a Metaplex
+metadata account whose `uri` names a JSON document holding exactly the fields
+the form wants: `website`, `twitter`, `telegram`, `description`, `image`. pump.fun's
+own API reads that same file. This is the Pons section above, one chain over —
+*"the one source that cannot be unreachable — the token contract itself — was
+the one nobody asked"* — applied to the chain where it had never been applied.
+
+- **`bot/src/solanaMeta.js` reads it, in ONE RPC request**: the metadata PDA and
+  the mint together (`getMultipleAccounts`). A Token-2022 mint carrying its own
+  TokenMetadata extension (pump.fun's newer mints) is read from the mint and
+  outranks a Metaplex record; its additional key/value pairs are read too, where
+  some mints keep their socials.
+- ⚠️ **AN ACCOUNT IS BELIEVED ONLY FROM ITS OWN PROGRAM AND ONLY ABOUT THIS
+  MINT.** The owner is checked, and the mint bytes inside the record must equal
+  the mint asked about — a record about another mint is another token's socials.
+- ⚠️ **THE `uri` IS A URL A STRANGER TYPED**, on a permissionless launchpad, so
+  it goes through the guarded fetch (`safeImage.fetchJson`): https only, public
+  addresses enforced inside the connection, every redirect hop re-checked,
+  256 KB. Only HTML is refused by type — gateways serve a metadata file as
+  JSON, plain text and octet-stream alike — and the PARSE is the real test.
+  `guarded()` is the ONE hop loop for an image and a document, or one of them
+  would come to skip the per-hop re-check.
+- **Across the IPFS ladder, HEDGED**: the uri's own gateway first, pump.fun's pin
+  next; the next gateway starts after a stagger if the current one is merely
+  slow and is NOT aborted (the `$DLYN` lesson — a fresh CID is a DHT walk, and
+  restarting it elsewhere loses it). `helpers/ipfsGateways.js` is a PORT of the
+  site's ladder, and `solanaMeta.test.js` reads the TS source and fails if the
+  two default lists ever disagree. ⚠️ **That guard's first cut stripped every
+  `//`-to-end-of-line as a comment — including the `https://` inside every url
+  — and its vacuity assertion is what said so.**
+- ⚠️ **A LINK IS KEPT ONLY WHERE ITS LABEL SAYS IT GOES.** The review card
+  renders these under "X:" and "Telegram:", and a creator types them into a
+  free-text form; a `twitter` field holding some other site is a link a buyer
+  taps believing it is the project's X. A bare handle or a scheme-less
+  `binwise.xyz` is accepted and completed. A launchpad stamps its OWN url into
+  `external_url`/`createdOn`, so that is never taken as the project's website.
+- ⚠️ **DISPLAY METADATA ONLY** — no price, no liquidity, no curve; the gates'
+  fields are ABSENT, so `mergeInfo` can only ever fill a social hole with this.
+  And it is LAST in the merge: a paid DexScreener profile that disagrees with the
+  mint keeps precedence (mutation-tested with a fixture where the two DIFFER —
+  the first fixture had them equal, and the inverted merge survived it).
+- ⚠️ **OPT-IN (`chainMeta`), and only the listing form opts in.** The auto-lister
+  and the listing audit call the same merge for every candidate on every scan,
+  and would pay an RPC request and a gateway fetch per token for fields they
+  never render. `config/autofill.js` is the ONE spelling of the form's lookup
+  options, shared with `launchpads:check`.
+- **"We could not ask" is never cached as "no metadata".** An RPC refusal or every
+  gateway refusing is `ok:false` and asked again on the next paste; an ANSWER is
+  remembered 15 min and concurrent pastes share one read. A refusal by an RPC
+  host (401/403/429, or a JSON-RPC "too many requests") reads as a TRANSPORT
+  error, so `rpcRead` walks to the next endpoint rather than stopping at the one
+  that refused. The RPC phase gets a SLICE of the form's budget, never the whole
+  clock, or the document read behind it could never run.
+- **The merged record's `description` reaches the overview.** It was read and
+  thrown away: the form only ever looked at GT's and the pad's, so a token whose
+  own mint publishes an overview got the auto-written intro.
+- **A form that still has no socials SAYS WHY**, at INFO: `[listing] autofill
+  solana/<mint>: no website, X or Telegram — merged from dexscreener+…; on-chain
+  metadata: <the chain's reason>`. Four causes render as one "not set" on the
+  review card, and this line is the difference between a diagnosis and a
+  screenshot.
+- **`launchpads:check` now prints what the FORM would prefill**, through the
+  form's own lookup (DexScreener, the pads AND the chain, merged as the form
+  merges them) — even for a token no pad knows, which is the case this report
+  is about. The pad-by-pad section was one input to that and was being read as
+  the answer.
+
+```bash
+cd bot && node scripts/run-tests.js test/solanaMeta.test.js test/listingSocials.test.js test/safeImage.test.js   # 42 tests, no network
+pm2 logs dexvra-bot --lines 300 --nostream | grep -F '[listing] autofill'
+```
+
+To check one token on the box, run `npm run launchpads:check --` in `bot/`
+followed by the mint address you pasted into the form; its last section is what
+the form would prefill and which source each field would come from.
+
+Twenty-nine guarantees are MUTATION-TESTED rather than argued — the form not
+opting in, the wiring removed, the opt-in dropped (every caller pays), the chain
+outranking the indexer, the merged description ignored, the no-socials line
+removed or losing the chain's reason, either mint check dropped, the owner
+unchecked, Token-2022 not preferred, the label-host check dropped, a launchpad's
+`external_url` accepted, a bare domain refused, a refusal cached, no coalescing,
+an answer not cached, a serial (unhedged) ladder, the deadline timer never
+cleared, the ladder unused, a flaky document read as an answer, the RPC given
+the whole clock, a host refusal not read as transport, the syscall code dropped,
+blank read as OFF, and on the guarded document fetch: HTML accepted, a non-object
+accepted, the hop re-check dropped, and the size bound lifted. Each fails between
+one and three tests; two SURVIVED their first run, and both were test gaps.
+
+**Config a fix depends on:** nothing — it ships ON and blank means on.
+`SOLANA_META=0` in `bot/.env` turns the on-chain read off; it uses the bot's own
+Solana RPC list (`RPC_SOLANA_URLS` / `RPC_SOLANA`) and the same `IPFS_GATEWAYS`
+override as the site. ⚠️ Whether the RPC and a gateway answer FROM THE BOX is a
+property of its egress today — this sandbox reaches neither — so the check above
+is the measurement. `bot/` only, so the deploy is the ecosystem restart.
+
 ## The banner drew "$???" to 12,607 subscribers
 
 A token listed as **牛来 ($牛来)** went out on the listing card as `$???` and again

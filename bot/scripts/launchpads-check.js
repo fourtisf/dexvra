@@ -19,6 +19,9 @@ require("../src/config/loadEnv").loadEnv(); // NB: requiring it loads nothing �
 
 const lp = require("../../shared/launchpads");
 const launchpads = require("../src/launchpads");
+const discovery = require("../src/discovery");
+const solanaMeta = require("../src/solanaMeta");
+const { INFO_OPTS } = require("../src/config/autofill");
 
 const G = (s) => `\x1b[32m${s}\x1b[0m`;
 const R = (s) => `\x1b[31m${s}\x1b[0m`;
@@ -67,6 +70,50 @@ async function checkFeeds() {
     }
   }
   return any;
+}
+
+/**
+ * What the LISTING FORM would prefill — the form's own lookup, with the form's
+ * own options (config/autofill INFO_OPTS), so this measures the stack a
+ * buyer's paste actually runs: DexScreener, the pads AND the token's on-chain
+ * metadata, merged exactly as the form merges them. The pad-by-pad section
+ * above is one input to that; a token no pad knows can still have its socials
+ * on chain, and that is precisely the case "no socials on the review card"
+ * is about.
+ */
+async function checkForm(address, chain) {
+  console.log(`\n── what the listing form would prefill (its own lookup) ──────\n`);
+  let metaOk = false;
+  if (solanaMeta.covers(chain)) {
+    const m = await solanaMeta.fetchTokenInfoX(chain, address, { budgetMs: INFO_OPTS.budgetMs });
+    metaOk = m.ok;
+    const mark = m.ok ? (m.info ? G("✓") : D("·")) : R("✗");
+    const said = m.info
+      ? `${m.info.name || "?"} ($${String(m.info.symbol || "?").replace(/^\$+/, "")}) — website ${m.info.website ? G("yes") : D("no")}, X ${m.info.twitter ? G("yes") : D("no")}, Telegram ${m.info.telegram ? G("yes") : D("no")}`
+      : D("no record");
+    console.log(`  ${mark} on-chain metadata   ${said}`);
+    if (m.docUrl) console.log(D(`      document: ${m.docUrl}`));
+    if (m.why) console.log(`      ${m.ok ? D(m.why) : R(m.why)}`);
+  } else if (chain === "solana") {
+    console.log(Y("  • on-chain metadata is OFF (SOLANA_META=0) — the form asks only third parties"));
+  }
+  const r = await discovery.fetchTokenInfoX(chain, address, INFO_OPTS);
+  const info = r.info || {};
+  const row = (k, v) => console.log(`    ${k.padEnd(12)} ${v === null || v === undefined || v === "" ? D("—") : v}`);
+  console.log("");
+  row("name", info.name);
+  row("ticker", info.symbol);
+  row("logo", info.logoUrl);
+  row("website", info.website);
+  row("X", info.twitter);
+  row("telegram", info.telegram);
+  row("overview", info.description ? info.description.slice(0, 60) + "…" : null);
+  row("from", info.source || (r.info ? "dexscreener" : null));
+  if (!r.ok) console.log(`\n  ${Y("DexScreener could not be asked: " + (r.why || "?"))}`);
+  if (!info.website && !info.twitter && !info.telegram) {
+    console.log(`\n  ${Y("No website, X or Telegram from any source.")} ${metaOk ? D("The chain answered — the creator wrote none, or this mint has no metadata document.") : R("The on-chain read did not finish — that, not the token, is why.")}`);
+  }
+  return metaOk || r.ok;
 }
 
 async function checkToken(address, chain) {
@@ -122,7 +169,12 @@ async function checkToken(address, chain) {
   if (args.length) {
     const address = args[0];
     const chain = args[1] || (/^0x[a-fA-F0-9]{40}$/.test(address) ? "bsc" : "solana");
-    ok = await checkToken(address, chain);
+    const padsOk = await checkToken(address, chain);
+    // A token no pad knows is still a token the form can fill from the chain,
+    // so the form's own view is printed either way — and it, not the pads, is
+    // what decides whether this paste would come back with its socials.
+    const formOk = await checkForm(address, chain);
+    ok = padsOk || formOk;
   } else {
     ok = await checkFeeds();
     console.log(D("\n  (pass a mint or contract address to see what a listing would autofill)"));

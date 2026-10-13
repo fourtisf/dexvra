@@ -9,7 +9,7 @@ const figures = require("../marketFigures");
 // Autofill asks every source that indexes the chain, not just DexScreener —
 // on Robinhood Chain, which DexScreener does not index, pools.trade is the only
 // one that knows the token at all. See discovery.js.
-const { fetchTokenInfo } = require("../discovery");
+const { fetchTokenInfo, chainMetaWhy } = require("../discovery");
 const { escapeHtml } = require("../helpers/format");
 const { normalizeTicker, isValidTicker, sanitizeTicker } = require("../helpers/ticker");
 // ⚠️ The MODULE, not a destructured startPayment. A destructured import is
@@ -46,10 +46,9 @@ const URL_RE = /^https?:\/\/\S+$/i;
  * rule the launchpad registry states for a dead pad. The abandoned lookup
  * keeps running and lands in its cache, so a retry gets it for free.
  */
-const AUTOFILL_MAX_MS = Math.max(1000, Number(process.env.LISTING_AUTOFILL_MS || 8000));
-/** What the discovery merge may spend before it answers with what it has —
- *  under the form's own ceiling, or the ceiling fires first and discards it. */
-const DISCOVERY_BUDGET_MS = Math.max(Math.round(AUTOFILL_MAX_MS / 2), AUTOFILL_MAX_MS - 750);
+// The clock and the lookup's options live in config/autofill — one spelling,
+// shared with `launchpads:check`, which prints what this form would prefill.
+const { AUTOFILL_MAX_MS, INFO_OPTS } = require("../config/autofill");
 
 /** Test seam — the three lookups, swappable without a network. The
  *  `core._deps.providerFor` shape, for the same reason. */
@@ -179,14 +178,21 @@ async function handleText(ctx) {
       const [ds, gt, desc] = await Promise.all([
         // The discovery gets a budget INSIDE the form's ceiling, so a source
         // that hangs costs its own answer and never the ones that arrived.
-        bounded(() => _lookups.fetchTokenInfo(f.chain, input, { budgetMs: DISCOVERY_BUDGET_MS })),
+        bounded(() => _lookups.fetchTokenInfo(f.chain, input, INFO_OPTS)),
         bounded(() => _lookups.fetchMarket(f.chain, input)),
         bounded(() => _lookups.fetchTokenDescription(f.chain, input)),
       ]);
       const name = (ds && ds.name) || (gt && gt.name);
       const symbol = (ds && ds.symbol) || (gt && gt.symbol);
       const logoUrl = (ds && ds.logoUrl) || (gt && gt.logoUrl);
-      if (desc && !f.overview) f.overview = cleanOverview(desc);
+      // The project's own words: GeckoTerminal's, then the pad's — and then
+      // whatever the merge carried, which is where the token's ON-CHAIN
+      // metadata document lands. That one was read and thrown away: the merged
+      // record's `description` was never looked at, so a pump.fun token whose
+      // GT entry and pad were both silent got the auto-written intro over a
+      // description its own mint publishes.
+      const overview = desc || (ds && ds.description) || null;
+      if (overview && !f.overview) f.overview = cleanOverview(overview);
       // ⚠️ KEPT, not thrown away. These two lookups already carry the price,
       // the market cap and the liquidity — and $SFX's paid post published
       // "Market cap: TBA · Price: TBA" minutes later because the only thing the
@@ -215,6 +221,18 @@ async function handleText(ctx) {
           if (ds.website && !f.website) f.website = ds.website;
           if (ds.twitter && !f.twitter) f.twitter = ds.twitter;
           if (ds.telegram && !f.telegram) f.telegram = ds.telegram;
+        }
+        // ⚠️ A FORM WITH NO SOCIALS SAYS WHY, at INFO. "Website: not set · X:
+        // not set" has four causes — DexScreener has no profile for it, the pad
+        // refused this box, the chain could not be read, or the creator wrote
+        // none — and the review card renders all four identically. This line
+        // is the difference between a diagnosis and a screenshot.
+        if (!f.website && !f.twitter && !f.telegram) {
+          const why = chainMetaWhy(f.chain, input);
+          log.info(
+            `[listing] autofill ${f.chain}/${input}: no website, X or Telegram — merged from ${(ds && ds.source) || (ds ? "dexscreener" : "no source")}` +
+              (why ? `; on-chain metadata: ${why}` : ""),
+          );
         }
         if (!f.sym) {
           log.warn(`[listing] autofill gave no usable ticker for ${f.chain}/${input} (symbol=${symbol ?? "-"})`);
@@ -567,5 +585,5 @@ module.exports = {
   handleText,
   handlePhoto,
   _lookups,
-  _test: { bondingLine, emptyForm, AUTOFILL_MAX_MS, DISCOVERY_BUDGET_MS },
+  _test: { bondingLine, emptyForm, AUTOFILL_MAX_MS, DISCOVERY_BUDGET_MS: INFO_OPTS.budgetMs },
 };

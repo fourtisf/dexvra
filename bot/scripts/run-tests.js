@@ -55,6 +55,10 @@ const res = spawnSync(process.execPath, ["--test", ...files], {
     // …and the guarded direct fetch of a host the proxy refuses must never make
     // a real request to a stranger from a test. Its own tests inject `request`.
     LOGO_GUARDED_FETCH: process.env.LOGO_GUARDED_FETCH || "0",
+    // The listing form's on-chain Solana metadata read (solanaMeta.js) asks a
+    // Solana RPC and an IPFS gateway — neither exists here. solanaMeta.test.js
+    // turns it back on with stubbed reads, and pins that blank means ON.
+    SOLANA_META: process.env.SOLANA_META || "0",
   },
 });
 try {

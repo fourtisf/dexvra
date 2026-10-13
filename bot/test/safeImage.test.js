@@ -191,3 +191,47 @@ test("the sniff keeps exactly what the site's upload route keeps (mediaStore.sni
   assert.strictEqual(si.sniff(Buffer.from("RIFF0000WEBPVP8 " + "x".repeat(10))), "webp");
   assert.strictEqual(si.sniff(Buffer.from("<svg xmlns='x'></svg>")), null);
 });
+
+// ── fetchJson — a token's METADATA DOCUMENT, under the same guard ───────────
+// The uri a Solana mint carries is a url its creator typed (solanaMeta.js), so
+// it is exactly as much a stranger's url as a logo is.
+
+test("fetchJson: a metadata document is read whatever type the gateway calls it", async () => {
+  const doc = Buffer.from(JSON.stringify({ name: "BINWISE", twitter: "https://x.com/binwise_sol" }));
+  for (const type of ["application/json", "text/plain; charset=utf-8", "application/octet-stream"]) {
+    const r = await si.fetchJson("https://ipfs.example.com/ipfs/bafk", fakeNet(route("https://ipfs.example.com/ipfs/bafk", { headers: { "content-type": type }, body: doc })));
+    assert.strictEqual(r.json && r.json.twitter, "https://x.com/binwise_sol", `${type}: ${r.why}`);
+  }
+});
+
+test("fetchJson: an HTML page, a non-object and garbage are answers about the FILE, not a bad minute", async () => {
+  const cases = [
+    [{ "content-type": "text/html" }, "<html>", /served text\/html/],
+    [{ "content-type": "application/json" }, "[1,2]", /not a JSON object/],
+    [{ "content-type": "application/json" }, "{nope", /not a JSON document/],
+  ];
+  for (const [headers, body, re] of cases) {
+    const r = await si.fetchJson("https://a.example.com/m.json", fakeNet(route("https://a.example.com/m.json", { headers, body: Buffer.from(body) })));
+    assert.strictEqual(r.json, null);
+    assert.match(r.why, re);
+    assert.strictEqual(r.flaky, false);
+  }
+});
+
+test("⚠️ fetchJson: the SSRF rules hold — a private address and a private redirect hop are refused", async () => {
+  const lit = await si.fetchJson("https://169.254.169.254/latest/meta-data", fakeNet({}));
+  assert.match(lit.why, /private or reserved/);
+  const net = fakeNet(route("https://cdn.example.com/m.json", { status: 302, headers: { location: "https://10.0.0.5/m.json" } }));
+  const hop = await si.fetchJson("https://cdn.example.com/m.json", net);
+  assert.match(hop.why, /private or reserved/);
+  assert.deepStrictEqual(net.asked, ["https://cdn.example.com/m.json"], "the private hop is never requested");
+  const http = await si.fetchJson("http://cdn.example.com/m.json", fakeNet({}));
+  assert.match(http.why, /not https/);
+});
+
+test("fetchJson: a document far larger than any metadata file is refused", async () => {
+  const big = Buffer.from(JSON.stringify({ pad: "x".repeat(300 * 1024) }));
+  const r = await si.fetchJson("https://a.example.com/m.json", fakeNet(route("https://a.example.com/m.json", { headers: { "content-type": "application/json" }, body: big })));
+  assert.strictEqual(r.json, null);
+  assert.match(r.why, /larger than/);
+});

@@ -148,5 +148,8 @@ test("the discovery merge is handed a budget under the form's own ceiling", asyn
   assert.ok(opts && opts.budgetMs > 0, "fetchTokenInfo was called with no budget");
   const ceiling = listing._test.AUTOFILL_MAX_MS;
   assert.ok(opts.budgetMs < ceiling, `budget ${opts.budgetMs}ms is not under the form's ${ceiling}ms ceiling`);
+  // …and the form is the one caller that asks the token's own chain metadata
+  // for its socials ($BWS: "Website: not set" over a mint that publishes one).
+  assert.strictEqual(opts.chainMeta, true, "the form must opt in to the on-chain metadata read");
   assert.strictEqual(ctx.session.form.sym, "HAPPYCAT");
 });
