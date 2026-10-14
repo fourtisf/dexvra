@@ -382,7 +382,19 @@ function build() {
       covers: 'pump.fun',
       bases: ['https://frontend-api-v3.pump.fun/coins', 'https://frontend-api.pump.fun/coins'],
       aliases: ['PUMPFUN_API'],
-      tokenPath: '/{id}',
+      // ⚠️ TWO SPELLINGS, AND THE SECOND IS A HYPOTHESIS. From the box the
+      // current host answers some pump.fun mints and 404s others, about tokens
+      // whose pump.fun page is open in the operator's browser ($BINWISE,
+      // $KVR). The same IP and the same request get a 200 for one mint, so a
+      // flat block does not fit. The leading reading is a coin pump.fun's API
+      // has not cached yet, and `?sync=true` is the spelling its own coin page
+      // asks with to have the API read the coin from the chain. Nothing here
+      // can verify that: this sandbox reaches no pump.fun host. So it is asked
+      // ONLY after the plain spelling 404s (`index.js` padToken), inside the
+      // same one budget, and `launchpads:check` prints which spelling answered
+      // and what each 404 SAID, so the next run on the box settles it.
+      // `LAUNCHPAD_PUMPFUN_TOKEN_PATH` still replaces both.
+      tokenPaths: ['/{id}', '/{id}?sync=true'],
       feedPath: '?offset=0&limit={n}&sort=created_timestamp&order=DESC&includeNsfw=true',
       idKeys: ['mint', 'address'],
       parse: pumpfunParse,

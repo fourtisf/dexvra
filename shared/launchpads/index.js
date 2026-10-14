@@ -172,10 +172,11 @@ function _cacheSet(k, v) {
 async function padToken(pad, chain, address, now) {
   const key = pad.key + ':' + chain + ':' + N.addrKey(chain, address);
   const cached = _cacheGet(key, now);
-  if (cached) return { pad: pad.key, ok: cached.ok, why: cached.why, status: cached.status, rec: cached.rec, base: cached.base || null, cached: true };
+  if (cached) return { pad: pad.key, ok: cached.ok, why: cached.why, status: cached.status, rec: cached.rec, base: cached.base || null, said: cached.said || '', path: cached.path || null, cached: true };
 
   const c = CLIENTS.get(pad.key);
-  const out = { pad: pad.key, ok: false, why: '', status: 0, rec: null, base: null, cached: false };
+  // `said` / `path` — see the walk below.
+  const out = { pad: pad.key, ok: false, why: '', status: 0, rec: null, base: null, said: '', path: null, cached: false };
   if (!c) { out.why = 'pad not built'; return out; }
 
   const bench = benched(pad.key, now);
@@ -207,12 +208,23 @@ async function padToken(pad, chain, address, now) {
   const walkMs = TIMEOUT_MS();
   let r = null;
   let cutShort = false;
+  // ⚠️ WHAT EACH 404 SAID. A 404 was recorded as "never heard of it" and its
+  // body thrown away, which is the "never discard the reason" defect on the one
+  // status this pad keeps returning. A framework's "Cannot GET /coins/…" (the
+  // ROUTE moved), an API's "coin not found" (the TOKEN is unknown) and a WAF
+  // page dressed as a 404 (the BOX is refused) need three different fixes, and
+  // pump.fun answered every one of them as one line on the check. Bounded,
+  // because an HTML error page must not paste a kilobyte into a log line.
+  const said = [];
   for (let i = 0; i < paths.length; i++) {
     const left = walkMs - (Date.now() - walkStart);
     if (i > 0 && left < 1000) { cutShort = true; break; }
     r = await http.getJson(c, P.fill(paths[i], { id: address }), { timeoutMs: i === 0 ? walkMs : left });
+    out.path = paths[i];
     if (r.ok || r.status !== 404) break;
+    said.push((paths.length > 1 ? `${paths[i]} → ` : '') + String(r.why || 'answered 404').slice(0, 160));
   }
+  out.said = said.join('; ').slice(0, 320);
   if (cutShort) {
     noteOk(pad.key);
     out.status = 404;
@@ -232,7 +244,7 @@ async function padToken(pad, chain, address, now) {
     if (r.status === 404) {
       noteOk(pad.key);
       out.ok = true;
-      _cacheSet(key, { at: now, rec: null, ok: true, why: '', status: 404, base: out.base });
+      _cacheSet(key, { at: now, rec: null, ok: true, why: '', status: 404, base: out.base, said: out.said, path: out.path });
       return out;
     }
     out.why = `${pad.label}: ${r.why}`;
@@ -261,7 +273,7 @@ async function padToken(pad, chain, address, now) {
       out.rec = (rec && (!named || N.sameAddress(chain, rec.address, address))) ? { ...rec, address } : null;
     } catch (e) { out.rec = null; out.why = `${pad.label}: unreadable response (${(e && e.message) || 'parse failed'})`; }
   }
-  _cacheSet(key, { at: now, rec: out.rec, ok: true, why: out.why, status: r.status, base: out.base });
+  _cacheSet(key, { at: now, rec: out.rec, ok: true, why: out.why, status: r.status, base: out.base, said: out.said, path: out.path });
   return out;
 }
 
@@ -360,7 +372,7 @@ async function tokenRecord(chain, address, opts) {
     // that shows a blank row.
     pad: p.key, ok: false, why: `${p.label}: ${(e && e.message) || 'failed'}`, status: 0, rec: null,
   }))));
-  out.tried = results.map((r) => ({ pad: r.pad, ok: r.ok, why: r.why, status: r.status, base: r.base || null, found: !!r.rec, cached: !!r.cached, skipped: !!r.skipped }));
+  out.tried = results.map((r) => ({ pad: r.pad, ok: r.ok, why: r.why, status: r.status, base: r.base || null, said: r.said || '', path: r.path || null, found: !!r.rec, cached: !!r.cached, skipped: !!r.skipped }));
   out.ok = results.some((r) => r.ok);
   if (!out.ok) out.why = results.map((r) => r.why).filter(Boolean).join('; ') || 'no launchpad answered';
   out.record = merge(results.map((r) => r.rec));
@@ -472,8 +484,53 @@ function probes() {
   }));
 }
 
+/**
+ * One pad's answer, in words — the ONE spelling both `launchpads:check`
+ * scripts (bot/ and tradebot/) print, so the two cannot describe the same
+ * answer two ways. Colourless: the caller colours by `kind`.
+ *
+ * `detail` is the line under it, and it is the point: what each 404 SAID, or
+ * which path spelling answered when it was not the first. "pumpfun: never
+ * heard of it" with nothing under it is what kept this pad undiagnosed for
+ * three rounds — "Cannot GET /coins/…", "coin not found" and a WAF page are
+ * three different fixes, and only the body tells them apart.
+ */
+function describeTried(t, pad) {
+  const via = t.base ? ` (${t.base})` : '';
+  const first = pad && Array.isArray(pad.tokenPaths) ? pad.tokenPaths[0] : null;
+  if (t.skipped) return { kind: 'skipped', text: t.why || 'skipped', detail: '' };
+  if (t.found) {
+    const late = t.path && first && t.path !== first;
+    return { kind: 'found', text: `knows it${via}`, detail: late ? `answered on ${t.path}${t.said ? ` — before it: ${t.said}` : ''}` : '' };
+  }
+  if (t.ok) {
+    return t.status === 404
+      ? { kind: 'unknown', text: `answered: never heard of it${via}`, detail: t.said ? `said: ${t.said}` : '' }
+      : { kind: 'unknown', text: `answered, no record${via}`, detail: '' };
+  }
+  return { kind: 'failed', text: t.why || 'did not answer', detail: '' };
+}
+
+/**
+ * The pads that did NOT know a token, and why, as one bounded line — for the
+ * listing form's "no website, X or Telegram" log. That line used to name only
+ * the sources that answered (`merged from launchpad:jupiter`), so a pump.fun
+ * mint whose pad refused this box read exactly like one pump.fun had never
+ * heard of: the diagnosis was in `launchpads:check`, run minutes later, by
+ * which time the answer had changed.
+ */
+function whyNot(tried) {
+  const parts = [];
+  for (const t of tried || []) {
+    if (t.found) continue;
+    const d = describeTried(t, null);
+    parts.push(`${t.pad}: ${d.text}${d.detail ? ` — ${d.detail}` : ''}`);
+  }
+  return parts.join('; ').slice(0, 400);
+}
+
 module.exports = {
   tokenRecord, record, newLaunches, probes,
-  all, enabled, padsFor, chains, padBase, basesOf, reload,
+  all, enabled, padsFor, chains, padBase, basesOf, reload, describeTried, whyNot,
   _test: { merge, curveRank, padToken, SCALARS },
 };

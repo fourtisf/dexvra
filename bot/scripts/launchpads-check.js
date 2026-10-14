@@ -137,18 +137,11 @@ async function checkToken(address, chain) {
   for (const t of r.tried) {
     const p = pads.find((x) => x.key === t.pad) || { key: t.pad, label: t.pad, enabled: true, verified: true };
     const mark = t.skipped ? Y("•") : t.found ? G("✓") : t.ok ? D("·") : R("✗");
-    // The host that ANSWERED, because a pad keeps a retired host behind its
-    // current one: "never heard of it" from the current host is a fact about
-    // the token, and from a retired host that 404s everything it is nothing.
-    const via = t.base ? ` (${t.base})` : "";
-    const note = t.skipped
-      ? Y(t.why)
-      : t.found
-        ? G(`knows it${via}`)
-        : t.ok
-          ? D((t.status === 404 ? "answered: never heard of it" : "answered, no record") + via)
-          : R(t.why);
-    console.log(`  ${mark} ${padHeader(p)}\n      ${note}`);
+    // The host that ANSWERED (a pad keeps a retired host behind its current
+    // one), and under it what each 404 SAID — the registry's one wording.
+    const d = lp.describeTried(t, p);
+    const paint = { skipped: Y, found: G, unknown: D, failed: R }[d.kind] || D;
+    console.log(`  ${mark} ${padHeader(p)}\n      ${paint(d.text)}${d.detail ? "\n      " + D(d.detail) : ""}`);
   }
   if (!r.record) {
     console.log(`\n  ${r.ok ? Y("No pad knows this token — normal for anything that migrated a while ago.") : R("No pad answered — a network/host problem, not a token problem.")}`);

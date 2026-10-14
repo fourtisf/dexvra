@@ -15,6 +15,26 @@ const lp = require("../../shared/launchpads");
 const log = require("./helpers/logger");
 const { httpsLogo } = require("./helpers/httpsLogo");
 
+/**
+ * Which pads did NOT know a token, and why — remembered per address for the
+ * listing form's "no website, X or Telegram" line, the same way
+ * `solanaMeta.lastWhy` serves its own half of that line. Read at the moment of
+ * the paste, because `launchpads:check` minutes later answers a different
+ * minute: $KVR's pump.fun lookup was a fact at 09:49 and gone by the time
+ * anybody looked. Bounded; a miss we never recorded is simply absent.
+ */
+const _why = new Map();
+const WHY_MAX = 200;
+function noteWhy(chain, address, tried) {
+  const k = `${chain}:${address}`;
+  const line = lp.whyNot(tried);
+  _why.delete(k);
+  if (!line) return;
+  if (_why.size >= WHY_MAX) _why.delete(_why.keys().next().value);
+  _why.set(k, line);
+}
+const lastWhy = (chain, address) => _why.get(`${chain}:${address}`) || null;
+
 /** Does any enabled pad cover this chain? Callers skip the leg otherwise. */
 const covers = (chain) => lp.padsFor(chain).length > 0;
 
@@ -42,6 +62,7 @@ async function fetchTokenInfo(chain, address) {
   // Worth one debug line: "no pad answered" and "no pad knows it" look
   // identical from here and need different answers from an operator.
   if (!r.ok && r.why) log.debug(`[launchpads] ${chain}/${address}: ${r.why}`);
+  noteWhy(chain, address, r.tried);
   const rec = r.record;
   if (!rec) return null;
   return {
@@ -92,4 +113,4 @@ async function fetchDescription(chain, address) {
   return (info && info.description) || null;
 }
 
-module.exports = { covers, fetchTokenInfo, fetchDescription, chains: lp.chains, padsFor: lp.padsFor, all: lp.all, reload: lp.reload, tokenRecord: lp.tokenRecord };
+module.exports = { covers, fetchTokenInfo, fetchDescription, lastWhy, chains: lp.chains, padsFor: lp.padsFor, all: lp.all, reload: lp.reload, tokenRecord: lp.tokenRecord };

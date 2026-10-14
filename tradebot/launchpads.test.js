@@ -632,3 +632,109 @@ test('…and a later spelling gets only what is LEFT of that budget, not a fresh
   const took = Date.now() - started;
   assert.ok(took < 1750, `the walk took ${took}ms — the second spelling was handed a whole fresh timeout`);
 });
+
+// ── pump.fun: what its 404 SAID, and the second spelling ─────────────────────
+// "intinya saya ingin dexvra add api pumpfun". The pad was always wired; from
+// the box it answered some pump.fun mints and 404'd others ($BINWISE, $KVR),
+// and every one of those 404s was printed as "never heard of it" with the body
+// thrown away — so "Cannot GET" (the route moved), "coin not found" (the token)
+// and a WAF page (the box) were one line. These pin the body travelling, and
+// the `?sync=true` spelling being asked only behind a plain 404.
+
+/** pump.fun answering per URL, with a BODY on its 404 — `serve()` sends none. */
+function pump(answer, seen) {
+  global.fetch = async (url) => {
+    const u = String(url);
+    if (!/pump\.fun/.test(u)) return { ok: false, status: 404, text: async () => '', json: async () => ({}) };
+    if (seen) seen.push(u);
+    const a = answer(u);
+    if (a && a.status) return { ok: false, status: a.status, text: async () => a.body || '', json: async () => ({}) };
+    return { ok: true, status: 200, text: async () => JSON.stringify(a), json: async () => a };
+  };
+}
+const pumpTried = (r) => r.tried.find((t) => t.pad === 'pumpfun');
+
+test('⚠️ a pump.fun 404 keeps what it SAID — "never heard of it" alone is not a diagnosis', async () => {
+  reset({ LAUNCHPAD_JUPITER: '0' });
+  pump((u) => (/sync=true/.test(u)
+    ? { status: 404, body: JSON.stringify({ message: 'Coin not found' }) }
+    : { status: 404, body: JSON.stringify({ message: 'Cannot GET /coins/x', error: 'Not Found', statusCode: 404 }) }));
+  const r = await lp.tokenRecord('solana', MINT);
+  const t = pumpTried(r);
+  assert.equal(t.status, 404);
+  assert.match(t.said, /Cannot GET/, 'the plain spelling\'s body was thrown away');
+  assert.match(t.said, /Coin not found/, 'the second spelling\'s body was thrown away');
+  const d = lp.describeTried(t, lp.padsFor('solana').find((p) => p.key === 'pumpfun'));
+  assert.match(d.text, /never heard of it \(frontend-api-v3\.pump\.fun\)/, 'the answering host was dropped');
+  assert.match(d.detail, /^said: .*Cannot GET/, 'the check would print no reason under the 404');
+});
+
+test('…the ?sync=true spelling is asked only BEHIND a plain 404, and the answer says which spelling it was', async () => {
+  reset({ LAUNCHPAD_JUPITER: '0' });
+  const seen = [];
+  pump((u) => (/sync=true/.test(u) ? pumpBody() : { status: 404, body: '{"message":"Coin not found"}' }), seen);
+  const r = await lp.tokenRecord('solana', MINT);
+  assert.ok(r.record, `the second spelling was never asked: ${seen.join(', ')}`);
+  assert.equal(r.record.twitter, 'https://x.com/curveproj');
+  const t = pumpTried(r);
+  assert.equal(t.path, '/{id}?sync=true');
+  const d = lp.describeTried(t, lp.padsFor('solana').find((p) => p.key === 'pumpfun'));
+  assert.match(d.detail, /answered on \/\{id\}\?sync=true/, 'the check would not say which spelling answered');
+  assert.match(d.detail, /Coin not found/);
+});
+
+test('…and a plain answer costs ONE request — the hypothesis is never paid for on a hit', async () => {
+  reset({ LAUNCHPAD_JUPITER: '0' });
+  const seen = [];
+  pump(() => pumpBody(), seen);
+  const r = await lp.tokenRecord('solana', MINT);
+  assert.ok(r.record);
+  assert.equal(seen.length, 1, `a 200 was followed by ${seen.length - 1} more request(s): ${seen.join(', ')}`);
+  assert.equal(pumpTried(r).path, '/{id}');
+  assert.equal(lp.describeTried(pumpTried(r), lp.padsFor('solana').find((p) => p.key === 'pumpfun')).detail, '', 'a first-spelling answer printed a spelling note');
+});
+
+test('…a 429 is not a reason to try the other spelling', async () => {
+  reset({ LAUNCHPAD_JUPITER: '0' });
+  const seen = [];
+  pump(() => ({ status: 429, body: 'slow down' }), seen);
+  await lp.tokenRecord('solana', MINT);
+  assert.equal(seen.length, 1, `a 429 was re-asked on ${seen.length} spellings`);
+});
+
+test('…the body is BOUNDED — an HTML error page is not pasted into a log line', async () => {
+  reset({ LAUNCHPAD_JUPITER: '0' });
+  pump(() => ({ status: 404, body: '<html>' + 'x'.repeat(5000) + '</html>' }));
+  const t = pumpTried(await lp.tokenRecord('solana', MINT));
+  assert.ok(t.said.length <= 320, `said is ${t.said.length} chars`);
+});
+
+test('…and a CACHED 404 still says what it said', async () => {
+  reset({ LAUNCHPAD_JUPITER: '0' });
+  pump(() => ({ status: 404, body: '{"message":"Coin not found"}' }));
+  await lp.tokenRecord('solana', MINT);
+  const again = pumpTried(await lp.tokenRecord('solana', MINT));
+  assert.ok(again.cached, 'the second lookup was not served from the cache');
+  assert.match(again.said, /Coin not found/, 'the cache dropped the reason');
+});
+
+test("…an operator's LAUNCHPAD_PUMPFUN_TOKEN_PATH replaces both spellings", async () => {
+  reset({ LAUNCHPAD_JUPITER: '0', LAUNCHPAD_PUMPFUN_TOKEN_PATH: '/v9/{id}' });
+  const seen = [];
+  pump(() => ({ status: 404, body: '' }), seen);
+  await lp.tokenRecord('solana', MINT);
+  assert.equal(seen.length, 1, `the pin was followed by guesses: ${seen.join(', ')}`);
+  assert.match(seen[0], /\/coins\/v9\//);
+});
+
+test('whyNot names the pads that did NOT know a token — and only those', () => {
+  const line = lp.whyNot([
+    { pad: 'jupiter', ok: true, found: true, status: 200, base: 'lite-api.jup.ag' },
+    { pad: 'pumpfun', ok: true, found: false, status: 404, base: 'frontend-api-v3.pump.fun', said: 'answered 404 — Coin not found' },
+    { pad: 'moonshot', ok: false, found: false, status: 0, why: "Moonshot: can't reach api.moonshot.cc — the name does not resolve" },
+  ]);
+  assert.doesNotMatch(line, /jupiter/, 'a pad that knew the token was listed as not knowing it');
+  assert.match(line, /pumpfun: answered: never heard of it \(frontend-api-v3\.pump\.fun\) — said: answered 404 — Coin not found/);
+  assert.match(line, /moonshot: Moonshot: can't reach/);
+  assert.ok(lp.whyNot([{ pad: 'x', ok: false, why: 'y'.repeat(900) }]).length <= 400, 'unbounded');
+});

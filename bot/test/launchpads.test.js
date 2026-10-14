@@ -301,3 +301,37 @@ test("a pad that fails on every base names the CURRENT host, not the retired fal
   assert.match(t.why, /frontend-api-v3\.pump\.fun — connection refused/, t.why);
   assert.match(t.why, /1 fallback base failed too/, "the fallback is still mentioned, never as the reason");
 });
+
+// ── what the pads that did NOT know a token said ─────────────────────────────
+// The listing form's "no website, X or Telegram" line named only the sources
+// that answered, so pump.fun refusing this box and pump.fun never having heard
+// of the mint were one line. The shim remembers the registry's own wording.
+
+test("the shim remembers which pads did not know a token, and what they SAID", async () => {
+  reset();
+  global.fetch = async (url) => {
+    const u = String(url);
+    if (/jup\.ag/.test(u)) return { ok: true, status: 200, text: async () => JSON.stringify(JUP), json: async () => JUP };
+    if (/pump\.fun/.test(u)) return { ok: false, status: 404, text: async () => '{"message":"Coin not found"}', json: async () => ({}) };
+    const e = new TypeError("fetch failed");
+    e.cause = { code: "ENOTFOUND" };
+    throw e;
+  };
+  await launchpads.fetchTokenInfo("solana", MINT);
+  const why = launchpads.lastWhy("solana", MINT);
+  assert.ok(why, "nothing was remembered");
+  assert.match(why, /pumpfun: answered: never heard of it \(frontend-api-v3\.pump\.fun\) — said: .*Coin not found/);
+  assert.doesNotMatch(why, /jupiter/, "a pad that KNEW the token was listed as not knowing it");
+  assert.strictEqual(discovery.padsWhy("solana", MINT), why, "discovery hands the form a different sentence");
+});
+
+test("…and a lookup every pad answered clears the old reason", async () => {
+  reset();
+  global.fetch = async () => ({ ok: false, status: 404, text: async () => "", json: async () => ({}) });
+  await launchpads.fetchTokenInfo("solana", MINT);
+  assert.ok(launchpads.lastWhy("solana", MINT));
+  reset();
+  serve({ "pump.fun": PUMP, "jup.ag": JUP, "raydium.io": PUMP, "moonshot.cc": PUMP });
+  await launchpads.fetchTokenInfo("solana", MINT);
+  assert.strictEqual(launchpads.lastWhy("solana", MINT), null, "a stale refusal outlived the lookup that answered it");
+});

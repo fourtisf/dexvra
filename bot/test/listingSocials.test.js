@@ -44,6 +44,8 @@ stub("../src/launchpads", {
     return null;
   },
   fetchDescription: async () => null,
+  // What the real shim remembers from the registry's per-pad answers.
+  lastWhy: () => "pumpfun: answered: never heard of it (frontend-api-v3.pump.fun) — said: answered 404 — Coin not found",
 });
 
 const sm = require("../src/solanaMeta");
@@ -186,4 +188,8 @@ test("a form that still has no socials SAYS WHY, naming the chain's own reason",
   assert.ok(line, `no diagnosis line: ${lines.join(" | ")}`);
   assert.match(line, /no website, X or Telegram/);
   assert.match(line, /on-chain metadata: could not read .*ECONNREFUSED/, "'the chain could not be asked' is not 'the creator wrote none'");
+  // …and what each launchpad SAID. "merged from launchpad:jupiter" named only
+  // the pads that answered, so pump.fun refusing this box read exactly like
+  // pump.fun never having heard of the mint.
+  assert.match(line, /launchpads that did not know it: pumpfun: .*Coin not found/, "the line dropped what pump.fun answered");
 });

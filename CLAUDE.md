@@ -914,6 +914,79 @@ is the likeliest cause of the next page.
 **Config a fix depends on:** nothing — it ships ON. ⚠️ `bot/` only, so the
 deploy is the **ecosystem restart** and there is no web rebuild.
 
+##### "intinya saya ingin dexvra add api pumpfun" — pump.fun's 404 had never said anything
+
+Asked over the pm2 lines from the original $KVR paste (09:49):
+
+```
+[solana-meta] DzBC…pump: could not read the token's accounts from the Solana RPC (HTTP 429 …)
+[listing] autofill solana/DzBC…pump: no website, X or Telegram — merged from launchpad:jupiter; on-chain metadata: …429…
+```
+
+**The pump.fun API was already wired** (the `pumpfun` pad, read by the form,
+the trade card and the snipe feed), and it is absent from that line because it
+did not know the mint. What it SAID was thrown away in three places:
+
+- **`padToken` recorded a 404 as "never heard of it" and dropped the body.** A
+  framework's `Cannot GET /coins/…` (the route moved), an API's `Coin not found`
+  (the token is unknown) and a WAF page dressed as a 404 (the box is refused)
+  need three different fixes, and the check printed all three as one line.
+  `said` now carries each spelling's 404 body (bounded at 320), through the
+  cache and into `tried`.
+- ⚠️ **`http.why()` read `j.error || j.message`**, so a NestJS 404
+  (`{ message: "Cannot GET …", error: "Not Found" }`) printed the status text
+  and dropped the one part that says the ROUTE is gone. It keeps every distinct
+  field now.
+- **The form's no-socials line named only the pads that ANSWERED.** The bot
+  shim remembers, per address, which pads did not know the token and what they
+  said (`launchpads.lastWhy`, `discovery.padsWhy`), and the line appends it.
+  That matters because `launchpads:check` minutes later answers a different
+  minute.
+
+**`?sync=true` is a second spelling, and it is a HYPOTHESIS.** From the box,
+pump.fun's current host answers some mints and 404s others about tokens whose
+pump.fun page is open in a browser. The same IP and the same request get a 200
+for another mint, so a flat block does not fit; the leading reading is a coin
+its API has not cached. It is asked ONLY behind a plain 404, inside the walk's
+one budget, so a hit still costs one request. A 429 does not walk.
+`LAUNCHPAD_PUMPFUN_TOKEN_PATH` still replaces both. ⚠️ Nothing here could
+verify it — this sandbox reaches no pump.fun host — so `launchpads:check` now
+prints which spelling answered and what each 404 said, and that run on the box
+is the measurement. No browser headers were added: a 200 for one mint from the
+same request says headers are not the gate.
+
+`describeTried` is the ONE wording both `launchpads:check` scripts print (bot/
+and tradebot/ had drifted — only one named the host).
+
+⚠️ **The 09:49 cause was the Solana RPC (HTTP 429), not pump.fun.** The public
+RPC fallback, the second look and the final look (rounds above) are what
+answer that. A pump.fun that answers is a fourth source on top of them, never a
+replacement — its API has moved, 404'd and refused this box across three
+rounds.
+
+```bash
+cd tradebot && SKIP_DOTENV=1 node --test launchpads.test.js                     # 45 tests, no network
+cd bot && node scripts/run-tests.js test/launchpads.test.js test/listingSocials.test.js
+cd /opt/dexvra/bot && npm run launchpads:check -- DzBCYzmGHEVdh5HK8tFBgS72iNaCEqkSHDeCCTLSpump
+```
+
+Nineteen guarantees are MUTATION-TESTED rather than argued:
+- the body never recorded, unbounded, dropped from the cache or from `tried`;
+- the spelling dropped from `tried`;
+- the walk stopping at the first 404, continuing past a 200 or past a 429;
+- the sync spelling removed;
+- `why()` back to error-first;
+- the 404 detail empty, the answering spelling never noted, the host dropped;
+- `whyNot` listing pads that knew the token, or unbounded;
+- the shim never recording or never clearing;
+- `padsWhy` answering null;
+- the form's line dropping the pads.
+
+Each fails between one and five tests.
+
+**Config a fix depends on:** nothing. ⚠️ This touches `shared/` and `bot/`, so
+`npm run deploy` restarts all three bot processes; there is no web rebuild.
+
 ## The banner drew "$???" to 12,607 subscribers
 
 A token listed as **牛来 ($牛来)** went out on the listing card as `$???` and again

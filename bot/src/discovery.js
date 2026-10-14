@@ -314,4 +314,12 @@ function chainMetaWhy(chain, address) {
   return solanaMeta.covers(chain) ? solanaMeta.lastWhy(address) : null;
 }
 
-module.exports = { fetchDiscovery, fetchDiscoveryX, fetchTokenInfo, fetchTokenInfoX, mergeInfo, chainMetaWhy };
+/** Which launchpads did not know the token, and why, or null — the other
+ *  half of the same line. "merged from launchpad:jupiter" named only the pads
+ *  that ANSWERED, so pump.fun refusing this box and pump.fun never having
+ *  heard of the mint read identically. */
+function padsWhy(chain, address) {
+  return launchpads.covers(chain) ? launchpads.lastWhy(chain, address) : null;
+}
+
+module.exports = { fetchDiscovery, fetchDiscoveryX, fetchTokenInfo, fetchTokenInfoX, mergeInfo, chainMetaWhy, padsWhy };

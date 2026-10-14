@@ -79,11 +79,11 @@ async function checkToken(address, chain) {
   for (const t of r.tried) {
     const p = pads.find((x) => x.key === t.pad) || { key: t.pad, label: t.pad, enabled: true, verified: true, chains: [] };
     const mark = t.skipped ? Y('•') : t.found ? G('✓') : t.ok ? D('·') : R('✗');
-    const note = t.skipped ? Y(t.why)
-      : t.found ? G('knows it')
-        : t.ok ? D(t.status === 404 ? 'answered: never heard of it' : 'answered, no record')
-          : R(t.why);
-    console.log(`  ${mark} ${padHeader(p)}\n      ${note}`);
+    // The registry's one wording, so this check and bot/'s cannot describe
+    // the same answer two ways — host included, and what each 404 SAID.
+    const d = lp.describeTried(t, p);
+    const paint = { skipped: Y, found: G, unknown: D, failed: R }[d.kind] || D;
+    console.log(`  ${mark} ${padHeader(p)}\n      ${paint(d.text)}${d.detail ? '\n      ' + D(d.detail) : ''}`);
   }
   if (!r.record) {
     console.log(`\n  ${r.ok ? Y('No pad knows this token.') : R('No pad answered — this is a network/host problem, not a token problem.')}`);

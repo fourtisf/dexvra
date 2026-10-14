@@ -9,7 +9,7 @@ const figures = require("../marketFigures");
 // Autofill asks every source that indexes the chain, not just DexScreener —
 // on Robinhood Chain, which DexScreener does not index, pools.trade is the only
 // one that knows the token at all. See discovery.js.
-const { fetchTokenInfo, chainMetaWhy } = require("../discovery");
+const { fetchTokenInfo, chainMetaWhy, padsWhy } = require("../discovery");
 const { escapeHtml } = require("../helpers/format");
 const { normalizeTicker, isValidTicker, sanitizeTicker } = require("../helpers/ticker");
 // ⚠️ The MODULE, not a destructured startPayment. A destructured import is
@@ -225,9 +225,11 @@ async function handleText(ctx) {
         // is the difference between a diagnosis and a screenshot.
         if (!f.website && !f.twitter && !f.telegram) {
           const why = chainMetaWhy(f.chain, input);
+          const pads = padsWhy(f.chain, input);
           log.info(
             `[listing] autofill ${f.chain}/${input}: no website, X or Telegram — merged from ${(ds && ds.source) || (ds ? "dexscreener" : "no source")}` +
-              (why ? `; on-chain metadata: ${why}` : ""),
+              (why ? `; on-chain metadata: ${why}` : "") +
+              (pads ? `; launchpads that did not know it: ${pads}` : ""),
           );
         }
         if (!f.sym) {

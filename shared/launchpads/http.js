@@ -98,8 +98,18 @@ async function why(r) {
   try {
     const t = (await r.text()).slice(0, 300).replace(/\s+/g, ' ').trim();
     if (!t) return '';
-    try { const j = JSON.parse(t); return ' — ' + (j.error || j.message || j.msg || j.errorCode || t); }
-    catch (_) { return ' — ' + t; }
+    let j;
+    try { j = JSON.parse(t); } catch (_) { return ' — ' + t; }
+    if (!j || typeof j !== 'object') return ' — ' + t;
+    // ⚠️ EVERY field, not the first. A framework 404 is `{ message: "Cannot
+    // GET /coins/…", error: "Not Found" }` — and `error` first printed the
+    // status text and threw away the one part that says the ROUTE is gone
+    // rather than the token. Distinct values, in reading order.
+    const parts = [j.message, j.error, j.msg, j.errorCode]
+      .map((v) => (typeof v === 'string' ? v : v == null ? '' : JSON.stringify(v)).trim())
+      .filter(Boolean);
+    const uniq = [...new Set(parts)];
+    return ' — ' + (uniq.length ? uniq.join(' · ') : t);
   } catch (_) { return ''; }
 }
 
