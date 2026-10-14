@@ -49,6 +49,8 @@ const URL_RE = /^https?:\/\/\S+$/i;
 // The clock and the lookup's options live in config/autofill — one spelling,
 // shared with `launchpads:check`, which prints what this form would prefill.
 const { AUTOFILL_MAX_MS, INFO_OPTS } = require("../config/autofill");
+const solanaMeta = require("../solanaMeta");
+const sessionStore = require("../helpers/sessionStore");
 
 /** Test seam — the three lookups, swappable without a network. The
  *  `core._deps.providerFor` shape, for the same reason. */
@@ -240,7 +242,13 @@ async function handleText(ctx) {
           return sendCard(ctx, tpl.render("listing_symbol_prompt"), menu.withHome([]));
         }
         s.awaitingField = null;
-        return showReview(ctx);
+        const shown = await showReview(ctx);
+        // ⚠️ FIRE AND FORGET — never awaited. Telegraf fetches no further
+        // updates until this handler returns, so a second look that waited
+        // here would make the whole bot deaf for its schedule ("mengapa bot
+        // tidak bisa merespon lagi", one feature over).
+        _late.started = lateFill(ctx, f, shown).catch((e) => log.warn(`[listing] second look for ${f.chain}/${input} failed: ${e.message}`));
+        return shown;
       }
       s.awaitingField = "name";
       return sendCard(ctx, tpl.render("listing_name_prompt"), menu.withHome([]));
@@ -444,6 +452,126 @@ async function showReview(ctx) {
   return r.msg;
 }
 
+// ── The second look ──────────────────────────────────────────────────────────
+/*
+ * "ini token ada logo website dan x tpi bot kita tidak bisa baca itu" — $KVR,
+ * a pump.fun launch three minutes old, came back `Logo: not set · Website: not
+ * set · X: not set` beside its pump.fun page drawing all three. The token's
+ * own on-chain metadata (solanaMeta.js) is what fills those, and it had been
+ * shipped and measured working on the box for BINWISE the day before.
+ *
+ * What it could not survive is ONE CLOCK. The form asks once, inside
+ * AUTOFILL_MAX_MS, and every way that read misses is transient: an RPC that
+ * answers 429 for a few seconds under the buy bot's polling, or a CID minted
+ * minutes ago that no gateway has cached yet. A miss there was PERMANENT — the
+ * review card said "not set" and only the buyer typing it all in could change
+ * that, about artwork that was one gateway away. The pattern logoRepair.js
+ * already applies to a paid post, applied to the form.
+ *
+ * So a Solana form that came back without its logo or without any social gets
+ * a second look, shortly after, and the review card is REPLACED when it finds
+ * something — holes only: nothing the buyer typed, uploaded or that the first
+ * read found is ever overwritten.
+ *
+ * ⚠️ GUARDED BY THE LIVE SESSION, not the `ctx` it started from. Every flow
+ * entry replaces the session wholesale, so through the old `ctx` a buyer who
+ * moved on is invisible — and a review card repainted over the tier picker or
+ * a new flow would be worse than the blank it fixes. The card is touched only
+ * while it is still the chat's latest card, the form is still this form, and
+ * no edit prompt is open. Checked once before any work and once again
+ * immediately before the send, with the picture already fetched so that window
+ * is milliseconds.
+ *
+ * ⚠️ Only when it can change something: a read that ANSWERED (`settled`) says
+ * the same for fifteen minutes, so after one look that finds nothing new over
+ * a settled answer, the schedule stops.
+ *
+ * `LISTING_LATE_FILL_MS` is the schedule (comma list, ms after the card);
+ * `0`/`off` disables it. Blank is the default — never "no time at all".
+ */
+const LATE_FILL_MS = (() => {
+  const raw = String(process.env.LISTING_LATE_FILL_MS == null ? "" : process.env.LISTING_LATE_FILL_MS).trim();
+  if (raw === "") return [4000, 15000];
+  if (/^(0|off|false|no)$/i.test(raw)) return [];
+  return raw
+    .split(",")
+    .map((x) => Number(x.trim()))
+    .filter((n) => Number.isFinite(n) && n >= 0)
+    .slice(0, 4);
+})();
+
+/** Seams for the tests: the live session, the schedule and the wait. The wait
+ *  is NOT unref'd — the test awaits it, and an unref'd timer lets the loop
+ *  empty under an awaited promise. */
+const _late = {
+  peek: (ctx) => sessionStore.peek(ctx),
+  delays: () => LATE_FILL_MS,
+  wait: (ms) => new Promise((r) => setTimeout(r, ms)),
+  /** The last look started by a paste — for a test to await. Nothing in
+   *  production reads it. */
+  started: null,
+};
+
+const lacksArt = (f) => !(f.logoFileId || f.logoUrl);
+const lacksSocials = (f) => !(f.website || f.twitter || f.telegram);
+
+/** What a second look found that the form still lacks — holes only. */
+function lateAdditions(f, info) {
+  const add = {};
+  if (!info) return add;
+  if (lacksArt(f) && info.logoUrl && /^https?:\/\//i.test(info.logoUrl)) add.logoUrl = info.logoUrl;
+  for (const k of ["website", "twitter", "telegram"]) if (!f[k] && info[k]) add[k] = info[k];
+  // The auto-written intro is a placeholder, not the buyer's words; the
+  // project's own description replaces it. A typed overview is never touched.
+  if (info.description && (!f.overview || f.overview === autoIntro(f))) add.overview = cleanOverview(info.description);
+  return add;
+}
+
+/** Is the card this look started from still the one the buyer is looking at? */
+function stillOnReview(ctx, f, address, msgId) {
+  const cur = _late.peek(ctx);
+  return !!(cur && cur === ctx.session && cur.form === f && f.address === address && !cur.awaitingField && cur.reviewShown && cur.latest_bot_message === msgId);
+}
+
+async function lateFill(ctx, f, msg) {
+  const delays = _late.delays();
+  if (!delays.length || !msg || !msg.message_id || !f || !solanaMeta.covers(f.chain)) return { applied: false, why: "not applicable" };
+  if (!lacksArt(f) && !lacksSocials(f)) return { applied: false, why: "nothing missing" };
+  const { chain, address } = f;
+  const msgId = msg.message_id;
+  const { bounded } = require("../helpers/bounded");
+  for (const ms of delays) {
+    await _late.wait(ms);
+    if (!stillOnReview(ctx, f, address, msgId)) return { applied: false, why: "moved on" };
+    const info = await bounded(
+      Promise.resolve()
+        .then(() => _lookups.fetchTokenInfo(chain, address, INFO_OPTS))
+        .catch(() => null),
+      AUTOFILL_MAX_MS,
+      () => null,
+    );
+    const add = lateAdditions(f, info);
+    const found = Object.keys(add);
+    if (found.length) {
+      // The picture is fetched BEFORE the second guard, so the window between
+      // the guard and the send is not a gateway round trip.
+      if (add.logoUrl) await reviewPhotoX({ ...f, ...add }).catch(() => null);
+      if (!stillOnReview(ctx, f, address, msgId)) {
+        log.info(`[listing] autofill ${chain}/${address}: a second look found ${found.join(", ")} after the buyer moved on — not applied`);
+        return { applied: false, why: "moved on", add };
+      }
+      Object.assign(f, add);
+      log.info(`[listing] autofill ${chain}/${address}: a second look found ${found.join(", ")} — review card updated`);
+      const sent = await showReview(ctx);
+      return { applied: true, add, msg: sent };
+    }
+    if (solanaMeta.settled(address)) break; // an answer, with nothing new in it
+  }
+  const why = solanaMeta.lastWhy(address);
+  log.info(`[listing] autofill ${chain}/${address}: a second look found nothing new${why ? ` — on-chain metadata: ${why}` : ""}`);
+  return { applied: false, why: "nothing new" };
+}
+
 // ── Edit buttons ─────────────────────────────────────────────────────────────
 async function editField(ctx) {
   await answer(ctx);
@@ -572,6 +700,9 @@ async function discard(ctx) {
 module.exports = {
   showReview,
   _reviewPhoto: reviewPhoto,
+  _late,
+  _lateFill: lateFill,
+  _lateAdditions: lateAdditions,
   _reviewPictureMissed: reviewPictureMissed,
   _photoFormat: photoFormat,
   goPay,

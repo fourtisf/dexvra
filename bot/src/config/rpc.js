@@ -194,7 +194,13 @@ async function rpcRead(chain, fn, opts = {}) {
   const timeoutMs = opts.timeoutMs || TIMEOUT_MS;
   const budgetMs = opts.budgetMs || BUDGET_MS;
   const started = Date.now();
-  const urls = rankedUrls(chain, started);
+  // `opts.extraUrls` are walked AFTER the configured list, never ahead of it,
+  // and only by a caller reading PUBLIC data (a token's own metadata) — never
+  // a payment or a sweep. The rule above (`RPC_<CHAIN>_URLS` wins outright) is
+  // about not carrying the operator's traffic and ADDRESSES to a node they did
+  // not pick; a mint anybody can look up carries neither. See solanaMeta.js.
+  const extra = (opts.extraUrls || []).filter(Boolean);
+  const urls = [...new Set([...rankedUrls(chain, started), ...extra])];
   if (!urls.length) throw new Error(`no RPC configured for chain "${chain}"`);
 
   let last = null;

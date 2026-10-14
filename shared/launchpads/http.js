@@ -60,7 +60,14 @@ function client(bases, label) {
     async fetch(path, init) {
       if (!list.length) throw new Error(`no ${label} base configured`);
       const order = sticky ? [sticky, ...list.filter((b) => b !== sticky)] : list;
-      let last = null;
+      // ⚠️ THE REPORTED REASON IS THE FIRST BASE'S, NOT THE LAST. The base list
+      // ends with the RETIRED hosts (kept so a rollover needs no deploy), and a
+      // retired host fails at the transport — so keeping the last error reported
+      // pump.fun as "can't reach frontend-api.pump.fun" over a refusal from the
+      // CURRENT host, frontend-api-v3, and sent the operator to the wrong one.
+      // Jupiter's swap path paid for this rule first (solana.js _overBases).
+      let first = null;
+      let more = 0;
       for (const base of order) {
         const url = base + path;
         try {
@@ -69,10 +76,12 @@ function client(bases, label) {
           return r;
         } catch (e) {
           if (sticky === base) sticky = null;
-          last = netErr(e, url);
+          if (!first) first = netErr(e, url);
+          else more++;
         }
       }
-      throw last || new Error(`no ${label} base configured`);
+      if (first && more) first.message += ` (${more} fallback base${more > 1 ? 's' : ''} failed too)`;
+      throw first || new Error(`no ${label} base configured`);
     },
   };
 }

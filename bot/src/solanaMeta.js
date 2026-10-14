@@ -49,7 +49,8 @@
  * merge for every candidate on every scan, and they would pay an RPC request
  * and a gateway fetch per token for socials they never render.
  */
-const { rpcRead } = require('./config/rpc');
+const rpcConfig = require('./config/rpc');
+const { rpcRead } = rpcConfig;
 const safeImage = require('./helpers/safeImage');
 const ipfs = require('./helpers/ipfsGateways');
 const { httpsLogo } = require('./helpers/httpsLogo');
@@ -320,13 +321,69 @@ async function rpcPost(url, method, params, timeoutMs) {
   return j && j.result;
 }
 
+/**
+ * The public Solana endpoints this read may fall back to AFTER the operator's
+ * own — `config/rpc.js`'s shipped defaults, not a new list.
+ *
+ * ⚠️ WHY THIS READ, AND NO OTHER, MAY REACH PAST `RPC_SOLANA_URLS`. $KVR's
+ * review card came back "Logo: not set · X: not set" on a box whose operator
+ * had said their Helius plan was hitting its limit — and the buy bot polls
+ * Solana pools through that same list all day (CLAUDE.md, "the trade bot was
+ * never the spender"). `RPC_SOLANA_URLS` wins outright, so one 429 there left
+ * this read with nowhere to go, and the form lost the logo the chain was
+ * holding. The rule against appending public nodes exists so the operator's
+ * traffic and ADDRESSES never reach a node they did not pick; a mint's public
+ * metadata carries neither. Payments and sweeps never take this path. It is
+ * the trade bot's SOL_READ_FALLBACKS decision, one package over.
+ *
+ * `SOLANA_META_PUBLIC_RPC=0` keeps the read on the configured list alone.
+ */
+function publicFallbacks() {
+  const v = String(process.env.SOLANA_META_PUBLIC_RPC == null ? '' : process.env.SOLANA_META_PUBLIC_RPC).trim();
+  if (/^(0|false|off|no)$/i.test(v)) return [];
+  return (rpcConfig.DEFAULTS.solana || []).slice();
+}
+
+/** A url's HOST only. A paid endpoint keeps its key in the path or the query,
+ *  and every reason below lands in a log line. */
+const rpcHost = (u) => {
+  try {
+    return new URL(u).host;
+  } catch {
+    return 'unparseable url';
+  }
+};
+
 /** Every account in ONE request — the metadata PDA, the mint, the pump.fun curve. */
 async function readAccounts(addrs, { timeoutMs, budgetMs }) {
-  const { value } = await rpcRead(
-    'solana',
-    (url) => rpcPost(url, 'getMultipleAccounts', [addrs, { encoding: 'base64', commitment: 'confirmed' }], timeoutMs),
-    { timeoutMs, budgetMs },
-  );
+  // ⚠️ EVERY endpoint's reason, not the last one's. `rpcRead` rethrows the LAST
+  // error, and with the public fallbacks behind the operator's endpoint that
+  // would report a public node's refusal over the Helius 429 that actually
+  // started it — the misdiagnosis shared/launchpads/http.js and solana.js
+  // _overBases already had to be fixed for. `onFail` fires for a timeout too,
+  // which an error handler inside `fn` never sees.
+  const reasons = [];
+  let value;
+  try {
+    ({ value } = await rpcRead(
+      'solana',
+      (url) => rpcPost(url, 'getMultipleAccounts', [addrs, { encoding: 'base64', commitment: 'confirmed' }], timeoutMs),
+      {
+        timeoutMs,
+        budgetMs,
+        extraUrls: publicFallbacks(),
+        onFail: (url, e) => reasons.push(`${rpcHost(url)} ${str((e && e.message) || e, 80)}`),
+      },
+    ));
+  } catch (e) {
+    // A request error (not a refusal) is final and never reached onFail, so it
+    // is added here; a transport error already has its line from onFail.
+    const final = rpcConfig.isTransportError(e) ? [] : [str((e && e.message) || e, 120)];
+    const why = [...reasons, ...final].join('; ') || 'no Solana RPC answered';
+    const err = new Error(why);
+    if (e && e.cause) err.cause = e.cause;
+    throw err;
+  }
   return (value && Array.isArray(value.value) ? value.value : []).map((a) => {
     if (!a || !Array.isArray(a.data)) return null;
     return { owner: a.owner, data: Buffer.from(String(a.data[0] || ''), 'base64') };
@@ -503,6 +560,17 @@ async function fetchTokenInfo(chain, mint, opts) {
   return (await fetchTokenInfoX(chain, mint, opts)).info;
 }
 
+/**
+ * Is there a remembered ANSWER for this mint? A settled read will say the same
+ * thing for HIT_TTL_MS, so asking again cannot change the form — the listing
+ * form's second look (handlers/listing.js lateFill) is skipped for it. Only a
+ * read that could not ask (`ok:false`, never cached) is worth a second look.
+ */
+function settled(mint) {
+  const hit = cache.get(String(mint || '').trim());
+  return !!(hit && Date.now() - hit.at < HIT_TTL_MS);
+}
+
 /** Why the last read of this mint came back short, or null. */
 function lastWhy(mint) {
   const f = lastFail.get(String(mint || '').trim());
@@ -522,10 +590,11 @@ module.exports = {
   fetchTokenInfo,
   fetchTokenInfoX,
   lastWhy,
+  settled,
   METADATA_PROGRAM,
   TOKEN_2022,
   PUMP_PROGRAM,
   _deps,
   _reset,
-  _test: { parseMetaplex, parseToken2022, parsePumpCurve, PUMP_CURVE_DISC, extract, readDocument, readString, webUrl, labelledUrl, rpcPost },
+  _test: { publicFallbacks, readAccounts, parseMetaplex, parseToken2022, parsePumpCurve, PUMP_CURVE_DISC, extract, readDocument, readString, webUrl, labelledUrl, rpcPost },
 };

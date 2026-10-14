@@ -20,8 +20,10 @@ const { toast } = require("./helpers/message");
 
 let middlewareApplied = false;
 
-const generateSessionKey = (ctx) =>
-  ctx.from && ctx.chat ? `${ctx.from.id}:${ctx.chat.id}` : undefined;
+// The store is OWNED by helpers/sessionStore so a late answer can read a
+// chat's CURRENT session (see that module); the key is unchanged.
+const sessionStore = require("./helpers/sessionStore");
+const generateSessionKey = sessionStore.key;
 
 const rateLimitConfig = {
   window: RATE_WINDOW,
@@ -102,7 +104,7 @@ function applyMiddleware(bot) {
   middlewareApplied = true;
 
   bot.use(timingMiddleware);
-  bot.use(session({ getSessionKey: generateSessionKey, defaultSession: () => ({}) }));
+  bot.use(session({ store: sessionStore.store, getSessionKey: generateSessionKey, defaultSession: () => ({}) }));
   bot.use(rateLimit(rateLimitConfig));
 
   registerHandlers(bot);

@@ -723,6 +723,113 @@ still pump.fun's: it costs nothing the form needs any more, but the
 `description` and the pad-sourced socials still come from the chain document,
 not from pump.fun.
 
+#### "ini token ada logo website dan x tpi bot kita tidak bisa baca itu add api pumpfun" — one clock was the whole chance
+
+Reported 2026-10-14, the day after the round above, with **$KVR** (KOVRA, a
+pump.fun launch three minutes old): `Logo: not set · Website: not set · X: not
+set · Telegram: not set`, beside its pump.fun page drawing all three. The card
+had the name and the ticker and the auto-written intro, which is what a chain
+read that missed its document (or an RPC refusal with DexScreener supplying
+the name) looks like.
+
+**pump.fun's API was not the gap and is not the fix.** It is wired (the
+`pumpfun` pad) and the box measured it answering 404 about its own tokens. The
+chain read above exists so the form does not depend on it. What the chain read
+could not survive was ONE CLOCK: the form asks once, inside
+`LISTING_AUTOFILL_MS`, and both ways that read misses are transient:
+- an RPC answering 429 for a few seconds. The operator had said their Helius
+  plan was hitting its limit, and the buy bot polls Solana pools through the
+  same `RPC_SOLANA_URLS` all day;
+- a CID minted minutes ago that no gateway has cached yet.
+
+The miss was PERMANENT: only the buyer typing it all in could change the card.
+Which of the two it was is in pm2 on the box (`[solana-meta]` /
+`[listing] autofill`), not here, so the fix covers both.
+
+- **A second look, after the card** (`handlers/listing.js` `lateFill`). A
+  Solana form that came back without its logo or without any social is looked
+  at again (`LISTING_LATE_FILL_MS`, default `4000,15000` ms after the card; `0`
+  disables it, blank is the default). When the look finds something, the review
+  card is REPLACED. It fills holes only: nothing the buyer typed or uploaded, and
+  nothing the first read found, is overwritten. The auto-written intro gives way
+  to the project's own description; a typed overview is kept.
+- ⚠️ **FIRE AND FORGET, NEVER AWAITED.** Telegraf fetches no updates until the
+  paste handler returns, so a look that waited there would make the whole bot
+  deaf for its schedule — "mengapa bot tidak bisa merespon lagi", one feature
+  over. Mutation-tested: awaiting it fails a test with a deadline.
+- ⚠️ **GUARDED BY THE LIVE SESSION, not the `ctx` it started from.** Every flow
+  entry replaces the session wholesale (`freshSession`, `/start`,
+  listedGuard), and through the old `ctx` that is invisible. A review card
+  repainted over the tier picker or a new flow would be worse than the blank it
+  fixes. So:
+  - the main bot's session store is OWNED by `helpers/sessionStore.js` (still
+    telegraf's in-memory store; only the instance is reachable now), and `peek`
+    reads the chat's CURRENT session;
+  - the card is touched only while that session IS this one (identity, not
+    resemblance: a store that hands back a copy is not this session), the form
+    is this form, no edit prompt is open, and the review card is still the
+    chat's latest card;
+  - it is checked before the lookup AND again just before the send, with the
+    picture already fetched so the window is milliseconds.
+- **Only where it can change something**: Solana only, only when something is
+  missing, and a SETTLED chain answer (`solanaMeta.settled`, cached 15 min) with
+  nothing new in it stops the schedule after one look.
+- **The metadata read falls back to the PUBLIC endpoints after the operator's
+  own** (`rpcRead` `extraUrls`, `rpc.DEFAULTS.solana`). `RPC_SOLANA_URLS` wins
+  outright, so a 429 there left this read with nowhere to go. The rule against
+  appending public nodes protects the operator's traffic and ADDRESSES; a
+  mint's public metadata carries neither. It is the trade bot's
+  `SOL_READ_FALLBACKS` decision, one package over. The configured endpoints
+  always LEAD. A source scan pins `solanaMeta.js` as the ONLY caller passing
+  `extraUrls`, so a payment or a sweep can never fall back to a node the
+  operator did not pick. `SOLANA_META_PUBLIC_RPC=0` turns it off.
+- ⚠️ **AND EVERY ENDPOINT'S REASON TRAVELS, NOT THE LAST ONE'S.** `rpcRead`
+  rethrows the last error, so with the fallbacks behind Helius a public node's
+  refusal would have been reported over the 429 that started it. That is the
+  misdiagnosis the next bullet fixes in the launchpad client. Hosts are named,
+  never urls: a paid endpoint keeps its key in the query.
+- ⚠️ **`shared/launchpads/http.js` REPORTED THE LAST BASE'S ERROR.** Every
+  pad's base list ends with its retired hosts. So when every base failed at
+  the transport, `launchpads:check` blamed `frontend-api.pump.fun` (retired)
+  for a failure of `frontend-api-v3`. The round above made the host that
+  ANSWERED travel; this is the other half. The first base's reason is kept,
+  with `(N fallback bases failed too)`. Found by running the check for $KVR.
+
+```bash
+cd bot && node scripts/run-tests.js test/listingLateFill.test.js test/solanaMetaRpc.test.js test/launchpads.test.js   # 35 tests, no network
+pm2 logs dexvra-bot --lines 3000 --nostream | grep -F DzBCYzmGHEVdh5HK8tFBgS72iNaCEqkSHDeCCTLSpump
+cd /opt/dexvra/bot && npm run launchpads:check -- DzBCYzmGHEVdh5HK8tFBgS72iNaCEqkSHDeCCTLSpump
+```
+
+Twenty-one guarantees are MUTATION-TESTED rather than argued. Each fails
+between one and seven tests:
+- the look awaited in the handler, or never started;
+- the guard ignoring the live session, an open edit, or the latest card;
+- the second guard removed;
+- a filled social overwritten, or a typed overview replaced;
+- the settled stop removed, the Solana check removed, or the nothing-missing
+  check removed;
+- blank read as off;
+- bot.js keeping a private store;
+- `extraUrls` ignored or leading, the opt-out ignored, or the read passing no
+  fallbacks;
+- only the last reason kept, or a request error dropped from it;
+- a url leaking into a reason;
+- the last base's reason winning in the launchpad client.
+
+One SURVIVED its first run and was a test gap: the identity check was masked
+by the latest-card check until a session COPY was the fixture.
+
+⚠️ **What this does NOT do.** It does not make a refusing RPC or gateway answer.
+If the box's `[solana-meta]` line says every endpoint refused, including the
+public ones, that is the box's egress and the next lever is config. And it
+cannot reach a review card the buyer already left: a token pasted, reviewed and
+confirmed inside four seconds keeps what the first read found.
+
+**Config a fix depends on:** nothing. It ships ON. `LISTING_LATE_FILL_MS` and
+`SOLANA_META_PUBLIC_RPC` are the knobs. ⚠️ This touches `bot/` AND `shared/`,
+so `npm run deploy` restarts all three bot processes; there is no web rebuild.
+
 ## The banner drew "$???" to 12,607 subscribers
 
 A token listed as **牛来 ($牛来)** went out on the listing card as `$???` and again

@@ -286,3 +286,18 @@ test("the host that answered a lookup is recorded, so 'never heard of it' says W
   assert.strictEqual(again.tried.find((t) => t.pad === "pumpfun").base, "frontend-api.pump.fun");
   lp.reload();
 });
+
+// ⚠️ THE REPORTED REASON IS THE FIRST BASE'S. The base list ends with retired
+// hosts, so keeping the LAST error blamed pump.fun's retired frontend-api for a
+// refusal from frontend-api-v3 — found running launchpads:check for $KVR.
+test("a pad that fails on every base names the CURRENT host, not the retired fallback", async () => {
+  global.fetch = async (url) => {
+    const e = new TypeError("fetch failed");
+    e.cause = { code: String(url).includes("frontend-api-v3") ? "ECONNREFUSED" : "ENOTFOUND" };
+    throw e;
+  };
+  const r = await lp.tokenRecord("solana", MINT, { only: ["pumpfun"] });
+  const t = r.tried.find((x) => x.pad === "pumpfun");
+  assert.match(t.why, /frontend-api-v3\.pump\.fun — connection refused/, t.why);
+  assert.match(t.why, /1 fallback base failed too/, "the fallback is still mentioned, never as the reason");
+});
