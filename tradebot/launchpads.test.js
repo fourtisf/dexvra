@@ -633,19 +633,20 @@ test('…and a later spelling gets only what is LEFT of that budget, not a fresh
   assert.ok(took < 1750, `the walk took ${took}ms — the second spelling was handed a whole fresh timeout`);
 });
 
-// ── pump.fun: what its 404 SAID, and the second spelling ─────────────────────
+// ── pump.fun: what its 404 SAID, and the route that moved ───────────────────
 // "intinya saya ingin dexvra add api pumpfun". The pad was always wired; from
-// the box it answered some pump.fun mints and 404'd others ($BINWISE, $KVR),
-// and every one of those 404s was printed as "never heard of it" with the body
-// thrown away — so "Cannot GET" (the route moved), "coin not found" (the token)
-// and a WAF page (the box) were one line. These pin the body travelling, and
-// the `?sync=true` spelling being asked only behind a plain 404.
+// the box it 404'd mints whose pump.fun page was open in a browser ($BINWISE,
+// $KVR), and every 404 was printed as "never heard of it" with the body thrown
+// away. Once the body travelled the box said `Cannot GET /coins/<mint>` — the
+// framework's unmatched-ROUTE answer — and pump.fun's own guide documents the
+// lookup as `/coins-v2/{mint}`. These pin the body travelling, the measured
+// route asked FIRST at exactly that URL, and the old one kept behind it.
 
 /** pump.fun answering per URL, with a BODY on its 404 — `serve()` sends none. */
 function pump(answer, seen) {
   global.fetch = async (url) => {
     const u = String(url);
-    if (!/pump\.fun/.test(u)) return { ok: false, status: 404, text: async () => '', json: async () => ({}) };
+    if (!/pump\.fun|proxy\.example/.test(u)) return { ok: false, status: 404, text: async () => '', json: async () => ({}) };
     if (seen) seen.push(u);
     const a = answer(u);
     if (a && a.status) return { ok: false, status: a.status, text: async () => a.body || '', json: async () => ({}) };
@@ -653,45 +654,46 @@ function pump(answer, seen) {
   };
 }
 const pumpTried = (r) => r.tried.find((t) => t.pad === 'pumpfun');
+const pumpPad = () => lp.padsFor('solana').find((p) => p.key === 'pumpfun');
+const CANNOT_GET = (u) => ({ status: 404, body: JSON.stringify({ message: `Cannot GET ${new URL(u).pathname}`, error: 'Not Found', statusCode: 404 }) });
 
-test('⚠️ a pump.fun 404 keeps what it SAID — "never heard of it" alone is not a diagnosis', async () => {
-  reset({ LAUNCHPAD_JUPITER: '0' });
-  pump((u) => (/sync=true/.test(u)
-    ? { status: 404, body: JSON.stringify({ message: 'Coin not found' }) }
-    : { status: 404, body: JSON.stringify({ message: 'Cannot GET /coins/x', error: 'Not Found', statusCode: 404 }) }));
-  const r = await lp.tokenRecord('solana', MINT);
-  const t = pumpTried(r);
-  assert.equal(t.status, 404);
-  assert.match(t.said, /Cannot GET/, 'the plain spelling\'s body was thrown away');
-  assert.match(t.said, /Coin not found/, 'the second spelling\'s body was thrown away');
-  const d = lp.describeTried(t, lp.padsFor('solana').find((p) => p.key === 'pumpfun'));
-  assert.match(d.text, /never heard of it \(frontend-api-v3\.pump\.fun\)/, 'the answering host was dropped');
-  assert.match(d.detail, /^said: .*Cannot GET/, 'the check would print no reason under the 404');
-});
-
-test('…the ?sync=true spelling is asked only BEHIND a plain 404, and the answer says which spelling it was', async () => {
-  reset({ LAUNCHPAD_JUPITER: '0' });
-  const seen = [];
-  pump((u) => (/sync=true/.test(u) ? pumpBody() : { status: 404, body: '{"message":"Coin not found"}' }), seen);
-  const r = await lp.tokenRecord('solana', MINT);
-  assert.ok(r.record, `the second spelling was never asked: ${seen.join(', ')}`);
-  assert.equal(r.record.twitter, 'https://x.com/curveproj');
-  const t = pumpTried(r);
-  assert.equal(t.path, '/{id}?sync=true');
-  const d = lp.describeTried(t, lp.padsFor('solana').find((p) => p.key === 'pumpfun'));
-  assert.match(d.detail, /answered on \/\{id\}\?sync=true/, 'the check would not say which spelling answered');
-  assert.match(d.detail, /Coin not found/);
-});
-
-test('…and a plain answer costs ONE request — the hypothesis is never paid for on a hit', async () => {
+test('⚠️ pump.fun is asked at the route it DOCUMENTS — /coins-v2/{mint}, as a sibling of the /coins base', async () => {
   reset({ LAUNCHPAD_JUPITER: '0' });
   const seen = [];
   pump(() => pumpBody(), seen);
   const r = await lp.tokenRecord('solana', MINT);
-  assert.ok(r.record);
+  assert.equal(seen[0], `https://frontend-api-v3.pump.fun/coins-v2/${MINT}`, `asked ${seen[0]}`);
   assert.equal(seen.length, 1, `a 200 was followed by ${seen.length - 1} more request(s): ${seen.join(', ')}`);
-  assert.equal(pumpTried(r).path, '/{id}');
-  assert.equal(lp.describeTried(pumpTried(r), lp.padsFor('solana').find((p) => p.key === 'pumpfun')).detail, '', 'a first-spelling answer printed a spelling note');
+  assert.ok(r.record, 'a flat coin object did not parse');
+  assert.equal(r.record.twitter, 'https://x.com/curveproj');
+  assert.equal(pumpTried(r).path, '../coins-v2/{id}');
+  assert.equal(lp.describeTried(pumpTried(r), pumpPad()).detail, '', 'a first-spelling answer printed a spelling note');
+});
+
+test('⚠️ a pump.fun 404 keeps what it SAID — "never heard of it" alone is not a diagnosis', async () => {
+  reset({ LAUNCHPAD_JUPITER: '0' });
+  pump((u) => (/coins-v2/.test(u) ? { status: 404, body: JSON.stringify({ message: 'Coin not found' }) } : CANNOT_GET(u)));
+  const t = pumpTried(await lp.tokenRecord('solana', MINT));
+  assert.equal(t.status, 404);
+  assert.match(t.said, /coins-v2.*Coin not found/, 'the measured route\'s body was thrown away');
+  assert.match(t.said, /Cannot GET \/coins\//, 'the legacy route\'s body was thrown away');
+  const d = lp.describeTried(t, pumpPad());
+  assert.match(d.text, /never heard of it \(frontend-api-v3\.pump\.fun\)/, 'the answering host was dropped');
+  assert.match(d.detail, /^said: /, 'the check would print no reason under the 404');
+});
+
+test('…the legacy /coins/{mint} is asked only BEHIND a 404, and the answer says which spelling it was', async () => {
+  reset({ LAUNCHPAD_JUPITER: '0' });
+  const seen = [];
+  pump((u) => (/coins-v2/.test(u) ? CANNOT_GET(u) : pumpBody()), seen);
+  const r = await lp.tokenRecord('solana', MINT);
+  assert.ok(r.record, `the legacy spelling was never asked: ${seen.join(', ')}`);
+  assert.equal(seen[1], `https://frontend-api-v3.pump.fun/coins/${MINT}`);
+  const t = pumpTried(r);
+  assert.equal(t.path, '/{id}');
+  const d = lp.describeTried(t, pumpPad());
+  assert.match(d.detail, /answered on \/\{id\}/, 'the check would not say which spelling answered');
+  assert.match(d.detail, /Cannot GET \/coins-v2\//);
 });
 
 test('…a 429 is not a reason to try the other spelling', async () => {
@@ -725,6 +727,36 @@ test("…an operator's LAUNCHPAD_PUMPFUN_TOKEN_PATH replaces both spellings", as
   await lp.tokenRecord('solana', MINT);
   assert.equal(seen.length, 1, `the pin was followed by guesses: ${seen.join(', ')}`);
   assert.match(seen[0], /\/coins\/v9\//);
+});
+
+test('…a pinned SIBLING path is a real value, not a placeholder — the next move of the route costs a line in .env', async () => {
+  reset({ LAUNCHPAD_JUPITER: '0', LAUNCHPAD_PUMPFUN_TOKEN_PATH: '../coins-v3/{id}' });
+  const seen = [];
+  pump(() => pumpBody(), seen);
+  const r = await lp.tokenRecord('solana', MINT);
+  assert.ok(r.record);
+  assert.equal(seen[0], `https://frontend-api-v3.pump.fun/coins-v3/${MINT}`);
+});
+
+test("…an existing PUMPFUN_API proxy keeps working: the sibling resolves under the proxy's own path", async () => {
+  reset({ LAUNCHPAD_JUPITER: '0' });
+  process.env.PUMPFUN_API = 'https://proxy.example/pump/coins';
+  try {
+    lp.reload();
+    const seen = [];
+    pump(() => pumpBody(), seen);
+    assert.ok((await lp.tokenRecord('solana', MINT)).record);
+    assert.equal(seen[0], `https://proxy.example/pump/coins-v2/${MINT}`);
+  } finally { delete process.env.PUMPFUN_API; lp.reload(); }
+});
+
+test('http.join: plain concatenation, except a ../ path resolved like a relative link', () => {
+  const { join } = require('../shared/launchpads/http');
+  assert.equal(join('https://h.example/coins', '/X'), 'https://h.example/coins/X');
+  assert.equal(join('https://h.example/coins', '?offset=0&limit=5'), 'https://h.example/coins?offset=0&limit=5', 'the feed path stopped being appended');
+  assert.equal(join('https://h.example/coins', '../coins-v2/X'), 'https://h.example/coins-v2/X');
+  assert.equal(join('https://h.example/coins/', '../coins-v2/X'), 'https://h.example/coins-v2/X', 'a trailing slash on the base moved the sibling');
+  assert.equal(join('https://h.example/a/coins', '../coins-v2/X?sync=1'), 'https://h.example/a/coins-v2/X?sync=1');
 });
 
 test('whyNot names the pads that did NOT know a token — and only those', () => {

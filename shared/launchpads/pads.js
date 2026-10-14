@@ -382,19 +382,25 @@ function build() {
       covers: 'pump.fun',
       bases: ['https://frontend-api-v3.pump.fun/coins', 'https://frontend-api.pump.fun/coins'],
       aliases: ['PUMPFUN_API'],
-      // ⚠️ TWO SPELLINGS, AND THE SECOND IS A HYPOTHESIS. From the box the
-      // current host answers some pump.fun mints and 404s others, about tokens
-      // whose pump.fun page is open in the operator's browser ($BINWISE,
-      // $KVR). The same IP and the same request get a 200 for one mint, so a
-      // flat block does not fit. The leading reading is a coin pump.fun's API
-      // has not cached yet, and `?sync=true` is the spelling its own coin page
-      // asks with to have the API read the coin from the chain. Nothing here
-      // can verify that: this sandbox reaches no pump.fun host. So it is asked
-      // ONLY after the plain spelling 404s (`index.js` padToken), inside the
-      // same one budget, and `launchpads:check` prints which spelling answered
-      // and what each 404 SAID, so the next run on the box settles it.
-      // `LAUNCHPAD_PUMPFUN_TOKEN_PATH` still replaces both.
-      tokenPaths: ['/{id}', '/{id}?sync=true'],
+      // ⚠️ THE PER-COIN ROUTE MOVED, AND THE BOX IS WHAT SAID SO. Every 404
+      // from this pad used to be printed as "never heard of it"; once the body
+      // travelled, `launchpads:check` on the box read
+      //   /{id} → answered 404 — Cannot GET /coins/<mint> · Not Found
+      // for a mint whose pump.fun page was open in a browser. "Cannot GET" is
+      // the framework's own unmatched-ROUTE answer — not "coin not found" —
+      // so the token was never the question: `/coins/{mint}` is gone. pump.fun's
+      // own published guide (github.com/pump-fun/pump-fun-skills, create-coin)
+      // documents the lookup as `GET /coins-v2/{mint}`, a flat coin object.
+      //
+      // `../coins-v2/{id}` is a SIBLING of the base (`http.js join`), not a new
+      // base: the feed is still under `/coins`, `PUMPFUN_API` overrides end in
+      // `/coins`, and `tradebot/solana.js` appends its feed paths to the same
+      // list. It is FIRST because it is the measured route, so a hit costs one
+      // request. `/{id}` stays behind it — a 404 is the only thing that walks,
+      // and a rollback should cost nothing. The `?sync=true` hypothesis is gone:
+      // the box answered it with the same "Cannot GET", i.e. the same dead route.
+      // `LAUNCHPAD_PUMPFUN_TOKEN_PATH` still replaces the list.
+      tokenPaths: ['../coins-v2/{id}', '/{id}'],
       feedPath: '?offset=0&limit={n}&sort=created_timestamp&order=DESC&includeNsfw=true',
       idKeys: ['mint', 'address'],
       parse: pumpfunParse,

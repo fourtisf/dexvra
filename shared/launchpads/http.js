@@ -45,6 +45,29 @@ function netErr(e, url) {
 }
 
 /**
+ * Join a base and a path. Plain concatenation — every path in the table starts
+ * with `/` or `?` and is appended to its base — EXCEPT a path that starts with
+ * `../`, which is resolved against the base the way a browser resolves a
+ * relative link: `…/coins` + `../coins-v2/X` is `…/coins-v2/X`.
+ *
+ * It exists for pump.fun, and the reason it is not a new base is the alias.
+ * pump.fun moved its per-coin route from `/coins/{mint}` to `/coins-v2/{mint}`
+ * (the box answered `Cannot GET /coins/<mint>`), while its new-coins FEED is
+ * still under `/coins`. The base has always ended in `/coins` because
+ * `PUMPFUN_API` has always been set that way, and `tradebot/solana.js` appends
+ * its feed paths to the same list — so moving the base to the bare host would
+ * silently break every operator override and the snipe feed with it. A sibling
+ * path keeps both, and a pinned proxy base (`https://proxy.example/pump/coins`)
+ * resolves to that proxy's own `/pump/coins-v2/…`, which is what a proxy of the
+ * same API needs.
+ */
+function join(base, path) {
+  const p = String(path || '');
+  if (!p.startsWith('../')) return base + p;
+  try { return new URL(p, String(base).replace(/\/*$/, '/')).href; } catch (_) { return base + p; }
+}
+
+/**
  * A tiny stateful client over a base list. `sticky` remembers which base last
  * answered so the healthy host is tried first, rather than paying the dead
  * one's connect timeout on every single request.
@@ -69,7 +92,7 @@ function client(bases, label) {
       let first = null;
       let more = 0;
       for (const base of order) {
-        const url = base + path;
+        const url = join(base, path);
         try {
           const r = await _fetch(url, init);
           sticky = base;
@@ -146,4 +169,4 @@ async function getJson(c, path, { timeoutMs = 6000, headers } = {}) {
   }
 }
 
-module.exports = { client, getJson, netErr, why, _fetch };
+module.exports = { client, getJson, netErr, why, join, _fetch };

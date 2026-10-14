@@ -987,6 +987,61 @@ Each fails between one and five tests.
 **Config a fix depends on:** nothing. ⚠️ This touches `shared/` and `bot/`, so
 `npm run deploy` restarts all three bot processes; there is no web rebuild.
 
+###### The first run with the body travelling: the ROUTE was gone, and the hypothesis was wrong
+
+`launchpads:check` on `0d395a8`, for $KVR:
+
+```
+· pumpfun   answered: never heard of it (frontend-api-v3.pump.fun)
+    said: /{id} → answered 404 — Cannot GET /coins/DzBC…pump · Not Found;
+          /{id}?sync=true → answered 404 — Cannot GET /coins/DzBC…pump?sync=true · Not Found
+```
+
+**"Cannot GET" is the framework's own unmatched-ROUTE answer**, not an API
+saying "coin not found" — so the token was never the question, and neither was
+a cache: `/coins/{mint}` no longer exists on that host. The `?sync=true`
+reading above was wrong and is removed; the paragraph is left in place because
+what it got right — ask the box, and print what each 404 said — is what found
+this in one run. **One round of keeping the body bought what three rounds of
+"never heard of it" could not.**
+
+- **The route pump.fun publishes is `GET /coins-v2/{mint}`** — from its own
+  GitHub guide (`pump-fun/pump-fun-skills`, create-coin), a flat coin object
+  with `image_uri`, `usd_market_cap`, `complete` and the reserves. It is asked
+  FIRST, so a hit is one request. `/coins/{id}` stays behind it: only a 404
+  walks, and a rollback should cost nothing. Pump.fun has been removing routes
+  on this host (a third party's `/coins/top-runners` went the same way on
+  2026-09-30), so this will move again — `LAUNCHPAD_PUMPFUN_TOKEN_PATH` makes
+  that a line in `.env`.
+- ⚠️ **IT IS A SIBLING PATH (`../coins-v2/{id}`), NOT A NEW BASE**, and that is
+  the whole design. The base has always ended in `/coins` because `PUMPFUN_API`
+  has always been set that way, the new-coins FEED is still under `/coins`, and
+  `tradebot/solana.js` appends its feed paths to the same list. Moving the base
+  to the bare host would silently break every operator override and the snipe
+  feed with it. `http.join` resolves a `../` path like a relative link and
+  concatenates everything else exactly as before, so a pinned proxy base
+  (`https://proxy.example/pump/coins`) resolves to the proxy's own
+  `/pump/coins-v2/…`. The placeholder guard is pinned to accept `../` — it
+  refuses `...` and `…`, and a guard that ate the sibling form would make the
+  next move of the route undeployable by `.env`.
+- ⚠️ **Whether `/coins-v2` answers THIS BOX is still measured, not assumed.**
+  A third-party spec says pump.fun's coin lookups need a JWT; the official guide
+  shows none. If the next run says `answered 401`, that is the answer, and the
+  walk stops there rather than guessing on.
+
+```bash
+cd tradebot && SKIP_DOTENV=1 node --test launchpads.test.js       # 48 tests, no network
+cd /opt/dexvra/bot && npm run launchpads:check -- DzBCYzmGHEVdh5HK8tFBgS72iNaCEqkSHDeCCTLSpump 2>&1 | grep -A2 pumpfun
+```
+
+Seven guarantees are MUTATION-TESTED: the client not resolving through `join`,
+`join` never resolving `../`, a trailing slash on the base moving the sibling,
+the legacy route asked first, the legacy route dropped, the old list restored,
+and the placeholder guard eating `../`. Each fails between one and five tests.
+
+**Config a fix depends on:** nothing. ⚠️ `shared/`, so `npm run deploy`
+restarts all three bot processes; there is no web rebuild.
+
 ## The banner drew "$???" to 12,607 subscribers
 
 A token listed as **牛来 ($牛来)** went out on the listing card as `$???` and again
