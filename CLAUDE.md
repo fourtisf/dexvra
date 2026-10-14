@@ -1028,6 +1028,11 @@ this in one run. **One round of keeping the body bought what three rounds of
   A third-party spec says pump.fun's coin lookups need a JWT; the official guide
   shows none. If the next run says `answered 401`, that is the answer, and the
   walk stops there rather than guessing on.
+- **MEASURED on `99035c7`: it answers.** `launchpads:check` for $KVR printed
+  `✓ pumpfun — knows it (frontend-api-v3.pump.fun)` with no spelling note (so
+  `/coins-v2` answered first, one request, no JWT), and the form's own lookup
+  read `from dexscreener+launchpad:jupiter+pumpfun+solana-meta` — pump.fun is a
+  live source for the listing form for the first time since the route moved.
 
 ```bash
 cd tradebot && SKIP_DOTENV=1 node --test launchpads.test.js       # 48 tests, no network
