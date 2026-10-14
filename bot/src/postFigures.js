@@ -129,7 +129,9 @@ function artRemedy(cls, chain, address) {
   // through /api/logo) has nothing to pull and would report "nobody has given
   // this token artwork" — the very claim that is in question. The layer that
   // failed is the curve read.
-  if (cls === "unread") return `npm run pons:check`;
+  // …and on Solana the layer is the mint's own metadata, which the form's own
+  // view in `launchpads:check` measures from the box (run in bot/).
+  if (cls === "unread") return chain === "solana" ? `npm run launchpads:check -- ${address}` : `npm run pons:check`;
   if (cls === "no-gateway-had-it" || cls === "gateway-refusing") {
     return `npm run post:check -- ${chain} ${address} --pin`;
   }
@@ -160,6 +162,23 @@ function artworkUnread(art) {
   return !!(art && !art.wanted && art.absentWhy);
 }
 
+/**
+ * THE PROJECT'S OWN LINKS, blank because we could not ask.
+ *
+ * $KVR's review card read "Website: not set · X: not set · Telegram: not set"
+ * beside a pump.fun page drawing two of them, and nothing said so: a creator
+ * who wrote no links and a mint whose metadata this box could not read render
+ * identically, on the card and in the channel post. Only the second is ours.
+ *
+ * Pages only on the reported SHAPE — no website, X or Telegram at all — and
+ * only with `unreadWhy` (the token's own metadata could not be read). A missing
+ * Telegram beside a present X is the commonest creator's choice there is, and
+ * paging on it would be the permanently-red state `chart:preview` sat in.
+ */
+function socialsUnread(socials) {
+  return !!(socials && socials.unreadWhy && Array.isArray(socials.holes) && socials.holes.length >= 3);
+}
+
 /** Which of the post's three market figures will publish as a hole. */
 function missingFigures(live) {
   return FIGURES.filter(([, ok]) => !ok(live)).map(([name]) => name);
@@ -175,15 +194,19 @@ const esc = (s) =>
  * of the two silences it was" are behavioural rules, and a source scan cannot
  * tell a rule from a comment about one — the `logoWrite.ts` contract.
  */
-function figureAlert({ kind, chain, address, sym, name, tier, live, why, siteUrl, art } = {}) {
+function figureAlert({ kind, chain, address, sym, name, tier, live, why, siteUrl, art, socials } = {}) {
   const missing = missingFigures(live);
   const lostArt = artworkLost(art);
   const unreadArt = artworkUnread(art);
-  // Either half of the promise is enough to page. A missing LIQUIDITY still is
+  const unreadLinks = socialsUnread(socials);
+  // Any half of the promise is enough to page. A missing LIQUIDITY still is
   // not — see KEY_FIGURES — but it is named below whenever something else fires.
   const keyMissing = keyMissingOf(live);
-  if (!keyMissing.length && !lostArt && !unreadArt) return null;
-  const holes = lostArt || unreadArt ? [...missing, "its own artwork"] : missing;
+  if (!keyMissing.length && !lostArt && !unreadArt && !unreadLinks) return null;
+  const holes = [...missing, ...(lostArt || unreadArt ? ["its own artwork"] : []), ...(unreadLinks ? ["its website, X and Telegram"] : [])];
+  // On Solana the read that could not answer is the mint's own metadata, not a
+  // curve — naming the curve there sends the operator to the wrong layer.
+  const chainRead = chain === "solana" ? "the TOKEN'S OWN METADATA read" : "the CURVE READ";
 
   // ⚠️ "WE COULD NOT ASK" AND "NOTHING IS THERE" ARE DIFFERENT FACTS, and only
   // the first is ours to fix. They are also the only two states the operator
@@ -220,7 +243,10 @@ function figureAlert({ kind, chain, address, sym, name, tier, live, why, siteUrl
     // refused us" and "this project published no logo" send an operator to
     // completely different places and the banner draws them identically.
     unreadArt
-      ? `Artwork: the row is blank because the CURVE READ could not answer — ${esc(art.absentWhy)}. This is not the project publishing no logo; the banner drew the Dexvra mark.`
+      ? `Artwork: the row is blank because ${chainRead} could not answer — ${esc(art.absentWhy)}. This is not the project publishing no logo; the banner drew the Dexvra mark.`
+      : "",
+    unreadLinks
+      ? `Links: website, X and Telegram are blank because ${chainRead} could not answer — ${esc(socials.unreadWhy)}. This is not the project publishing none; add them in the admin panel if the token has them.`
       : "",
     // ⚠️ SAID, so an operator does not race the bot: services/logoRepair.js
     // keeps asking and edits the posts in place, and it reports either way.
@@ -240,7 +266,7 @@ function figureAlert({ kind, chain, address, sym, name, tier, live, why, siteUrl
       ? `Run <code>npm run market:check -- ${esc(chain)}</code>${ponsChain.covers(chain) ? ` and <code>npm run pons:check</code> (the curve and the ETH/USD ladder)` : ""} on the box.`
       : "",
     lostArt ? `Run <code>${esc(artRemedy(artFailure(art).cls, chain, address))}</code> on the box.` : "",
-    !lostArt && unreadArt ? `Run <code>${esc(artRemedy("unread", chain, address))}</code> on the box.` : "",
+    !lostArt && (unreadArt || unreadLinks) ? `Run <code>${esc(artRemedy("unread", chain, address))}</code> on the box.` : "",
   ]
     .filter(Boolean)
     .join("\n");
@@ -265,4 +291,4 @@ function reportFigures(args) {
   }
 }
 
-module.exports = { missingFigures, keyMissingOf, isKeyHole, artworkLost, artworkUnread, artFailure, artRemedy, figureAlert, reportFigures, KEY_FIGURES };
+module.exports = { missingFigures, keyMissingOf, isKeyHole, artworkLost, artworkUnread, socialsUnread, artFailure, artRemedy, figureAlert, reportFigures, KEY_FIGURES };

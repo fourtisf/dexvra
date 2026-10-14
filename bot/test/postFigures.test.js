@@ -206,7 +206,21 @@ test("BOTH fulfilment paths carry the blank's reason — a rule on one sibling i
   for (const r of reports) {
     const art = /art: \{([\s\S]*?)\n    \}/.exec(r) || /art: \{([\s\S]*?)\}/.exec(r);
     assert.ok(art, "an art block");
-    assert.match(art[1], /absentWhy: live && live\.logoWhy/, `the sibling cannot report a blank it could not fill:\n${r}`);
+    // The PROPERTY, not a spelling: the listing path folds the curve's reason
+    // into `listAbsentWhy` beside the mint-metadata one (the final look), and a
+    // guard pinned to the literal went red over code that keeps its rule — and
+    // would pass on a variable that dropped `live.logoWhy`. So an identifier is
+    // followed to its definition, and THAT must carry the curve's reason.
+    const m = /absentWhy: ([^,\n]+)/.exec(art[1]);
+    assert.ok(m, `no absentWhy in:\n${r}`);
+    let expr = m[1];
+    const ident = /^([A-Za-z_$][\w$]*)$/.exec(expr.trim());
+    if (ident) {
+      const def = new RegExp(`const ${ident[1]} = ([^;]+);`).exec(src);
+      assert.ok(def, `absentWhy reads ${ident[1]}, which is defined nowhere`);
+      expr = def[1];
+    }
+    assert.match(expr, /live && live\.logoWhy/, `the sibling cannot report a blank it could not fill:\n${r}`);
   }
 });
 

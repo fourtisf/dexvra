@@ -35,6 +35,7 @@ const safeImage = require("./helpers/safeImage");
 const tokenEmoji = require("./tokenEmoji");
 const tpl = require("./templates");
 const postFigures = require("./postFigures");
+const holes = require("./listingHoles");
 const logoRepair = require("./services/logoRepair");
 const ponsChain = require("./ponsChain");
 const log = require("./helpers/logger");
@@ -109,6 +110,77 @@ function adoptChainLogo(input, live) {
   if (!/^https:\/\/[^\s"'<>]+$/i.test(url)) return false;
   input.logoUrl = url;
   return true;
+}
+
+/**
+ * FULFILMENT'S FINAL LOOK at the token's own metadata — immediately before the
+ * row is created, beside the market read.
+ *
+ * "bagaimana agar masalah ini tidak terjadi lgi", asked over $KVR: the review
+ * card came back "Logo: not set · Website: not set · X: not set", and the same
+ * lookup on the box minutes later prefilled every one of them from the mint's
+ * own metadata. The miss was a minute (an RPC refusing this box, a CID no
+ * gateway held yet), and the review card's second look only helps a buyer who
+ * is still reading it. One who confirms inside four seconds, or whose second
+ * look met the same refusing RPC, went on to PAY for a listing born blank — and
+ * the paid post happens once.
+ *
+ *   · The SAME lookup the form makes (config/autofill INFO_OPTS — the
+ *     listing form, `launchpads:check` and this ask one question), filling
+ *     holes by the SAME rule (listingHoles.additions), honouring what the buyer
+ *     REMOVED at `/skip` (`p.autofill`, recorded by the form).
+ *   · Only where the source that misses for a minute is asked at all
+ *     (`solanaMeta.covers`), and only when the row has a hole. A paid listing
+ *     is a few events an hour, so this is one bounded read per order.
+ *   · Bounded (AUTOFILL_MAX_MS) and started beside the market read, so on a
+ *     healthy box it costs no wall clock at all.
+ *   · `unread` says whether the CHAIN could be asked — the difference between
+ *     "the creator published nothing" (not a fault) and "we could not read it"
+ *     (ours), which the watch below turns into a page.
+ *
+ * Returns null when not applicable; never throws.
+ */
+const _finalLook = {
+  fetchTokenInfo: (chain, address, opts) => require("./discovery").fetchTokenInfo(chain, address, opts),
+  meta: () => require("./solanaMeta"),
+};
+async function finalLook(input, p) {
+  try {
+    const meta = _finalLook.meta();
+    if (!input || !meta.covers(input.chain)) return null;
+    const auto = (p && p.autofill) || {};
+    const form = { ...input, logoFileId: p && p.logoFileId };
+    if (!holes.hasHoles(form, auto)) return null;
+    const { AUTOFILL_MAX_MS, INFO_OPTS } = require("./config/autofill");
+    const info = await bounded(
+      Promise.resolve()
+        .then(() => _finalLook.fetchTokenInfo(input.chain, input.address, INFO_OPTS))
+        .catch(() => null),
+      AUTOFILL_MAX_MS,
+      () => null,
+    );
+    const settled = meta.settled(input.address);
+    return {
+      info,
+      unread: settled ? null : meta.lastWhy(input.address) || `no answer within ${AUTOFILL_MAX_MS}ms`,
+    };
+  } catch (e) {
+    log.warn(`[fulfil] final look for ${input && input.chain}/${input && input.address}: ${e.message}`);
+    return null;
+  }
+}
+
+/**
+ * Apply a final look to the listing input, holes only. Returns the names of the
+ * fields it filled. A logo the buyer UPLOADED (p.logoFileId) is never replaced
+ * — by the time this runs it has become an /api/media url on `input.logoUrl`.
+ */
+function applyFinalLook(input, p, look) {
+  if (!look || !look.info) return [];
+  const auto = (p && p.autofill) || {};
+  const add = holes.additions({ ...input, logoFileId: p && p.logoFileId }, look.info, auto);
+  Object.assign(input, add);
+  return Object.keys(add);
 }
 
 /**
@@ -793,6 +865,8 @@ async function fulfillListing(ctx, order) {
   // `snapshot` is what the listing FORM read at paste time — the fallback for
   // any figure every live attempt missed (see readPostMarket).
   const marketP = readPostMarket(input.chain, input.address, "listing", { snapshot: p.market });
+  // The final look starts here too, for the same reason (see finalLook).
+  const lookP = finalLook(input, p);
 
   // 1. Logo (best-effort): upload the Telegram photo to dexvra media.
   let logoBuffer = null;
@@ -824,6 +898,17 @@ async function fulfillListing(ctx, order) {
   if (adoptChainLogo(input, live)) {
     log.info(`[fulfil] logo adopted from the chain record for ${input.chain}/${input.address}: ${input.logoUrl}`);
   }
+  // Then the token's own metadata, holes only — after the chain record, so a
+  // curve's logo keeps its precedence and this only fills what is still blank.
+  const look = await lookP;
+  const filled = applyFinalLook(input, p, look);
+  if (filled.length) {
+    log.info(`[fulfil] final look filled ${filled.join(", ")} for ${input.chain}/${input.address} — the review card had them blank`);
+  }
+  // Still blank because the chain could not be asked: OURS, and paged below.
+  // A blank whose chain ANSWERED is the creator's choice and pages nobody.
+  const blankLogo = !p.logoFileId && !input.logoUrl && !((p.autofill || {}).removed || {}).logo;
+  const chainUnread = look && look.unread ? `the token's on-chain metadata could not be read: ${look.unread}` : null;
 
   // The row is born with the figures the post is about to publish. dexvra.io
   // renders a row's captured figures whenever no provider has priced it yet
@@ -889,6 +974,9 @@ async function fulfillListing(ctx, order) {
   // published a hole is one alert — the "one fault, one alert" rule. It is
   // after the read and before the posts because nothing downstream can add a
   // figure this does not have.
+  // Why the row is BLANK when it is blank for OUR reason: the curve could not
+  // be asked (live.logoWhy), or the token's own metadata could not be read.
+  const listAbsentWhy = live && live.logoWhy ? String(live.logoWhy) : blankLogo && chainUnread ? chainUnread : null;
   postFigures.reportFigures({
     kind: "listing", chain: input.chain, address: input.address, sym: input.sym,
     name: input.name, tier: input.tier, live, why: marketWhy,
@@ -902,12 +990,16 @@ async function fulfillListing(ctx, order) {
       // Why the row is BLANK, when it is blank for OUR reason — the curve
       // sources could not be asked. Absent means they answered and this
       // project published no artwork, which is not a fault and never pages.
-      absentWhy: live && live.logoWhy ? String(live.logoWhy) : null,
+      absentWhy: listAbsentWhy,
       repair: LOGO_REPAIR_ENABLED,
     },
+    // The third half of the promise the order bought: its project's own
+    // links. Only the shape $KVR was reported with pages — no website, X or
+    // Telegram at all — and only when the chain could not be asked.
+    socials: { holes: holes.lacksSocials(input) ? holes.holeNames(input).filter((h) => h !== "logo") : [], unreadWhy: chainUnread },
   });
   // Kept for the repair below: the same facts the watch just judged.
-  const listArt = { wanted: !!(p.logoFileId || input.logoUrl), got: !!logoBuffer, absentWhy: live && live.logoWhy ? String(live.logoWhy) : null };
+  const listArt = { wanted: !!(p.logoFileId || input.logoUrl), got: !!logoBuffer, absentWhy: listAbsentWhy };
   const coin = coinFrom(input, live);
   const bannerCoin = bannerCoinOf(input, live);
   const tierBadge = input.tier === "XPRESS" ? "Xpress Listing" : input.tier ? `${tierLabel(input.tier)} Tier` : null;
@@ -1483,6 +1575,7 @@ module.exports = {
   fetchLogoUrlWarm,
   _fetchLogoUrlWarm: fetchLogoUrlWarm,
   readArtwork,
+  _finalLook,
   _resetWarm: () => warmed.clear(),
   _pinLogo: pinLogo,
   _PIN_LOGO_MS: PIN_LOGO_MS,

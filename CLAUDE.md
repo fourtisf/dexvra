@@ -830,6 +830,90 @@ confirmed inside four seconds keeps what the first read found.
 `SOLANA_META_PUBLIC_RPC` are the knobs. ⚠️ This touches `bot/` AND `shared/`,
 so `npm run deploy` restarts all three bot processes; there is no web rebuild.
 
+##### "bagaimana agar masalah ini tidak terjadi lgi" — the check was green, and nothing would have said so if it were not
+
+Asked over `launchpads:check` on the box for $KVR, straight after the deploy:
+the form's own lookup prefilled the logo, `kovra.live`, `x.com/kovrasol` and
+the overview from the mint's metadata, through pump.fun's pin. **So the miss
+was a minute, not a token.** The second look shipped above turns that minute
+into a second chance, and left two holes, both with the operator as the
+detector again:
+
+| hole | now |
+| --- | --- |
+| a buyer who confirmed inside 4s, or whose second look met the same refusing RPC, PAID for a listing born blank | **fulfilment's final look** (`fulfillment.finalLook`), one more read immediately before the row is created |
+| every look said why at INFO — a level nobody watches — so a card blank because the chain could not be read looked exactly like a creator who wrote nothing | **a WARN** at the end of the second look, and **a page** at the paid order, only when the chain could NOT be asked |
+
+- **`listingHoles.js` is the ONE owner of "what may a late read fill"**, and
+  both the second look and the final look CALL it. Two copies of that rule is
+  how one of them comes to overwrite something the buyer decided.
+- ⚠️ **A FIELD THE BUYER REMOVED STAYS REMOVED.** `/skip` on the logo or the
+  overview is a decision ("not that picture"), and a blank is not. Both late
+  reads fill blanks, so without a record the final look would put the removed
+  logo straight back on a public post. `f.removed` is written at the `/skip` and
+  carried into the order as `payload.autofill`.
+- ⚠️ **WHETHER THE OVERVIEW IS THE AUTO-WRITTEN INTRO IS DECIDED BY THE FORM**,
+  never re-derived at fulfilment: fulfilment repairs a ticker the site would
+  refuse, and the intro rebuilt from the repaired ticker would no longer match,
+  silently keeping the placeholder over the project's own description.
+- **An UPLOADED logo is never replaced** — by fulfilment it is an `/api/media`
+  url, and `p.logoFileId` is what says it was the buyer's.
+- **Started beside the market read**, bounded at `AUTOFILL_MAX_MS`, and only
+  where the source that misses for a minute is asked at all
+  (`solanaMeta.covers`) and the row has a hole. One read per paid order, and no
+  wall clock on a healthy box.
+- ⚠️ **"COULD NOT ASK" PAGES; "NOTHING THERE" DOES NOT.** `solanaMeta.settled`
+  is the line: a settled answer with no links is the creator's choice and stays
+  at INFO, an unsettled one is ours. And only the reported SHAPE pages — no
+  website, X **and** Telegram, or no logo — because a missing Telegram beside a
+  present X is the commonest creator's choice there is, and paging on it would
+  be the permanently-red state `chart:preview` sat in.
+- **The page names the right layer.** On Solana the read is the mint's own
+  metadata, not a curve, and the remedy is `launchpads:check` with the real
+  mint — `pons:check` would send the operator to a chain the token is not on.
+- ⚠️ **The repair asks the mint too.** A row blank because the metadata could
+  not be read is queued for `logoRepair`, whose blank-row path asked only the
+  market record — which on Solana carries no logo — and would have closed the
+  job as *"the chain answered and publishes no artwork"*, false. It asks the
+  same lookup now, and an unread mint is retried rather than given up on.
+
+- ⚠️ **AND THE OLD GUARD FOR THE SIBLINGS PINNED A SPELLING.** "Both
+  fulfilment paths carry the blank's reason" matched the literal
+  `absentWhy: live && live.logoWhy`, so it went red the moment the listing
+  folded that reason into `listAbsentWhy` beside the mint's — and would have
+  passed on a variable that dropped `live.logoWhy`. This repo's recurring guard
+  defect, again. It follows the identifier to its definition now, and dropping
+  the curve's reason from either sibling fails it.
+
+```bash
+cd bot && node scripts/run-tests.js test/listingFinalLook.test.js test/listingLateFill.test.js   # no network
+pm2 logs dexvra-bot --lines 3000 --nostream | grep -F 'final look filled'
+```
+
+Twenty-seven guarantees are MUTATION-TESTED rather than argued: the look not
+applied, run after the market read, not gated on the chain, ignoring the
+removals, replacing an upload, ignoring the unread state, the links and the
+logo halves of the page dropped, a throw costing the order; the shared rule
+ignoring either removal, overwriting a filled link, taking an `ipfs://` logo,
+ignoring the placeholder rule, counting a removed logo as a hole; the form not
+recording the `/skip`, the order dropping it, the second look's WARN back to
+INFO or firing on a settled answer, the WARN losing the real mint; the page on
+any missing link or without a reason, the alert ignoring the links, the remedy
+and the wording naming the curve on Solana; and the repair never asking the
+mint or giving up on an unread one. Each fails between one and three tests.
+
+⚠️ **What this does NOT do.** It cannot make a refusing RPC answer — if every
+endpoint refuses, the order still publishes blank, and now SAYS so. It cannot
+reach the channel post's LINKS after the fact (the logo is repaired in place,
+the caption's links are not), and the site row's links are then an admin edit
+in the panel, which the page names. ⚠️ The buy bot shares `RPC_SOLANA_URLS`
+with this read and is by far its heaviest user (`BUYBOT_MAX_TX`,
+`BUYBOT_POOL_MIN_MS` in `bot/.env`), so a box whose Helius plan is at its limit
+is the likeliest cause of the next page.
+
+**Config a fix depends on:** nothing — it ships ON. ⚠️ `bot/` only, so the
+deploy is the **ecosystem restart** and there is no web rebuild.
+
 ## The banner drew "$???" to 12,607 subscribers
 
 A token listed as **牛来 ($牛来)** went out on the listing card as `$???` and again

@@ -132,6 +132,17 @@ function realDeps() {
     readArtwork: (urls) => f.readArtwork(urls, { tries: 1 }),
     readMarket: (chain, address) => f.readPostMarket(chain, address, "repair"),
     adoptChainLogo: f._adoptChainLogo,
+    // The token's own metadata, for a chain whose logo lives there (Solana).
+    // The SAME lookup the form and fulfilment's final look make.
+    readTokenInfo: (chain, address) => {
+      const meta = require("../solanaMeta");
+      if (!meta.covers(chain)) return null;
+      const { INFO_OPTS } = require("../config/autofill");
+      return require("../discovery")
+        .fetchTokenInfo(chain, address, INFO_OPTS)
+        .catch(() => null)
+        .then((info) => ({ info, unread: meta.settled(address) ? null : meta.lastWhy(address) || "no answer" }));
+    },
     pinLogo: f._pinLogo,
     postMedia: f.postMedia,
     replaceMedia: require("../channels/post").replaceMedia,
@@ -154,6 +165,18 @@ async function attempt(job, deps) {
       const probe = { logoUrl: null };
       if (deps.adoptChainLogo(probe, live)) urls.push(probe.logoUrl);
       else if (live && live.logoWhy) return { done: false, why: String(live.logoWhy) };
+      // ⚠️ On Solana the chain record carries no logo — the mint's own
+      // metadata does, and a row blank because THAT could not be read
+      // (fulfilment's final look) would otherwise end here as "the chain
+      // answered and publishes no artwork", which is false.
+      if (!urls.length && deps.readTokenInfo) {
+        const look = await deps.readTokenInfo(job.chain, job.address);
+        if (look) {
+          const u = look.info && typeof look.info.logoUrl === "string" ? look.info.logoUrl.trim() : "";
+          if (/^https?:\/\/\S+$/i.test(u)) urls.push(u);
+          else if (look.unread) return { done: false, why: String(look.unread) };
+        }
+      }
     } catch (e) {
       return { done: false, why: e.message };
     }

@@ -87,22 +87,11 @@ function emptyForm() {
 }
 
 // One clean paragraph — the overview renders on the channel post and the site.
-// Length limits count code points so an emoji at the boundary never gets its
-// surrogate pair split (which would store/send ill-formed text).
-const cpSlice = (s, n) => Array.from(String(s)).slice(0, n).join("");
-const cleanOverview = (s) => cpSlice(String(s || "").replace(/\s+/g, " ").trim(), 500) || null;
-
-// Auto-written project intro — used when the token carries no on-chain/API
-// description and the user didn't type one, so the review card and channel post
-// always read as a finished listing instead of "not set". Editable like any
-// field. Returns null only if we don't even know the token name yet.
-function autoIntro(f) {
-  const nm = String(f.name || "").trim();
-  if (!nm) return null;
-  const sy = f.sym ? ` ($${String(f.sym).replace(/^\$+/, "")})` : "";
-  const ch = f.chain && chainOf(f.chain) ? chainOf(f.chain).label : f.chain || "";
-  return `${nm}${sy} is now live and trading on ${ch}.`;
-}
+// cpSlice, cleanOverview and autoIntro live with the rule about what a late
+// read may fill (listingHoles.js), because fulfilment's final look asks the
+// same question and must not grow its own copy of it.
+const holes = require("../listingHoles");
+const { cpSlice, cleanOverview, autoIntro } = holes;
 function freshSession(ctx, patch) {
   const prev = ctx.session && ctx.session.latest_bot_message;
   ctx.session = { latest_bot_message: prev, ...patch };
@@ -152,6 +141,11 @@ async function handleText(ctx) {
     // overview + logo edit prompts promise "/skip to remove" — honour it
     if (field === "overview") f.overview = null;
     if (field === "logo") { f.logoFileId = null; f.logoUrl = null; }
+    // ⚠️ RECORDED, because a removal is a decision and a blank is not. The
+    // second look and fulfilment's final look both fill blanks, and a blank
+    // the buyer MADE — "not that picture" — would otherwise be filled with the
+    // very thing they removed, on a public post.
+    if (field === "overview" || field === "logo") f.removed = { ...(f.removed || {}), [field]: true };
     s.awaitingField = null;
     return showReview(ctx);
   }
@@ -512,19 +506,19 @@ const _late = {
   started: null,
 };
 
-const lacksArt = (f) => !(f.logoFileId || f.logoUrl);
-const lacksSocials = (f) => !(f.website || f.twitter || f.telegram);
+const { lacksArt, lacksSocials } = holes;
 
-/** What a second look found that the form still lacks — holes only. */
+/** How the form's own state reads to the shared rule: what the buyer removed,
+ *  and whether the overview is still the auto-written placeholder. Decided
+ *  HERE, where the name and ticker are the ones the intro was written from. */
+function autoState(f) {
+  return { removed: { ...(f.removed || {}) }, autoOverview: !!f.overview && f.overview === autoIntro(f) };
+}
+
+/** What a second look found that the form still lacks — holes only. The rule
+ *  is listingHoles.additions, shared with fulfilment's final look. */
 function lateAdditions(f, info) {
-  const add = {};
-  if (!info) return add;
-  if (lacksArt(f) && info.logoUrl && /^https?:\/\//i.test(info.logoUrl)) add.logoUrl = info.logoUrl;
-  for (const k of ["website", "twitter", "telegram"]) if (!f[k] && info[k]) add[k] = info[k];
-  // The auto-written intro is a placeholder, not the buyer's words; the
-  // project's own description replaces it. A typed overview is never touched.
-  if (info.description && (!f.overview || f.overview === autoIntro(f))) add.overview = cleanOverview(info.description);
-  return add;
+  return holes.additions(f, info, autoState(f));
 }
 
 /** Is the card this look started from still the one the buyer is looking at? */
@@ -568,8 +562,35 @@ async function lateFill(ctx, f, msg) {
     if (solanaMeta.settled(address)) break; // an answer, with nothing new in it
   }
   const why = solanaMeta.lastWhy(address);
+  // ⚠️ "WE COULD NOT ASK" IS SAID WHERE THE OPERATOR READS, not only in pm2.
+  // $KVR's blank card was found by a person comparing it with pump.fun, and
+  // every look had logged the reason at INFO — a level nobody watches. A
+  // SETTLED answer means the chain was read and the creator published nothing,
+  // which is not a fault and stays at INFO; an unsettled one means the token's
+  // own metadata could not be read at all, across the paste and every look.
+  if (!solanaMeta.settled(address)) {
+    log.warn(lateUnreadLine(f, why));
+    return { applied: false, why: "unread" };
+  }
   log.info(`[listing] autofill ${chain}/${address}: a second look found nothing new${why ? ` — on-chain metadata: ${why}` : ""}`);
   return { applied: false, why: "nothing new" };
+}
+
+/**
+ * The ops line for a review card still blank after its second look because the
+ * token's own metadata could not be read. PURE, so the test calls it. Names the
+ * holes, the reason, what happens next (the paid order asks once more), and the
+ * check that measures it on the box — with the real mint, never a blank.
+ */
+function lateUnreadLine(f, why) {
+  const sym = f.sym ? `$${String(f.sym).replace(/^\$/, "")}` : "?";
+  const missing = holes.holeNames(f, { removed: f.removed });
+  return (
+    `[listing] review card for ${sym} ${f.chain}/${f.address} is still missing ${missing.join(", ") || "nothing"} — ` +
+    `the token's own on-chain metadata could not be read (${why || "no answer within the budget"}), so this is ` +
+    `NOT the project publishing none. The paid order asks once more before it creates the listing. ` +
+    `Measure it on the box: cd /opt/dexvra/bot && npm run launchpads:check -- ${f.address}`
+  );
 }
 
 // ── Edit buttons ─────────────────────────────────────────────────────────────
@@ -631,6 +652,9 @@ async function goPay(ctx, tier) {
     payload: {
       listingInput: buildListingInput(f, tier),
       logoFileId: f.logoFileId || null,
+      // What fulfilment's final look needs to fill holes WITHOUT overruling the
+      // buyer: what they removed, and whether the overview is the placeholder.
+      autofill: autoState(f),
       // Dated, so fulfilment can refuse it once it is too old to publish.
       market: f.market || null,
       trendHours: tierTrendingHours(tier),
@@ -703,6 +727,8 @@ module.exports = {
   _late,
   _lateFill: lateFill,
   _lateAdditions: lateAdditions,
+  _lateUnreadLine: lateUnreadLine,
+  _autoState: autoState,
   _reviewPictureMissed: reviewPictureMissed,
   _photoFormat: photoFormat,
   goPay,
