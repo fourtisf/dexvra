@@ -1,17 +1,19 @@
 "use client";
 
-import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useApp } from "@/components/AppState";
+import { CandleChart } from "@/components/CandleChart";
 import { Coin } from "@/components/Coin";
 import { ChainLogo } from "@/components/ChainLogo";
 import { Socials } from "@/components/Socials";
 import { TokenTrades } from "@/components/TokenTrades";
+import { UnlistedToken } from "@/components/UnlistedToken";
 import { TierTag, TrendingBadge } from "@/components/TierTag";
 import { CHAINS } from "@/config/chains";
-import { fmtAge, fmtCap, fmtNum, fmtPrice, pathFrom } from "@/lib/format";
+import { fmtAge, fmtCap, fmtNum, fmtPrice } from "@/lib/format";
 import { scoreTier } from "@/lib/score";
+import { holdersCell, holdersTitle } from "@/lib/holderCell";
 
 export default function TokenPage() {
   const params = useParams<{ chain: string; address: string }>();
@@ -28,6 +30,12 @@ export default function TokenPage() {
     [data, chain, address],
   );
 
+  // ⚠️ HOLDERS ARE ASKED FOR, NEVER ASSUMED. The row's `holders` is a stored
+  // default nobody measured — "HOLDERS 0" on $SFX, 1,570 on DexScreener — so a
+  // real count comes from /api/holders (the chain's explorer, else GT's token
+  // info), and until one arrives the cell says "—", never a number.
+  const holders = useHolderCount(chain, address);
+
   if (!data) {
     return (
       <section className="view">
@@ -35,17 +43,10 @@ export default function TokenPage() {
       </section>
     );
   }
-  if (!t) {
-    return (
-      <section className="view">
-        <div className="panel big-empty">
-          <div className="em">🔍</div>
-          <p>This token isn&apos;t a Dexvra listing (yet). Only paid listings appear here.</p>
-          <Link href="/" className="btn-primary">Back to board →</Link>
-        </div>
-      </section>
-    );
-  }
+  // NOT a dead end. Every buy-bot alert links here, the buy bot is free and
+  // runs on any contract, so most arrivals on this page are for a token nobody
+  // has listed — see UnlistedToken.
+  if (!t) return <UnlistedToken chain={chain} address={address} />;
 
   const c = CHAINS[t.chain];
   const network = c?.geckoNetwork ?? null;
@@ -53,24 +54,21 @@ export default function TokenPage() {
   const col = up ? "#3DDC97" : "#F76A85";
   const watching = watchlist.has(t.key);
   const st = scoreTier(t.score);
-  const chartSrc =
-    network && t.poolAddress
-      ? `https://www.geckoterminal.com/${network}/pools/${t.poolAddress}?embed=1&info=0&swaps=0&grayscale=0&light_chart=0&resolution=15m`
-      : null;
-  const d = pathFrom(t.trend, 640, 120);
-
   const copyCa = () => {
     navigator.clipboard?.writeText(t.address).catch(() => {});
     toast("Contract address copied 📋");
   };
 
-  const stats: [string, string, string?][] = [
+  const stats: [string, string, string?, string?][] = [
     ["Price", fmtPrice(t.priceUsd)],
     ["24h", `${up ? "+" : ""}${t.chg["24h"].toFixed(1)}%`, up ? "up" : "dn"],
     ["MCAP", fmtCap(t.mcap)],
     ["Liquidity", fmtCap(t.liq)],
     ["Vol · 24h", fmtCap(t.vol["24h"])],
-    ["Holders", fmtNum(t.holders)],
+    // The REASON rides the cell as a tooltip: "—" alone cannot say whether the
+    // explorer is down or the token is not indexed, and every round of this
+    // report began with nobody able to tell.
+    ["Holders", holdersCell(holders, t.holders), undefined, holdersTitle(holders, t.holders)],
     ["Tax", t.taxPct != null ? `${t.taxPct}%` : "—"],
     ["Txns · 24h", fmtNum(t.txns["24h"].buys + t.txns["24h"].sells)],
   ];
@@ -84,7 +82,7 @@ export default function TokenPage() {
         <div className="tp-id">
           <div className="tp-sym">
             {t.symbol}
-            <TierTag tier={t.tier} />
+            <TierTag tier={t.tier} ageMinutes={t.listedMinutesAgo} />
             {t.trendingRank != null && <TrendingBadge />}
           </div>
           <div className="tp-nm">
@@ -99,7 +97,7 @@ export default function TokenPage() {
         <div className="tp-actions">
           <button
             className={`btn-ghost2 ${watching ? "on" : ""}`}
-            style={{ color: watching ? "var(--gold)" : undefined }}
+            style={{ color: watching ? "var(--acc)" : undefined }}
             onClick={() => toggleWatch(t.key, t.symbol)}
           >
             {watching ? "★ Watching" : "☆ Watch"}
@@ -118,27 +116,26 @@ export default function TokenPage() {
         <Socials t={t} />
       </div>
 
+      {t.overview && (
+        <div className="panel tp-about">
+          <div className="tp-about-k">About {t.symbol}</div>
+          <p className="tp-about-p">{t.overview}</p>
+        </div>
+      )}
+
       <div className="tp-grid">
         <div className="tp-chart-wrap">
-          {chartSrc ? (
-            <iframe className="tp-chart" title={`${t.symbol} chart`} src={chartSrc} allow="clipboard-write" allowFullScreen />
-          ) : (
-            <div className="tp-chart-fallback">
-              <svg viewBox="0 0 640 120" preserveAspectRatio="none" style={{ width: "100%", height: "100%" }}>
-                <path d={`${d} L640,120 L0,120 Z`} fill={col} fillOpacity=".14" />
-                <path d={d} fill="none" stroke={col} strokeWidth="2.4" strokeLinecap="round" />
-              </svg>
-              <div className="chart-note">
-                {network ? (
-                  <a href={`https://www.geckoterminal.com/${network}/tokens/${t.address}`} target="_blank" rel="noopener noreferrer" style={{ color: "var(--mint)" }}>
-                    Open full chart on GeckoTerminal ↗
-                  </a>
-                ) : (
-                  `Price trend · ${c?.label ?? t.chain} charts coming soon`
-                )}
-              </div>
-            </div>
-          )}
+          {/* Real candles, ours. What used to be here was a GeckoTerminal
+              iframe when a pool address happened to be known and a curve
+              generated from the ticker's hash when it was not — see
+              components/CandleChart.tsx for why neither could stay. */}
+          <CandleChart
+            chain={t.chain}
+            address={t.address}
+            symbol={t.symbol}
+            poolHint={t.poolAddress}
+            gtUrl={network ? `https://www.geckoterminal.com/${network}/tokens/${t.address}` : null}
+          />
         </div>
 
         <aside className="tp-side">
@@ -154,8 +151,8 @@ export default function TokenPage() {
             </div>
           </div>
           <div className="tp-stats">
-            {stats.map(([k, v, cls]) => (
-              <div className="ds" key={k}>
+            {stats.map(([k, v, cls, title]) => (
+              <div className="ds" key={k} title={title}>
                 <div className="k">{k}</div>
                 <div className={`v ${cls === "up" ? "tp-up" : cls === "dn" ? "tp-dn" : ""}`}>{v}</div>
               </div>
@@ -167,4 +164,41 @@ export default function TokenPage() {
       <TokenTrades t={t} />
     </section>
   );
+}
+
+interface HolderFeed {
+  count: number | null;
+  source: "blockscout" | "dexscreener" | "geckoterminal" | null;
+  via?: string | null;
+  why: string | null;
+}
+
+/** One request per token page, never polled: a holder count moves over hours
+ *  and the route caches it for fifteen minutes anyway. A MISS is asked once
+ *  more, after the route's own miss memo has lapsed — a reader who opened the
+ *  page during a one-minute explorer blip must not keep "—" for the whole
+ *  visit, and asking any sooner would only read the memo back. */
+const HOLDERS_RETRY_MS = 100_000;
+function useHolderCount(chain: string, address: string): HolderFeed | null {
+  const [feed, setFeed] = useState<HolderFeed | null>(null);
+  useEffect(() => {
+    if (!chain || !address) return;
+    const ac = new AbortController();
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    setFeed(null);
+    const ask = (again: boolean) =>
+      fetch(`/api/holders?${new URLSearchParams({ chain, address })}`, { signal: ac.signal })
+        .then((r) => r.json())
+        .then((j: HolderFeed) => {
+          setFeed(j);
+          if (j.count == null && again) retry = setTimeout(() => void ask(false), HOLDERS_RETRY_MS);
+        })
+        .catch(() => {});
+    void ask(true);
+    return () => {
+      ac.abort();
+      if (retry) clearTimeout(retry);
+    };
+  }, [chain, address]);
+  return feed;
 }
