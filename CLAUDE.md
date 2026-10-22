@@ -11813,6 +11813,107 @@ Liquidity emoji** → **😀 Swap emoji** (or ✏️ Edit and send the premium e
 keeps their own icon there — only `{liqEmoji}` follows the setting. A channel
 post animates only through the GramJS premium account (💎 Premium status).
 
+### "MASA DEXVRA TIDAK DETECT LP NYA INI TOKEN DEPLOY BY PUMPFUN" — a curve's reserve IS its liquidity
+
+`$APECHECK` (pump.fun, Solana, `FMqh25isHFLt6bFACBKwSZ66xkUpbpCi4Gdiik1Gpump`,
+15% along its curve) went out as a paid listing reading
+`Market cap: $4.7K · 💧 Liquidity: — · Price: $0.000004717`, beside pump.fun's
+own page in the same minute: *"Pool information — Paired with SOL — Total
+liquidity $360.91 (3.49 SOL)"*. The `$SFX` round above made liquidity a figure
+every post carries. It did not reach a bonding curve, which has no POOL and
+therefore no "pool depth". It does have a reserve, and pump.fun calls that
+reserve its liquidity. Two holes, and either one alone prints the dash:
+
+**1. The reserve was parsed and then dropped.** `pumpfunParse` read
+`real_sol_reserves` into `raisedNative` (the "Raised 3.49 / 85 SOL" fact) and
+never into a dollar figure anything could print.
+
+- **`curveLiqUsd` is a new canonical field**: the SOL the curve holds × SOL/USD.
+  It has its own name and is deliberately NOT `liqUsd`, because that one is pool
+  depth, which liquidity GATES read.
+- **SOL/USD is the RATIO of two figures pump.fun publishes in the SAME answer**:
+  `usd_market_cap ÷ market_cap` (the second is in SOL). That makes the number
+  pump.fun's own page prints, at no extra request, rather than a second reading
+  off a second clock.
+- Where `market_cap` is absent, the cap in SOL is DERIVED the way pump.fun
+  derives it: virtual reserves for the price per token, times the supply.
+- ⚠️ **A UNIT BAND, not a price opinion.** A ratio of about 1 means both fields
+  are in one unit (a renamed field), and would print 3.49 SOL as $3.49. Outside
+  (2, 100000) the answer is "unknown". The same goes for an answer with no
+  dollars at all: `solanaMeta`'s on-chain curve read carries reserves only, so
+  it publishes no figure.
+- **Only while it is still a curve.** A graduated token's reserve moved into a
+  pool the indexers measure. The registry's merge also DROPS the field when
+  another pad proves a migration, because a curve figure beside a migration pool
+  is two answers to one question.
+
+**2. The post never asked the pad.** DexScreener indexes pump.fun curves as
+ordinary pairs, with a price and a cap but no depth. So the post's read left by
+the door where both figures the launchpad leg is gated on were present, and the
+one source that had the reserve was never asked. ⚠️ **This is `$ORCHFLOWS`'s
+lesson for the logo, unlearnt for the liquidity, one function over.**
+
+- **`fromCurve` is the door now** (`liqFromCurve` then `logoFromCurve`), on all
+  three exits of `fetchMarket`. A priced record with no liquidity takes the
+  pad's figure (`lp.liq ?? lp.curveLiq`, `mergeCurve`'s order), then the Pons
+  contract's.
+- **`padOnce`**: one pad answer fills both holes. A curve token minutes old
+  usually lacks the logo too.
+- **Same contract as the logo:** only for a caller on a clock (the paid post).
+  The nine background pipelines grow no launchpad request each, and an indexer's
+  own depth is an ANSWER that is never replaced.
+- ⚠️ **AND THE POST HAD BEEN RETRIED FOR IT.** `needsAnotherRead` re-reads a
+  liquidity hole whenever the reading names a pool, and DexScreener names the
+  curve's own address as one. So the post spent its whole retry window asking
+  two indexers for a number neither publishes, then printed the dash. The first
+  read fills it now, and the test counts the DexScreener requests.
+- ⚠️ **THE GATE IS UNTOUCHED.** The shim carries the reserve as `curveLiq`
+  beside `liq: 0`. Only `marketdata` folds it into the market record's `liq`,
+  which no listing gate reads. A $360 curve reserve passing `minLiq` would be a
+  free listing for every fresh launch.
+
+⚠️ **The pad wait was allowed to run PAST the post's budget, which would have
+cost the price.** The pad wait was computed as `Math.max(500, budget −
+elapsed)`, and that was already true of the logo's pad read. The caller bounds
+the whole read at the SAME budget, so a pad that hangs to the edge (or 500ms
+past it) loses the race to that outer bound. The caller then discards the ENTIRE
+record: a price and a cap DexScreener answered at t≈0.5s, thrown away for a
+liquidity or a logo. Widening how often the pad is asked would have made that
+latent defect routine. `padOnce` now stops `CHAIN_RESERVE_MS` short of the
+budget, and does not ask at all with under 250ms left. The test runs a 2s budget
+with GT hung and every pad host hanging, and the price and cap must survive.
+⚠️ The sibling `fillFromLaunchpad` still floors its slice at 500ms. It is reached
+only when price or cap is MISSING, so there is no answer for it to throw away.
+That is recorded here, not changed.
+
+**On the box:** `launchpads:check` in `tradebot/`, given the mint, now prints
+`curve liq` beside `liquidity`, so the two are visibly different facts. The
+tradebot's trade card needed nothing: it already renders a curve's reserve as
+its own row ("🚀 Raised 3.49 / 85 SOL").
+
+```bash
+cd bot && node scripts/run-tests.js test/pumpfunLiq.test.js test/curvePost.test.js   # 11 + 54 tests, no network
+```
+
+Thirteen guarantees are MUTATION-TESTED rather than argued, and each mutant
+fails between one and five tests:
+
+- the field never set;
+- the derived SOL price dropped;
+- the unit band dropped;
+- a graduated token keeping the figure;
+- the merge keeping it beside a migration, or dropping the field;
+- the shim dropping `curveLiq`, or feeding it to the gate's `liq`;
+- the liquidity door a no-op, unbudgeted, or replacing an indexer's depth;
+- the pad wait running to the budget edge;
+- the door skipping the liquidity.
+
+**Config a fix depends on:** nothing. pump.fun's `/coins-v2` already answers
+from the box (measured on `99035c7`). ⚠️ This touches `shared/` and `bot/`, so
+`npm run deploy` restarts all three bot processes. There is no web rebuild. A
+listing already posted with a dash stays as posted; the next post carries the
+figure, and so does the site row it creates (`rowFigures`).
+
 ## "holder dan chart still broken" — a zero nobody measured, and a chart that ate the page's scroll
 
 Reported with the $SFX token page straight after the TBA fix deployed green:

@@ -290,7 +290,7 @@ function baseHost(b) {
 const SCALARS = [
   'name', 'symbol', 'description', 'logoUrl', 'website', 'twitter', 'telegram',
   'priceUsd', 'mcapUsd', 'liqUsd', 'vol24Usd', 'holders', 'creator', 'createdAt',
-  'raisedNative', 'targetNative', 'nativeSym', 'launchUrl',
+  'raisedNative', 'targetNative', 'nativeSym', 'launchUrl', 'curveLiqUsd',
 ];
 
 /** How much a pad's curve answer is worth. Facts outrank estimates. */
@@ -339,6 +339,10 @@ function merge(recs) {
     out.migratedPool = best.migratedPool;
     out.curvePad = best.pad;
   }
+  // A curve's reserve beside a curve state that says it MIGRATED is the
+  // two-answers defect this merge exists to prevent — one pad's stale curve
+  // figure over another pad's migration pool. The pool is the fact.
+  if (out.graduated === true) out.curveLiqUsd = null;
   // Pads that disagreed, so a check script or an operator can see it. Silence
   // about a contradiction is how a wrong number survives for months.
   const seen = list.filter((r) => curveRank(r) > 0 && r.progressPct != null);

@@ -23,6 +23,9 @@ const GT = "https://api.geckoterminal.com/api/v2";
 const GT_STAGE_SHARE = 0.55;
 // Kept back from the launchpad's slice for the chain merge that follows it.
 const CHAIN_RESERVE_MS = 400;
+// Below this, a pad request has no realistic chance of answering inside the
+// caller's budget, so it is not made at all.
+const PAD_MIN_MS = 250;
 // This module has its own fetch calls against GeckoTerminal, and for a long
 // time they went out with no regard for the shared 429 cooldown or for any
 // budget — nine background pipelines (pump, rank-up, auto-trend, gainers,
@@ -545,8 +548,10 @@ function mergeCurve(out, lp) {
     ...base,
     priceUsd: num(base.priceUsd) ?? num(lp.priceUsd),
     mcap: num(base.mcap) ?? num(lp.mcap),
-    // `curveLiq` is the chain record's raised reserve (ponsChain) — the figure
-    // the site prints — and only ever fills a hole an indexer left.
+    // `curveLiq` is the native coin a bonding curve holds, in USD — the Pons
+    // chain record's raised reserve (the figure the site prints) and pump.fun's
+    // "Total liquidity" off the registry's pad — and only ever fills a hole an
+    // indexer left. Never `liq` upstream of here: that is the gate's field.
     liq: num(base.liq) ?? num(lp.liq) ?? num(lp.curveLiq),
     // A launchpad publishes no 24h volume, so this can only ever carry through
     // what an indexer already found. NOT defaulted to 0: a token still on a
@@ -572,6 +577,85 @@ function mergeCurve(out, lp) {
   };
 }
 
+const isBudgeted = (opts) => Number.isFinite(opts && opts.budgetMs) && opts.budgetMs > 0;
+
+/**
+ * ONE pad read per exit of `fetchMarket`, shared by every hole that needs it —
+ * the liquidity and the logo are often missing from the same record (a curve
+ * token minutes old), and one answer fills both. A second read would mostly be
+ * a registry cache hit; sharing the promise makes that a property rather than a
+ * coincidence of the cache's TTL.
+ */
+function padOnce(ctx) {
+  if (!ctx.padP) {
+    // ⚠️ WHAT IS LEFT OF THE CLOCK, LESS A RESERVE — NEVER A FLOOR PAST IT.
+    // The caller bounds this whole read at the same `budgetMs` (fulfillment's
+    // `readMarketOnce`), so a pad wait that ends at — or, with the old 500ms
+    // floor, PAST — the budget edge loses the race to that outer bound, and the
+    // caller then discards the ENTIRE record: a price and a cap DexScreener had
+    // answered at t≈0.5s, thrown away for a liquidity or a logo. A hole is
+    // worth a request; it is not worth the figures the post exists to carry.
+    // Too little time left is "could not ask", and the record goes out as is.
+    const left = ctx.opts.budgetMs - (Date.now() - ctx.startedAt) - CHAIN_RESERVE_MS;
+    ctx.padP = left < PAD_MIN_MS
+      ? Promise.resolve(null)
+      : bounded(launchpads.fetchTokenInfo(ctx.chain, ctx.address).catch(() => null), left, () => null);
+  }
+  return ctx.padP;
+}
+
+/**
+ * Every exit of `fetchMarket` — the holes a CURVE can fill on a record an
+ * indexer already priced. A priced answer leaves by three doors, and a rule on
+ * one of them is a rule the other two do not have.
+ */
+async function fromCurve(out, ctx) {
+  return logoFromCurve(await liqFromCurve(out, ctx), ctx);
+}
+
+/**
+ * A PRICED record with NO LIQUIDITY takes the CURVE'S reserve — the pad's, then
+ * the contract's — for a caller on a clock.
+ *
+ * "MASA DEXVRA TIDAK DETECT LP NYA", over $APECHECK, a pump.fun token 15% along
+ * its curve: the paid post printed `💧 Liquidity: —` while pump.fun's own page
+ * read "Total liquidity $360.91 (3.49 SOL)". DexScreener indexes pump.fun
+ * curves as ordinary pairs and publishes their price and cap but no depth, so
+ * the record left by a door with both of the figures the pad leg is gated on —
+ * and the one source that HAD the number (the pad, which reads the curve's SOL
+ * reserve) was never asked. The logo learnt this exact lesson one function down
+ * ($ORCHFLOWS); the liquidity had not.
+ *
+ * ⚠️ AND THE POST WAS RETRIED FOR IT. `marketFigures.needsAnotherRead` re-reads
+ * a liquidity hole whenever the reading names a pool, and DexScreener names the
+ * curve's own address as one — so the post spent its whole retry window asking
+ * the same two indexers for a number neither publishes, then printed the dash.
+ *
+ * Same contract as the logo: ONLY for a caller on a clock (the paid post), so
+ * the nine background pipelines grow no launchpad round trip each; an
+ * indexer's own depth is an ANSWER and is never replaced; and the reserve lands
+ * in `liq` HERE, on the market record — never in the `liq` the auto-lister's
+ * gate reads off `discovery`, because a curve reserve must not pass a floor
+ * written for pool depth.
+ */
+async function liqFromCurve(out, ctx) {
+  if (!out || num(out.liq) != null) return out;
+  if (!isBudgeted(ctx.opts)) return out;
+  let liq = null;
+  // The pad first, in `mergeCurve`'s order — but never on the doors where
+  // `fillFromLaunchpad` already asked it and merged what it said.
+  if (!ctx.padAsked && launchpads.covers(ctx.chain)) {
+    const lp = await padOnce(ctx);
+    liq = lp ? (num(lp.liq) ?? num(lp.curveLiq)) : null;
+  }
+  // The contract, whose read is already in flight and therefore free.
+  if (liq == null && ctx.chainP) {
+    const r = await ctx.chainP;
+    liq = r && r.info ? num(r.info.curveLiq) : null;
+  }
+  return liq != null ? { ...out, liq } : out;
+}
+
 /**
  * A PRICED record with NO ARTWORK still takes the CURVE'S logo — from the
  * contract, then from the pad — and says so when it could not ask.
@@ -591,9 +675,10 @@ function mergeCurve(out, lp) {
  * this is a no-op and the read they started stays fire-and-forget exactly as
  * before. An indexer's own logo is an ANSWER and is never replaced.
  */
-async function logoFromCurve(out, { chainP, opts, chain, address, startedAt, padAsked }) {
+async function logoFromCurve(out, ctx) {
+  const { chainP, opts, chain, padAsked } = ctx;
   if (!out || out.logoUrl) return out;
-  if (!(Number.isFinite(opts && opts.budgetMs) && opts.budgetMs > 0)) return out;
+  if (!isBudgeted(opts)) return out;
 
   // 1. THE CHAIN, which is already in flight and therefore free.
   const r = chainP ? await chainP : null;
@@ -615,12 +700,7 @@ async function logoFromCurve(out, { chainP, opts, chain, address, startedAt, pad
   // only when the chain gave no artwork, at most ONE request per paid post, and
   // never on the doors where `fillFromLaunchpad` already asked it.
   if (!padAsked && launchpads.covers(chain)) {
-    const padMs = Math.max(500, opts.budgetMs - (Date.now() - startedAt));
-    const lp = await bounded(
-      launchpads.fetchTokenInfo(chain, address).catch(() => null),
-      padMs,
-      () => null,
-    );
+    const lp = await padOnce(ctx);
     if (lp && lp.logoUrl) return { ...out, logoUrl: lp.logoUrl };
   }
 
@@ -693,7 +773,7 @@ async function fetchMarket(chain, address, opts = {}) {
   const need = Array.isArray(opts.need) && opts.need.length ? opts.need : NEED_DEFAULT;
   const hasField = (o, f) => (f === "priceUsd" || f === "mcap" ? !!o[f] : Number.isFinite(o[f]));
   if (dsFirst && need.every((f) => hasField(dsFirst, f)))
-    return logoFromCurve(dsFirst, { chainP, opts, chain, address, startedAt, padAsked: false });
+    return fromCurve(dsFirst, { chainP, opts, chain, address, startedAt, padAsked: false });
 
   // ⚠️ NO SINGLE STAGE MAY CONSUME THE WHOLE BUDGET.
   //
@@ -735,7 +815,7 @@ async function fetchMarket(chain, address, opts = {}) {
   // does not index the GT-primary chains at all, so `fetchDS` returns before
   // any request is made.
   if (gt && gt.priceUsd && gt.mcap && gt.liq && gt.change24h != null)
-    return logoFromCurve(gt, { chainP, opts, chain, address, startedAt, padAsked: false });
+    return fromCurve(gt, { chainP, opts, chain, address, startedAt, padAsked: false });
   // GT missing entirely, or missing price/mcap/liq → let DexScreener fill gaps.
   // In cheap mode it has ALREADY been asked, and its answer is reused — a miss
   // included. `dsFirst || await fetchDS(...)` would re-ask on every miss, which
@@ -808,7 +888,7 @@ async function fetchMarket(chain, address, opts = {}) {
       out.changeWhy = out.changeWhy ? `${out.changeWhy}; ${c.why}` : c.why;
     }
   }
-  return logoFromCurve(out, { chainP, opts, chain, address, startedAt, padAsked });
+  return fromCurve(out, { chainP, opts, chain, address, startedAt, padAsked });
 }
 
 /**
@@ -860,5 +940,6 @@ module.exports = {
   CHANGE_POOL_MIN_SHARE,
   _pickTrusted: pickTrusted,
   _mergeCurve: mergeCurve,
+  _liqFromCurve: liqFromCurve,
   SANE_CHANGE_PCT,
   MCAP_DISAGREE_FACTOR, fetchMarket, fetchPrice, fetchTokenDescription };

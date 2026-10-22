@@ -108,6 +108,10 @@ async function checkToken(address, chain) {
     : m.graduated === true ? 'graduated' + (m.migratedPool ? ' → ' + m.migratedPool : '')
       : Y('unknown — no pad said'));
   if (m.raisedNative != null) row('raised', `${m.raisedNative} / ${m.targetNative} ${m.nativeSym || ''}`);
+  // The reserve in dollars — what a paid post prints as 💧 Liquidity when no
+  // indexer publishes pool depth for a curve. Printed beside `liquidity` so the
+  // two are visibly different facts, not one figure under two names.
+  if (m.curveLiqUsd != null) row('curve liq', `${money(m.curveLiqUsd)} ${D('(the curve\'s reserve — the post\'s liquidity while it bonds)')}`);
   row('socials', [m.website && 'web', m.twitter && 'x', m.telegram && 'tg'].filter(Boolean).join(' ') || null);
   row('description', m.description ? m.description.slice(0, 60) + '…' : null);
   row('from', m.source);

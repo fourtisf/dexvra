@@ -174,6 +174,11 @@ function blank(pad, chain, address) {
     // invented a fact.
     onCurve: null, graduated: null, progressPct: null, progressSource: null,
     raisedNative: null, targetNative: null, nativeSym: null,
+    // The NATIVE COIN a bonding curve holds, in USD — what pump.fun prints as
+    // "Total liquidity". Deliberately NOT `liqUsd`: that one is pool depth, the
+    // field liquidity GATES read (the bot's `minLiq`), and a few hundred dollars
+    // of curve reserve must never pass a floor written for an AMM pool.
+    curveLiqUsd: null,
     migratedPool: null, launchpad: null, launchUrl: null,
     source: 'launchpad:' + pad.key,
   };
@@ -300,6 +305,45 @@ const ID_KEYS = ['mint', 'address', 'id', 'tokenAddress', 'token_address', 'cont
 const PUMP_CURVE_TOKENS = Number(env('LAUNCHPAD_PUMPFUN_CURVE_TOKENS') || 793100000000000);   // initial real_token_reserves (793.1M @ 6dp)
 const PUMP_TARGET_SOL = Number(env('LAUNCHPAD_PUMPFUN_TARGET_SOL') || 85);                    // SOL raised at graduation
 const LAMPORTS = 1e9;
+// SOL/USD is read as a RATIO of two figures pump.fun publishes in one response,
+// and this is the band a real ratio sits in. It is a UNIT check, not a price
+// opinion: a ratio of ~1 means both fields are in the same unit (a renamed
+// field, or the SOL figure dropped) and would print SOL as dollars; a ratio in
+// the millions means a raw-units field crept in. Either way the answer is
+// "unknown", never a liquidity figure off by orders of magnitude.
+const SOL_USD_MIN = 2;
+const SOL_USD_MAX = 100000;
+
+/**
+ * USD per SOL, from the SAME response the reserve came from — or null.
+ *
+ * pump.fun publishes its market cap twice, in SOL (`market_cap`) and in dollars
+ * (`usd_market_cap`), so their ratio is the SOL price pump.fun itself used for
+ * that answer. That is the point: the liquidity this produces is the number on
+ * pump.fun's own page ("Total liquidity $360.91 (3.49 SOL)") rather than a
+ * second reading off a second clock, and it costs no request.
+ *
+ * Where the SOL figure is absent the market cap in SOL is DERIVED the way
+ * pump.fun derives it — the curve's virtual reserves give the price per token,
+ * times the supply — so a response shape that dropped `market_cap` still
+ * answers. Anything short of both is null.
+ */
+function solUsdOf(raw) {
+  const usd = pnum(pick(raw, ['usd_market_cap', 'usdMarketCap']));
+  if (usd == null) return null;
+  // ONLY `market_cap`. `marketCap` is a USD figure on every other pad in this
+  // table (P_MCAP reads it as one), and taking it here would read 1.0 as SOL.
+  let inSol = pnum(pick(raw, ['market_cap']));
+  if (inSol == null) {
+    const vs = pnum(pick(raw, ['virtual_sol_reserves', 'virtualSolReserves']));
+    const vt = pnum(pick(raw, ['virtual_token_reserves', 'virtualTokenReserves']));
+    const supply = pnum(pick(raw, ['total_supply', 'token_total_supply', 'totalSupply']));
+    if (vs != null && vt != null && supply != null) inSol = (vs / LAMPORTS) * (supply / vt);
+  }
+  if (!(inSol > 0)) return null;
+  const r = usd / inSol;
+  return r > SOL_USD_MIN && r < SOL_USD_MAX ? r : null;
+}
 
 function pumpfunParse(pad, chain, raw, now) {
   const rec = common(blank(pad, chain, str(pick(raw, ['mint', 'address']), 64)), raw, now);
@@ -325,11 +369,29 @@ function pumpfunParse(pad, chain, raw, now) {
   // "Raised X / Y SOL" is a FACT where the percentage is an estimate, and the
   // trade card already has a row for it (`info.raised` / `info.target`).
   const solRaw = num(pick(raw, ['real_sol_reserves', 'realSolReserves']));
+  let sol = null;
   if (solRaw != null && solRaw >= 0) {
-    const sol = solRaw / LAMPORTS;
+    sol = solRaw / LAMPORTS;
     if (sol <= PUMP_TARGET_SOL * 3) { rec.raisedNative = sol; rec.targetNative = PUMP_TARGET_SOL; rec.nativeSym = 'SOL'; }
+    else sol = null;   // an implausible reserve is not a liquidity figure either
   }
-  return curveState(rec, { graduated: complete, progressApi: null, progressDerived: derived, migratedPool: pool });
+  curveState(rec, { graduated: complete, progressApi: null, progressDerived: derived, migratedPool: pool });
+
+  // THE CURVE'S LIQUIDITY — the SOL it holds, in dollars. "MASA DEXVRA TIDAK
+  // DETECT LP NYA" over $APECHECK: pump.fun's own page read "Total liquidity
+  // $360.91 (3.49 SOL)" while the paid post printed "💧 Liquidity: —". The
+  // reserve was parsed into `raisedNative` above and never into a figure the
+  // post could print: an indexer reports a bonding curve with no pool depth,
+  // and this was the one record that had the number.
+  //
+  // ⚠️ ONLY WHILE IT IS STILL A CURVE. A graduated token's reserve has moved
+  // into its pool, which the indexers measure; a curve figure beside a
+  // migration would be two answers to one question.
+  const solUsd = solUsdOf(raw);
+  if (rec.graduated !== true && sol != null && sol > 0 && solUsd != null) {
+    rec.curveLiqUsd = Math.round(sol * solUsd * 100) / 100;
+  }
+  return rec;
 }
 
 // ── Jupiter Token API v2 ─────────────────────────────────────────────────────
@@ -634,4 +696,5 @@ module.exports = {
   // its parameters — which `LAUNCHPAD_PUMPFUN_CURVE_TOKENS` exists for.
   pumpfunParse,
   _parsers: { pumpfunParse, jupiterParse },
+  _solUsdOf: solUsdOf,
 };

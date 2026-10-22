@@ -80,6 +80,15 @@ async function fetchTokenInfo(chain, address) {
     twitter: rec.twitter,
     telegram: rec.telegram,
     liq: Number(rec.liqUsd) || 0,
+    // The SOL a bonding curve holds, in USD — pump.fun's "Total liquidity".
+    // Its OWN NAME, beside `liq` rather than in it, and that is the rule this
+    // field exists under: `liq` above is what the auto-lister's `minLiq` gate
+    // reads, and a curve reserve is not the pool depth that gate was written
+    // for. Only `marketdata.mergeCurve` takes it — LAST, filling a hole an
+    // indexer left — so it reaches the post's 💧 line and nothing that decides
+    // whether a token may be listed. The ponsChain record carries the same
+    // field for the same reason. Null, never 0: a 0 there reads as a rug.
+    curveLiq: Number(rec.curveLiqUsd) > 0 ? Number(rec.curveLiqUsd) : null,
     vol24: Number(rec.vol24Usd) || 0,
     change24h: 0,
     pairCreatedAt: Number(rec.createdAt) || 0,

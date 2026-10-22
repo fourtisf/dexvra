@@ -595,7 +595,7 @@ test("…and a chain that ANSWERED with no logo makes NO such claim", async () =
   }
 });
 
-test("⚠️ every exit of fetchMarket goes through logoFromCurve — a priced answer leaves by three doors", () => {
+test("⚠️ every exit of fetchMarket goes through fromCurve — a priced answer leaves by three doors", () => {
   // The first cut put the fill after the LAST door only; the DS-priced record
   // (the one the reported token takes) left through the first and never saw
   // it. Comment-stripped: the helper's own header quotes the rule.
@@ -614,7 +614,12 @@ test("⚠️ every exit of fetchMarket goes through logoFromCurve — a priced a
   // `return null` (the GT slice's timeout) is not a door out of fetchMarket.
   const returns = after.match(/^  (?:if \([^\n]*\) )?return\b[^;]*;/gm) || [];
   assert.ok(returns.length >= 3, `three doors, found ${returns.length}`);
-  for (const r of returns) assert.match(r, /return logoFromCurve\(/, `an exit bypasses the curve's logo: ${r}`);
+  for (const r of returns) assert.match(r, /return fromCurve\(/, `an exit bypasses the curve's holes (logo, liquidity): ${r}`);
+  // …and the door fills BOTH holes. A wrapper that dropped one would keep every
+  // exit "going through" it while the hole it forgot went back to a dash.
+  const door = src.slice(src.indexOf("async function fromCurve("), src.indexOf("async function liqFromCurve("));
+  assert.match(door, /liqFromCurve\(/, "the door no longer fills the liquidity");
+  assert.match(door, /logoFromCurve\(/, "the door no longer fills the logo");
 });
 
 test("…while a background caller with NO budget does not wait on the chain for a logo it does not render", async () => {
