@@ -110,6 +110,10 @@ function verdict(a) {
   // pool (postFigures.isKeyHole) — the operator's "every listing carries its
   // market cap and its liquidity", which a pool makes achievable.
   const keyHole = a.holes.some((h) => postFigures.isKeyHole(h, a.live));
+  // A curve's reserve we HAD and could not price: the post prints the
+  // indexer's both-sides figure, ~10× pump.fun's own. A wrong number, not a
+  // hole — so it is judged before the hole test can call the row clean.
+  if (a.live && a.live.curveDrift) return 'fault';
   if (!keyHole && !a.lostArt && !a.unreadArt) return 'ok';
   // ⚠️ A LOST LOGO IS ALWAYS OURS. The row asserts a picture and we could not
   // turn it into bytes — that is a fact about this box, never about the token,
@@ -155,6 +159,9 @@ function report(row, a) {
       ? `${a.live.liq}${a.live.liqFrom === 'curve' ? " (the curve's SOL reserve — pump.fun's \"Total liquidity\")" : ''}`
       : '—';
     note(`price ${a.live.priceUsd} · mcap ${a.live.mcap} · liq ${liqLine} · ${artLine}`);
+    // Why the curve's own reserve did NOT replace the figure printed — the one
+    // line that separates "pump.fun did not answer" from "it does not publish one".
+    if (a.live.curveWhy) note(`curve reserve not used — ${a.live.curveWhy}`);
     // A GREEN row whose artwork came from a public gateway is green TODAY. That
     // is the flip: the same url loaded on two deploys and failed on two with no
     // code change. Pinning it makes today's answer permanent.
@@ -206,6 +213,10 @@ function report(row, a) {
     if (!unknown) note(liqOnly && liqWhy ? `→ npm run launchpads:check -- ${row.address}` : '→ npm run market:check -- ' + row.chain);
     if (unknown && padded) note('nothing to fix here — this is the post being honest');
     if (unknown && !padded) note(`honest about the token — but adding a ${row.chain} launchpad to shared/launchpads/pads.js is what would price a pre-migration one`);
+  }
+  if (a.live && a.live.curveDrift) {
+    note(`liq ${a.live.liq} is NOT the curve's reserve — ${a.live.curveWhy}`);
+    note(`→ npm run launchpads:check -- ${row.address}`);
   }
   if (a.lostArt) {
     note(a.adopted

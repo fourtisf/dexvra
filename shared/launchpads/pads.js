@@ -305,6 +305,10 @@ const ID_KEYS = ['mint', 'address', 'id', 'tokenAddress', 'token_address', 'cont
 const PUMP_CURVE_TOKENS = Number(env('LAUNCHPAD_PUMPFUN_CURVE_TOKENS') || 793100000000000);   // initial real_token_reserves (793.1M @ 6dp)
 const PUMP_TARGET_SOL = Number(env('LAUNCHPAD_PUMPFUN_TARGET_SOL') || 85);                    // SOL raised at graduation
 const LAMPORTS = 1e9;
+// Every pump.fun mint is 1,000,000,000 tokens at 6 decimals — a protocol
+// constant like the two above, used only when the answer omits `total_supply`,
+// and env-tunable for the same reason they are.
+const PUMP_TOTAL_SUPPLY = Number(env('LAUNCHPAD_PUMPFUN_TOTAL_SUPPLY') || 1e15);
 // SOL/USD is read as a RATIO of two figures pump.fun publishes in one response,
 // and this is the band a real ratio sits in. It is a UNIT check, not a price
 // opinion: a ratio of ~1 means both fields are in the same unit (a renamed
@@ -337,7 +341,7 @@ function solUsdOf(raw) {
   if (inSol == null) {
     const vs = pnum(pick(raw, ['virtual_sol_reserves', 'virtualSolReserves']));
     const vt = pnum(pick(raw, ['virtual_token_reserves', 'virtualTokenReserves']));
-    const supply = pnum(pick(raw, ['total_supply', 'token_total_supply', 'totalSupply']));
+    const supply = pnum(pick(raw, ['total_supply', 'token_total_supply', 'totalSupply'])) ?? pnum(PUMP_TOTAL_SUPPLY);
     if (vs != null && vt != null && supply != null) inSol = (vs / LAMPORTS) * (supply / vt);
   }
   if (!(inSol > 0)) return null;

@@ -84,7 +84,8 @@ case "$1" in
   pid)      cat "$S/pid_$2" 2>/dev/null || echo 0; exit 0 ;;
   restart)
     if [ "$2" = "ecosystem.config.js" ]; then newpid dexvra-bot; newpid dexvra-adminbot;
-    elif [ "$2" != "dexvra" ]; then newpid "$2"; fi
+    elif [ "$2" != "dexvra" ]; then newpid "$2";
+    else rm -f "$S/websha"; fi   # a restarted web app serves the new build
     # A real process takes a moment to boot and print. $S/bootdelay models that,
     # which is the only way a test can tell "read the end of the log" from
     # "wait for a line this restart produced".
@@ -169,11 +170,11 @@ test("…and the web app being on an older commit is then NOT a failure", () => 
   assert.match(r.out, /no web file changed since/);
 });
 
-test("⚠️ but a web app behind on WEB files IS a failure", () => {
+test("⚠️ a web app behind on WEB files is now RESTARTED by the deploy, not only reported", () => {
   // The real shape: an EARLIER deploy pulled a web change and left the web app
-  // un-restarted. This deploy is tradebot-scoped, so it will not restart it
-  // either — and that stale web app is now missing a web commit, which is the
-  // one case where "older" is the wrong verdict.
+  // un-restarted. This deploy's own pull is tradebot-only — and it used to say
+  // "behind on WEB files; re-run with --all" and stop there, which made the
+  // scope a thing an operator had to remember again.
   const w = world();
   const stale = sh(w.dir, `git rev-parse --short HEAD`).trim();           // A
   sh(w.dir, `echo a >> src.txt && git add -A && git commit -qm web`);     // B — already on the box
@@ -185,8 +186,47 @@ test("⚠️ but a web app behind on WEB files IS a failure", () => {
   fs.writeFileSync(path.join(w.stub, "newsha"), head);
   fs.writeFileSync(path.join(w.stub, "websha"), stale);                   // the web app never left A
   const r = w.run();
-  assert.equal(r.code, 1, "a web app missing a web change must fail the deploy");
-  assert.match(r.out, /behind on WEB files/);
+  assert.equal(r.code, 0, r.out);
+  const c = calls(w);
+  assert.ok(/npm run build/.test(c), "the stale web app must be rebuilt:\n" + c);
+  assert.ok(/pm2 restart dexvra --update-env/.test(c), "…and restarted");
+  assert.match(r.out, new RegExp(`dexvra was running ${stale}, and files of its own changed since`));
+});
+
+test("⚠️ THE REPORTED STATE: the checkout moved WITHOUT a deploy — the next deploy finishes the job", () => {
+  // `ab8deda is checked out, but not everything is running it`: HEAD reached
+  // the box by a `git pull` typed by hand (or a deploy that died after the
+  // merge), so this run had nothing to pull — and restarted nothing.
+  const w = world();
+  const old = sh(w.dir, `git rev-parse --short HEAD`).trim();
+  sh(w.dir, `echo x >> bot/x.js && echo a >> src.txt && git add -A && git commit -qm "bot+web" && git push -q origin main`);
+  const head = sh(w.dir, `git rev-parse --short HEAD`).trim();             // the box is ALREADY here
+  fs.writeFileSync(path.join(w.stub, "newsha"), head);
+  fs.writeFileSync(path.join(w.stub, "websha"), old);
+  for (const proc of ["dexvra-bot", "dexvra-adminbot", "dexvra-tradebot"]) {
+    fs.writeFileSync(path.join(w.stub, `log_${proc}`), `[boot] build ${old}\n`);
+  }
+  const r = w.run();
+  assert.equal(r.code, 0, r.out);
+  const c = calls(w);
+  assert.ok(/pm2 restart ecosystem/.test(c), "both bots were left on the old code:\n" + c);
+  assert.ok(/pm2 restart dexvra --update-env/.test(c), "the web app was left on the old code");
+  assert.ok(!/pm2 restart dexvra-tradebot/.test(c), "nothing of the tradebot's own changed — it is not restarted");
+  assert.match(verdictLine(r.out, "dexvra-bot"), new RegExp(head));
+  assert.match(verdictLine(r.out, "dexvra-tradebot"), /older, and nothing of its own changed/);
+});
+
+test("a ROOT-LEVEL markdown change rebuilds nothing — Next reads no CLAUDE.md", () => {
+  const w = world();
+  const before = sh(w.dir, `git rev-parse --short HEAD`).trim();
+  push(w, ["CLAUDE.md"]);
+  fs.writeFileSync(path.join(w.stub, "websha"), before);
+  const r = w.run();
+  assert.equal(r.code, 0, r.out);
+  const c = calls(w);
+  assert.ok(!/npm run build/.test(c), "a doc commit paid for a Next build:\n" + c);
+  assert.ok(!/pm2 restart/.test(c));
+  assert.match(r.out, /no web file changed since/, "…and the web app on the older commit is not 'behind'");
 });
 
 test("a web-only change does not restart the bots", () => {

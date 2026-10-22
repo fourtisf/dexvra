@@ -100,13 +100,33 @@ to rebuild and restart**:
 | `bot/**` | `pm2 restart ecosystem.config.js` — **both** bots |
 | `tradebot/**` | `pm2 restart dexvra-tradebot` |
 | `shared/**` | all three — `shared/launchpads/` is required by every package |
+| a root-level `*.md` (CLAUDE.md, README) | nothing — Next reads no root markdown |
 | anything else | `npm run build` + `pm2 restart dexvra` |
+| **any process RUNNING a commit with its own files changed since** | **that process — however HEAD got there** |
 
 - `npm run deploy:all` — rebuild and restart everything, for a box whose state
   is in doubt. `--with-bots` still forces the bot suite on.
-- **With nothing new to pull it verifies and restarts nothing**, so a second run
-  is a report rather than another rebuild — which makes it the "what is actually
-  running?" command too.
+- **With nothing new to pull it restarts only what is BEHIND**, so a second run
+  on a healthy box is a report rather than another rebuild (the "what is
+  actually running?" command), and a second run on a half-deployed box finishes
+  the job.
+
+⚠️ **"ab8deda is checked out, but not everything is running it" — AND THE NEXT
+RUN DID NOTHING ABOUT IT.** The scope was BEFORE..AFTER of the run's OWN pull.
+A checkout that moved by any other road, such as a `git pull` typed by hand or
+a deploy that died between the merge and the restart, therefore read as
+"nothing new to pull". Nothing was restarted, every process stayed on the old
+code, and the verify told the operator to remember `--all`: the scope as a
+thing an operator had to remember, again. Step 2c now asks each process what it
+is RUNNING, read the same way the verify reads it, and restarts any process with
+a file of its own changed since. A commit it cannot read decides nothing there;
+the verify names it.
+
+⚠️ **And a CLAUDE.md commit rebuilt the web app.** A root-level `*.md` was
+"anything else", so a doc commit cost a Next build. Worse, the verify then
+reported the web app "behind on WEB files" over a build whose code had not
+changed. Root markdown is nobody's file now, in the scope and in the verify
+alike: they share one spelling of each process's paths.
 
 ⚠️ **THE SCOPE WAS A THING AN OPERATOR HAD TO REMEMBER, AND `--with-bots` WAS
 OPT-IN.** Forgetting it deployed the web app and left BOTH bots on the old code
@@ -120,7 +140,7 @@ The four commands above are still what it runs, and they are still correct by
 hand — but by hand is where the forgetting happens.
 
 ```bash
-cd /opt/dexvra && node --test --experimental-strip-types src/lib/deployScript.test.ts   # 17 tests, no network
+cd /opt/dexvra && node --test --experimental-strip-types src/lib/deployScript.test.ts   # 23 tests, no network
 ```
 
 ### Step 5 is not optional — and `npm run deploy` now does it
@@ -12063,6 +12083,71 @@ tests:
 **Config a fix depends on:** nothing. `bot/` only, so `npm run deploy` does the
 ecosystem restart. A post already published with the both-sides figure stays as
 it went out.
+
+###### "liat ini mengapa seperti ini" — the override's code ran, and the reserve still was not used
+
+`post:check` on the box after the next deploy read `build ab8deda · web
+74361c2`. It ran the override's code, which proves the code was in the
+checkout even though no process was running it (see the deploy section at the
+top), and still printed:
+
+```
+✓ $APECHECK   mcap 3477.21 · liq 3421.157391193828
+✓ $POKECITY   mcap 2243    · liq 2646.26
+```
+
+`$APECHECK` is now at 98% of its cap, and nothing said why the curve's reserve
+was not used. Three causes print the same row, and they need three different
+fixes:
+
+1. the pad did not answer;
+2. the pad publishes no reserve;
+3. the pad published a reserve that could not be priced.
+
+This sandbox cannot reach pump.fun, so which of them the box hit is measured
+there, not here.
+
+- **`withCurveMiss` says which** (`curveWhy`), and `post:check` prints it
+  under the row: `curve reserve not used — …`.
+- ⚠️ **The third is a FAULT, not a note (`curveDrift`).** It means a reserve
+  was in hand and there was no way to price it. The post then publishes the
+  indexer's both-sides figure, roughly 10× pump.fun's own, on every pump.fun
+  listing, silently. `post:check` marks it red, and the paid-post watch pages
+  *"published the wrong liquidity figure"*. The other two are diagnostics: the
+  figure printed is what an indexer publishes, and one slow read is not an
+  incident.
+- **The SOL price survives a leaner pump.fun answer.** When both `market_cap`
+  and `total_supply` are absent, the supply falls back to pump.fun's protocol
+  constant: 1B tokens at 6 decimals, `LAUNCHPAD_PUMPFUN_TOTAL_SUPPLY`. That is
+  the same kind of constant as the 793.1M curve tokens beside it, so the virtual
+  reserves alone are enough.
+
+```bash
+cd /opt/dexvra/bot && npm run post:check                                           # "curve reserve not used — <why>"
+cd /opt/dexvra/bot && npm run launchpads:check -- FMqh25isHFLt6bFACBKwSZ66xkUpbpCi4Gdiik1Gpump   # the curve liq row
+```
+
+Twelve more guarantees are MUTATION-TESTED, and each mutant fails between one
+and two tests:
+
+- the supply default removed;
+- the miss never explained;
+- the drift never flagged;
+- `post:check` ignoring it, or dropping its note;
+- the watch ignoring it;
+- the deploy's bot or web self-heal removed;
+- the tradebot judged on the bot's paths;
+- root markdown rebuilding the web app, in the scope or in the verify.
+
+A thirteenth, a `+dirty` stamp let into the self-heal, changed no outcome.
+Restarting such a process from the clean checkout fixes it too, and the script
+says so rather than claiming a guarantee.
+
+**Config a fix depends on:** nothing. ⚠️ `shared/` changed, so a plain
+`npm run deploy` restarts all three bot processes AND rebuilds the web app this
+time. That holds even though the box's copy of the script is the old one until
+this pull: the old script still decides from the diff, and this diff reaches
+everything.
 
 ## "holder dan chart still broken" — a zero nobody measured, and a chart that ate the page's scroll
 

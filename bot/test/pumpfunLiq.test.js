@@ -541,3 +541,61 @@ test("post:check SAYS which liquidity it printed — a curve's reserve is not a 
   assert.match(run({ priceUsd: 1e-6, mcap: 3610, liq: 360.9, liqFrom: "curve" }), /liq 360\.9 \(the curve's SOL reserve/);
   assert.doesNotMatch(run({ priceUsd: 1e-6, mcap: 3610, liq: 9100 }), /curve's SOL reserve/, "a pool's depth labelled as a curve reserve");
 });
+
+// ── "liat ini mengapa seperti ini" — the override's code ran on the box, and
+// `$APECHECK` still printed liq 3421 (98% of its cap) with nothing saying why ─
+
+test("the SOL price is still derived when the answer omits BOTH `market_cap` and `total_supply`", () => {
+  // Every pump.fun mint is 1B tokens at 6dp — a protocol constant, like the
+  // curve's 793.1M — so the virtual reserves alone are enough.
+  const { market_cap, total_supply, ...lean } = PUMP;
+  const rec = P.pumpfunParse({ key: "pumpfun", label: "pump.fun" }, "solana", lean, Date.now());
+  assert.ok(rec.curveLiqUsd > 0, "a leaner pump.fun answer lost the curve's liquidity");
+});
+
+test("withCurveMiss: says WHY the reserve did not replace the figure — and only the unpriced reserve is a fault", () => {
+  const out = { priceUsd: 1, mcap: 3477, liq: 3421 };
+  const late = market._withCurveMiss(out, { info: null, ok: false, why: "the launchpads did not answer within 900ms", failed: [], late: true });
+  assert.match(late.curveWhy, /did not answer/);
+  assert.strictEqual(late.curveDrift, undefined, "a slow pad on one read is not an incident");
+  const noReserve = market._withCurveMiss(out, { info: { onCurve: true, raised: null }, ok: true, failed: [] });
+  assert.match(noReserve.curveWhy, /none published its reserve/);
+  assert.strictEqual(noReserve.curveDrift, undefined);
+  const drift = market._withCurveMiss(out, { info: { onCurve: true, raised: 3.49, nativeSym: "SOL", launchpad: "pump.fun" }, ok: true, failed: [] });
+  assert.strictEqual(drift.curveDrift, true);
+  assert.match(drift.curveWhy, /reported the curve's reserve \(3\.49 SOL\)/);
+  const graduated = market._withCurveMiss(out, { info: { onCurve: false, raised: null }, ok: true, failed: [] });
+  assert.deepStrictEqual(graduated, out, "a graduated token's pool depth needs no explaining");
+});
+
+test("⚠️ DRIVEN: a reserve we HAD and could not price is a WRONG FIGURE — post:check is red and the watch pages", async () => {
+  const { market_cap, virtual_sol_reserves, virtual_token_reserves, total_supply, ...renamed } = PUMP;
+  const withDepth = { pairs: [{ ...DS_CURVE.pairs[0], liquidity: { usd: 3421.16 }, info: { imageUrl: "https://cdn.dexscreener.com/ape.png" } }] };
+  const { restore } = stubFetch((who) => (who === "ds" ? withDepth : who === "pump" ? renamed : null));
+  try {
+    const { live } = await fulfil._readPostMarket("solana", APE, "test", { tries: 1 });
+    assert.strictEqual(live.liq, 3421.16, "the indexer's figure is what was left to print");
+    assert.strictEqual(live.curveDrift, true);
+    assert.strictEqual(verdict({ live, why: null, holes: [], lostArt: false }), "fault", "post:check was green over a number ~10× pump.fun's");
+    const html = postFigures.figureAlert({ kind: "listing", chain: "solana", address: APE, sym: "$APECHECK", live, why: null });
+    assert.ok(html, "the watch was silent over the wrong figure");
+    assert.match(html, /wrong liquidity figure/);
+    assert.ok(html.includes(`npm run launchpads:check -- ${APE}`));
+  } finally {
+    restore();
+  }
+});
+
+test("post:check prints why the curve's reserve was not used — 'pump.fun did not answer' is not 'it publishes none'", () => {
+  const { report } = require("../scripts/post-check.js");
+  const lines = [];
+  const orig = console.log;
+  console.log = (m) => lines.push(String(m));
+  try {
+    report({ chain: "solana", address: APE, sym: "$APECHECK", name: "APECHECK", logoUrl: null },
+      { live: { priceUsd: 1e-6, mcap: 3477, liq: 3421, curveWhy: "the launchpads did not answer — the launchpads did not answer within 900ms" }, holes: [], why: null, logoUrl: null, art: null });
+  } finally {
+    console.log = orig;
+  }
+  assert.match(lines.join("\n"), /curve reserve not used — the launchpads did not answer/);
+});

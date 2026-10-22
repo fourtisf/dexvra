@@ -687,7 +687,7 @@ async function liqFromCurve(out, ctx) {
     // not the depth anyone can sell into.
     const curve = curveLiqOf(lp);
     if (curve != null) return { ...out, liq: curve, liqFrom: "curve", onCurve: true };
-    if (have) return out;
+    if (have) return withCurveMiss(out, pad);
     liq = lp ? (num(lp.liq) ?? num(lp.curveLiq)) : null;
     if (liq == null) ({ why, retry } = padLiqWhy(pad, verified));
     // The pad's word on the PHASE travels with the record: an indexer's "pair"
@@ -703,6 +703,37 @@ async function liqFromCurve(out, ctx) {
   }
   if (liq != null) return { ...out, liq };
   return why ? { ...out, liqWhy: why, liqRetry: retry } : out;
+}
+
+/**
+ * A figure is in hand and the curve's reserve could NOT replace it — say why.
+ *
+ * "liat ini mengapa seperti ini": `post:check` on the box ran the override's
+ * code and still printed `$APECHECK liq 3421` — 98% of its cap, a number no
+ * pump.fun curve can hold — with nothing anywhere saying why the reserve was
+ * not used. "The pad did not answer", "the pad does not publish a reserve" and
+ * "the pad published one we could not price" need three different fixes.
+ *
+ * ⚠️ THE LAST ONE IS A FAULT, NOT A NOTE (`curveDrift`). A reserve in hand and
+ * no way to price it means the post publishes the indexer's both-sides figure —
+ * roughly ten times pump.fun's own — on every pump.fun listing, silently, until
+ * somebody compares. The watch and `post:check` treat it as a wrong figure.
+ * The other reasons are diagnostics: the figure printed is what an indexer
+ * publishes, and a slow pad on one read is not an incident.
+ */
+function withCurveMiss(out, pad) {
+  const lp = pad && pad.info;
+  let why = null;
+  let drift = false;
+  if (!pad) why = null;
+  else if (pad.late || !pad.ok) why = `the launchpads did not answer — ${pad.why || "no pad answered"}`;
+  else if (Array.isArray(pad.failed) && pad.failed.length) why = `the launchpad could not be asked — ${pad.failed.join("; ")}`;
+  else if (lp && lp.onCurve === true && num(lp.raised) != null) {
+    why = `${lp.launchpad || "the launchpad"} reported the curve's reserve (${lp.raised} ${lp.nativeSym || "SOL"}) but nothing to price it in dollars — its response shape has changed, so the indexer's both-sides figure was printed`;
+    drift = true;
+  } else if (lp && lp.onCurve === true) why = "the launchpads say it is on a curve but none published its reserve";
+  if (!why) return out;
+  return drift ? { ...out, curveWhy: why, curveDrift: true } : { ...out, curveWhy: why };
 }
 
 /**
@@ -1061,6 +1092,7 @@ module.exports = {
   _liqFromCurve: liqFromCurve,
   _padLiqWhy: padLiqWhy,
   _curveLiqOf: curveLiqOf,
+  _withCurveMiss: withCurveMiss,
   _chainLiqWhy: chainLiqWhy,
   SANE_CHANGE_PCT,
   MCAP_DISAGREE_FACTOR, fetchMarket, fetchPrice, fetchTokenDescription };

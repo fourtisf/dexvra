@@ -210,7 +210,11 @@ function figureAlert({ kind, chain, address, sym, name, tier, live, why, siteUrl
   // Any half of the promise is enough to page. A missing LIQUIDITY still is
   // not — see KEY_FIGURES — but it is named below whenever something else fires.
   const keyMissing = keyMissingOf(live);
-  if (!keyMissing.length && !lostArt && !unreadArt && !unreadLinks) return null;
+  // A curve's reserve we HAD and could not price: the post printed the
+  // indexer's both-sides figure, ~10× the launchpad's own. Not a hole — a
+  // wrong number — and the one regression nothing else would notice.
+  const wrongLiq = !!(live && live.curveDrift);
+  if (!keyMissing.length && !lostArt && !unreadArt && !unreadLinks && !wrongLiq) return null;
   const holes = [...missing, ...(lostArt || unreadArt ? ["its own artwork"] : []), ...(unreadLinks ? ["its website, X and Telegram"] : [])];
   // On Solana the read that could not answer is the mint's own metadata, not a
   // curve — naming the curve there sends the operator to the wrong layer.
@@ -235,7 +239,9 @@ function figureAlert({ kind, chain, address, sym, name, tier, live, why, siteUrl
         : "neither DexScreener nor GeckoTerminal returned anything — either both refused this box, or the token has no indexed pool yet";
 
   const label = kind === "trending" ? "Trending slot" : "Listing";
-  const head = `⚠️ <b>${label} published without ${holes.map(esc).join(" · ")}</b>`;
+  const head = holes.length
+    ? `⚠️ <b>${label} published without ${holes.map(esc).join(" · ")}</b>`
+    : `⚠️ <b>${label} published the wrong liquidity figure</b>`;
   return [
     head,
     `<b>${esc(ticker(sym))}</b>${name ? ` — ${esc(name)}` : ""} · ${esc(String(chain).toUpperCase())}${tier ? ` · ${esc(tier)}` : ""}`,
@@ -246,6 +252,7 @@ function figureAlert({ kind, chain, address, sym, name, tier, live, why, siteUrl
     // Named on its own line when something else ALSO fired, so the price's
     // reason does not swallow the liquidity's.
     liqWhy && !liqOnly ? `Liquidity: ${esc(liqWhy)}` : "",
+    wrongLiq ? `Liquidity: ${esc(live.liq)} is not the curve's reserve — ${esc(live.curveWhy)}` : "",
     // The artwork gets its own sentence and its own script, because a logo that
     // would not load and an indexer that would not answer are different layers.
     lostArt
@@ -285,7 +292,7 @@ function figureAlert({ kind, chain, address, sym, name, tier, live, why, siteUrl
       : "",
     // The curve's reserve is the launchpads' to answer, and this is the check
     // that shows it (`curve liq`) — with the REAL address, never a blank.
-    liqWhy && launchpads.covers(chain)
+    (liqWhy || wrongLiq) && launchpads.covers(chain)
       ? `Run <code>npm run launchpads:check -- ${esc(address)}</code> in bot/ — it prints the curve's reserve and which pad answered.`
       : "",
     lostArt ? `Run <code>${esc(artRemedy(artFailure(art).cls, chain, address))}</code> on the box.` : "",

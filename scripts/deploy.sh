@@ -21,9 +21,10 @@
 #   --with-bots   force the bot suite on, whatever the diff says
 #   --all         force everything on (use when the box's state is in doubt)
 #
-# WITH NOTHING NEW TO PULL IT VERIFIES AND RESTARTS NOTHING. That makes it the
-# "what is actually running?" command too, and keeps it idempotent: a second run
-# is a report, not another rebuild.
+# WITH NOTHING NEW TO PULL IT RESTARTS ONLY WHAT IS BEHIND. A process running
+# a commit older than HEAD, with a file of its OWN changed since, is restarted
+# however HEAD got there — so a second run on a healthy box is a report, not
+# another rebuild, and a second run on a half-deployed box finishes the job.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -88,22 +89,99 @@ else
   CHANGED="$(git diff --name-only "$BEFORE" "$AFTER")"
 fi
 
+# Each process's OWN files — one spelling, read by the scope below and by the
+# verification in step 7, so the two cannot disagree about what "behind" means.
+#
+# ⚠️ A ROOT-LEVEL *.md IS NOBODY'S FILE. CLAUDE.md is committed beside nearly
+# every fix, and as "anything else" it rebuilt the web app (minutes) and then
+# reported it "behind on WEB files" over a build whose code had not changed —
+# the red that teaches its reader to ignore red. Next reads no root markdown.
+BOT_PATHS='^(bot|shared)/'
+TRADE_PATHS='^(tradebot|shared)/'
+WEB_PATHS_E='^(bot|tradebot)/|^[^/]+\.md$'   # the web test is an INVERTED match
+
 while IFS= read -r f; do
   [ -z "$f" ] && continue
   case "$f" in
     bot/*)      DO_BOTS=1 ;;
     tradebot/*) DO_TRADE=1 ;;
     shared/*)   DO_WEB=1; DO_BOTS=1; DO_TRADE=1 ;;
+    */*)        DO_WEB=1 ;;
+    *.md)       ;;
     *)          DO_WEB=1 ;;
   esac
 done <<< "$CHANGED"
+
+# ── 2c. What is RUNNING, not only what this pull brought ──────────────────
+# ⚠️ "ab8deda is checked out, but not everything is running it." The scope
+# above is BEFORE..AFTER of THIS pull, so a checkout that moved by any other
+# road — a `git pull` typed by hand, a deploy that died between the merge and
+# the restart — read as "nothing new to pull", restarted nothing, and every
+# process stayed on the old code while the verify below said so and told the
+# operator to remember --all. That is the scope being a thing an operator had to
+# remember, which is the defect this script was written to end.
+#
+# So each process is asked what it is RUNNING, and one with a file of its own
+# changed since is restarted. Read the same way step 7 reads it. A commit we
+# cannot read (no stamp, a sha this checkout does not have, +dirty) decides
+# nothing here; step 7 names it.
+running_bot_sha() {               # running_bot_sha <proc>
+  local pid f
+  pid="$(pm2 pid "$1" 2>/dev/null | head -1 | tr -dc '0-9')"
+  f="$ROOT/.run/build/$pid.json"
+  if [ -n "$pid" ] && [ "$pid" != "0" ] && [ -f "$f" ]; then
+    grep -o '"sha" *: *"[^"]*"' "$f" | sed 's/.*"\([^"]*\)"$/\1/' | head -1
+    return
+  fi
+  pm2 logs "$1" --lines 2000 --nostream 2>/dev/null | grep '\[boot\] build' | tail -1 \
+    | grep -o '[0-9a-f]\{7,40\}\(+dirty\)\?' | tail -1 || true
+}
+behind_on() {                     # behind_on <sha> <ERE> [invert]
+  [ -n "$1" ] || return 1
+  # `abc1234+dirty` is not a commit name, so a +dirty stamp decides nothing
+  # here and step 7 reports it. Recorded as behaviour, not as a guarantee: a
+  # mutation that let it through changed no test, because restarting such a
+  # process from this (clean) checkout would fix it just as well.
+  git cat-file -e "${1}^{commit}" 2>/dev/null || return 1
+  if [ "${3:-}" = "invert" ]; then
+    [ -n "$(git diff --name-only "$1" HEAD | grep -Ev "$2" || true)" ]
+  else
+    [ -n "$(git diff --name-only "$1" HEAD | grep -E "$2" || true)" ]
+  fi
+}
+HEALED=""
+if command -v pm2 >/dev/null 2>&1; then
+  if [ "$DO_WEB" = "0" ]; then
+    web_now="$(curl -fsS --max-time 8 http://127.0.0.1:3005/api/tokens 2>/dev/null \
+      | grep -o '"build" *: *"[^"]*"' | grep -o '[0-9a-f]\{7,\}' | head -1 || true)"
+    if behind_on "$web_now" "$WEB_PATHS_E" invert; then DO_WEB=1; HEALED="$HEALED dexvra@$web_now"; fi
+  fi
+  for proc in dexvra-bot dexvra-adminbot; do
+    [ "$DO_BOTS" = "1" ] && break
+    pm2 describe "$proc" >/dev/null 2>&1 || continue
+    s="$(running_bot_sha "$proc")"
+    if behind_on "$s" "$BOT_PATHS"; then DO_BOTS=1; HEALED="$HEALED $proc@$s"; fi
+  done
+  for proc in dexvra-tradebot dexvra-trade; do
+    [ "$DO_TRADE" = "1" ] && break
+    pm2 describe "$proc" >/dev/null 2>&1 || continue
+    s="$(running_bot_sha "$proc")"
+    if behind_on "$s" "$TRADE_PATHS"; then DO_TRADE=1; HEALED="$HEALED $proc@$s"; fi
+  done
+fi
 
 [ "$FORCE_BOTS" = "1" ] && DO_BOTS=1
 if [ "$FORCE_ALL" = "1" ]; then DO_WEB=1; DO_BOTS=1; DO_TRADE=1; fi
 
 step "Scope"
-if [ -z "$CHANGED" ] && [ "$FORCE_ALL" = "0" ] && [ "$FORCE_BOTS" = "0" ]; then
-  echo "nothing new to pull — verifying what is running, restarting nothing"
+if [ -n "$HEALED" ]; then
+  # SAID, because a restart nobody asked for must be traceable to a reason.
+  for h in $HEALED; do
+    printf '%s was running %s, and files of its own changed since — restarting it\n' "${h%@*}" "${h#*@}"
+  done
+fi
+if [ -z "$CHANGED" ] && [ -z "$HEALED" ] && [ "$FORCE_ALL" = "0" ] && [ "$FORCE_BOTS" = "0" ]; then
+  echo "nothing new to pull, and everything is running what it should — restarting nothing"
   echo "(pass --all to rebuild and restart anyway)"
 else
   printf 'web app  %s\nbot suite %s\ntradebot  %s\n' \
@@ -288,10 +366,7 @@ verdict() {                       # verdict <label> <sha> <restarted 0|1> <paths
   fi
 }
 
-WEB_PATHS='^(?!bot/|tradebot/)'          # documented below; grep -E cannot do it
-WEB_PATHS_E='^(bot|tradebot)/'           # so the web test is an INVERTED match
-BOT_PATHS='^(bot|shared)/'
-TRADE_PATHS='^(tradebot|shared)/'
+# BOT_PATHS / TRADE_PATHS / WEB_PATHS_E are defined once, in step 2b.
 
 # ── the web app ───────────────────────────────────────────────────────────
 # ⚠️ READ IT FROM /api/tokens, NOT FROM THE HTML. `NEXT_PUBLIC_BUILD` is
