@@ -11914,6 +11914,92 @@ from the box (measured on `99035c7`). ⚠️ This touches `shared/` and `bot/`, 
 listing already posted with a dash stays as posted; the next post carries the
 figure, and so does the site row it creates (`rowFigures`).
 
+#### "bagaimana agar masalah ini tidak terjadi lgi" — the watch and the check both said a dash was fine
+
+Asked straight after the fix above. **Nothing in the bot would have caught
+`$APECHECK`.** That is not for lack of a watch: `postFigures` exists for
+exactly this promise and `post:check` exists to run it before a buyer pays.
+Both EXEMPTED a curve's missing liquidity, on the stated ground that *"a bonding
+curve has no pool depth"*. `post:check` printed that sentence as a **green
+note**. It stopped being true the day pump.fun's and the Pons curve's reserves
+became figures, so the operator was the detector again. This file's oldest
+lesson, landing on the exemption rather than on the code: **a rule written about
+a fact expires when the fact does.**
+
+The fix above makes the dash rarer. It cannot make it impossible: pump.fun can
+rename a field, its host can refuse this box, the post can run out of time. So
+the exemption now covers only the state it was written for: **every source
+answered and none publishes a reserve.** Everything else is ours, and carries
+its reason on the market record (`liqWhy`):
+
+| why the curve's liquidity stayed a dash | `liqWhy` | re-read? |
+| --- | --- | --- |
+| a VERIFIED pad (pump.fun) failed, or the pads did not answer in the budget | ✓ | ✓, a retry may reach it |
+| the pad REPORTED the reserve and nothing priced it | ✓ "its response shape has changed" | ✗, a renamed field answers the same |
+| the Pons contract read was refused or failed | ✓ | ✓ |
+| every source answered and none publishes a reserve | — (honest) | ✗ |
+
+- **`marketFigures.liqHoleIsOurs` is the ONE owner** of "this liquidity hole is
+  ours". The post's watch (`postFigures.isKeyHole`) reads it, and `post:check`
+  reads it through the watch. Three copies of this rule is how the exemption
+  outlived its fact in two places at once. The retry has its own, narrower
+  predicate (`liqRetry`): every hole worth a retry is worth a page, but not the
+  other way round.
+- ⚠️ **THE PAD'S SHAPE DRIFT IS THE ONE THIS EXISTS FOR.** If pump.fun renames
+  `usd_market_cap` or `market_cap`, `curveLiqUsd` goes null on every pump.fun
+  listing with nothing thrown. The reserve is still in hand (`raised`), so that
+  state is distinguishable and it pages. The bot's `launchpads:check` prints it
+  RED: *"reserve 3.49 SOL reported, but nothing to price it"*.
+- ⚠️ **ONLY A VERIFIED PAD'S FAILURE COUNTS.** `launchpads.fetchTokenInfoX`
+  reports `failed`, filtered to `verified: true` pads. moonshot's host is retired
+  and four.meme refuses datacenter IPs, so counting them would page every Solana
+  listing for ever. For the same reason a late or unreachable registry counts
+  only where a verified pad covers the chain. On Robinhood both pads are guesses,
+  and the Pons contract answers for itself.
+- ⚠️ **DEXSCREENER'S "PAIR" FOR A CURVE IS THE CURVE.** It indexes pump.fun
+  curves as pairs and names the curve's own address. So the `$SFX` pool rule —
+  *"a pool with no depth reading is ours: re-read it, then page"* — fired on
+  every pump.fun listing: three reads for a number no indexer publishes, then a
+  page whose "why" blamed the indexers. When the pad says the token is
+  `onCurve`, that flag rides the record, and `namesAPool` stops treating the
+  curve as a pool. A pair NO pad knows keeps the pool rule it always had.
+- **The pad answer is memoised on ONE context per read** (`ctx.padP`), so the
+  doors after `fillFromLaunchpad` read that same answer, with its `ok` and
+  `failed`, instead of asking again.
+- **The alert names the curve's own reason** and the real-value remedy
+  (`launchpads:check -- <the mint>`), never *"an indexer publishes no
+  liquidity"* over a pad that timed out.
+
+```bash
+cd bot && node scripts/run-tests.js test/pumpfunLiq.test.js   # 24 tests, no network
+cd /opt/dexvra/bot && npm run post:check                      # red when a curve's liquidity is ours to fix
+```
+
+Seventeen guarantees are MUTATION-TESTED rather than argued, and each mutant
+fails between one and six tests:
+
+- the drift branch removed;
+- the verified-pad gate dropped;
+- the failed list ignored;
+- the shim never computing `failed`, or counting unverified pads;
+- `liqWhy` never attached;
+- the watch ignoring it;
+- the retry ignoring `liqRetry`, or retrying every `liqWhy`;
+- the curve's pair read as a pool;
+- the phase not carried;
+- a stale `liqWhy` kept beside a figure;
+- the alert's reason or its remedy dropped;
+- `isKeyHole` back to the pool rule alone;
+- `post:check`'s old sentence restored;
+- the chain read's reason dropped.
+
+⚠️ The last one SURVIVED its first run. No test drove a Pons curve whose
+contract read failed, so dropping that reason changed nothing a test could see.
+That was a test gap, not a code defect, and a driven Robinhood test closes it.
+
+**Config a fix depends on:** nothing. `bot/` only, so `npm run deploy` does the
+ecosystem restart.
+
 ## "holder dan chart still broken" — a zero nobody measured, and a chart that ate the page's scroll
 
 Reported with the $SFX token page straight after the TBA fix deployed green:

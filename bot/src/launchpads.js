@@ -39,7 +39,8 @@ const lastWhy = (chain, address) => _why.get(`${chain}:${address}`) || null;
 const covers = (chain) => lp.padsFor(chain).length > 0;
 
 /**
- * Token info in the shape dexscreener.fetchTokenInfo returns.
+ * Token info in the shape dexscreener.fetchTokenInfo returns — AND WHETHER
+ * EVERY PAD THAT MATTERS COULD BE ASKED.
  *
  * FIELD NAMES AND THE ZERO-VS-NULL CONVENTION ARE NOT NEGOTIABLE HERE.
  * autoLister.rejectReason reads `liq`, `vol24` and `pairCreatedAt` by those
@@ -47,24 +48,48 @@ const covers = (chain) => lp.padsFor(chain).length > 0;
  * gate the operator set, and auto-list a token with no liquidity at all. The
  * same note sits on poolstrade.fetchTokenInfo for the same reason.
  *
- * Returns null when no pad knows the token, which is the normal outcome for
+ * `info` is null when no pad knows the token, which is the normal outcome for
  * anything that migrated long ago — the caller falls through to DexScreener.
+ *
+ * ⚠️ `failed` IS WHY THIS HAS AN X FORM. "No pad knows this token" and "the pad
+ * that would know it did not answer" both come back as a null `info`, and the
+ * paid post's liquidity watch has to tell them apart: the first is the post
+ * being honest, the second is a hole we could have filled. Only VERIFIED pads
+ * are listed — an unverified pad's request shape is a guess that is expected
+ * to fail on some boxes (moonshot's host is retired, four.meme refuses
+ * datacenter IPs), and paging on it would make the watch permanently red.
+ *
+ * @returns {Promise<{info: object|null, ok: boolean, why: string, failed: string[]}>}
  */
-async function fetchTokenInfo(chain, address) {
-  if (!covers(chain)) return null;
+async function fetchTokenInfoX(chain, address) {
+  if (!covers(chain)) return { info: null, ok: true, why: `no launchpad covers ${chain}`, failed: [] };
   let r;
   try {
     r = await lp.tokenRecord(chain, address);
   } catch (e) {
     log.debug(`[launchpads] ${chain}/${address}: ${e.message}`);
-    return null;
+    return { info: null, ok: false, why: e.message, failed: [] };
   }
   // Worth one debug line: "no pad answered" and "no pad knows it" look
   // identical from here and need different answers from an operator.
   if (!r.ok && r.why) log.debug(`[launchpads] ${chain}/${address}: ${r.why}`);
   noteWhy(chain, address, r.tried);
+  const verified = new Set(lp.padsFor(chain).filter((p) => p.verified).map((p) => p.key));
+  const failed = (r.tried || [])
+    .filter((t) => !t.ok && !t.found && verified.has(t.pad))
+    // The registry already spells each reason with the pad's label in front.
+    .map((t) => String(t.why || `${t.pad}: no answer`));
   const rec = r.record;
-  if (!rec) return null;
+  if (!rec) return { info: null, ok: r.ok, why: r.why || "", failed };
+  return { info: shape(rec), ok: r.ok, why: r.why || "", failed };
+}
+
+/** The same lookup, collapsed to the shape every older caller reads. */
+async function fetchTokenInfo(chain, address) {
+  return (await fetchTokenInfoX(chain, address)).info;
+}
+
+function shape(rec) {
   return {
     name: rec.name,
     symbol: rec.symbol,
@@ -89,6 +114,12 @@ async function fetchTokenInfo(chain, address) {
     // whether a token may be listed. The ponsChain record carries the same
     // field for the same reason. Null, never 0: a 0 there reads as a rug.
     curveLiq: Number(rec.curveLiqUsd) > 0 ? Number(rec.curveLiqUsd) : null,
+    // The reserve in its OWN coin. Carried so a reserve we HAVE and could not
+    // price ("pump.fun changed its response shape") is distinguishable from a
+    // pad that publishes no reserve at all — the first is a fault, the second
+    // is the post being honest.
+    raised: Number(rec.raisedNative) > 0 ? Number(rec.raisedNative) : null,
+    nativeSym: rec.nativeSym || null,
     vol24: Number(rec.vol24Usd) || 0,
     change24h: 0,
     pairCreatedAt: Number(rec.createdAt) || 0,
@@ -122,4 +153,4 @@ async function fetchDescription(chain, address) {
   return (info && info.description) || null;
 }
 
-module.exports = { covers, fetchTokenInfo, fetchDescription, lastWhy, chains: lp.chains, padsFor: lp.padsFor, all: lp.all, reload: lp.reload, tokenRecord: lp.tokenRecord };
+module.exports = { covers, fetchTokenInfo, fetchTokenInfoX, fetchDescription, lastWhy, chains: lp.chains, padsFor: lp.padsFor, all: lp.all, reload: lp.reload, tokenRecord: lp.tokenRecord };

@@ -81,12 +81,20 @@ function stubFetch(router) {
   const asked = [];
   global.fetch = async (url) => {
     const u = String(url);
-    const who = u.includes("dexscreener") ? "ds" : u.includes("geckoterminal") ? "gt" : u.includes("pump.fun") ? "pump" : "pad";
+    const who = u.includes("/api/pons")
+      ? "chain"
+      : u.includes("dexscreener") ? "ds" : u.includes("geckoterminal") ? "gt" : u.includes("pump.fun") ? "pump" : "pad";
     asked.push(who);
     const body = router(who, u);
     if (body === "hang") return new Promise(() => {});
+    if (body === "down") {
+      const e = new TypeError("fetch failed");
+      e.cause = { code: "ENOTFOUND" };
+      throw e;
+    }
     if (body && typeof body.then === "function") return body; // a response that arrives late
     if (body === null || body === undefined) return { ok: false, status: 404, text: async () => "", json: async () => ({}) };
+    if (body && body.__status) return { ok: false, status: body.__status, text: async () => "", json: async () => ({}) };
     return { ok: true, status: 200, text: async () => JSON.stringify(body), json: async () => body };
   };
   return { asked, restore: () => (global.fetch = orig) };
@@ -247,5 +255,192 @@ test("⚠️ a HANGING pad cannot cost the post the price and the cap DexScreene
     assert.ok(asked.includes("pump"), "the pad was still asked — only the WAIT is bounded");
   } finally {
     restore();
+  }
+});
+
+// ── "bagaimana agar masalah ini tidak terjadi lgi" ──────────────────────────
+//
+// The fix above makes the dash rarer. It cannot make it impossible: pump.fun
+// can rename a field, its host can refuse this box, the post can run out of
+// time. And the watch that exists for exactly this — `postFigures` — and the
+// check an operator runs before a buyer pays — `post:check` — both EXEMPTED a
+// curve's missing liquidity, `post:check` with a green note reading "a bonding
+// curve has no pool depth". So the operator was the detector, by screenshot.
+//
+// The exemption now covers only the state it was written for: every source
+// ANSWERED and none publishes a reserve. A hole we could not ASK for, or a
+// reserve we could not PRICE, pages — and those are the tests below.
+
+const figures = require("../src/marketFigures");
+const postFigures = require("../src/postFigures");
+const { verdict } = require("../scripts/post-check.js");
+
+const PAD = { info: null, ok: true, why: "", failed: [] };
+
+test("padLiqWhy: every source answered with no reserve is HONEST — no reason, no retry", () => {
+  assert.deepStrictEqual(market._padLiqWhy(PAD, true), { why: null, retry: false }, "no pad knows the token");
+  const noReserve = { ...PAD, info: { onCurve: true, launchpad: "bonk.fun", liq: 0, curveLiq: null, raised: null } };
+  assert.deepStrictEqual(market._padLiqWhy(noReserve, true), { why: null, retry: false }, "a pad that publishes no reserve");
+});
+
+test("⚠️ padLiqWhy: a reserve the pad REPORTED and nothing priced is pump.fun changing its shape — ours, and NOT retried", () => {
+  const drift = { ...PAD, info: { launchpad: "pump.fun", liq: 0, curveLiq: null, raised: 3.49, nativeSym: "SOL" } };
+  const r = market._padLiqWhy(drift, true);
+  assert.match(String(r.why), /reported the curve's reserve \(3\.49 SOL\).*response shape has changed/);
+  assert.strictEqual(r.retry, false, "a renamed field answers the same on the next read");
+});
+
+test("padLiqWhy: a pad we could not ASK is ours — but only where a VERIFIED pad covers the chain", () => {
+  const late = { info: null, ok: false, why: "the launchpads did not answer within 900ms", failed: [], late: true };
+  assert.deepStrictEqual(market._padLiqWhy(late, true), { why: late.why, retry: true });
+  assert.deepStrictEqual(market._padLiqWhy(late, false), { why: null, retry: false }, "Robinhood's pads are all guesses — a slow guess is not a page");
+  const down = { info: null, ok: false, why: "pump.fun: can't reach frontend-api-v3.pump.fun", failed: [] };
+  assert.match(String(market._padLiqWhy(down, true).why), /could not be asked — pump\.fun: can't reach/);
+  assert.strictEqual(market._padLiqWhy(down, false).why, null);
+  const verifiedFailed = { ...PAD, failed: ["pump.fun: HTTP 503"] };
+  const r = market._padLiqWhy(verifiedFailed, true);
+  assert.match(String(r.why), /pump\.fun: HTTP 503/, "another pad answering must not hide the one that has the reserve");
+  assert.strictEqual(r.retry, true);
+});
+
+test("chainLiqWhy: the Pons contract refused or unread is ours; an answer is not", () => {
+  assert.ok(market._chainLiqWhy(null).why);
+  assert.match(String(market._chainLiqWhy({ ok: false, why: "site answered 503" }).why), /503/);
+  assert.match(String(market._chainLiqWhy({ ok: true, info: { readWhy: "rpc 429" } }).why), /rpc 429/);
+  assert.strictEqual(market._chainLiqWhy({ ok: true, info: { priceUsd: 1 } }).why, null);
+});
+
+test("marketFigures: ONE owner of 'this liquidity hole is ours' — and only a flaky one is re-read", () => {
+  const base = { priceUsd: 1, mcap: 2, liq: null };
+  assert.strictEqual(figures.liqHoleIsOurs(base), false, "every source answered — honest");
+  assert.strictEqual(figures.liqHoleIsOurs({ ...base, poolAddress: "pool" }), true, "a pool we could not read");
+  assert.strictEqual(figures.liqHoleIsOurs({ ...base, poolAddress: "curve", onCurve: true }), false, "an indexer's 'pair' for a curve is the curve");
+  assert.strictEqual(figures.needsAnotherRead({ ...base, poolAddress: "curve", onCurve: true }), false);
+  assert.strictEqual(figures.liqHoleIsOurs({ ...base, liqWhy: "x" }), true, "a reserve we could not ask for or price");
+  assert.strictEqual(figures.liqHoleIsOurs({ ...base, liq: 5, liqWhy: "x" }), false, "not a hole");
+  assert.strictEqual(figures.needsAnotherRead({ ...base, liqWhy: "x", liqRetry: true }), true);
+  assert.strictEqual(figures.needsAnotherRead({ ...base, liqWhy: "x", liqRetry: false }), false, "a renamed field is not worth the retry window");
+  const merged = figures.mergeFigures({ ...base, liqWhy: "timed out", liqRetry: true }, { liq: 360.9 });
+  assert.strictEqual(merged.liq, 360.9);
+  assert.strictEqual(merged.liqWhy, undefined, "a stale reason beside a real figure is two cells disagreeing");
+});
+
+test("⚠️ the post's WATCH pages on a curve's liquidity we could not get — and stays silent on an honest one", () => {
+  const live = { priceUsd: 0.000004717, mcap: 4717, liq: null };
+  const args = { kind: "listing", chain: "solana", address: APE, sym: "$APECHECK", name: "APECHECK", live, why: null };
+  assert.strictEqual(postFigures.figureAlert(args), null, "every source answered and none publishes depth — the post is honest");
+  const why = "pump.fun reported the curve's reserve (3.49 SOL) but nothing to price it in dollars — its response shape has changed";
+  const html = postFigures.figureAlert({ ...args, live: { ...live, liqWhy: why } });
+  assert.ok(html, "the watch was silent over the $APECHECK dash — the operator was the detector");
+  assert.match(html, /without liquidity/);
+  assert.match(html, /response shape has changed/, "the alert must say WHY, not 'an indexer publishes none'");
+  assert.ok(html.includes(`npm run launchpads:check -- ${APE}`), "the remedy carries the REAL mint, never a blank");
+});
+
+test("⚠️ post:check is RED over the same hole, and green-with-a-true-sentence over the honest one", () => {
+  const A = (live) => ({ live, why: null, holes: ["liquidity"], lostArt: false });
+  assert.strictEqual(verdict(A({ priceUsd: 1, mcap: 2, liq: null })), "ok");
+  assert.strictEqual(verdict(A({ priceUsd: 1, mcap: 2, liq: null, liqWhy: "the launchpads did not answer within 900ms" })), "fault");
+  const src = fss.readFileSync(path.join(__dirname, "..", "scripts", "post-check.js"), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1");
+  assert.ok(!/a bonding curve has no pool depth/.test(src), "the check reassures the operator with a sentence that is no longer true");
+});
+
+// ── driven end to end, through the read the post makes ──────────────────────
+
+test("⚠️ DRIVEN: pump.fun renames a field → the post still goes out, the dash is not retried, and the watch PAGES", async () => {
+  // The reserve is still there; both ways to price it are gone.
+  const { market_cap, virtual_sol_reserves, virtual_token_reserves, total_supply, ...renamed } = PUMP;
+  const { asked, restore } = stubFetch((who) => (who === "ds" ? DS_CURVE : who === "pump" ? renamed : null));
+  try {
+    const { live } = await fulfil._readPostMarket("solana", APE, "test", { tries: 3, pauseMs: 0 });
+    assert.strictEqual(live.priceUsd, 0.000004717, "the price still publishes");
+    assert.strictEqual(live.liq ?? null, null);
+    assert.match(String(live.liqWhy), /response shape has changed/);
+    assert.strictEqual(asked.filter((w) => w === "ds").length, 1, "a deterministic hole bought the whole retry window");
+    assert.ok(postFigures.isKeyHole("liquidity", live), "…and the watch treats it as a fault");
+  } finally {
+    restore();
+  }
+});
+
+test("⚠️ DRIVEN: pump.fun unreachable → the hole is named as ours and re-read once more", async () => {
+  const { asked, restore } = stubFetch((who) => {
+    if (who === "ds") return DS_CURVE;
+    if (who === "pump") return "down";
+    return null;
+  });
+  try {
+    const { live } = await fulfil._readPostMarket("solana", APE, "test", { tries: 2, pauseMs: 0 });
+    assert.strictEqual(live.mcap, 4717);
+    assert.match(String(live.liqWhy), /could not be asked/, `got ${live.liqWhy}`);
+    assert.strictEqual(asked.filter((w) => w === "ds").length, 2, "a hole we could not ASK for is worth the second read");
+  } finally {
+    restore();
+  }
+});
+
+test("DRIVEN: the pad says it is a curve and publishes no reserve → honest: no reason, no retry, no page", async () => {
+  // A pad that answers and simply does not report a reserve (bonk.fun-shaped):
+  // the post's dash is the truth about what anybody publishes.
+  const { real_sol_reserves, market_cap, virtual_sol_reserves, virtual_token_reserves, ...noReserve } = PUMP;
+  const { asked, restore } = stubFetch((who) => (who === "ds" ? DS_CURVE : who === "pump" ? noReserve : null));
+  try {
+    const { live } = await fulfil._readPostMarket("solana", APE, "test", { tries: 3, pauseMs: 0 });
+    assert.strictEqual(live.liqWhy, undefined);
+    assert.strictEqual(live.onCurve, true, "the pad's word on the phase travels with the record");
+    // ⚠️ DexScreener names the curve's address as a pair. Read as a POOL, that
+    // bought three reads and a page over a number nobody publishes.
+    assert.strictEqual(asked.filter((w) => w === "ds").length, 1, "the curve's 'pair' was read as a pool we failed to read");
+    assert.ok(!postFigures.isKeyHole("liquidity", live));
+  } finally {
+    restore();
+  }
+});
+
+test("…while a pair NO pad knows keeps the pool rule it always had ($SFX): re-read, and paged", async () => {
+  const { asked, restore } = stubFetch((who) => (who === "ds" ? DS_CURVE : null));
+  try {
+    const { live } = await fulfil._readPostMarket("solana", APE, "test", { tries: 2, pauseMs: 0 });
+    assert.strictEqual(live.onCurve, undefined, "nobody said it is a curve");
+    assert.strictEqual(asked.filter((w) => w === "ds").length, 2);
+    assert.ok(postFigures.isKeyHole("liquidity", live));
+  } finally {
+    restore();
+  }
+});
+
+test("⚠️ an UNVERIFIED pad that is down is not a page — only a pad whose shape we have measured counts", async () => {
+  // moonshot's host is retired and four.meme refuses datacenter IPs: on the box
+  // those fail on every read. Counting them would page every Solana listing
+  // with an honest dash, for ever — the permanently-red check nobody reads.
+  const { real_sol_reserves, market_cap, virtual_sol_reserves, virtual_token_reserves, ...noReserve } = PUMP;
+  const { asked, restore } = stubFetch((who) => (who === "ds" ? DS_CURVE : who === "pump" ? noReserve : "down"));
+  try {
+    const { live } = await fulfil._readPostMarket("solana", APE, "test", { tries: 3, pauseMs: 0 });
+    assert.ok(asked.includes("pad"), "the unverified pads must actually have been asked and failed");
+    assert.strictEqual(live.liqWhy, undefined, `an unverified pad's failure paged: ${live.liqWhy}`);
+    assert.ok(!postFigures.isKeyHole("liquidity", live));
+  } finally {
+    restore();
+  }
+});
+
+test("⚠️ DRIVEN (Robinhood): a Pons curve whose CONTRACT read failed names that read — the one source that cannot be unreachable", async () => {
+  // Robinhood's pads are both guesses, so their silence pages nobody; the
+  // contract is the authority there, and a 503 from the reader is ours.
+  const ponsChain = require("../src/ponsChain");
+  ponsChain._reset();
+  const WROTE = "0xfCd4CdEabe055315b1036A189eA54ca627Df390a";
+  const ds = { pairs: [{ chainId: "robinhood", priceUsd: "0.000004", marketCap: 4494, pairAddress: "0xcurve", baseToken: { address: WROTE, name: "Wallet Route", symbol: "WROTE" } }] };
+  const { restore } = stubFetch((who) => (who === "ds" ? ds : who === "chain" ? { __status: 503 } : null));
+  try {
+    const m = await market.fetchMarket("robinhood", WROTE, { cheap: true, need: ["priceUsd", "mcap", "liq"], budgetMs: 2000 });
+    assert.strictEqual(m.priceUsd, 0.000004);
+    assert.match(String(m.liqWhy), /the curve read failed/, `got ${m.liqWhy}`);
+    assert.ok(postFigures.isKeyHole("liquidity", m));
+  } finally {
+    restore();
+    ponsChain._reset();
   }
 });

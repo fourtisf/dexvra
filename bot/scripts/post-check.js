@@ -155,10 +155,13 @@ function report(row, a) {
     if (row.logoUrl && a.art && a.art.source !== 'upload') {
       note(`— from a public gateway; pin it so no post ever asks one again: npm run post:check -- ${row.chain} ${row.address} --pin`);
     }
-    // A missing liquidity is normal on a curve and is never a failure here —
-    // launchpads.js returns null deliberately, because a 0 reads as a rug.
-    // (Reached only with NO pool named — a pool's missing depth is a fault above.)
-    if (a.holes.length) note(`liquidity would print as — (no pool yet — a bonding curve has no pool depth)`);
+    // ⚠️ THIS LINE USED TO SAY "a bonding curve has no pool depth" — green, on
+    // the one check an operator runs before a buyer pays, about the very dash
+    // $APECHECK published while pump.fun printed its $360.91. A curve's reserve
+    // IS a figure now; reaching here means every source answered and none
+    // publishes one (a hole we could not fill is a fault above, via
+    // postFigures.isKeyHole → marketFigures.liqHoleIsOurs).
+    if (a.holes.length) note(`liquidity would print as — (every source answered and none publishes this token's depth or curve reserve)`);
     return true;
   }
 
@@ -182,14 +185,19 @@ function report(row, a) {
     // have no launchpad for — the second is a gap in this repo, not in the
     // market, and only one of them is worth acting on.
     const padded = launchpads.covers(row.chain);
+    const liqWhy = a.live && a.live.liqWhy && a.holes.includes('liquidity') ? a.live.liqWhy : null;
+    const liqOnly = a.holes.filter((h) => postFigures.isKeyHole(h, a.live)).every((h) => h === 'liquidity');
     note(a.why
       ? `the read did not finish: ${a.why}`
-      : a.live
-        ? `an indexer answered and publishes no ${a.holes.filter((h) => postFigures.isKeyHole(h, a.live)).join(' or ')} for it`
-        : padded
-          ? 'no indexer and no launchpad returned anything for this token'
-          : `no indexer had it, and no launchpad covers ${row.chain} — a token still on a bonding curve there has no source at all`);
-    if (!unknown) note('→ npm run market:check -- ' + row.chain);
+      : liqOnly && liqWhy
+        ? `liquidity: ${liqWhy}`
+        : a.live
+          ? `an indexer answered and publishes no ${a.holes.filter((h) => postFigures.isKeyHole(h, a.live)).join(' or ')} for it`
+          : padded
+            ? 'no indexer and no launchpad returned anything for this token'
+            : `no indexer had it, and no launchpad covers ${row.chain} — a token still on a bonding curve there has no source at all`);
+    if (liqWhy && !liqOnly) note(`liquidity: ${liqWhy}`);
+    if (!unknown) note(liqOnly && liqWhy ? `→ npm run launchpads:check -- ${row.address}` : '→ npm run market:check -- ' + row.chain);
     if (unknown && padded) note('nothing to fix here — this is the post being honest');
     if (unknown && !padded) note(`honest about the token — but adding a ${row.chain} launchpad to shared/launchpads/pads.js is what would price a pre-migration one`);
   }

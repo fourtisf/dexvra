@@ -51,7 +51,42 @@ function holes(m) {
 function needsAnotherRead(m) {
   if (!m) return true;
   if (!pos(m.priceUsd) || !pos(m.mcap)) return true;
-  return !pos(m.liq) && !!m.poolAddress;
+  // …and a curve whose reserve could not be ASKED for (`liqRetry`, set by
+  // marketdata when the pads timed out or a verified pad failed) — the next
+  // read may reach it. A reason that will not change on a retry (a pad that
+  // HAD the reserve and no price for it) is not retried; it pages instead.
+  return !pos(m.liq) && (namesAPool(m) || !!m.liqRetry);
+}
+
+/**
+ * Does the reading name a POOL — one with depth to read?
+ *
+ * ⚠️ NOT WHEN THE LAUNCHPAD SAYS THE TOKEN IS STILL ON ITS CURVE. DexScreener
+ * indexes pump.fun curves as ordinary pairs and names the CURVE'S address as
+ * the pair, with no depth — so `poolAddress` alone read every pump.fun listing
+ * as a pool we had failed to read: three reads for a number no indexer
+ * publishes, then a page whose "why" pointed at the indexers. A curve's hole is
+ * judged by the curve's own rule (`liqWhy`), never by the indexer's word for it.
+ */
+function namesAPool(m) {
+  return !!m.poolAddress && m.onCurve !== true;
+}
+
+/**
+ * A liquidity hole that is OURS — the ONE owner, read by the post's watch
+ * (`postFigures.isKeyHole`) and by `post:check` through it.
+ *
+ * A pool we failed to read the depth of, or a curve whose reserve we could not
+ * ask for or could not price (`liqWhy`, set at the read where the reason is
+ * known). What is NOT ours: every source answered and none publishes a
+ * reserve — the only state in which a dash is the post being honest.
+ *
+ * ⚠️ This used to be `poolAddress` alone, on the ground that "a bonding curve
+ * has no pool depth". That stopped being true when pump.fun's and the Pons
+ * curve's reserves became figures, and $APECHECK's dash was the cost.
+ */
+function liqHoleIsOurs(m) {
+  return !!m && !pos(m.liq) && (namesAPool(m) || !!m.liqWhy);
 }
 
 /**
@@ -70,6 +105,9 @@ function mergeFigures(a, b) {
     if (FIELDS.includes(k)) continue;
     if (out[k] == null && v != null) out[k] = v;
   }
+  // A reason for a liquidity hole the merge has since filled is a stale
+  // sentence beside a real number — the two-cells-disagreeing defect.
+  if (pos(out.liq)) { delete out.liqWhy; delete out.liqRetry; }
   return out;
 }
 
@@ -121,4 +159,4 @@ function rowFigures(m) {
   return out;
 }
 
-module.exports = { FIELDS, holes, needsAnotherRead, mergeFigures, snapshotOf, usableSnapshot, rowFigures };
+module.exports = { FIELDS, holes, needsAnotherRead, liqHoleIsOurs, mergeFigures, snapshotOf, usableSnapshot, rowFigures };

@@ -165,6 +165,15 @@ async function checkToken(address, chain) {
   row("overview", info.description ? info.description.slice(0, 60) + "…" : null);
   row("market cap", money(info.mcap));
   row("liquidity", money(info.liq));
+  // The curve's reserve in dollars — what a paid post prints as 💧 while the
+  // token bonds. A reserve the pad REPORTED and nothing priced is pump.fun
+  // having changed its response shape, and it is printed red: the post's watch
+  // pages on it, and this is where the operator lands to see why.
+  row("curve liq", info.curveLiq
+    ? `${money(info.curveLiq)} ${D("(the curve's reserve — the post's 💧 while it bonds)")}`
+    : info.raised
+      ? R(`reserve ${info.raised} ${info.nativeSym || ""} reported, but nothing to price it in dollars — the pad's response shape changed`)
+      : null);
   row("launchpad", info.launchpad);
   row("phase", info.onCurve === true || info.graduated === true ? phaseText(info) : Y("unknown — no pad said"));
   row("from", info.source);

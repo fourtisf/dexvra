@@ -33,6 +33,8 @@
  */
 const log = require("./helpers/logger");
 const ponsChain = require("./ponsChain");
+const launchpads = require("./launchpads");
+const marketFigures = require("./marketFigures");
 const { ticker } = require("./helpers/format");
 
 /** Renders as a figure, rather than as TBA / — (`priceStr`, `mcStr`, `liqStr`). */
@@ -58,16 +60,22 @@ const FIGURES = [
 const KEY_FIGURES = new Set(["price", "market cap"]);
 
 /**
- * …EXCEPT WHEN THE READING NAMES A POOL. Then the token HAS depth and the post
- * published a dash over a number we failed to read — the operator's rule is
- * now "every listing carries its market cap and its liquidity", and a pool is
- * exactly the case where that is achievable. The curve case above is unchanged:
- * no pool, no depth, no page. Same predicate `marketFigures.needsAnotherRead`
- * retries on, so the watch and the retry cannot disagree about which hole is a
- * fault.
+ * …EXCEPT WHEN THE HOLE IS OURS. A reading that names a pool HAS depth and the
+ * post published a dash over a number we failed to read — the operator's rule
+ * is "every listing carries its market cap and its liquidity", and a pool is
+ * exactly the case where that is achievable.
+ *
+ * ⚠️ AND A CURVE IS NO LONGER EXEMPT BY BEING A CURVE. "No pool, no depth, no
+ * page" was right while a curve had no figure at all; pump.fun's and the Pons
+ * curve's reserves are figures now, and $APECHECK went out with a dash while
+ * pump.fun's own page printed $360.91 — the operator, not this watch, was the
+ * detector. A curve's hole pages when we could not ASK for its reserve or could
+ * not PRICE it (`liqWhy`), and stays silent only where every source answered
+ * and none publishes one. `marketFigures.liqHoleIsOurs` is the one owner, so
+ * this watch, the retry and `post:check` cannot disagree about it.
  */
 function isKeyHole(hole, live) {
-  return KEY_FIGURES.has(hole) || (hole === "liquidity" && !!(live && live.poolAddress));
+  return KEY_FIGURES.has(hole) || (hole === "liquidity" && marketFigures.liqHoleIsOurs(live));
 }
 function keyMissingOf(live) {
   return missingFigures(live).filter((f) => isKeyHole(f, live));
@@ -213,11 +221,18 @@ function figureAlert({ kind, chain, address, sym, name, tier, live, why, siteUrl
   // can act on differently: one is a budget or an outage, the other is a token
   // no indexer covers yet, and sending them the same sentence is how three
   // rounds of this went to the wrong setting.
+  // A liquidity hole that is ours carries its OWN reason from the read; "an
+  // indexer answered and publishes no liquidity" over a pad that timed out is
+  // the wrong layer.
+  const liqOnly = keyMissing.length && keyMissing.every((h) => h === "liquidity");
+  const liqWhy = live && live.liqWhy && keyMissing.includes("liquidity") ? String(live.liqWhy) : null;
   const cause = why
     ? esc(why)
-    : live
-      ? "an indexer answered and publishes no " + keyMissing.join(" or ") + " for it"
-      : "neither DexScreener nor GeckoTerminal returned anything — either both refused this box, or the token has no indexed pool yet";
+    : liqOnly && liqWhy
+      ? esc(liqWhy)
+      : live
+        ? "an indexer answered and publishes no " + keyMissing.join(" or ") + " for it"
+        : "neither DexScreener nor GeckoTerminal returned anything — either both refused this box, or the token has no indexed pool yet";
 
   const label = kind === "trending" ? "Trending slot" : "Listing";
   const head = `⚠️ <b>${label} published without ${holes.map(esc).join(" · ")}</b>`;
@@ -228,6 +243,9 @@ function figureAlert({ kind, chain, address, sym, name, tier, live, why, siteUrl
     // read, and printing it over a post whose only hole was the picture would
     // send the operator to the wrong layer.
     keyMissing.length ? `Why: ${cause}` : "",
+    // Named on its own line when something else ALSO fired, so the price's
+    // reason does not swallow the liquidity's.
+    liqWhy && !liqOnly ? `Liquidity: ${esc(liqWhy)}` : "",
     // The artwork gets its own sentence and its own script, because a logo that
     // would not load and an indexer that would not answer are different layers.
     lostArt
@@ -264,6 +282,11 @@ function figureAlert({ kind, chain, address, sym, name, tier, live, why, siteUrl
     // curve token as "honest", which is the wrong layer for a curve.
     keyMissing.length
       ? `Run <code>npm run market:check -- ${esc(chain)}</code>${ponsChain.covers(chain) ? ` and <code>npm run pons:check</code> (the curve and the ETH/USD ladder)` : ""} on the box.`
+      : "",
+    // The curve's reserve is the launchpads' to answer, and this is the check
+    // that shows it (`curve liq`) — with the REAL address, never a blank.
+    liqWhy && launchpads.covers(chain)
+      ? `Run <code>npm run launchpads:check -- ${esc(address)}</code> in bot/ — it prints the curve's reserve and which pad answered.`
       : "",
     lostArt ? `Run <code>${esc(artRemedy(artFailure(art).cls, chain, address))}</code> on the box.` : "",
     !lostArt && (unreadArt || unreadLinks) ? `Run <code>${esc(artRemedy("unread", chain, address))}</code> on the box.` : "",

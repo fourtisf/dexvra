@@ -451,12 +451,8 @@ async function fetchTokenDescription(chain, address) {
  * the rest of this file is built on: a live pool reading always beats a
  * launchpad's copy of the same number.
  */
-async function fillFromLaunchpad(chain, address, out, padMs = 0) {
+async function fillFromLaunchpad(chain, address, out, padMs = 0, ctx = null) {
   if (!launchpads.covers(chain)) return out;
-  const read = launchpads.fetchTokenInfo(chain, address).catch((e) => {
-    log.debug(`[market] launchpad ${chain}/${address}: ${e.message}`);
-    return null;
-  });
   // ⚠️ A SLICE for a caller on a clock, never the whole of what is left. A
   // pad host that hangs costs LAUNCHPAD_TIMEOUT_MS (6s) per read until its
   // breaker benches it; behind the GT slice (4.4s of an 8s budget) that is a
@@ -465,13 +461,32 @@ async function fillFromLaunchpad(chain, address, out, padMs = 0) {
   // answer keeps precedence when it arrives in time; a pad that overruns its
   // slice is INCONCLUSIVE, and the chain fills what it left. Unbudgeted
   // callers wait exactly as they always did.
-  const lp = padMs > 0
-    ? await bounded(read, padMs, () => {
-        log.debug(`[market] launchpad ${chain}/${address}: passed its ${padMs}ms slice — falling through to the chain`);
-        return null;
-      })
-    : await read;
-  return mergeCurve(out, lp);
+  const pad = await padRead(chain, address, padMs);
+  // The doors below (`fromCurve`) read the SAME answer rather than asking the
+  // pad again — and they need its `ok`/`failed` to say why a hole stayed open.
+  if (ctx) ctx.padP = Promise.resolve(pad);
+  return mergeCurve(out, pad.info);
+}
+
+/**
+ * Ask the launchpads, and ALWAYS say what happened — never a bare null.
+ *
+ * `{info, ok, why, failed}` from the shim, plus the two ways this caller can
+ * fail to ask at all: the slice ran out, or there was no time to start. A
+ * liquidity hole the post publishes is a fault exactly when one of those, or a
+ * verified pad's failure, is why it stayed open — and that is only knowable if
+ * the reason survives to the end of the read.
+ */
+async function padRead(chain, address, ms) {
+  const read = launchpads.fetchTokenInfoX(chain, address).catch((e) => {
+    log.debug(`[market] launchpad ${chain}/${address}: ${e.message}`);
+    return { info: null, ok: false, why: e.message, failed: [] };
+  });
+  if (!(ms > 0)) return read;
+  return bounded(read, ms, () => {
+    log.debug(`[market] launchpad ${chain}/${address}: passed its ${ms}ms slice`);
+    return { info: null, ok: false, why: `the launchpads did not answer within ${ms}ms`, failed: [], late: true };
+  });
 }
 
 /**
@@ -598,8 +613,8 @@ function padOnce(ctx) {
     // Too little time left is "could not ask", and the record goes out as is.
     const left = ctx.opts.budgetMs - (Date.now() - ctx.startedAt) - CHAIN_RESERVE_MS;
     ctx.padP = left < PAD_MIN_MS
-      ? Promise.resolve(null)
-      : bounded(launchpads.fetchTokenInfo(ctx.chain, ctx.address).catch(() => null), left, () => null);
+      ? Promise.resolve({ info: null, ok: false, why: "no time was left in the post's budget to ask the launchpads", failed: [], late: true })
+      : padRead(ctx.chain, ctx.address, left);
   }
   return ctx.padP;
 }
@@ -642,18 +657,85 @@ async function liqFromCurve(out, ctx) {
   if (!out || num(out.liq) != null) return out;
   if (!isBudgeted(ctx.opts)) return out;
   let liq = null;
-  // The pad first, in `mergeCurve`'s order — but never on the doors where
-  // `fillFromLaunchpad` already asked it and merged what it said.
-  if (!ctx.padAsked && launchpads.covers(ctx.chain)) {
-    const lp = await padOnce(ctx);
+  let why = null;
+  let retry = false;
+  // The pad first, in `mergeCurve`'s order. On the doors where
+  // `fillFromLaunchpad` already asked it, this is that same answer, memoised.
+  if (launchpads.covers(ctx.chain)) {
+    const pad = await padOnce(ctx);
+    const lp = pad.info;
     liq = lp ? (num(lp.liq) ?? num(lp.curveLiq)) : null;
+    if (liq == null) ({ why, retry } = padLiqWhy(pad, launchpads.padsFor(ctx.chain).some((p) => p.verified)));
+    // The pad's word on the PHASE travels with the record: an indexer's "pair"
+    // for a token still on its curve is the curve, and the watch and the retry
+    // must judge its hole by the curve's rule (marketFigures.namesAPool).
+    if (lp && lp.onCurve === true && out.onCurve == null) out = { ...out, onCurve: true };
   }
   // The contract, whose read is already in flight and therefore free.
   if (liq == null && ctx.chainP) {
     const r = await ctx.chainP;
     liq = r && r.info ? num(r.info.curveLiq) : null;
+    if (liq == null && !why) ({ why, retry } = chainLiqWhy(r));
   }
-  return liq != null ? { ...out, liq } : out;
+  if (liq != null) return { ...out, liq };
+  return why ? { ...out, liqWhy: why, liqRetry: retry } : out;
+}
+
+/**
+ * Why a curve's liquidity stayed a dash — but ONLY when the reason is OURS.
+ *
+ * "bagaimana agar masalah ini tidak terjadi lgi", asked straight after
+ * $APECHECK: the paid-post watch and `post:check` both exempted a curve's
+ * missing liquidity on the stated ground that "a bonding curve has no pool
+ * depth" — `post:check` printed exactly that sentence as a green note. It
+ * stopped being true the day pump.fun's reserve and the Pons curve's became a
+ * figure, so the exemption now covers only the state it was written for: every
+ * source ANSWERED and none publishes a reserve (a pad that does not report
+ * one, a token no pad knows). Everything else is a hole we could have filled:
+ *
+ *   · the pads could not be asked in time, or a VERIFIED pad failed — a retry
+ *     may fill it, so `retry` is set (only on a chain a verified pad covers;
+ *     see the first branch below);
+ *   · the pad HAD the reserve and no price to convert it — pump.fun renamed a
+ *     field, and that is the one regression nothing else would ever notice,
+ *     because the post would quietly print a dash for every pump.fun listing.
+ *     Deterministic, so not retried.
+ *
+ * PURE, so the rule is tested by being called. Null `why` = honest silence.
+ */
+function padLiqWhy(pad, verifiedCovers) {
+  if (!pad) return { why: null, retry: false };
+  // ⚠️ "We could not ask" COUNTS ONLY WHERE A VERIFIED PAD COVERS THE CHAIN.
+  // The registry waits for every pad, so one guessed host that hangs makes the
+  // whole read late — and on a chain whose only pads are guesses (Robinhood:
+  // Pons and Flap, both `verified: false`) that would page and retry every
+  // curve post on the box, for ever, over a request shape nobody has measured.
+  // The Pons contract read answers for itself below.
+  if (pad.late || !pad.ok) {
+    if (!verifiedCovers) return { why: null, retry: false };
+    return pad.late
+      ? { why: pad.why, retry: true }
+      : { why: `the launchpads could not be asked — ${pad.why || "no pad answered"}`, retry: true };
+  }
+  if (Array.isArray(pad.failed) && pad.failed.length) {
+    return { why: `the launchpad could not be asked — ${pad.failed.join("; ")}`, retry: true };
+  }
+  const lp = pad.info;
+  if (lp && num(lp.raised) != null) {
+    return {
+      why: `${lp.launchpad || "the launchpad"} reported the curve's reserve (${lp.raised} ${lp.nativeSym || ""}) but nothing to price it in dollars — its response shape has changed`.replace(/\s+\)/, ")"),
+      retry: false,
+    };
+  }
+  return { why: null, retry: false };
+}
+
+/** The same rule for the Pons contract read — refused or unread is ours. */
+function chainLiqWhy(r) {
+  if (!r) return { why: "the curve read threw", retry: true };
+  if (!r.ok) return { why: `the curve read failed — ${r.why || "no answer"}`, retry: true };
+  if (r.info && r.info.readWhy) return { why: `the curve read was refused — ${r.info.readWhy}`, retry: true };
+  return { why: null, retry: false };
 }
 
 /**
@@ -676,7 +758,7 @@ async function liqFromCurve(out, ctx) {
  * before. An indexer's own logo is an ANSWER and is never replaced.
  */
 async function logoFromCurve(out, ctx) {
-  const { chainP, opts, chain, padAsked } = ctx;
+  const { chainP, opts, chain } = ctx;
   if (!out || out.logoUrl) return out;
   if (!isBudgeted(opts)) return out;
 
@@ -699,8 +781,8 @@ async function logoFromCurve(out, ctx) {
   // Chain FIRST because it costs nothing extra and it is the authority; the pad
   // only when the chain gave no artwork, at most ONE request per paid post, and
   // never on the doors where `fillFromLaunchpad` already asked it.
-  if (!padAsked && launchpads.covers(chain)) {
-    const lp = await padOnce(ctx);
+  if (launchpads.covers(chain)) {
+    const lp = (await padOnce(ctx)).info;
     if (lp && lp.logoUrl) return { ...out, logoUrl: lp.logoUrl };
   }
 
@@ -751,6 +833,10 @@ async function fetchMarket(chain, address, opts = {}) {
   // see fillFromChain's header for the arithmetic that makes this load-bearing.
   const chainP = startChainRead(chain, address);
   const startedAt = Date.now();
+  // ONE context per read, handed to every door: the pad answer is memoised on
+  // it, so a door after `fillFromLaunchpad` reads that answer rather than
+  // asking again.
+  const ctx = { chainP, opts, chain, address, startedAt, padP: null };
   const dsFirst = opts.cheap ? await fetchDS(chain, address) : null;
   // ⚠️ THE CHEAP ANSWER HAS TO CARRY WHAT THIS CALLER ACTUALLY READS.
   //
@@ -773,7 +859,7 @@ async function fetchMarket(chain, address, opts = {}) {
   const need = Array.isArray(opts.need) && opts.need.length ? opts.need : NEED_DEFAULT;
   const hasField = (o, f) => (f === "priceUsd" || f === "mcap" ? !!o[f] : Number.isFinite(o[f]));
   if (dsFirst && need.every((f) => hasField(dsFirst, f)))
-    return fromCurve(dsFirst, { chainP, opts, chain, address, startedAt, padAsked: false });
+    return fromCurve(dsFirst, ctx);
 
   // ⚠️ NO SINGLE STAGE MAY CONSUME THE WHOLE BUDGET.
   //
@@ -815,7 +901,7 @@ async function fetchMarket(chain, address, opts = {}) {
   // does not index the GT-primary chains at all, so `fetchDS` returns before
   // any request is made.
   if (gt && gt.priceUsd && gt.mcap && gt.liq && gt.change24h != null)
-    return fromCurve(gt, { chainP, opts, chain, address, startedAt, padAsked: false });
+    return fromCurve(gt, ctx);
   // GT missing entirely, or missing price/mcap/liq → let DexScreener fill gaps.
   // In cheap mode it has ALREADY been asked, and its answer is reused — a miss
   // included. `dsFirst || await fetchDS(...)` would re-ask on every miss, which
@@ -848,15 +934,13 @@ async function fetchMarket(chain, address, opts = {}) {
   // Only when something the callers actually render is still missing — an
   // indexed token must not pay a launchpad round trip on every poll, and nine
   // background pipelines call this on timers.
-  let padAsked = false;
   if (!out || !out.priceUsd || !out.mcap) {
     // What is LEFT of a budgeted caller's clock, less a reserve for the chain
     // merge below (the chain read started at t=0 and has its own bound, so by
     // now it is usually settled). 0 = no slice = the old unbounded wait.
     const budgeted = Number.isFinite(opts.budgetMs) && opts.budgetMs > 0;
     const padMs = budgeted ? Math.max(500, opts.budgetMs - (Date.now() - startedAt) - CHAIN_RESERVE_MS) : 0;
-    out = await fillFromLaunchpad(chain, address, out, padMs);
-    padAsked = true;
+    out = await fillFromLaunchpad(chain, address, out, padMs, ctx);
   }
   // Re-tested, not chained onto the line above: the pad may have answered some
   // of it, and a token whose price arrived but whose cap did not is still a
@@ -888,7 +972,7 @@ async function fetchMarket(chain, address, opts = {}) {
       out.changeWhy = out.changeWhy ? `${out.changeWhy}; ${c.why}` : c.why;
     }
   }
-  return fromCurve(out, { chainP, opts, chain, address, startedAt, padAsked });
+  return fromCurve(out, ctx);
 }
 
 /**
@@ -941,5 +1025,7 @@ module.exports = {
   _pickTrusted: pickTrusted,
   _mergeCurve: mergeCurve,
   _liqFromCurve: liqFromCurve,
+  _padLiqWhy: padLiqWhy,
+  _chainLiqWhy: chainLiqWhy,
   SANE_CHANGE_PCT,
   MCAP_DISAGREE_FACTOR, fetchMarket, fetchPrice, fetchTokenDescription };
