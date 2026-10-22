@@ -27,6 +27,11 @@ export async function GET(_req: Request, { params }: { params: { name: string } 
       headers: {
         "content-type": MIME[ext],
         "cache-control": "public, max-age=31536000, immutable",
+        // These bytes can be a BUYER's upload, checked by magic bytes only — so
+        // a GIF/HTML polyglot is possible. nosniff keeps a browser from deciding
+        // it is a page; the sandbox CSP makes it inert if one is opened anyway.
+        "x-content-type-options": "nosniff",
+        "content-security-policy": "default-src 'none'; img-src 'self' data:; media-src 'self'; sandbox",
       },
     });
   } catch {

@@ -57,13 +57,17 @@ async function saveJob(job) {
  * the same artwork the channel post does, and that can be the admin's GIF/MP4
  * clip. A clip sent through sendPhoto is an error, not a still.
  */
-async function createJob({ text, entities, mediaPath, mediaFileId, mediaType, createdBy, createdByUsername, targets, test, autoSend, paid, reportChatId, ref }) {
+async function createJob({ text, entities, parseMode, mediaPath, mediaFileId, mediaType, createdBy, createdByUsername, targets, test, autoSend, paid, reportChatId, ref }) {
   const job = {
     id: newId(),
     kind: "mass_dm",
     status: test || autoSend ? "in_progress" : "pending_review",
     text: text || "",
     entities: entities || [],
+    // "HTML" only for a card WE rendered as markup. A buyer's message is never
+    // parsed: one `<` in it failed every send, and a typed `<a href>` would
+    // have reached 12,000 inboxes as a link nobody reviewed for that.
+    parseMode: parseMode === "HTML" ? "HTML" : null,
     mediaPath: mediaPath || null,
     // Already a Telegram file_id (or a URL Telegram can fetch): nothing to
     // upload, so primeMedia skips straight to the paced send.

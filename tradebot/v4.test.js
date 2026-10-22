@@ -80,12 +80,20 @@ test("poolId is keccak(abi.encode(PoolKey)) — the exact preimage v4 uses", () 
   assert.notStrictEqual(v4.poolId(v4.NATIVE, TOKEN, 500, 10), id);
 });
 
-test("v4 stays OFF until a PoolManager is configured", () => {
-  // Same rule as the V3 block next to it: a guessed address on a money path is
-  // worse than a disabled feature, so there is no baked default.
-  withEnv({ ROBINHOOD_V4_POOLMANAGER: undefined }, () => {
-    assert.strictEqual(v4.cfg("robinhood"), null);
-    assert.strictEqual(v4.enabled("robinhood"), false);
+test("v4 stays OFF on a chain nobody vouched for; a listed chain gets Uniswap's own PoolManager", () => {
+  // Same rule as the V3 block next to it: a GUESSED address on a money path is
+  // worse than a disabled feature. Uniswap's published deployment is not a
+  // guess — it is cited in v4.js the way chains.js cites the V3 factory — so a
+  // listed chain has a default and an unlisted one still has none.
+  withEnv({ NOCHAIN_V4_POOLMANAGER: undefined }, () => {
+    assert.strictEqual(v4.cfg("nochain"), null);
+    assert.strictEqual(v4.enabled("nochain"), false);
+  });
+  withEnv({ ROBINHOOD_V4_POOLMANAGER: undefined, ROBINHOOD_V4_AUTODISCOVER: undefined }, () => {
+    assert.strictEqual(v4.cfg("robinhood").poolManager, v4.CANONICAL_V4.robinhood.poolManager);
+  });
+  withEnv({ ROBINHOOD_V4_POOLMANAGER: undefined, ROBINHOOD_V4_AUTODISCOVER: "0" }, () => {
+    assert.strictEqual(v4.cfg("robinhood"), null, "AUTODISCOVER=0 still pins a chain to its env alone");
   });
   withEnv({ ROBINHOOD_V4_POOLMANAGER: "0x" + "ab".repeat(20) }, () => {
     const c = v4.cfg("robinhood");
@@ -392,16 +400,41 @@ test("bestPool reads the hooked pool the sweep missed, and swaps THAT key", asyn
   });
 });
 
-test("the PoolManager is observed from the log that created the pool", async () => {
+test("a forged Initialize log cannot become a listed chain's PoolManager", async () => {
+  // Any contract can emit an Initialize-shaped log. On a chain Uniswap published
+  // a deployment for, the log's emitter is not consulted at all.
   v4._resetDiscovery();
   const o = v4.orderCurrencies(TOKEN, v4.NATIVE);
   const provider = fakeProvider([initLog(PM, o.currency0, o.currency1, 3000, 60, v4.NATIVE)]);
   await withEnv({ ROBINHOOD_V4_POOLMANAGER: undefined }, async () => {
-    assert.strictEqual(v4.cfg("robinhood"), null, "nothing in .env");
-    const found = await v4.discoverPoolManager("robinhood", TOKEN, depsWith(provider));
-    assert.strictEqual(found, ethers.getAddress(PM), "whatever emitted Initialize IS the PoolManager");
     const live = await v4.cfgLive("robinhood", TOKEN, depsWith(provider));
-    assert.ok(live && live.poolManager === ethers.getAddress(PM), "and the config builds off it");
+    assert.strictEqual(live.poolManager, v4.CANONICAL_V4.robinhood.poolManager, "Uniswap's, not the emitter's");
+  });
+});
+
+test("on an unlisted chain a discovered PoolManager can price, and is never sent a swap", async () => {
+  // The exploit this replaces, end to end: FAKE emits an Initialize naming the
+  // attacker's token and Swap logs naming the attacker's "router", and that
+  // router accepts ANY calldata — so the old election simulated it, elected it
+  // and sent it the user's value.
+  v4._resetDiscovery();
+  const ATTACKER_ROUTER = "0x" + "66".repeat(20);
+  const o = v4.orderCurrencies(TOKEN, v4.NATIVE);
+  const called = [];
+  const provider = {
+    ...fakeProvider([initLog(PM, o.currency0, o.currency1, 3000, 60, v4.NATIVE),
+      swapLog(PM, ATTACKER_ROUTER), swapLog(PM, ATTACKER_ROUTER), swapLog(PM, ATTACKER_ROUTER)]),
+    call: async ({ to }) => { called.push(String(to).toLowerCase()); return "0x"; },
+  };
+  await withEnv({ NOCHAIN_V4_POOLMANAGER: undefined, NOCHAIN_V4_UNIVERSAL_ROUTER: undefined }, async () => {
+    const found = await v4.discoverPoolManager("nochain", TOKEN, depsWith(provider));
+    assert.strictEqual(found, ethers.getAddress(PM), "discovery still answers, for the price");
+    const c = await v4.cfgLive("nochain", TOKEN, depsWith(provider));
+    assert.deepStrictEqual(await v4.routerCandidates("nochain", c, depsWith(provider)), [], "no router for it");
+    const r = await v4.prepareSwap(provider, "nochain", { ...POOL, tokenIsZero: false }, "0x" + "11".repeat(20),
+      { tokenIn: v4.NATIVE, amountIn: 1n, minOut: 1n, deadline: 1 }, depsWith(provider));
+    assert.ok(!r.call, "no swap is built");
+    assert.ok(!called.includes(ATTACKER_ROUTER), "and the attacker's router is never even simulated");
   });
 });
 
@@ -429,48 +462,62 @@ test("a pool quoted in something we cannot value is not a quote", async () => {
   });
 });
 
-test("the router is observed from the sender of a swap on this PoolManager", async () => {
+test("a Swap log's sender is never a router candidate, however busy it is", async () => {
+  // Anyone who swaps is a `sender`. A contract that dust-swaps through the REAL
+  // PoolManager a few hundred times used to top this list.
   v4._resetDiscovery();
-  const OTHER = "0x" + "22".repeat(20);
-  const provider = fakeProvider([
-    swapLog(PM, UR), swapLog(PM, UR), swapLog(PM, OTHER),
-    swapLog("0x" + "33".repeat(20), "0x" + "44".repeat(20)),   // another contract's Swap — not ours
-  ]);
-  await withEnv({ ROBINHOOD_V4_POOLMANAGER: PM, ROBINHOOD_V4_UNIVERSAL_ROUTER: undefined }, async () => {
+  const SPAMMER = "0x" + "22".repeat(20);
+  const canon = v4.CANONICAL_V4.robinhood;
+  const provider = fakeProvider(Array.from({ length: 50 }, () => swapLog(canon.poolManager, SPAMMER)));
+  await withEnv({ ROBINHOOD_V4_POOLMANAGER: undefined, ROBINHOOD_V4_UNIVERSAL_ROUTER: undefined }, async () => {
     const cands = await v4.routerCandidates("robinhood", v4.cfg("robinhood"), depsWith(provider));
-    assert.deepStrictEqual(cands.map((a) => a.toLowerCase()), [UR, OTHER], "busiest first, and only this manager's");
+    assert.deepStrictEqual(cands, canon.routers, "Uniswap's routers, in the published order, and only those");
+    assert.ok(!cands.some((a) => a.toLowerCase() === SPAMMER));
+  });
+});
+
+test("an operator's own PoolManager gets the operator's router, never the canonical ones", async () => {
+  // A router is built against one PoolManager; pointed at a fork it can only
+  // revert, so offering it would cost a simulation per trade for nothing.
+  v4._resetDiscovery();
+  await withEnv({ ROBINHOOD_V4_POOLMANAGER: PM, ROBINHOOD_V4_UNIVERSAL_ROUTER: undefined }, async () => {
+    assert.deepStrictEqual(await v4.routerCandidates("robinhood", v4.cfg("robinhood"), {}), []);
+  });
+  await withEnv({ ROBINHOOD_V4_POOLMANAGER: PM, ROBINHOOD_V4_UNIVERSAL_ROUTER: UR }, async () => {
+    const cands = await v4.routerCandidates("robinhood", v4.cfg("robinhood"), {});
+    assert.deepStrictEqual(cands.map((a) => a.toLowerCase()), [UR]);
   });
 });
 
 test("a candidate that cannot fill the swap never gets sent one", async () => {
-  // The safety rail the discovery half rests on: an address is elected by
-  // executing the exact calldata for free, not by looking plausible.
+  // Among the vouched-for routers, the election still runs: an older router
+  // that predates this action set reverts on our calldata and is skipped.
   v4._resetDiscovery();
-  const BAD = "0x" + "22".repeat(20);
+  const [first, second] = v4.CANONICAL_V4.robinhood.routers;
   const provider = {
-    ...fakeProvider([swapLog(PM, BAD), swapLog(PM, BAD), swapLog(PM, UR)]),
+    ...fakeProvider([]),
     call: async ({ to }) => {
-      if (String(to).toLowerCase() === BAD.toLowerCase()) throw new Error("execution reverted");
+      if (String(to).toLowerCase() === first.toLowerCase()) throw new Error("execution reverted");
       return "0x";
     },
   };
-  await withEnv({ ROBINHOOD_V4_POOLMANAGER: PM, ROBINHOOD_V4_UNIVERSAL_ROUTER: undefined }, async () => {
+  await withEnv({ ROBINHOOD_V4_POOLMANAGER: undefined, ROBINHOOD_V4_UNIVERSAL_ROUTER: undefined }, async () => {
     const pool = { ...POOL, tokenIsZero: false };
     const opts = { tokenIn: v4.NATIVE, amountIn: 1n, minOut: 1n, deadline: 1 };
     const r = await v4.prepareSwap(provider, "robinhood", pool, "0x" + "11".repeat(20), opts, depsWith(provider));
     assert.ok(r.call, "the one that simulates wins");
-    assert.strictEqual(r.router.toLowerCase(), UR, "even though it was the LESS busy candidate");
-    assert.strictEqual(r.call.to.toLowerCase(), UR);
+    assert.strictEqual(r.router, second, "even though it was listed second");
+    assert.strictEqual(r.call.to, second);
   });
 });
 
 test("when nothing can fill it, prepareSwap refuses instead of guessing", async () => {
   v4._resetDiscovery();
   const provider = {
-    ...fakeProvider([swapLog(PM, UR)]),
+    ...fakeProvider([]),
     call: async () => { throw new Error("execution reverted: bad actions"); },
   };
-  await withEnv({ ROBINHOOD_V4_POOLMANAGER: PM, ROBINHOOD_V4_UNIVERSAL_ROUTER: undefined }, async () => {
+  await withEnv({ ROBINHOOD_V4_POOLMANAGER: undefined, ROBINHOOD_V4_UNIVERSAL_ROUTER: undefined }, async () => {
     const r = await v4.prepareSwap(provider, "robinhood", { ...POOL, tokenIsZero: false },
       "0x" + "11".repeat(20), { tokenIn: v4.NATIVE, amountIn: 1n, minOut: 1n, deadline: 1 }, depsWith(provider));
     assert.ok(!r.call, "no call");
@@ -483,13 +530,12 @@ test("a demoted router goes to the back of the queue", async () => {
   // cannot just be skipped mid-trade — the next has no allowance either. Without
   // demotion the retry approves the same wrong address and fails identically.
   v4._resetDiscovery();
-  const OTHER = "0x" + "22".repeat(20);
-  const provider = fakeProvider([swapLog(PM, UR), swapLog(PM, UR), swapLog(PM, OTHER)]);
-  await withEnv({ ROBINHOOD_V4_POOLMANAGER: PM, ROBINHOOD_V4_UNIVERSAL_ROUTER: undefined }, async () => {
-    const deps = depsWith(provider);
-    assert.strictEqual((await v4.routerCandidates("robinhood", v4.cfg("robinhood"), deps))[0].toLowerCase(), UR);
-    v4.demoteRouter("robinhood", UR);
-    assert.strictEqual((await v4.routerCandidates("robinhood", v4.cfg("robinhood"), deps))[0].toLowerCase(), OTHER,
+  const [first, second] = v4.CANONICAL_V4.robinhood.routers;
+  await withEnv({ ROBINHOOD_V4_POOLMANAGER: undefined, ROBINHOOD_V4_UNIVERSAL_ROUTER: undefined }, async () => {
+    const deps = depsWith(fakeProvider([]));
+    assert.strictEqual((await v4.routerCandidates("robinhood", v4.cfg("robinhood"), deps))[0], first);
+    v4.demoteRouter("robinhood", first);
+    assert.strictEqual((await v4.routerCandidates("robinhood", v4.cfg("robinhood"), deps))[0], second,
       "the retry tries somebody else");
   });
 });

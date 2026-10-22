@@ -1439,7 +1439,9 @@ function broadcastMedia(media, orderId) {
 function listingBroadcast(coin, media) {
   const { text, extra } = payloadArgs(fmt.listingPost(coin), false);
   const body = media ? post.fitCaption({ text, entities: extra.entities || [] }) : { text, entities: extra.entities || [] };
-  return { text: body.text, entities: body.entities || [], media };
+  // The card's own parse mode travels with it: a template stored as HTML is
+  // markup the sender must parse, while a buyer's typed message never is.
+  return { text: body.text, entities: body.entities || [], media, parseMode: extra.parse_mode || null };
 }
 
 // ── Paid Mass DM ──────────────────────────────────────────────────────────
@@ -1485,6 +1487,7 @@ async function queueBroadcast(ctx, order, content, { autoSend = false } = {}) {
     const job = await massStore.createJob({
       text: p.text || "",
       entities: p.entities || [],
+      parseMode: p.parseMode || null,
       ...media,
       createdBy: order.buyerId,
       createdByUsername: order.buyerUsername || null,

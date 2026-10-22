@@ -85,7 +85,9 @@ test("the late scan only looks at pending orders young enough to be real", () =>
 
 test("a credited late payment is swept and fulfilled, in that order", () => {
   const rec = fss.readFileSync(require.resolve("../src/services/recovery.js"), "utf8");
-  const i = rec.indexOf('setStatus(o.id, "paid")');
+  // Marked paid through orders.claimPaid — the one crediting path that only
+  // one caller can win (paymentRace.test.js drives the race it closes).
+  const i = rec.indexOf("orders.claimPaid(o.id)");
   const s = rec.indexOf("sweepByAddress");
   const f = rec.indexOf('refulfil(tg, o, "late-paid")');
   assert.ok(i > -1 && s > i && f > s, "mark paid → sweep → fulfil");

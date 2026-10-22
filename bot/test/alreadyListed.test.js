@@ -205,3 +205,13 @@ test("answering clears a half-built form so the next message is not swallowed", 
   assert.strictEqual(c.session.awaitingField, undefined);
   assert.strictEqual(c.session.latest_bot_message, 1, "but the card it just sent is still tracked for editing");
 });
+
+test("⚠️ an ANONYMOUS pending submission does not hold the token hostage", async () => {
+  // /api/submit needs no account: a stranger typing the contract into it must
+  // not be able to refuse the real project's paid listing until an admin
+  // clears the queue. The site no longer inherits anything from that row.
+  listings([{ ...ROW, status: "pending", source: "submission" }]);
+  assert.strictEqual(await listed.existingListing(EVM, "robinhood"), null);
+  listings([{ ...ROW, status: "approved", source: "submission" }]);
+  assert.ok(await listed.existingListing(EVM, "robinhood"), "once an admin approved it, it is a listing like any other");
+});

@@ -26,11 +26,16 @@ function jobExtra(job, forCaption) {
       ? { caption: job.text, caption_entities: ents }
       : { entities: ents, disable_web_page_preview: true };
   }
+  // ⚠️ PLAIN unless the job says it is markup. This used to parse EVERY
+  // entity-less message as HTML, so a buyer's "price < $1" made Telegram refuse
+  // all 12,000 sends of a paid broadcast with a 400, and raw tags they typed
+  // were rendered. Only a card we rendered ourselves is HTML (store.createJob).
+  const html = job.parseMode === "HTML" ? { parse_mode: "HTML" } : {};
   return forCaption
     ? job.text
-      ? { caption: job.text, parse_mode: "HTML" }
+      ? { caption: job.text, ...html }
       : {}
-    : { parse_mode: "HTML", disable_web_page_preview: true };
+    : { ...html, disable_web_page_preview: true };
 }
 
 // ── Why a recipient did not get it ──────────────────────────────────────────
@@ -384,4 +389,4 @@ function start(telegram) {
   };
 }
 
-module.exports = { start, runJob, _sendMethod: sendMethod, _fileIdOf: fileIdOf, _notePremium: notePremium, _stripCustomEmoji: stripCustomEmoji, _customCount: customCount, _reportText: reportText, _noteFailure: noteFailure, _reachLine: reachLine, _failLine: failLine };
+module.exports = { start, runJob, _jobExtra: jobExtra, _sendMethod: sendMethod, _fileIdOf: fileIdOf, _notePremium: notePremium, _stripCustomEmoji: stripCustomEmoji, _customCount: customCount, _reportText: reportText, _noteFailure: noteFailure, _reachLine: reachLine, _failLine: failLine };

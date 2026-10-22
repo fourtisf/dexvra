@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { PRESERVED_ON_RELIST, keepStatus, mergeRelist } from "./relist.ts";
+import { PRESERVED_ON_RELIST, keepStatus, mergeRelist, relistBase } from "./relist.ts";
 
 // The row as it sits in the store: a project's uploaded artwork, the socials
 // they typed, and a trending slot somebody paid for and is still running.
@@ -128,4 +128,25 @@ test("demotion is still possible — it just is not a side effect of a create", 
   // `setStatus` is what an admin rejecting a listing calls, and it is untouched.
   // This rule is only about what CREATING something may do to a row that exists.
   assert.notEqual(keepStatus("approved", "pending"), "pending");
+});
+
+test("⚠️ a re-list inherits only from an APPROVED row — never an anonymous submission's links", () => {
+  // /api/submit is anonymous, and a rejected row is kept. A stranger's pending
+  // or rejected row for a victim token used to fill every field the real
+  // project's paid listing left blank — phishing website, X and Telegram — and
+  // keepStatus then promoted it to approved.
+  const stranger = {
+    website: "https://phish.example", twitter: "https://x.com/phish", telegram: "https://t.me/phish",
+    overview: "claim the airdrop at phish.example", logoUrl: "https://phish.example/logo.png",
+  };
+  const paid = { chain: "solana", address: "So1111", sym: "REAL", website: undefined, twitter: "" };
+  for (const status of ["pending", "rejected"]) {
+    const out = relistBase({ ...stranger, status }, paid);
+    for (const k of ["website", "twitter", "telegram", "overview", "logoUrl"] as const) {
+      assert.ok(!String((out as Record<string, unknown>)[k] ?? "").includes("phish"), `${status} row leaked ${k}`);
+    }
+  }
+  const approved = relistBase({ ...stranger, status: "approved" }, paid);
+  assert.equal((approved as Record<string, unknown>).website, stranger.website, "an approved row is still preserved, as before");
+  assert.deepEqual(relistBase(null, paid), paid, "and a first listing is taken as it stands");
 });

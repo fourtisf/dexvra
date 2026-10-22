@@ -20,7 +20,7 @@
  * Knowing an interface and being allowed to fill a swap are different things —
  * the line v4.js already draws between price() and canSwapLive().
  */
-const { classifySlots } = require('./curveIface.js');
+const { classifySlots, addrLike } = require('./curveIface.js');
 
 /**
  * ⚠️ EVERY AMOUNT THAT CROSSES THIS BOUNDARY IS NORMALISED, and `null` refuses.
@@ -76,7 +76,7 @@ function buildCurveCall(leg, opts) {
   if (leg.wide) return { ok: false, why: 'this curve takes more arguments than Dexvra reads, so the call cannot be rebuilt faithfully' };
 
   const cls = classifySlots(leg, token, { minSamples });
-  if (!cls.ok) return { ok: false, why: cls.why, slots: cls.slots, needsMoreTrades: /only \d+ sample/.test(cls.why || '') };
+  if (!cls.ok) return { ok: false, why: cls.why, slots: cls.slots, needsMoreTrades: !!cls.short || /only \d+ sample/.test(cls.why || '') };
 
   /*
    * ⚠️ EXACTLY ONE ARGUMENT MAY SCALE WITH THE TRADE.
@@ -342,7 +342,9 @@ function buildFromShape(shapeLeg, opts) {
       // The sibling's classify already refused a stranger's constant address;
       // re-checked here because the shape crossed a persistence boundary and a
       // stored file is not a proof.
-      if (/^0{24}[0-9a-fA-F]{40}$/.test(w) && !/^0+$/.test(w) && !/^0{8}/.test(w.slice(24))) {
+      // `addrLike`, not the four-zero-byte reading: a ground vanity address
+      // stored in curveShapes.json by the old rule must not survive the reload.
+      if (addrLike(w)) {
         return { ok: false, why: 'the learned shape carries a constant address that is neither the token nor the trader — refusing to replay it' };
       }
       if (!/^[0-9a-fA-F]{64}$/.test(w)) return { ok: false, why: 'the learned shape holds a malformed constant' };

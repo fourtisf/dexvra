@@ -20,7 +20,9 @@ const MAX_LIMIT = 50;
 
 export async function GET(req: NextRequest) {
   const chain = (req.nextUrl.searchParams.get("chain") ?? PONS.chain).trim();
-  const limit = Math.min(MAX_LIMIT, Math.max(1, Number(req.nextUrl.searchParams.get("limit")) || 20));
+  // TRUNCATED, because the value is a cache key: `limit=1.0001`, `1.0002`, … were
+  // each a fresh key and a fresh on-chain feed read against the shared public RPC.
+  const limit = Math.min(MAX_LIMIT, Math.max(1, Math.trunc(Number(req.nextUrl.searchParams.get("limit"))) || 20));
 
   if (!isPonsChain(chain)) {
     return NextResponse.json({ error: "no launch feed for this chain", chain }, { status: 404 });

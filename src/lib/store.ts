@@ -16,7 +16,7 @@ function fillSeedSocials(r: { sym: string; website?: string; twitter?: string; t
 import { kvGet, kvSet, mongoConfigured } from "./mongo";
 import { applyLostUpload, applyPinnedLogo, applyResolvedLogo, healUploadUrls } from "./logoWrite";
 import { applyHolderCount } from "./holderWrite";
-import { keepStatus, mergeRelist } from "./relist";
+import { keepStatus, relistBase } from "./relist";
 
 // Mongo mirror key for this store (doc _id in the `web` collection).
 const MIRROR_KEY = "listings";
@@ -137,11 +137,24 @@ async function persist(rows: StoredListing[]): Promise<void> {
   if (mongoConfigured()) void kvSet(MIRROR_KEY, rows);
 }
 
+/**
+ * What a mutation returns when it changed nothing, so nothing is written.
+ *
+ * ⚠️ `mutate` used to persist on EVERY call. `/api/holders` is public and calls
+ * setHolderCount for whatever address it is asked about — so a loop over
+ * arbitrary contracts rewrote the whole listings.json and fired a full-document
+ * Mongo mirror per request, queueing every bot and admin write behind it.
+ * The no-op guards in holderWrite/logoWrite decided correctly and saved
+ * nothing, because the write happened anyway.
+ */
+const NO_CHANGE: unique symbol = Symbol("no-change");
+
 /** Serialize mutations so concurrent writes never clobber each other. */
-function mutate(fn: (rows: StoredListing[]) => StoredListing[]): Promise<StoredListing[]> {
+function mutate(fn: (rows: StoredListing[]) => StoredListing[] | typeof NO_CHANGE): Promise<StoredListing[]> {
   const run = writeChain.then(async () => {
     const rows = await load();
     const next = fn(rows.map((r) => ({ ...r })));
+    if (next === NO_CHANGE) return rows;
     await persist(next);
     return next;
   });
@@ -176,7 +189,9 @@ export async function addListing(rec: ListingRow, opts?: { status?: ListingStatu
     // carried erased the logo the project uploaded, their socials, the
     // overview, and a trending window that was still running. See relist.ts;
     // clearing a field is the PATCH path's job, where "" means "clear this".
-    const base = dupIdx >= 0 ? mergeRelist(rows[dupIdx], rec) : rec;
+    // ⚠️ …AND ONLY FROM A ROW SOMEBODY APPROVED — see relistBase. A pending or
+    // rejected row may be an anonymous stranger's, phishing links and all.
+    const base = relistBase(dupIdx >= 0 ? rows[dupIdx] : null, rec);
     created = {
       ...base,
       id: dupIdx >= 0 ? rows[dupIdx].id : id,
@@ -257,7 +272,7 @@ export async function pinLogo(chain: string, address: string, fromUrl: string, t
   await mutate((rows) => {
     const out = applyPinnedLogo(rows, chain, address, fromUrl, toUrl);
     wrote = out.wrote;
-    return out.rows as StoredListing[];
+    return out.wrote ? (out.rows as StoredListing[]) : NO_CHANGE;
   });
   return wrote;
 }
@@ -268,7 +283,7 @@ export async function setHolderCount(chain: string, address: string, count: numb
   await mutate((rows) => {
     const out = applyHolderCount(rows, chain, address, count);
     wrote = out.wrote;
-    return out.rows as StoredListing[];
+    return out.wrote ? (out.rows as StoredListing[]) : NO_CHANGE;
   });
   return wrote;
 }
@@ -280,7 +295,7 @@ export async function setResolvedLogo(chain: string, address: string, logoUrl: s
     // a mutation property, and this file cannot be loaded by the test runner.
     const out = applyResolvedLogo(rows, chain, address, logoUrl);
     wrote = out.wrote;
-    return out.rows as StoredListing[];
+    return out.wrote ? (out.rows as StoredListing[]) : NO_CHANGE;
   });
   return wrote;
 }

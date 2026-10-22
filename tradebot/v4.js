@@ -87,14 +87,74 @@ const coder = ethers.AbiCoder.defaultAbiCoder();
 const _env = (k) => (process.env[k] || '').trim();
 const _isAddr = (a) => { try { return !!a && ethers.isAddress(a) && a !== ethers.ZeroAddress; } catch (_) { return false; } };
 
+// ── The deployments Uniswap itself published ────────────────────────────────
+//
+// ⚠️ THE ADDRESS THAT RECEIVES A USER'S MONEY MAY NEVER COME FROM A LOG.
+// Discovery used to take the PoolManager from "whatever contract emitted an
+// Initialize log naming this token", and the router from "whatever address
+// appears as `sender` in that contract's Swap logs". ANY contract can emit
+// either log. So a contract that emitted a fake Initialize for a token of its
+// own became the PoolManager for the WHOLE chain for six hours, its "router"
+// passed the simulation by accepting any calldata, and every v4 buy on that
+// chain sent its value there. Even on the REAL PoolManager, `sender` is anyone
+// who ever swapped: a contract that swaps a few dust amounts lands on the
+// candidate list and wins the same election. Simulation proves an address
+// ACCEPTS our call; it says nothing about whether it gives anything back.
+//
+// So the money path trusts exactly two sources: the operator's env, and the
+// list below. Source: github.com/Uniswap/contracts, deployments/json/<chainId>
+// .json (latest + history), read 2026-10-22. A router is listed only when it is
+// the `latest` one or its constructor names THIS PoolManager. Cross-checked:
+// Robinhood's V3 factory there is the one chains.js already trades through,
+// and the Ethereum/Base/BSC/Arbitrum routers include the widely published v4
+// Universal Routers. ⚠️ One history entry (Robinhood 0x06af…bf99) was stored
+// with an invalid EIP-55 checksum in that file; it is normalised here and kept
+// only because its constructor names the canonical PoolManager.
+const CANONICAL_V4 = Object.freeze({
+  robinhood: {
+    poolManager: '0x8366a39CC670B4001A1121B8F6A443A643e40951',
+    routers: ['0x204FAca1764B154221e35c0d20aBb3c525710498', '0x8876789976dEcBfCbBbe364623C63652db8C0904',
+      '0x248A454AC3584c2A48D1fCb28D3910a6B6Ea00Af', '0x06AfBA43Fd06227fA663b0DAecF536f6EaA6bf99'],
+  },
+  ethereum: {
+    poolManager: '0x000000000004444c5dc75cB358380D2e3dE08A90',
+    routers: ['0x23617e59A5925b2A4Bf75d73ff6711cD0b29De85', '0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af',
+      '0xab863E752Bf67D8DCDD929EaAe9Be9dc83Fb3BbB', '0x0542093271A31f6FC1DADB232bd59eeb27de780F',
+      '0xCb640A86855f1A828c27241bA364348de28abe66', '0x4C82D1fBFe28C977cBB58D8C7FF8FCF9F70a2cCA',
+      '0xd92A36B0000531EF3063dEd4De20A0783308446C'],
+  },
+  base: {
+    poolManager: '0x498581fF718922c3f8e6A244956aF099B2652b2b',
+    routers: ['0xd6145b2D3F379919E8CdEda7B97e37c4b2Ca9c40', '0x6fF5693b99212Da76ad316178A184AB56D299b43',
+      '0xF3A4F4094BD2c6C06cA2F61789d8727B8d1e7259', '0xBE2257d1aAfBE6B73F67A9ac971C2F0B344Bb3c5'],
+  },
+  bsc: {
+    poolManager: '0x28e2Ea090877bF75740558f6BFB36A5ffeE9e9dF',
+    routers: ['0xDc264714F68d84CF29BC605589405E78bDBE7C9f', '0x1906c1d672b88cD1B9aC7593301cA990F94Eae07',
+      '0x91BF3bfAEf8D771A74E1A8fE460b3EE646b2e588'],
+  },
+  arbitrum: {
+    poolManager: '0x360E68faCcca8cA495c1B759Fd9EEe466db9FB32',
+    routers: ['0x2d01411773c8C24805306E89A41F7855C3c4Fe65', '0xA51afAFe0263b40EdaEf0Df8781eA9aa03E381a3',
+      '0x96b2FD2F80e9428Daa65d859653117D453981AB4'],
+  },
+});
+const canonicalV4 = (chainKey) => CANONICAL_V4[String(chainKey).toLowerCase()] || null;
+
 /** v4 config for a chain, or null when it isn't set up.
+ *
+ *  The PoolManager is the operator's env first, then Uniswap's own published
+ *  deployment for the chain. `<CHAIN>_V4_AUTODISCOVER=0` still pins a chain to
+ *  its env alone, which is what that switch has always meant.
  *
  *  `poolManagerOverride` is how a DISCOVERED PoolManager (see cfgLive) reuses
  *  the rest of this — the fee tiers, the storage slot, the StateView — without a
  *  second copy of the env parsing that has already been wrong once. */
 function cfg(chainKey, poolManagerOverride) {
   const P = String(chainKey).toUpperCase();
-  const poolManager = _isAddr(poolManagerOverride) ? poolManagerOverride : _env(`${P}_V4_POOLMANAGER`);
+  const canon = _autoOk(chainKey) ? canonicalV4(chainKey) : null;
+  const poolManager = _isAddr(poolManagerOverride) ? poolManagerOverride
+    : (_env(`${P}_V4_POOLMANAGER`) || (canon ? canon.poolManager : ''));
   if (!_isAddr(poolManager)) return null;
   const stateView = _env(`${P}_V4_STATEVIEW`);
   // NOT Number(_env(...)) alone: an unset var is "", Number("") is 0, and 0 is
@@ -236,6 +296,13 @@ async function _initLogs(provider, chainKey, ca, poolManager) {
  *
  * Cached per CHAIN, not per token: a chain has one PoolManager, so the first
  * v4 token anyone pastes configures it for every token after it.
+ *
+ * ⚠️ Which is exactly why it is no longer trusted with money. Any contract can
+ * emit an Initialize log, so on a chain with no env and no CANONICAL_V4 entry
+ * the answer here can be an attacker's contract. cfg() now reaches Uniswap's
+ * published PoolManager before this runs, and routerCandidates() offers no
+ * router for a PoolManager nobody vouched for — so what this finds can PRICE a
+ * card, and can never be sent a swap.
  */
 async function discoverPoolManager(chainKey, ca, deps) {
   if (!_autoOk(chainKey)) return null;
@@ -398,41 +465,30 @@ async function discoverPoolKeys(ca, chainKey, c, deps) {
 }
 
 /**
- * Universal Router candidates for a chain: the env one first, then whatever
- * contracts have actually been observed filling swaps on this PoolManager.
+ * Universal Router candidates for a chain: the operator's env one first, then
+ * the routers Uniswap published for this chain — and NOTHING observed.
  *
- * `sender` on a v4 Swap log is the contract that unlocked the PoolManager, so
- * every address here has already executed a real v4 swap on this exact
- * deployment. That still is not proof it speaks the Universal Router's
- * `execute(bytes,bytes[],uint256)` — a position manager or an aggregator shows
- * up in the same list — which is why the caller ELECTS one by simulating the
- * swap it is about to sign against each in turn. An address that cannot fill
- * our calldata for free never gets to fill it for money.
+ * ⚠️ This list used to be the `sender` topics of the PoolManager's Swap logs.
+ * Anyone who swaps is a sender, and a contract that accepts any calldata passes
+ * the simulation that elects a router — so a few dust swaps from an attacker's
+ * contract put it in line for every user's value. See CANONICAL_V4.
+ *
+ * The canonical routers are offered only while the PoolManager IS the
+ * canonical one: a router is built against one PoolManager, and pointed at an
+ * operator's fork it can only revert. Such an operator sets
+ * <CHAIN>_V4_UNIVERSAL_ROUTER as well. The election below still decides which
+ * of the vouched-for routers can fill THIS swap. `deps` is unused now and kept
+ * so no caller has to change.
  */
+// eslint-disable-next-line no-unused-vars
 async function routerCandidates(chainKey, c, deps) {
   const out = [];
   const rc = routerCfg(chainKey);
   if (rc) out.push(rc.router);
-  if (!_autoOk(chainKey) || !c) return out;
-  const ck = `ur:${chainKey}`;
-  let found = _lookup(ck);
-  if (found === undefined) {
-    let provider; try { provider = deps.providerFor(chainKey); } catch (_) { provider = null; }
-    const logs = provider ? await _scanLogs(provider, chainKey, { address: c.poolManager, topics: [SWAP_TOPIC], limit: 120 }) : [];
-    const tally = new Map();
-    for (const l of logs) {
-      const t = l && Array.isArray(l.topics) ? l.topics[2] : null;
-      if (!t || t.length !== 66) continue;
-      let a; try { a = ethers.getAddress('0x' + t.slice(26)); } catch (_) { continue; }
-      if (a === ethers.ZeroAddress) continue;
-      if (a.toLowerCase() === String(c.poolManager).toLowerCase()) continue;
-      tally.set(a, (tally.get(a) || 0) + 1);
-    }
-    // Busiest first: the router the deployment's own UI uses is the one most of
-    // its swaps came through, so the election below usually ends on the first try.
-    found = _cached(ck, [...tally.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([a]) => a), CHAIN_MISS_TTL_MS);
+  const canon = canonicalV4(chainKey);
+  if (canon && c && String(c.poolManager).toLowerCase() === canon.poolManager.toLowerCase()) {
+    for (const a of canon.routers) if (!out.some((x) => x.toLowerCase() === a.toLowerCase())) out.push(a);
   }
-  for (const a of found || []) if (!out.some((x) => x.toLowerCase() === a.toLowerCase())) out.push(a);
   // The router that has already filled a swap on this chain goes first, and a
   // demoted one goes last. Election is per chain and outlives the trade that
   // did it: without that, a SELL — which has to approve before it can simulate —
@@ -579,7 +635,7 @@ function priceNativeFromSqrt(sqrtPriceX96, tokenDecimals, tokenIsZero) {
  * what a v4-era launch actually pairs against — checking only WETH would miss
  * the common case entirely.
  */
-async function bestPool(ca, chainKey, deps) {
+async function bestPool(ca, chainKey, deps, trade) {
   const c = await cfgLive(chainKey, ca, deps);
   if (!c) return null;
   const chain = deps.chainOf(chainKey);
@@ -630,7 +686,46 @@ async function bestPool(ca, chainKey, deps) {
   // Deepest by in-range liquidity. A pool that is initialised but empty prices
   // at whatever it was initialised to, which is not a market.
   found.sort((a, b) => (a.liquidity > b.liquidity ? -1 : a.liquidity < b.liquidity ? 1 : 0));
-  return found[0];
+  return pickForTrade(found, ca, chain, trade);
+}
+
+/**
+ * Which of the pools found should THIS trade go through.
+ *
+ * ⚠️ RAW `liquidity` IS NOT DEPTH, AND IT IS CHEAP TO FAKE. Anyone can
+ * initialise a pool for any token on the real PoolManager, at any price, in a
+ * fee tier nobody uses — and a position in a one-tick range carries an enormous
+ * L for very little capital. Ranked by L alone, that pool wins, and minOut is
+ * then computed from the attacker's own price, so the user fills at it with
+ * their slippage intact. So a trade is routed to the pool that PAYS IT THE MOST
+ * for its actual size: an inflated-price pool pays fewer tokens and loses; a
+ * "too good" one with no real depth behind it makes the quote overstate the
+ * fill, minOut reverts the swap, and nothing is spent. It is what an aggregator
+ * does, and it needs no outside price.
+ *
+ * Only pools in the SAME quote class as the deepest one are compared — ETH and
+ * WETH are one class — because a payout in NVDA and a payout in ETH are not
+ * numbers that can be ranked against each other. With no trade size (a card
+ * render) the deepest pool is still the answer, as before.
+ */
+function pickForTrade(found, ca, chain, trade) {
+  const top = found[0];
+  const amountIn = trade && trade.amountIn != null ? BigInt(trade.amountIn) : 0n;
+  if (!top || amountIn <= 0n) return top || null;
+  const weth = _isAddr(chain && chain.weth) ? String(chain.weth).toLowerCase() : '';
+  const klass = (q) => { const s = String(q).toLowerCase(); return s === NATIVE || s === weth ? 'native' : s; };
+  const want = klass(top.quote);
+  // A BUY into a foreign-quoted pool is sized in that token only after leg one
+  // has run, so the native amount here is in the wrong unit to rank by.
+  if (trade.side !== 'sell' && want !== 'native') return top;
+  const out = (p) => quoteExactIn(p, amountIn, trade.side === 'sell' ? ca : p.quote);
+  let best = top, bestOut = out(top);
+  for (const p of found) {
+    if (p === top || klass(p.quote) !== want) continue;
+    const o = out(p);
+    if (o > bestOut) { best = p; bestOut = o; }
+  }
+  return best;
 }
 
 /**
@@ -896,13 +991,13 @@ async function permit2Calls(provider, chainKey, token, owner, amount, router) {
 }
 
 module.exports = {
-  cfg, cfgLive, enabled, poolId, orderCurrencies, poolState, bestPool, price, priceNativeFromSqrt, tradePoolKeys,
+  cfg, cfgLive, enabled, poolId, orderCurrencies, poolState, bestPool, pickForTrade, price, priceNativeFromSqrt, tradePoolKeys,
   quoteExactIn, discoverPoolManager, discoverPoolKeys, routerCandidates, electRouter, demoteRouter,
   routerCfg, canSwap, canSwapLive, swapCalldata, simulate, prepareSwap, permit2Calls,
   // Whether this chain may DISCOVER its v4 deployment, as opposed to having one
   // pinned in env. The boot log needs the difference: unset env is not "no v4".
   autoOk: _autoOk,
-  NATIVE, DEFAULT_TIERS, DEFAULT_POOLS_SLOT, CMD_V4_SWAP, CANONICAL_PERMIT2,
+  NATIVE, DEFAULT_TIERS, DEFAULT_POOLS_SLOT, CMD_V4_SWAP, CANONICAL_PERMIT2, CANONICAL_V4,
   INITIALIZE_EVENT, INITIALIZE_TOPIC, SWAP_TOPIC,
   _resetDiscovery,
 };

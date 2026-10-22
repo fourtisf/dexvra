@@ -20,8 +20,19 @@ const tpl = require("../templates");
 const log = require("./logger");
 
 // A rejected row is not a listing — it was refused, so a fresh attempt has to be
-// allowed through. approved and pending both occupy the slot.
+// allowed through. approved and pending both occupy the slot…
 const BLOCKING = new Set(["approved", "pending"]);
+// ⚠️ …EXCEPT A PENDING ROW FROM THE ANONYMOUS PUBLIC FORM. `/api/submit` needs
+// no account and no payment, so a stranger who typed a token's contract into
+// it held that token hostage: every paid listing of it was refused "already
+// listed" until an admin got round to the queue. Nobody vouched for that row;
+// the paid create replaces it, and the site no longer inherits a single field
+// from it (src/lib/relist.ts relistBase). An approved row always blocks.
+const blocks = (r) => {
+  const st = r.status || "approved";
+  if (!BLOCKING.has(st)) return false;
+  return !(st === "pending" && r.source === "submission");
+};
 const sameAddr = (a, b) => String(a || "").toLowerCase() === String(b || "").toLowerCase();
 
 /** The listing that already owns this contract, or null.
@@ -35,7 +46,7 @@ async function existingListing(address, chain) {
   const rows = await api.getListings();
   return (
     rows.find(
-      (r) => (!chain || r.chain === chain) && sameAddr(r.address, addr) && BLOCKING.has(r.status || "approved"),
+      (r) => (!chain || r.chain === chain) && sameAddr(r.address, addr) && blocks(r),
     ) || null
   );
 }

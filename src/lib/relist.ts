@@ -81,6 +81,26 @@ export function mergeRelist<T extends Relistable>(prev: Relistable, next: T): T 
   return out;
 }
 
+/**
+ * The base a re-list is built on: the stored row merged in, or nothing.
+ *
+ * ⚠️ ONLY AN APPROVED ROW IS INHERITED FROM. `/api/submit` is anonymous, so a
+ * pending row — and a REJECTED one, which is kept rather than deleted — can be
+ * a stranger's: a victim token's contract with phishing links for its website,
+ * X and Telegram and an overview saying "claim the airdrop here". When the real
+ * project later bought a listing, the bot's create carried only the fields the
+ * buyer filled in, mergeRelist filled every blank from the stranger's row, and
+ * keepStatus promoted it to approved — so the paying project went live with the
+ * attacker's links on it. An approved row is content somebody vouched for; any
+ * other row is not, and the incoming create is taken as it stands.
+ */
+export function relistBase<T extends Relistable>(
+  prev: (Relistable & { status?: string }) | null | undefined,
+  next: T,
+): T {
+  return prev && prev.status === "approved" ? mergeRelist(prev, next) : { ...next };
+}
+
 /** "The payload did not carry this." A blank string counts: it is what an
  *  untouched form field and a stripped-out value both arrive as, and reading
  *  it as an instruction to delete is the whole defect. */

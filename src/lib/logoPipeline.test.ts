@@ -65,7 +65,11 @@ test("⚠️ a re-list may fill a listing's fields, never blank them", () => {
   // as `undefined`. So every re-POST of a token the site already carried erased
   // the logo the project uploaded, their socials, the overview, and a trending
   // window that was still running. Nothing failed and nothing said so.
-  assert.match(STORE, /mergeRelist\(rows\[dupIdx\], rec\)/);
+  // Through relistBase, which merges an APPROVED row and nothing else (an
+  // anonymous submission is not inherited from — relist.test.ts drives both).
+  assert.match(STORE, /relistBase\(dupIdx >= 0 \? rows\[dupIdx\] : null, rec\)/);
+  assert.match(read("src/lib/relist.ts"), /\? mergeRelist\(prev, next\)/,
+    "and relistBase still fills blanks from the row it does inherit from");
   assert.ok(
     !/created = \{\s*\.\.\.rec,\s*id: dupIdx >= 0/.test(STORE),
     "the wholesale overwrite is gone",

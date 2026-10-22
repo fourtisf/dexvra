@@ -47,12 +47,23 @@ async function refulfil(tg, order, why) {
   }
 }
 
+// When each pending order was last looked at by the scan, in memory.
+//
+// ⚠️ NEWEST-FIRST WAS A STARVATION BUG. Every pay-card tap mints an order, the
+// scan reads only MAX_PER_SCAN of them, and newest-first meant ~30 abandoned
+// taps every ten minutes kept a real buyer who paid late (after the watcher, or
+// across a restart) out of the window for good — never credited, never swept,
+// never fulfilled. Least-recently-checked first (never-checked leading) reaches
+// every order within ceil(n / MAX_PER_SCAN) scans, whatever arrives after it.
+const lastChecked = new Map();
+
 /** Pending orders young enough that a late payment is still plausible. */
 function pendingCandidates(now = Date.now()) {
-  return orders
+  const due = orders
     .allOrders()
-    .filter((o) => o.status === "pending" && !o.adminFree && o.amountSmallest && o.address && now - o.createdAt < DAY)
-    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    .filter((o) => o.status === "pending" && !o.adminFree && o.amountSmallest && o.address && now - o.createdAt < DAY);
+  for (const id of lastChecked.keys()) if (!due.some((o) => o.id === id)) lastChecked.delete(id);
+  return due.sort((a, b) => (lastChecked.get(a.id) || 0) - (lastChecked.get(b.id) || 0) || (b.createdAt || 0) - (a.createdAt || 0));
 }
 
 /** Credit + fulfil + sweep any pending order whose funds have landed.
@@ -64,14 +75,18 @@ async function checkLatePayments(tg) {
   let credited = 0;
   for (const o of due.slice(0, MAX_PER_SCAN)) {
     try {
+      lastChecked.set(o.id, Date.now());
       const bal = await wallets.getBalance(o.chain, o.address);
       checked++;
       // The SAME threshold the Confirm button uses — including the operator's
       // tolerance — so the two paths can never disagree about who has paid.
       if (BigInt(bal) < verify.acceptThreshold(o.amountSmallest)) continue;
+      // `o` is a snapshot taken before that await; the Confirm tap or its
+      // watcher may have credited and fulfilled it since. Only the winner of
+      // the claim fulfils — see orders.claimPaid.
+      if (!(await orders.claimPaid(o.id))) continue;
       credited++;
       log.warn(`[recovery] late payment detected on ${o.chain}/${o.address} (order ${o.id}) — crediting`);
-      await orders.setStatus(o.id, "paid");
       wallets.sweepByAddress(o.chain, o.address).catch((e) => log.warn(`[recovery] sweep threw: ${e.message}`));
       await refulfil(tg, o, "late-paid");
     } catch (e) {
@@ -111,4 +126,4 @@ function start(tg) {
   };
 }
 
-module.exports = { runRecovery, checkLatePayments, pendingCandidates, start };
+module.exports = { runRecovery, checkLatePayments, pendingCandidates, start, _lastChecked: lastChecked };

@@ -14627,6 +14627,143 @@ widens the per-host slice. ⚠️ `tradebot/` only, so the deploy is
 rebuild.
 
 
+## "Coba lakukan audit agar website dan bot safe" — the 2026-10-22 security audit
+
+Three independent read-only reviews (web, bot, tradebot), every finding then
+VERIFIED against the code before it was touched, every fix driven by a test that
+fails on the old code. "Is it PHP?" was the question that started it: no — there
+is not one `.php` file here; the stack is Next.js + Node, and the real exposure
+was in our own code and our dependencies.
+
+### Money-path fixes (tradebot)
+
+- ⚠️ **THE ADDRESS THAT RECEIVES A USER'S MONEY MAY NEVER COME FROM A LOG.**
+  `v4.js` took the PoolManager from whatever contract emitted an Initialize log
+  naming the token (cached chain-wide, 6h), and the router from the `sender` of
+  Swap logs. ANY contract can emit those logs, and anyone who swaps is a sender;
+  a contract that accepts any calldata passes the election simulation. So one
+  forged log made an attacker's contract every user's v4 router. **`CANONICAL_V4`**
+  is Uniswap's own published deployment per chain (github.com/Uniswap/contracts
+  `deployments/json/<chainId>.json`, cross-checked against the V3 factory chains.js
+  already trades through); the money path trusts that list and the operator's
+  env, nothing observed. A discovered PoolManager can still PRICE a card on an
+  unlisted chain and is never sent a swap. `<CHAIN>_V4_AUTODISCOVER=0` still
+  means env alone. ⚠️ One entry in Uniswap's own file has a broken EIP-55
+  checksum; it is normalised and kept only because its constructor names the
+  canonical PoolManager.
+- **`canTradeNow`'s v4 leg asks about THIS token's pool**, not the chain.
+  `canSwapLive` is a chain-level yes, which used to be hidden by discovery and
+  would now have fired every armed snipe at tokens with no pool. Misses are
+  remembered `V4_PROBE_MISS_MS` (4s — a launch's pool can appear a second later).
+- **The v4 pool is chosen by what it PAYS this trade** (`v4.pickForTrade`), not
+  by raw `liquidity` — a one-tick position at an attacker's price carries a huge
+  L for little capital, and minOut was then computed from the attacker's price.
+  Compared within one quote class only (ETH = WETH). **Plus a divergence guard**
+  (`_v4Guard`, `V4_MAX_QUOTE_DIVERGENCE`, default 2×) against the indexer's USD
+  price over Coinbase spot — the Solana guard's rule and wording, so `err.diverged`
+  explains it; an unreadable reference never blocks a trade.
+- ⚠️ **A GROUND VANITY ADDRESS WAS REPLAYED AS A "CONSTANT".** `wordAddr` calls
+  an address with four leading zero bytes a number (2^32 work to grind), so a
+  recipient slot set to one was copied into every victim's curve buy — tokens
+  minted to the attacker, and the learned shape carried it to every fresh launch
+  on the pad. `addrLike` (12 zero bytes, value ≥ 2^64) decides refusal; and since
+  no magnitude separates a big AMOUNT from an address, the SAMPLES do: constant
+  across varied sizes → refused; equal sizes → `short`, which falls back to the
+  pad's learned shape, never to replaying the word. `buildFromShape` re-checks
+  stored shapes.
+- **The curve is the holder of the unsold supply**, not the most-called
+  contract — a count is something an attacker can buy. With several candidates
+  the one holding the most of the token wins (all reads must answer, ties keep
+  the count's pick). ⚠️ Residual: a window flooded so completely that the real
+  curve is not a candidate at all is not caught by this; binding the curve to the
+  factory's launch log is the next step if that is ever seen.
+
+### Money-path fixes (bot)
+
+- **The Broadcast add-on is offered only on listing orders** (`ADDON_KINDS`).
+  It was gated on the currency alone, so trending/banner/Mass DM orders were
+  charged the fee and sent nothing — only `fulfillListing` reads it.
+- **…and cannot be toggled once ✅ Confirm is checking** (`payment.inFlight`, or a
+  non-pending stored status). The watcher polls the amount it started with, so a
+  buyer could add it after Confirm, pay the base price and broadcast free.
+- **`orders.claimPaid` is the one pending → paid transition**, used by the
+  Confirm tap, the watcher and recovery. Recovery read a SNAPSHOT then awaited a
+  balance; a watcher that credited in between was followed by a second
+  fulfilment of one payment. Check-and-set with no await between = atomic in
+  `dexvra-bot`, which is the only process that credits.
+- **The late-payment scan is least-recently-checked first**, not newest first —
+  thirty abandoned pay-card taps every ten minutes kept a real late payer out of
+  the window forever.
+- **A buyer's Mass DM text is never parsed as HTML** (`job.parseMode`, set only
+  for a card we rendered as markup). One `<` failed all sends of a paid
+  broadcast; a typed `<a href>` would have reached every inbox as a link.
+- **An anonymous pending submission no longer blocks a paid listing**
+  (`listedGuard` `blocks()`): `/api/submit` needs no account, so typing a
+  contract into it held the token hostage until an admin cleared the queue.
+
+### Web app fixes
+
+- ⚠️ **A re-list inherits only from an APPROVED row** (`relist.ts` `relistBase`).
+  A stranger's pending or rejected submission (kept, not deleted) carrying
+  phishing links filled every blank of the real project's later paid listing,
+  and `keepStatus` promoted it to approved.
+- **`mutate` writes nothing when nothing changed** (`NO_CHANGE`): public
+  `/api/holders` rewrote the whole listings.json + Mongo mirror per request.
+- `/api/pons/launches` truncates `limit` (it is a cache key); `token-preview`'s
+  uncached `?debug=1` needs the internal token (it spent the site's ~5/min GT
+  budget per call).
+- Baseline headers from `next.config.mjs` (frame-ancestors/X-Frame-Options,
+  nosniff, Referrer-Policy, Permissions-Policy, HSTS without includeSubDomains).
+  The CSP is scoped to pages so `/api/logo` and `/api/media` keep their own
+  sandbox CSP — **measured with a real build and curl**, not assumed.
+  `/api/media` now sends nosniff + sandbox CSP (buyer bytes, magic-byte checked).
+
+### Dependencies
+
+- `bot/`: 0 high/critical (was 5 high). `tronweb` pins axios 1.18.0 and its
+  ethers pins ws 8.17.1 even at its latest version, so `overrides` force axios
+  ≥1.20 and ws ≥8.21 under it. The 5 moderates left are all under
+  `@solana/web3.js` 1.x (uuid via rpc-websockets — v4 only, not the vulnerable
+  `buf` path; stream-json — fed only by our own RPC endpoints); the fix is the
+  3.x rewrite.
+- `tradebot/`: unchanged on purpose. Its 3 highs are `bigint-buffer` under
+  `@solana/spl-token` with no fixed version (npm suggests a DOWNGRADE to 0.1.8);
+  a lockfile churn with no security gain is not worth it in the package holding
+  users' keys. ⚠️ Do not run `npm audit fix --force` there.
+- Web: `nanoid`, `source-map-js` updated. ⚠️ **Next.js 14.2.35 remains**, with
+  22 advisories and no 14.x patch. The two criticals are NOT reachable here
+  (Linux host; `images.unoptimized: true` makes `/_next/image` 404 — verified in
+  the 14.2.35 source; **do not remove that flag before upgrading**). The reachable
+  ones are DoS-class in Server Components. Upgrading to 15.5.x (React 19, async
+  request APIs) is its own project.
+- ⚠️ **Node 18 is end-of-life (April 2025)** and is what production runs. Next 16
+  needs Node 20+. Upgrading Node on the box comes first.
+
+### Recorded, not changed (operator decisions)
+
+- `@dexvraceo` is admin BY USERNAME; a released/changed handle hands its holder
+  the admin bot and free orders. Replace with the numeric id when known.
+- `PK_CHANNEL` receives plaintext temp-wallet keys by design; anyone in that
+  channel can front-run a sweep. `WALLET_ENC_KEY` is optional.
+- The tradebot's daily store backup (encrypted keys + mnemonics) defaults to the
+  ops/report channel; the KDF is scrypt over `WALLET_SECRET` with a fixed salt.
+  A long random `WALLET_SECRET` and a dedicated backup channel are the levers.
+- Paid listings need no proof of token ownership, and the Broadcast add-on DMs
+  the buyer-supplied links with no review.
+- Admin login lockout is global (any client can keep the admin locked out);
+  `next start` binds 0.0.0.0 — `-H 127.0.0.1` once nginx is confirmed to proxy
+  to localhost.
+
+```bash
+cd tradebot && SKIP_DOTENV=1 node --test v4.test.js v4Trust.test.js curveVanity.test.js
+cd bot && node scripts/run-tests.js test/broadcastAddonGuard.test.js test/paymentRace.test.js test/massdmParse.test.js test/alreadyListed.test.js
+node --test --experimental-strip-types src/lib/relist.test.ts
+```
+
+**Config a fix depends on:** nothing. ⚠️ This touches `src/`, `bot/` and
+`tradebot/`, so `npm run deploy` rebuilds the site and restarts all four
+processes. `V4_MAX_QUOTE_DIVERGENCE`, `V4_PROBE_MISS_MS` are the new knobs.
+
 ## Conventions
 
 - Tests live beside the code they cover, in `bot/test/`, `tradebot/*.test.js`

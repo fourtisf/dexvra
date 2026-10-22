@@ -3,6 +3,7 @@
 // pay_card_admin); the picker is pay_pick.
 const { Markup } = require("telegraf");
 const { armPayment } = require("../payments/payment");
+const payment = require("../payments/payment");
 const { addAmount, subAmount, toSmallest } = require("../payments/units");
 const orders = require("../payments/orders");
 const { sendCard, answer, toast } = require("../helpers/message");
@@ -120,8 +121,16 @@ async function startPayment(ctx, order) {
 // counts toward it.
 const addon = require("../config/broadcastAddon");
 
+// ⚠️ ONLY A LISTING DELIVERS THE BROADCAST. The pay card is shared by every
+// flow, and gating this on the CURRENCY alone put "➕ Add Broadcast (+2 SOL)" on
+// trending, banner and Mass DM orders too — which charged the fee and sent
+// nothing, because only fulfillListing reads `payload.broadcast`. One set, so
+// the button and the fulfilment cannot disagree about which orders it means.
+const ADDON_KINDS = new Set(["xpress_listing", "tiered_listing"]);
+
 /** The fee this ARMED order would pay, or null when it cannot take the add-on. */
-const addonFee = (order) => addon.addonPriceForNative(order && order.native);
+const addonFee = (order) =>
+  order && ADDON_KINDS.has(order.kind) ? addon.addonPriceForNative(order.native) : null;
 
 const hasBroadcast = (order) => Boolean(order && order.payload && order.payload.broadcast);
 
@@ -254,6 +263,15 @@ async function broadcastToggle(ctx) {
   // be charged or refunded off a stale button.
   const fee = addonFee(order);
   if (fee == null) return redrawPending(ctx);
+  // ⚠️ NOT ONCE CONFIRM HAS BEEN TAPPED. The watcher polls against the amount
+  // the order had when it started, so raising it afterwards let a buyer send the
+  // base price, be credited, and get a broadcast to the whole audience for free
+  // — and lowering it would leave a paid-for add-on undelivered. The durable
+  // status covers a watcher that already finished.
+  const live = orders.getOrder(order.id);
+  if (payment.inFlight(order.id) || (live && live.status !== "pending")) {
+    return toast(ctx, tpl.render("still_checking"));
+  }
 
   const on = hasBroadcast(order);
   const payload = { ...(order.payload || {}) };

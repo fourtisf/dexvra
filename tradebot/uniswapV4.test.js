@@ -295,7 +295,10 @@ test("⚠️ the v4 buy pays in the pool's OWN quote, not 'native or else WETH'"
   // with the native amount prices the trade in the wrong unit entirely.
   assert.match(body, /v4\.quoteExactIn\(p4, payAmt, payWith\)/, "the quote is still sized in native");
   assert.match(body, /amountIn: payAmt/, "the swap is still built with the native amount");
-  assert.ok(!/amountIn: spend/.test(body), "a native amount still reaches the v4 swap");
+  // The SWAP's options, specifically: the pool CHOICE is handed the native
+  // size on purpose (v4.pickForTrade ranks only native-class pools by it, and
+  // keeps the deepest pool for a foreign-quoted buy).
+  assert.ok(!/tokenIn: [^,}]+, amountIn: spend/.test(body), "a native amount still reaches the v4 swap");
 });
 
 test("⚠️ …and every failure after leg one SAYS what the wallet is holding", () => {

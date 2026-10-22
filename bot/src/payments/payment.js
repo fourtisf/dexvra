@@ -142,7 +142,13 @@ async function confirmPayHandler(ctx) {
     }
 
     if (paid) {
-      await orders.setStatus(order.id, "paid").catch(() => {});
+      // ONE crediting path wins — see orders.claimPaid. Losing means recovery
+      // or a watcher already credited it and is carrying the fulfilment.
+      if (!(await orders.claimPaid(order.id).catch(() => true))) {
+        ctx.session.pendingPayment = null;
+        await toast(ctx, tpl.render("payment_already_credited", { order: order.id }));
+        return;
+      }
       // The payment is confirmed, so the pending card is spent. Cleared HERE,
       // while the middleware chain still owns the session: Telegraf writes
       // ctx.session back after next() resolves, so the same assignment made from
@@ -234,7 +240,10 @@ async function watchPayment(ctx, order, address) {
       ).catch(() => {});
       return;
     }
-    await orders.setStatus(order.id, "paid").catch(() => {});
+    if (!(await orders.claimPaid(order.id).catch(() => true))) {
+      log.info(`[pay] order ${order.id} funded, but already credited elsewhere (recovery) — not fulfilling twice`);
+      return;
+    }
     log.info(`[pay] order ${order.id} funded after ${secs()}s (watched off the tap)`);
     await runFulfilment(ctx, order, false);
   } catch (e) {
@@ -333,4 +342,9 @@ async function runFulfilment(ctx, order, adminFree) {
   }
 }
 
-module.exports = { armPayment, confirmPayHandler, newOrderId, humanWithSymbol };
+/** Is this order's payment being checked or fulfilled right now? Read by the
+ *  pay card's add-on toggle: an amount that moves while a watcher is polling
+ *  against the old one is credited at the old one. */
+const inFlight = (id) => verifying.has(id) || fulfilling.has(id);
+
+module.exports = { armPayment, confirmPayHandler, newOrderId, humanWithSymbol, inFlight };

@@ -2811,6 +2811,39 @@ function _curveWarm(ca, chainKey) {
   _curveIface(chainKey, ca).catch(() => {});
 }
 
+/*
+ * ⚠️ `v4.canSwapLive` ANSWERS FOR THE CHAIN, NOT FOR THIS TOKEN. It says a v4
+ * route exists on this chain at all; it never asked whether this token has a
+ * pool. That used to be hidden by discovery, which found the PoolManager from
+ * THIS token's own Initialize log — until the first v4 token pasted cached it
+ * for the chain, after which every token answered yes. With Uniswap's
+ * published PoolManager now always known, it would answer yes for every token
+ * on every listed chain, and every armed snipe would fire at a token with no
+ * pool to buy from. So: a pool for THIS token, with liquidity in it, and a
+ * route. A miss is remembered for V4_PROBE_MISS_MS, because this is polled on a
+ * timer and a pool lookup is several RPC reads — and kept SHORT, because a
+ * launch's pool can appear a second after the first probe, and a snipe that
+ * waited out a long miss would arrive late to the one launch it was armed for.
+ */
+const V4_PROBE_MISS_MS = Math.max(0, Number(process.env.V4_PROBE_MISS_MS || 4000));
+const _v4ProbeMiss = new Map();
+async function _v4Tradeable(ca, chainKey) {
+  const k = `${chainKey}:${String(ca).toLowerCase()}`;
+  const miss = _v4ProbeMiss.get(k);
+  if (miss && Date.now() - miss < V4_PROBE_MISS_MS) return false;
+  const deps = { chainOf, providerFor };
+  let ok = false;
+  if (await v4.canSwapLive(ca, chainKey, deps).catch(() => false)) {
+    const p4 = await v4.bestPool(ca, chainKey, deps).catch(() => null);
+    ok = !!p4 && BigInt(p4.liquidity || 0) > 0n;
+  }
+  if (!ok) {
+    _v4ProbeMiss.set(k, Date.now());
+    if (_v4ProbeMiss.size > 500) _v4ProbeMiss.delete(_v4ProbeMiss.keys().next().value);
+  } else _v4ProbeMiss.delete(k);
+  return ok;
+}
+
 async function canTradeNow(ca, chainKey) {
   try {
     if (isSvm(chainKey)) return await _solRoutable(ca);
@@ -2825,7 +2858,7 @@ async function canTradeNow(ca, chainKey) {
     // contract waiting for liquidity, and buying into it is how a snipe fills at
     // an arbitrary price. The reserve is the launch, not the pair.
     if (pick && pick.wethBal != null && pick.wethBal > 0n) return true;
-    if (await v4.canSwapLive(ca, chainKey, { chainOf, providerFor }).catch(() => false)) return true;
+    if (await _v4Tradeable(ca, chainKey)) return true;
     /*
      * ⚠️ THE CURVE LEG. It ANSWERS from the cache only — and it WARMS the
      * cache in the background, paced, because a cache nothing ever fills is a
@@ -3992,6 +4025,41 @@ async function _withdrawSol(u, to, amount, chainKey, walletId, guarded) {
 }
 
 // ---------------------------------------------------------------- v4 approvals
+/*
+ * THE v4 DIVERGENCE GUARD — the Solana one, on the venue whose pool can be PLANTED.
+ *
+ * Anyone can initialise a v4 pool for any token on the real PoolManager at any
+ * price, and minOut is computed from the chosen pool's own state, so a pool at
+ * an attacker's price fills at that price with the user's slippage intact.
+ * `v4.pickForTrade` already routes to the pool that pays the most; this is the
+ * second line, and it needs a price nobody on-chain can set: the indexer's USD
+ * price over Coinbase's native spot. Started concurrently with the quote, held
+ * for at most GUARD_REF_WAIT_MS, and — exactly as on Solana — a reference that
+ * cannot be read is never a reason to block a trade. The sentence reuses
+ * Solana's wording, so i18n's `err.diverged` explains it in both languages.
+ */
+const V4_MAX_DIVERGENCE = Math.max(0, Number(process.env.V4_MAX_QUOTE_DIVERGENCE || 2));
+function _v4RefStart(ca, chainKey) {
+  const p = withTmo(Promise.all([marketOf(ca, chainKey).catch(() => null), ethUsd(chainKey).catch(() => 0)])
+    .then(([m, usd]) => (m && m.priceUsd > 0 && usd > 0 ? m.priceUsd / usd : 0)), 5000, 0);
+  p.catch(() => {});
+  return p;
+}
+/** Throws when `nativePerToken` (what this trade actually pays or gets) is more
+ *  than V4_MAX_DIVERGENCE times worse than the indexer's price. `suffix` is the
+ *  "what you are holding" line a refusal after leg one owes the user. */
+async function _v4Guard(refP, nativePerToken, side, suffix = '') {
+  if (!(V4_MAX_DIVERGENCE > 0) || !(nativePerToken > 0) || !refP) return;
+  const ref = await withTmo(refP, GUARD_REF_WAIT_MS, 0);
+  if (!(ref > 0)) return;
+  const times = side === 'sell' ? ref / nativePerToken : nativePerToken / ref;
+  if (times > V4_MAX_DIVERGENCE) {
+    const err = new Error(`quote is ${times.toFixed(1)}x worse than the price shown (${nativePerToken.toPrecision(3)} vs ${ref.toPrecision(3)} per token) — nothing was sent.${suffix}`);
+    err.divergence = times;
+    throw err;
+  }
+}
+
 /**
  * The Permit2 approvals a v4 swap needs before it can pull an ERC20 — the token
  * on a sell, wrapped native on a WETH-quoted buy.
@@ -4112,7 +4180,11 @@ async function buy(chatId, ca, ethAmount, chainKey, walletId, opts) {
         // it. v4.js finds the PoolManager and the router from the chain's own
         // logs when the env is unset, so the question to ask is whether a pool
         // EXISTS — and then to prove the route by simulating it.
-        const p4 = await v4.bestPool(ca, chainKey, { chainOf, providerFor }).catch(() => null);
+        // Started before anything else on this branch, so the guard below waits
+        // on a read that has had the whole quote to arrive. The TRADE SIZE goes
+        // into the pool choice: see v4.pickForTrade.
+        const v4Ref = _v4RefStart(ca, chainKey);
+        const p4 = await v4.bestPool(ca, chainKey, { chainOf, providerFor }, { amountIn: spend, side: 'buy' }).catch(() => null);
         if (p4) {
           const dec4 = await tokenDecimals(ca, chainKey);
           // The currency this pool actually TAKES. A v4 pool pairs against ETH
@@ -4179,6 +4251,10 @@ async function buy(chatId, ca, ethAmount, chainKey, walletId, opts) {
           }
           const minTok = expTok * (10000n - slip) / 10000n;
           if (minTok <= 0n) throw new Error(`zero quote from the v4 pool for this token.${safe}`);
+          // What this buy pays per token, all in: on a foreign-quoted pool leg
+          // one has already turned `spend` into the quote token, so the native
+          // spent over the tokens expected is still the true price.
+          await _v4Guard(v4Ref, Number(ethers.formatEther(spend)) / Number(ethers.formatUnits(expTok, dec4)), 'buy', safe);
           // A WETH-quoted pool is paid in WETH, so the native has to be wrapped
           // and handed to Permit2 before the router can pull it. A foreign-quoted
           // one is already held after leg one and only needs the allowance.
@@ -4487,8 +4563,11 @@ async function sell(chatId, ca, pct, chainKey, walletId, opts) {
     // probe and by the discovered-curve fallback below it. Two copies of this
     // predicate would eventually disagree about which bags have an exit.
     const noAmm = !onCurve && pick.kind === 'v2' && !_v2Fillable(pick);
+    // The trade size picks the pool, and the reference read starts now so the
+    // guard below never waits on it longer than GUARD_REF_WAIT_MS.
+    const v4SellRef = noAmm ? _v4RefStart(ca, chainKey) : null;
     const p4Sell = noAmm
-      ? await v4.bestPool(ca, chainKey, { chainOf, providerFor }).catch(() => null)
+      ? await v4.bestPool(ca, chainKey, { chainOf, providerFor }, { amountIn: amount, side: 'sell' }).catch(() => null)
       : null;
     /*
      * A BAG WITH NO POOL TO SELL INTO — the exit side of the discovered curve.
@@ -4570,6 +4649,12 @@ async function sell(chatId, ca, pct, chainKey, walletId, opts) {
       }
       const minEth4 = expEth * (10000n - slip) / 10000n;
       if (minEth4 <= 0n) throw new Error('zero quote from the v4 pool for this sell');
+      // Only where the payout IS native (ETH or WETH): a foreign-quoted pool
+      // pays in a token this line would have to price a second time.
+      const sellQuote = String(p4Sell.quote).toLowerCase();
+      if (sellQuote === v4.NATIVE || (_isAddr(chain.weth) && sellQuote === String(chain.weth).toLowerCase())) {
+        await _v4Guard(v4SellRef, Number(ethers.formatEther(expEth)) / Number(ethers.formatUnits(amount, dec4)), 'sell');
+      }
       // Permit2 first: the router pulls the token through it, so the approvals
       // have to land before the swap can even be simulated.
       const approved = await _v4Approve(wallet, chainKey, p4Sell, ca, amount, gasMult, gas);
@@ -5347,4 +5432,5 @@ module.exports = {
   // Test-only seams — see the notes at each definition.
   _deps,
   _clearReadCaches, _launchpadFailClear: () => _launchpadFail.clear(),
+  _v4Guard,
 };

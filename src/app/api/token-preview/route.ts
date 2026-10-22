@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { CHAINS } from "@/config/chains";
 import { cached } from "@/lib/cache";
+import { internalAuthorized } from "@/lib/internalAuth";
 import { gtGet } from "@/lib/providers/gt";
 
 export const dynamic = "force-dynamic";
@@ -267,7 +268,12 @@ export async function GET(req: NextRequest) {
   // returns nothing private — it exists because "no token matches" is
   // indistinguishable from "the upstream 404'd" from the outside, and guessing
   // between those cost two deploys.
-  if (req.nextUrl.searchParams.get("debug") === "1") {
+  //
+  // ⚠️ OPERATOR-ONLY. It skips the cache, so every public call spent a
+  // DexScreener request and a GeckoTerminal search — and the site's whole GT
+  // allowance is a handful a minute, shared with every chart. A loop over it
+  // blanked charts site-wide. Send the internal bearer token to use it.
+  if (req.nextUrl.searchParams.get("debug") === "1" && internalAuthorized(req)) {
     const tried: Record<string, unknown> = {};
     // Which BUILD answered. The absence of this field is itself the answer:
     // an older bundle has no debug branch at all and replies { token, chain }.

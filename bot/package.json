@@ -54,6 +54,10 @@
   "overrides": {
     "rpc-websockets": {
       "uuid": "9.0.1"
+    },
+    "tronweb": {
+      "axios": "^1.20.0",
+      "ws": "^8.21.0"
     }
   },
   "comment_overrides": "Pin rpc-websockets' uuid to a CommonJS build. @solana/web3.js → rpc-websockets pulls uuid@14 (ESM-only), which crashes require() on Node < 22.12 with ERR_REQUIRE_ESM. uuid@9.0.1 exposes a CJS require entry; the v4 API used by rpc-websockets is unchanged."

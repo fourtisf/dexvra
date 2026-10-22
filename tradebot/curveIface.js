@@ -111,6 +111,27 @@ async function steppedLogs(chain, filter, opts = {}) {
  */
 const wordAddr = (w) =>
   /^0{24}[0-9a-fA-F]{40}$/.test(w) && !/^0{8}/.test(w.slice(24)) ? '0x' + w.slice(24).toLowerCase() : null;
+
+/**
+ * Could this word BE an address, for the purpose of refusing to replay it?
+ *
+ * ⚠️ `wordAddr` is the wrong question for a refusal. Its four-zero-byte rule is
+ * right for READING a slot, and it means an address with four leading zero
+ * bytes — about 2^32 work to grind, an afternoon on one GPU — reads as "a
+ * number". So a recipient slot the attacker filled with such an address in two
+ * trades of their own was classified `constant`, copied verbatim into every
+ * victim's calldata, and minted the victims' tokens to the attacker; and the
+ * shape, keyed by the pad's bytecode, carried it to every fresh launch on the
+ * pad. Here the line is 2^64: no amount, flag, fee tier or deadline a curve
+ * takes is that large, and an address below it would need 2^96 grinding. Solidity
+ * ≥0.8 rejects an address argument with dirty upper bits, so a word above 2^160
+ * cannot be a recipient at all.
+ */
+const ADDR_FLOOR = 1n << 64n;
+const addrLike = (w) => {
+  if (!/^0{24}[0-9a-fA-F]{40}$/.test(String(w || ''))) return false;
+  try { return BigInt('0x' + w) >= ADDR_FLOOR; } catch (_) { return false; }
+};
 const topicAddr = (t) => (typeof t === 'string' && t.length === 66 ? '0x' + t.slice(26).toLowerCase() : null);
 const lc = (s) => String(s || '').toLowerCase();
 /** A Transfer's `value` — the non-indexed uint256 in the log data. */
@@ -538,7 +559,34 @@ async function decodeCurveIface(chain, token, opts = {}) {
     if (!r.from && !r.into) continue;
     score.set(r.to, (score.get(r.to) || 0) + r.n);
   }
-  const curve = [...score.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+  let curve = [...score.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+  /*
+   * ⚠️ A COUNT IS SOMETHING ANYONE CAN BUY. "Most trades in the newest window"
+   * was the whole election, so an attacker holding some of a real curve
+   * token could call their own contract a dozen times — one that pays tokens
+   * out and ignores its min-out — and become "the curve" for every victim's
+   * buy for half an hour, with `sane()` passing because they chose the ratio.
+   * What an attacker cannot cheaply fake is the one thing a real bonding curve
+   * IS: the holder of the unsold supply. With more than one candidate, the one
+   * holding the most of this token wins, and the count only breaks a tie the
+   * chain could not answer. Every read must answer, or the count stands: a
+   * half-read comparison is a guess.
+   */
+  const cands = [...score.keys()];
+  if (cands.length > 1 && typeof chain.call === 'function') {
+    const bals = await Promise.all(cands.map(async (a) => {
+      try {
+        const r = await chain.call({ to: token, data: '0x70a08231' + String(a).slice(2).toLowerCase().padStart(64, '0') });
+        return r && r !== '0x' ? BigInt(r) : null;
+      } catch (_) { return null; }
+    }));
+    if (bals.every((b) => b != null)) {
+      // The count's choice stands unless another candidate holds strictly MORE.
+      let bi = cands.indexOf(curve);
+      for (let k = 0; k < cands.length; k++) if (bals[k] > bals[bi]) bi = k;
+      curve = cands[bi];
+    }
+  }
   if (!curve) {
     return { ok: false, why: 'the token moved, but never to or from the contract that was called — no curve in these trades' };
   }
@@ -586,7 +634,7 @@ function describeIface(r) {
   return `curve ${r.curve} · ${b} · ${sl}`;
 }
 
-module.exports = { decodeCurveIface, describeIface, steppedLogs, TRANSFER_TOPIC, LOG_STEP, LOG_STEPS, _argsOf: argsOf, _wordAddr: wordAddr };
+module.exports = { decodeCurveIface, describeIface, steppedLogs, TRANSFER_TOPIC, LOG_STEP, LOG_STEPS, addrLike, _argsOf: argsOf, _wordAddr: wordAddr };
 
 /*
  * ─────────────────────────────────────────────────────────────────────────────
@@ -673,20 +721,37 @@ function classifySlots(leg, token, opts = {}) {
      * the same 32 bytes as the number 0, it is what an unused optional slot
      * holds, and sending it to nobody is not sending it to a stranger.
      */
-    if (same && first.addr && !/^0+$/.test(first.word)) {
-      out.slots.push({ i, role: 'unknown', addr: first.addr, why: `every sample puts the same address (${first.addr}) here and it is neither the token nor the trader — replaying a stranger's address is how a buy pays out to somebody else` });
-      continue;
-    }
-    // A slot that scales BEFORE one that is merely constant: on a run of
-    // equal-sized samples an amount slot is also constant, and freezing it
-    // would send a minimum-out computed for a trade that is not ours.
-    const values = samples.map((s) => s.args[i].num);
     // The SIZE this leg is denominated in: what was paid on a buy, what was
     // handed over on a sell. Without the second half a sell explains nothing.
     // `size` is decided at collection time, where the direction is known. The
     // fallback keeps older shapes (and the unit tests' hand-built legs) working.
     const vals = samples.map((s) => (s.size != null ? BigInt(s.size) : (s.value > 0n ? s.value : BigInt(s.amount || 0))));
     const varied = vals.some((v) => v !== vals[0]);
+    /*
+     * ⚠️ AND "ADDRESS" IS DECIDED BY `addrLike`, NOT BY `first.addr`. The
+     * reading rule calls an address with four leading zero bytes a number, and
+     * grinding one is an afternoon's work — so a recipient the attacker set to
+     * such an address sailed through as a `constant` and minted every victim's
+     * tokens to them. No magnitude separates a big amount from a ground
+     * address (500 tokens at 18 decimals is above 2^64), but the SAMPLES do:
+     *   · sizes VARIED and this word did not → it is not an amount, so it is a
+     *     stranger's address or a hash. Refused, as before.
+     *   · every sample the SAME size → an amount and an address look identical.
+     *     That is too little history, not a verdict: `short` sends the build to
+     *     the pad's learned shape, read off a sibling whose trades DID vary, under
+     *     the bytecode-identity proof — never to replaying this word.
+     */
+    if (same && addrLike(first.word)) {
+      const a = first.addr || '0x' + first.word.slice(24).toLowerCase();
+      out.slots.push(varied
+        ? { i, role: 'unknown', addr: a, why: `every sample puts the same address (${a}) here and it is neither the token nor the trader — replaying a stranger's address is how a buy pays out to somebody else` }
+        : { i, role: 'unknown', short: true, why: 'every sample is the same size, so this could be an amount or an address — more trades of different sizes are needed' });
+      continue;
+    }
+    // A slot that scales BEFORE one that is merely constant: on a run of
+    // equal-sized samples an amount slot is also constant, and freezing it
+    // would send a minimum-out computed for a trade that is not ours.
+    const values = samples.map((s) => s.args[i].num);
     if (varied && values.every((n) => n !== null && n > 0n) && vals.every((v) => v > 0n)) {
       const r0 = (values[0] * 10n ** 18n) / vals[0];
       if (samples.every((s, k) => ratioClose((values[k] * 10n ** 18n) / vals[k], r0, tolBps))) {
@@ -700,6 +765,9 @@ function classifySlots(leg, token, opts = {}) {
 
   const bad = out.slots.filter((s) => s.role === 'unknown');
   out.ok = bad.length === 0;
+  // Every unexplained slot is one more varied trade would explain — the same
+  // standing as "only 1 sample", and the caller treats it the same way.
+  out.short = bad.length > 0 && bad.every((s) => s.short);
   // ⚠️ Never "the token cannot be traded" — only "we cannot build this call
   // safely yet". A wider window, or one more trade on the pad, changes it.
   if (!out.ok) out.why = `argument${bad.length === 1 ? '' : 's'} ${bad.map((s) => s.i).join(', ')} could not be explained from ${samples.length} samples`;
