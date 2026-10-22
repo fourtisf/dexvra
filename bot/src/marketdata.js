@@ -567,7 +567,9 @@ function mergeCurve(out, lp) {
     // chain record's raised reserve (the figure the site prints) and pump.fun's
     // "Total liquidity" off the registry's pad — and only ever fills a hole an
     // indexer left. Never `liq` upstream of here: that is the gate's field.
-    liq: num(base.liq) ?? num(lp.liq) ?? num(lp.curveLiq),
+    // Inside ONE pad record, a curve's own reserve outranks the record's `liq`
+    // (an aggregator's both-sides figure — see `liqFromCurve`).
+    liq: num(base.liq) ?? curveLiqOf(lp) ?? num(lp.liq) ?? num(lp.curveLiq),
     // A launchpad publishes no 24h volume, so this can only ever carry through
     // what an indexer already found. NOT defaulted to 0: a token still on a
     // bonding curve has traded, and calling that "zero volume" would let the
@@ -654,18 +656,40 @@ async function fromCurve(out, ctx) {
  * written for pool depth.
  */
 async function liqFromCurve(out, ctx) {
-  if (!out || num(out.liq) != null) return out;
+  if (!out) return out;
   if (!isBudgeted(ctx.opts)) return out;
+  const have = num(out.liq) != null;
+  const verified = launchpads.padsFor(ctx.chain).some((p) => p.verified);
+  // With a figure already in hand the pad is asked only where a VERIFIED pad
+  // publishes a curve reserve (pump.fun, on Solana) — the one place that figure
+  // can be REPLACED below. Elsewhere an answer in hand costs no request.
+  if (have && !verified) return out;
   let liq = null;
   let why = null;
   let retry = false;
-  // The pad first, in `mergeCurve`'s order. On the doors where
-  // `fillFromLaunchpad` already asked it, this is that same answer, memoised.
+  // The pad first. On the doors where `fillFromLaunchpad` already asked it,
+  // this is that same answer, memoised.
   if (launchpads.covers(ctx.chain)) {
     const pad = await padOnce(ctx);
     const lp = pad.info;
+    // ⚠️ ON A CURVE, THE CURVE'S OWN RESERVE WINS — over an aggregator's figure
+    // AND over an indexer's. "liat ini", over `post:check` straight after the
+    // fix: $POKECITY printed `mcap 2243 · liq 2646` — liquidity LARGER than the
+    // market cap — and $APECHECK `mcap 3462 · liq 2734`, beside pump.fun's own
+    // page reading ~10%. Those were both-sides figures: the curve's UNSOLD
+    // TOKENS valued at spot, plus its SOL. On pump.fun's curve (30 virtual SOL,
+    // 1.073B virtual tokens) the SOL a curve holds can never exceed ~27% of its
+    // market cap, so 79% and 118% are a different quantity — the one an AMM
+    // pool calls liquidity, and the one a trader comparing with pump.fun's
+    // "Total liquidity" reads as Dexvra inflating the number. The first cut of
+    // this function took `lp.liq` (Jupiter's) ahead of the reserve and printed
+    // exactly that. A pool's depth is an answer; a curve's both-sides figure is
+    // not the depth anyone can sell into.
+    const curve = curveLiqOf(lp);
+    if (curve != null) return { ...out, liq: curve, liqFrom: "curve", onCurve: true };
+    if (have) return out;
     liq = lp ? (num(lp.liq) ?? num(lp.curveLiq)) : null;
-    if (liq == null) ({ why, retry } = padLiqWhy(pad, launchpads.padsFor(ctx.chain).some((p) => p.verified)));
+    if (liq == null) ({ why, retry } = padLiqWhy(pad, verified));
     // The pad's word on the PHASE travels with the record: an indexer's "pair"
     // for a token still on its curve is the curve, and the watch and the retry
     // must judge its hole by the curve's rule (marketFigures.namesAPool).
@@ -679,6 +703,16 @@ async function liqFromCurve(out, ctx) {
   }
   if (liq != null) return { ...out, liq };
   return why ? { ...out, liqWhy: why, liqRetry: retry } : out;
+}
+
+/**
+ * The curve's OWN liquidity — the native coin it holds, in USD — when the pad
+ * says the token is still on its curve; null otherwise. One owner, read by the
+ * door above and by `mergeCurve`, so the two cannot rank the same pad record's
+ * two liquidity figures differently.
+ */
+function curveLiqOf(lp) {
+  return lp && lp.onCurve === true ? num(lp.curveLiq) : null;
 }
 
 /**
@@ -1026,6 +1060,7 @@ module.exports = {
   _mergeCurve: mergeCurve,
   _liqFromCurve: liqFromCurve,
   _padLiqWhy: padLiqWhy,
+  _curveLiqOf: curveLiqOf,
   _chainLiqWhy: chainLiqWhy,
   SANE_CHANGE_PCT,
   MCAP_DISAGREE_FACTOR, fetchMarket, fetchPrice, fetchTokenDescription };

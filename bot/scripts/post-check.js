@@ -148,7 +148,13 @@ function report(row, a) {
     // ⚠️ LIQUIDITY IS PRINTED. The post now publishes it beside the market cap,
     // and a check that never showed it could not tell the operator whether the
     // next card would carry a figure or a dash.
-    note(`price ${a.live.priceUsd} · mcap ${a.live.mcap} · liq ${a.live.liq > 0 ? a.live.liq : '—'} · ${artLine}`);
+    // ⚠️ AND WHICH LIQUIDITY. A curve's SOL reserve and a pool's both-sides
+    // depth are different quantities, and an operator comparing this line with
+    // pump.fun's "Total liquidity" needs to know which one they are reading.
+    const liqLine = a.live.liq > 0
+      ? `${a.live.liq}${a.live.liqFrom === 'curve' ? " (the curve's SOL reserve — pump.fun's \"Total liquidity\")" : ''}`
+      : '—';
+    note(`price ${a.live.priceUsd} · mcap ${a.live.mcap} · liq ${liqLine} · ${artLine}`);
     // A GREEN row whose artwork came from a public gateway is green TODAY. That
     // is the flip: the same url loaded on two deploys and failed on two with no
     // code change. Pinning it makes today's answer permanent.

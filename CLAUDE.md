@@ -11855,13 +11855,15 @@ lesson for the logo, unlearnt for the liquidity, one function over.**
 
 - **`fromCurve` is the door now** (`liqFromCurve` then `logoFromCurve`), on all
   three exits of `fetchMarket`. A priced record with no liquidity takes the
-  pad's figure (`lp.liq ?? lp.curveLiq`, `mergeCurve`'s order), then the Pons
-  contract's.
+  pad's figure, then the Pons contract's. ⚠️ The first cut ranked the pad's
+  `lp.liq` (Jupiter's) ahead of the curve's reserve, which was wrong; see
+  *"liat ini"* below.
 - **`padOnce`**: one pad answer fills both holes. A curve token minutes old
   usually lacks the logo too.
 - **Same contract as the logo:** only for a caller on a clock (the paid post).
-  The nine background pipelines grow no launchpad request each, and an indexer's
-  own depth is an ANSWER that is never replaced.
+  The nine background pipelines grow no launchpad request each. A POOL's depth
+  is an answer that is never replaced; a curve's both-sides figure is not a
+  pool's depth (see below).
 - ⚠️ **AND THE POST HAD BEEN RETRIED FOR IT.** `needsAnotherRead` re-reads a
   liquidity hole whenever the reading names a pool, and DexScreener names the
   curve's own address as one. So the post spent its whole retry window asking
@@ -11999,6 +12001,68 @@ That was a test gap, not a code defect, and a driven Robinhood test closes it.
 
 **Config a fix depends on:** nothing. `bot/` only, so `npm run deploy` does the
 ecosystem restart.
+
+##### "liat ini" — the check went green, and two of its liquidity figures were a different quantity
+
+`post:check` on the box, on `74361c2`, with every row green:
+
+```
+✓ $APECHECK   price 0.000003462 · mcap 3462.40 · liq 2734.24
+✓ $POKECITY   price 0.000002267 · mcap 2243    · liq 2646.26
+```
+
+**`$POKECITY`'s liquidity is LARGER THAN ITS MARKET CAP.** pump.fun's curve
+fixes virtual SOL × virtual tokens at 30 × 1.073B, so its market cap in SOL is
+`vsol² / 32.19` and the SOL it really holds is `vsol − 30`. Their ratio peaks at
+**~27%** (at 60 virtual SOL). pump.fun's own page for `$APECHECK` read
+$360.91 on a $3.61K cap, which is 10%. So 79% and 118% are not the curve's
+reserve. They are the AMM definition of liquidity: the curve's UNSOLD TOKENS
+valued at spot, plus its SOL. A trader comparing the post with pump.fun reads
+that as Dexvra inflating the number roughly tenfold.
+
+**The first cut of the fix put it there.** `liqFromCurve` took `lp.liq ??
+lp.curveLiq`, following `mergeCurve`'s order. `lp.liq` is Jupiter's figure,
+which uses the AMM definition, and Jupiter is the first Solana pad in the
+merge. The reserve was in hand and lost to it.
+
+- **On a curve, the curve's own reserve WINS** over an aggregator's figure
+  and over an indexer's. `curveLiqOf(lp)` is the one owner. It reads `curveLiq`
+  only while the pad says `onCurve`, so a graduated token keeps its POOL's
+  depth, which really is exit liquidity. `mergeCurve` ranks the same pair
+  inside one pad record the same way.
+- ⚠️ **That means asking the pad even when a figure is already in hand**,
+  because an indexer's liquidity says nothing about whether the token is still a
+  curve. This is only for a caller on a clock, and only where a VERIFIED pad
+  publishes a reserve (pump.fun, on Solana). On Robinhood a figure in hand costs
+  no request to the guessed pad hosts.
+- **`liqFrom: "curve"` travels with the figure**, and `post:check` prints
+  `liq 360.9 (the curve's SOL reserve — pump.fun's "Total liquidity")`. Two
+  quantities under one label is how the green check hid this.
+- ⚠️ **The invariant is a TEST:** across the whole curve (30.5 → 115 virtual
+  SOL), the published figure never exceeds 27% of the market cap. A both-sides
+  figure starts at about 100%, so this fails the moment the definition slides
+  back.
+
+```bash
+cd bot && node scripts/run-tests.js test/pumpfunLiq.test.js   # 30 tests, no network
+cd /opt/dexvra/bot && npm run post:check                      # curve rows now say which liquidity they print
+```
+
+Eight guarantees are MUTATION-TESTED, and each mutant fails between one and two
+tests:
+
+- the curve override removed;
+- the aggregator ranked first again;
+- the override ignoring the phase;
+- `mergeCurve`'s order reverted;
+- a figure in hand never re-judged;
+- unverified chains asked too;
+- the provenance dropped;
+- `post:check`'s label dropped.
+
+**Config a fix depends on:** nothing. `bot/` only, so `npm run deploy` does the
+ecosystem restart. A post already published with the both-sides figure stays as
+it went out.
 
 ## "holder dan chart still broken" — a zero nobody measured, and a chart that ate the page's scroll
 

@@ -210,18 +210,97 @@ test("…while a BACKGROUND caller grows no pump.fun round trip for a figure it 
   }
 });
 
-test("…and an indexer's own depth is an ANSWER: the curve never replaces it, and the pad is not asked for it", async () => {
-  // With its logo too: an artwork hole asks the pad on its own (logoFromCurve),
-  // and this test is about whether the LIQUIDITY does.
-  const withDepth = { pairs: [{ ...DS_CURVE.pairs[0], liquidity: { usd: 9100 }, info: { imageUrl: "https://cdn.dexscreener.com/ape.png" } }] };
-  const { asked, restore } = stubFetch((who) => (who === "ds" ? withDepth : who === "pump" ? PUMP : null));
+// ── on a curve, WHICH liquidity ─────────────────────────────────────────────
+//
+// "liat ini": `post:check` on the box after the fix above read `$POKECITY mcap
+// 2243 · liq 2646` — liquidity LARGER than the market cap — and `$APECHECK
+// mcap 3462 · liq 2734`, beside pump.fun's own page at ~10%. Those are
+// both-sides figures (the curve's unsold tokens at spot, plus its SOL), and the
+// first cut of the fix took them ahead of the curve's own reserve.
+
+/** pump.fun's curve: virtual SOL × virtual tokens is fixed at launch. */
+const K = 30 * 1073000000; // SOL × tokens
+
+test("⚠️ INVARIANT: a curve's published liquidity is its SOL — never more than ~27% of its market cap, anywhere on the curve", () => {
+  // A both-sides figure breaks this immediately (it starts at ~100% of the cap),
+  // so this is the guard against the definition sliding back to the AMM one.
+  let worst = 0;
+  for (let vsol = 30.5; vsol <= 115; vsol += 0.5) {
+    const vtok = K / vsol;
+    const mcapSol = (vsol / vtok) * 1e9;
+    const usd = mcapSol * 150;
+    const rec = P.pumpfunParse({ key: "pumpfun", label: "pump.fun" }, "solana", {
+      mint: APE, complete: false, usd_market_cap: usd, market_cap: mcapSol,
+      real_sol_reserves: Math.round((vsol - 30) * 1e9),
+      real_token_reserves: Math.max(0, Math.round((793100000 - (1073000000 - vtok)) * 1e6)),
+    }, Date.now());
+    assert.ok(rec.curveLiqUsd > 0, `no figure at ${vsol} SOL`);
+    worst = Math.max(worst, rec.curveLiqUsd / usd);
+  }
+  assert.ok(worst <= 0.27, `the curve's liquidity reached ${(worst * 100).toFixed(1)}% of its market cap`);
+});
+
+test("⚠️ the REPORTED numbers: an aggregator's both-sides figure (liq > mcap) loses to the curve's own reserve", async () => {
+  // Jupiter publishes `liquidity` for curve tokens on the AMM definition.
+  const jup = [{ id: APE, name: "APECHECK", symbol: "APECHECK", usdPrice: 0.000004717, mcap: 4717, liquidity: 5560, launchpad: "pump.fun", bondingCurve: 15 }];
+  const { restore } = stubFetch((who, u) => (who === "ds" ? DS_CURVE : who === "pump" ? PUMP : /jup\.ag/.test(u) ? jup : null));
   try {
-    const m = await market.fetchMarket("solana", APE, { cheap: true, need: ["priceUsd", "mcap", "liq"], budgetMs: 2000 });
-    assert.strictEqual(m.liq, 9100);
-    assert.ok(!asked.includes("pump"), "a pad request was spent on a figure the indexer had answered");
+    const { live } = await fulfil._readPostMarket("solana", APE, "test", { tries: 1 });
+    assert.ok(Math.abs(live.liq - LIQ) < 0.01, `printed ${live.liq} — the aggregator's both-sides figure, not pump.fun's "Total liquidity" (${LIQ})`);
+    assert.strictEqual(live.liqFrom, "curve", "post:check must be able to say which liquidity it is");
   } finally {
     restore();
   }
+});
+
+test("⚠️ …and an INDEXER's figure on a curve token is replaced the same way — it is the same both-sides quantity", async () => {
+  const withDepth = { pairs: [{ ...DS_CURVE.pairs[0], liquidity: { usd: 4100 }, info: { imageUrl: "https://cdn.dexscreener.com/ape.png" } }] };
+  const { asked, restore } = stubFetch((who) => (who === "ds" ? withDepth : who === "pump" ? PUMP : null));
+  try {
+    const m = await market.fetchMarket("solana", APE, { cheap: true, need: ["priceUsd", "mcap", "liq"], budgetMs: 2000 });
+    assert.ok(asked.includes("pump"), "the pad must be asked: an indexer's liquidity does not say whether the token is still a curve");
+    assert.ok(Math.abs(m.liq - LIQ) < 0.01, `kept ${m.liq} — 87% of the cap, a number no curve can hold`);
+    assert.strictEqual(m.liqFrom, "curve");
+  } finally {
+    restore();
+  }
+});
+
+test("…while a GRADUATED token keeps its pool's depth — that IS exit liquidity", async () => {
+  const withDepth = { pairs: [{ ...DS_CURVE.pairs[0], dexId: "pumpswap", liquidity: { usd: 41000 }, info: { imageUrl: "https://cdn.dexscreener.com/ape.png" } }] };
+  const graduated = { ...PUMP, complete: true, pump_swap_pool: "Poo1Address11111111111111111111111111111111", real_sol_reserves: 0 };
+  const { restore } = stubFetch((who) => (who === "ds" ? withDepth : who === "pump" ? graduated : null));
+  try {
+    const m = await market.fetchMarket("solana", APE, { cheap: true, need: ["priceUsd", "mcap", "liq"], budgetMs: 2000 });
+    assert.strictEqual(m.liq, 41000);
+    assert.strictEqual(m.liqFrom, undefined);
+  } finally {
+    restore();
+  }
+});
+
+test("…and where no VERIFIED pad publishes a reserve (Robinhood), a figure in hand costs no pad request", async () => {
+  const ponsChain = require("../src/ponsChain");
+  ponsChain._reset();
+  const T = "0xfCd4CdEabe055315b1036A189eA54ca627Df390a";
+  const ds = { pairs: [{ chainId: "robinhood", priceUsd: "0.000004", marketCap: 4494, liquidity: { usd: 3100 }, pairAddress: "0xpair", info: { imageUrl: "https://cdn.dexscreener.com/w.png" }, baseToken: { address: T, name: "W", symbol: "W" } }] };
+  const { asked, restore } = stubFetch((who) => (who === "ds" ? ds : who === "chain" ? null : null));
+  try {
+    const m = await market.fetchMarket("robinhood", T, { cheap: true, need: ["priceUsd", "mcap", "liq"], budgetMs: 2000 });
+    assert.strictEqual(m.liq, 3100);
+    assert.ok(!asked.includes("pad"), `a guessed pad host was asked for a figure already in hand: ${asked.join(", ")}`);
+  } finally {
+    restore();
+    ponsChain._reset();
+  }
+});
+
+test("curveLiqOf: the reserve counts only while the pad says the token is ON its curve", () => {
+  assert.strictEqual(market._curveLiqOf({ onCurve: true, curveLiq: 360.9 }), 360.9);
+  assert.strictEqual(market._curveLiqOf({ onCurve: null, curveLiq: 360.9 }), null);
+  assert.strictEqual(market._curveLiqOf({ onCurve: false, curveLiq: 360.9 }), null);
+  // …and inside one pad record the reserve outranks the record's own `liq`.
+  assert.strictEqual(market._mergeCurve({ priceUsd: 1, mcap: 2 }, { onCurve: true, liq: 5560, curveLiq: 360.9 }).liq, 360.9);
 });
 
 test("⚠️ a HANGING pad cannot cost the post the price and the cap DexScreener already answered", async () => {
@@ -443,4 +522,22 @@ test("⚠️ DRIVEN (Robinhood): a Pons curve whose CONTRACT read failed names t
     restore();
     ponsChain._reset();
   }
+});
+
+test("post:check SAYS which liquidity it printed — a curve's reserve is not a pool's depth", () => {
+  const { report } = require("../scripts/post-check.js");
+  const run = (live) => {
+    const lines = [];
+    const orig = console.log;
+    console.log = (m) => lines.push(String(m));
+    try {
+      report({ chain: "solana", address: APE, sym: "$APECHECK", name: "APECHECK", logoUrl: null },
+        { live, holes: [], why: null, logoUrl: null, art: null });
+    } finally {
+      console.log = orig;
+    }
+    return lines.join("\n");
+  };
+  assert.match(run({ priceUsd: 1e-6, mcap: 3610, liq: 360.9, liqFrom: "curve" }), /liq 360\.9 \(the curve's SOL reserve/);
+  assert.doesNotMatch(run({ priceUsd: 1e-6, mcap: 3610, liq: 9100 }), /curve's SOL reserve/, "a pool's depth labelled as a curve reserve");
 });
