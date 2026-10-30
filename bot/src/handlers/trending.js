@@ -8,6 +8,7 @@ const { RENEW_DISCOUNT_PCT } = require("../config/constants");
 const { escapeHtml } = require("../helpers/format");
 const { startPayment } = require("./pay");
 const api = require("../api/dexvra");
+const caInput = require("../helpers/caInput");
 const menu = require("./menu");
 const { Markup } = menu;
 const tpl = require("../templates");
@@ -29,25 +30,38 @@ async function handleText(ctx) {
   if (s.awaitingField !== "trend_ca") return;
   const input = (ctx.message.text || "").trim();
 
-  let chain = null;
-  let address = input;
-  const m = input.match(/\/token\/([a-z0-9]+)\/([^/\s?]+)/i);
-  if (m) {
-    chain = m[1].toLowerCase();
-    address = m[2];
-  }
+  // A dexvra.io link, a DexScreener link, or a bare address — parsed without a
+  // request. A DexScreener link names the POOL (helpers/caInput.js), so its
+  // address is only a first guess at the listing.
+  const ref = caInput.parseInput(input);
+  let chain = ref && ref.kind !== "address" ? ref.chain : null;
+  let address = ref ? ref.address : input;
 
-  let listing = null;
+  let all = null;
   try {
-    const all = await api.getListings();
-    listing = all.find(
-      (r) =>
-        (!chain || r.chain === chain) &&
-        String(r.address).toLowerCase() === String(address).toLowerCase() &&
-        r.status === "approved",
-    );
+    all = await api.getListings();
   } catch (e) {
     return toast(ctx, tpl.render("trending_service_down"));
+  }
+  const find = (ch, addr) =>
+    all.find(
+      (r) =>
+        (!ch || r.chain === ch) &&
+        String(r.address).toLowerCase() === String(addr).toLowerCase() &&
+        r.status === "approved",
+    );
+  let listing = find(chain, address);
+  // ⚠️ A MISS ON A LINK OR A PASTED PAIR IS ASKED AGAIN AS THE TOKEN. The
+  // listing row holds the token's contract; the address in a DexScreener URL is
+  // its pool, so the project that pasted its own chart link was told "not
+  // listed" about a token that is. Only on a miss, so a token pays nothing.
+  if (!listing && ref && ref.kind !== "dexvra") {
+    const res = await caInput.resolveInputSoon(input, { chain });
+    if (res && res.address && res.address !== address) {
+      chain = res.chain || chain;
+      address = res.address;
+      listing = find(chain, address);
+    }
   }
 
   if (!listing) {

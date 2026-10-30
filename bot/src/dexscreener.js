@@ -37,6 +37,7 @@ const BASE = "https://api.dexscreener.com/latest/dex/tokens/";
 // for. A slug that is wrong is still safe in both directions (no pair matches,
 // the feed entry is skipped); what is not safe is two maps that can drift.
 const { CHAINS, DEXSCREENER_SLUG } = require("./config/chains");
+const dsPair = require("../../shared/dexscreener/pair");
 
 const DS_CHAIN = Object.fromEntries(Object.keys(CHAINS).map((c) => [c, DEXSCREENER_SLUG[c] || c]));
 
@@ -168,6 +169,50 @@ async function fetchTokenInfoX(chain, address, { now = Date.now() } = {}) {
   }
 }
 
+/**
+ * The same bench, as the transport the shared pair resolver injects. A refusal
+ * parks DexScreener for every caller in this process, exactly as it does for
+ * fetchTokenInfoX — a second private idea of "is DexScreener up" in one process
+ * is how one half keeps hammering a host the other half already backed off.
+ * Resolves `{ ok, status, body, why }` and never throws.
+ */
+async function benchedFetchJson(url, { timeoutMs = 8000, now = Date.now() } = {}) {
+  const held = benched(now);
+  if (held) return { ok: false, status: 0, body: null, why: held };
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+    if (!res.ok) {
+      benchFrom(res.status, res, now);
+      return { ok: false, status: res.status, body: null, why: `DexScreener HTTP ${res.status}` };
+    }
+    return { ok: true, status: res.status, body: await res.json(), why: null };
+  } catch (e) {
+    return { ok: false, status: 0, body: null, why: `DexScreener ${e.message}${e.cause && e.cause.code ? ` (${e.cause.code})` : ""}` };
+  }
+}
+
+/**
+ * Is `address` a DexScreener PAIR on any of `chains` (our chain keys)?
+ *
+ * The address in a dexscreener.com URL is the pool, and every other reader in
+ * this file asks `latest/dex/tokens/` — which knows nothing about pools. See
+ * shared/dexscreener/pair.js for the whole reasoning; this only maps our chain
+ * keys onto DexScreener's slugs (the one map, DS_CHAIN) and back.
+ *
+ *   ok:true,  pair:{…, chain} — it is that pair; `pair.token` is what it trades
+ *   ok:true,  pair:null       — every chain answered, and it is not a pair
+ *   ok:false, pair:null       — could not ask; `why` says what stopped us
+ */
+async function fetchPairX(address, chains) {
+  const slugs = [...new Set((chains || []).map((c) => DS_CHAIN[c]).filter(Boolean))];
+  const r = await dsPair.resolvePairX(address, { slugs, fetchJson: benchedFetchJson });
+  if (r.pair) r.pair.chain = OUR_CHAIN[r.pair.chainId] || null;
+  return r;
+}
+
+/** Our chain key for a DexScreener chain id (`seiv2` → `sei`), or null. */
+const chainOfSlug = (slug) => OUR_CHAIN[String(slug || "").toLowerCase()] || null;
+
 /** The long-standing shape, for the callers that only ever wanted the record.
  *  ⚠️ It cannot tell a refusal from a token with no pair — that is what
  *  `fetchTokenInfoX` exists for, and why the auto-lister uses that one. */
@@ -289,4 +334,4 @@ async function fetchDiscovery(feeds = DISCOVERY_FEEDS) {
 // DS_CHAIN is exported because the token-logo CDN path is keyed on DexScreener's
 // chain slug (dd.dexscreener.com/ds-data/tokens/<slug>/<addr>.png) — gainers.js
 // builds that URL as a logo fallback and must not keep a second copy of the map.
-module.exports = { fetchTokenInfo, fetchTokenInfoX, fetchDiscovery, fetchDiscoveryX, DISCOVERY_FEEDS, DS_CHAIN, benched, resetBench };
+module.exports = { fetchTokenInfo, fetchTokenInfoX, fetchPairX, chainOfSlug, fetchDiscovery, fetchDiscoveryX, DISCOVERY_FEEDS, DS_CHAIN, benched, resetBench };

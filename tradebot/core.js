@@ -1647,7 +1647,7 @@ const _ckey = (chainKey, x) => chainKey + ':' + (isSvm(chainKey) ? String(x) : S
 // server.
 // _dsCache too: it is a 30s memo of an EXTERNAL answer, and a test that swaps
 // the indexer out gets the previous test's response without this.
-function _clearReadCaches() { _metaCache.clear(); _curveCache.clear(); _gradCache.clear(); _dsCache.clear(); _gtCache.clear(); _venueCache.clear(); curveTrade._reset(); }
+function _clearReadCaches() { _metaCache.clear(); _curveCache.clear(); _gradCache.clear(); _dsCache.clear(); _gtCache.clear(); _venueCache.clear(); _pairCache.clear(); curveTrade._reset(); }
 
 // Why the launchpad last failed to answer, per chain. resolveCurve deliberately
 // collapses a factory error into '' — the same value that means "this token genuinely
@@ -2126,6 +2126,96 @@ async function dsMarket(ca, chainKey) {
     name: (p.baseToken && p.baseToken.name) || '',
     sym: (p.baseToken && p.baseToken.symbol) || '',
   };
+}
+
+// ------------------------------------------------- a pasted PAIR, or a link
+// Reported 2026-10-30 with https://dexscreener.com/bsc/0x20da3ebe…b546554:
+// DexScreener had the token, and the bot "could not read the CA". The address
+// in a DexScreener URL is the POOL, not the token (shared/dexscreener/pair.js),
+// and every reader in this file asks `latest/dex/tokens/` — so a pasted link
+// fell to "I didn't recognise that", and the bare pair address was carded as
+// "couldn't price it", or worse as the pool's LP token, which IS an ERC-20.
+const dsPairRule = require('../shared/dexscreener/pair');
+const _pairCache = new Map();   // `${slugs}|${address}` → { at, r }
+const PAIR_TTL_MS = 5 * 60 * 1000;
+
+async function _pairLookup(address, slugs) {
+  const key = slugs.join(',') + '|' + (isEvmHex(address) ? String(address).toLowerCase() : String(address));
+  const hit = _pairCache.get(key);
+  if (hit && Date.now() - hit.at < PAIR_TTL_MS) return hit.r;
+  // 3s, not the 6s every other read here gets: a person just pasted and is
+  // waiting for the card, and an unanswered lookup fails OPEN for a bare paste.
+  const r = await dsPairRule.resolvePairX(address, { slugs, timeoutMs: 3000 });
+  // Only an ANSWER is remembered; a refusal cached would spread one rate-limited
+  // second across every paste for five minutes.
+  if (r.ok) {
+    if (_pairCache.size >= DS_CACHE_MAX) _pairCache.delete(_pairCache.keys().next().value);
+    _pairCache.set(key, { at: Date.now(), r });
+  }
+  return r;
+}
+const isEvmHex = (a) => /^0x[0-9a-fA-F]+$/.test(String(a || ''));
+
+/**
+ * What TOKEN does a paste mean?
+ *
+ *   null                              — use the paste exactly as typed
+ *   { ca, chain, via: 'pair', pair }  — it was a pool; `ca` is the token it trades
+ *   { ca, chain, via: 'link' }        — a dexscreener.com link to a TOKEN page
+ *   { refused }                       — a link we cannot read honestly; say why
+ *
+ * ⚠️ A RESOLVED TOKEN CAME FROM AN INDEX, NOT FROM THE USER. `via:'pair'` is a
+ * pointer DexScreener handed us; the caller SHOWS that token's card (whose name
+ * and symbol are read off the chain) and never spends on it blind — auto-buy
+ * and /buy open the card instead. A link to a token page carries the user's own
+ * address and is treated like a paste of it.
+ *
+ * A bare address costs nothing new: `dsPairsX` is the same cached request chain
+ * detection makes anyway, and the pair endpoint is asked only when DexScreener
+ * ANSWERED and knows no token at that address. A DexScreener that could not be
+ * asked leaves the paste as typed — the behaviour that shipped before this.
+ */
+async function resolvePaste(text) {
+  const s = String(text || '').trim();
+  const enabled = new Set(chains.enabledChains().map((c) => c.key));
+  const usable = (k) => k && enabled.has(k);
+  const link = dsPairRule.parseLink(s);
+  if (link) {
+    const chainKey = link.slug ? DS_TO_CHAIN[link.slug] : null;
+    if (link.slug && !usable(chainKey)) return { refused: `that DexScreener link is on "${link.slug}", a network this bot doesn't trade` };
+    const slugs = link.slug ? [link.slug] : _slugsFor(link.address, enabled);
+    if (!slugs.length) return { refused: "that DexScreener link isn't on a network this bot trades" };
+    const r = await _pairLookup(link.address, slugs);
+    if (r.pair) return _fromPair(r.pair, usable);
+    if (!r.ok) return { refused: `couldn't read that DexScreener link just now (${r.why}) — paste the token's contract address instead` };
+    return { ca: link.address, chain: chainKey, via: 'link' };
+  }
+  const isCaShape = /^0x[0-9a-fA-F]{40}$/.test(s) || solana.isSolAddress(s);
+  if (!isCaShape) return null;
+  const ds = await dsPairsX(s).catch(() => ({ pairs: [], ok: false }));
+  if (!ds.ok) return null;
+  const same = dsPairRule.sameAddress;
+  const direct = ds.pairs.find((p) => p && same(p.pairAddress, s) && p.baseToken && p.baseToken.address);
+  if (direct) return _fromPair(dsPairRule.summarize(direct), usable);
+  if (ds.pairs.some((p) => p && (same(p.baseToken && p.baseToken.address, s) || same(p.quoteToken && p.quoteToken.address, s)))) return null;
+  const slugs = _slugsFor(s, enabled);
+  if (!slugs.length) return null;
+  const r = await _pairLookup(s, slugs).catch(() => ({ ok: false, pair: null }));
+  return r.pair ? _fromPair(r.pair, usable) : null;
+}
+
+/** DexScreener slugs worth asking about an address of this shape. */
+function _slugsFor(address, enabled) {
+  const svm = !/^0x/i.test(String(address || ''));
+  return Object.entries(DS_CHAIN_KEY)
+    .filter(([k]) => enabled.has(k) && isSvm(k) === svm)
+    .map(([, slug]) => slug);
+}
+
+function _fromPair(pair, usable) {
+  const chainKey = DS_TO_CHAIN[pair.chainId];
+  if (!usable(chainKey)) return { refused: `that pair is on "${pair.chainId}", a network this bot doesn't trade` };
+  return { ca: pair.token.address, chain: chainKey, via: 'pair', pair };
 }
 
 /** Enabled chain keys where `ca` actually TRADES, deepest market first.
@@ -5420,7 +5510,7 @@ module.exports = {
   snipeDraft, newSnipeDraft, updateSnipeDraft, clearSnipeDraft, armSnipeDraft, SNIPE_DRAFT_TTL_H, copyFanOut,
   feePayoutEnabled, payFromFeeWallet,
   resolveCurve, isGraduated, launchpadDiag, tokenMeta, tokenDecimals, tokenSnapshot, ethBalance, tokenBalance, tokenBalanceOrNull, tokenSupplyUi, tokenAcrossWallets, tokenBalancesAcross, ethUsd, gasOverrides, rawSend, posKey, bestDexVenue,
-  dsMarket, gtMarket, marketOf, dsChainsOf, marketProbe, dsVenueLabel, v4,
+  dsMarket, gtMarket, marketOf, dsChainsOf, marketProbe, dsVenueLabel, v4, resolvePaste,
   // Exported the way `v4` is: as MODULE OBJECTS, so the test seam is DECLARED
   // rather than incidental. A test replaces `core.curveTrade.prepareBuy` and
   // stubs the whole discovery + simulate + price stack; destructured at the

@@ -182,9 +182,25 @@ test("a contract pasted with no flow running gets an answer", async () => {
   // returned early on `!s.type` and the message vanished.
   const src = code("handlers/text.js");
   assert.match(src, /if \(!s\.type\) return await bareContract\(ctx, raw\);/);
-  assert.match(src, /const hit = listed\.extractAddress\(raw\);/);
-  assert.match(src, /if \(!hit\) return;/, "only a real contract may reach the API");
   assert.match(src, /if \(raw\.startsWith\("\/"\)\) return;/, "commands still belong to their own handlers");
+  // "Only a real contract may reach the API" — DRIVEN, not pinned to a line.
+  // It used to match `if (!hit) return;` verbatim, which went red the day a
+  // DexScreener link (resolved to its token first) became a second way in,
+  // and would have passed on a router that sent every message to the API.
+  const text = require("../src/handlers/text");
+  const realExisting = listed.existingListing;
+  let asked = 0;
+  listed.existingListing = async () => (asked++, null);
+  try {
+    for (const chatter of ["gm", "hello there", "wen moon?", "https://example.com/bsc/" + EVM]) {
+      await text.textRouter({ chat: { id: 1, type: "private" }, from: { id: 1 }, session: {}, message: { text: chatter }, reply: async () => ({}) });
+    }
+    assert.strictEqual(asked, 0, "chatter reached the listings API");
+    await text.textRouter({ chat: { id: 1, type: "private" }, from: { id: 1 }, session: {}, message: { text: EVM }, reply: async () => ({}) });
+    assert.strictEqual(asked, 1, "a real contract is looked up");
+  } finally {
+    listed.existingListing = realExisting;
+  }
 });
 
 test("an unlisted contract pasted into the chat stays silent", async () => {

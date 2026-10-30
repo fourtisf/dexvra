@@ -7902,6 +7902,83 @@ mistaken for an oversight.
 cd bot && node scripts/run-tests.js test/payNetwork.test.js   # 30 tests — the Robinhood flows are driven, not read
 ```
 
+## "bot tidak bisa baca ca token" — the address in a DexScreener URL is the POOL
+
+Reported 2026-10-30 with `https://dexscreener.com/bsc/0x20da3ebe08379117fdb7f15ff55456813b546554`:
+DexScreener carried the token and "the bot could not read the CA".
+
+**A DexScreener page is a PAIR page.** A token URL redirects to its top pair,
+so the address in the address bar, in "copy link", and in this repo's OWN buy
+alert 📈 Chart button (`chartUrl(chain, poolAddress)`) is the pool. And every
+reader in both bots asked one question of DexScreener, `latest/dex/tokens/`,
+which knows nothing about pools:
+
+| door | what a pasted link / pair address did |
+| --- | --- |
+| listing form | link → "not a valid address"; pair → **listed as the token**, a paid row no price read could ever find |
+| `/settoken`, group paste | link ignored; pair → "No live pool on that CA" about a pool that exists |
+| Mass DM | link → "invalid CA"; pair → order about the pool |
+| Trending, gainers slot swap, bare DM paste | "not listed" / "no market data" |
+| trade bot paste | link → "I didn't recognise that"; pair → carded as the pool (a v2 pool IS an ERC-20, its LP token) |
+
+- **`shared/dexscreener/pair.js` is the one rule**, for both packages:
+  `parseLink` (the whole message must be the link; a link in a sentence is
+  talk) and `resolvePairX` over DexScreener's DOCUMENTED pair endpoint,
+  `latest/dex/pairs/{chainId}/{pair}`. Transport is INJECTED, so the listing
+  bot's DexScreener bench still parks the host for every caller.
+- ⚠️ **THE MATCH IS EXACT, AND THE TOKEN IS THE BASE.** Only a pair whose
+  `pairAddress` IS the input counts (EVM hex case-insensitive and LOWERCASED in
+  the request — an explorer paste is the checksum spelling; base58 exact). The
+  base token is what the page the person shared is about; "the side that is not
+  WBNB" would be a second, private idea of the same fact.
+- **`bot/src/helpers/caInput.js` is the one door** every bot flow calls; it
+  also owns `probeChains` (the buy bot's candidate list, re-exported by
+  `group/setup.js` — one owner). **The answer is always the TOKEN**; the pair
+  rides along for the buy bot, which watches exactly the pool it was pointed at.
+- ⚠️ **A LINK WE COULD NOT VERIFY IS REFUSED; A BARE ADDRESS FAILS OPEN.** A link
+  is almost always a pair, so guessing it is a token while DexScreener is not
+  answering would put the pool on a paid listing. A bare address is almost
+  always a token, and refusing every paste whenever DexScreener refuses this box
+  would switch the intake off over a check — it goes on exactly as before.
+- **It costs a token nothing new.** The listing form (chain picked first) asks
+  ONE pair request; the buy bot and the trade bot ask the pair endpoint only
+  after the token endpoint ANSWERED and knows no token there; Trending and the
+  DM paste only on a miss.
+- ⚠️ **A TOKEN RESOLVED FROM A PAIR IS SHOWN, NEVER SPENT ON BLIND** (trade
+  bot). It is a pointer DexScreener handed us, not something the user typed, so
+  auto-buy and `/buy` stop at the card (whose name and symbol are read off the
+  chain) with "not bought automatically". A link to a token PAGE carries the
+  user's own address and is treated like a paste of it.
+- **The substitution is said out loud** — `ca_pair_resolved` /
+  `ca_link_refused` (admin-editable, Bot Messages) and `paste.*` (EN/ID) in the
+  trade bot. A swap nobody saw is a token nobody chose.
+- Two old guards pinned a SPELLING (`const hit = listed.extractAddress(raw);`,
+  `listing = all.find(`) and went red over code keeping their rule; both assert
+  the property now — the bare-paste one is driven.
+
+```bash
+cd bot && node scripts/run-tests.js test/dexPair.test.js test/caInputWiring.test.js   # 37 tests, no network
+cd tradebot && SKIP_DOTENV=1 node --test dexPaste.test.js                              # 11 tests, no network
+```
+
+Twenty-four guarantees are MUTATION-TESTED rather than argued — every door
+dropping the resolution (listing, `/settoken` storing the input, the buy bot's
+pair fallback, the group paste, Mass DM, Trending's retry and its no-cost path,
+the gainers swap, the DM paste, the trade bot paste), the match not exact, a 404
+read as an outage, the last reason winning, EVM not lowercased, base58
+case-folded, a link inside a sentence accepted, the bench bypassed, a link
+failing open on a timeout and on a refusal, and in the trade bot: auto-buy or
+`/buy` spending on a resolved pair, a token paying for a pair lookup, and a
+DexScreener outage failing closed. Each fails between one and three tests;
+three SURVIVED their first run and all three were test gaps.
+
+**Config a fix depends on:** nothing. `CA_INPUT_MS` (5s, floor 1s) bounds the
+check on a paste. ⚠️ `shared/`, `bot/` and `tradebot/` changed, so
+`npm run deploy` restarts all three bot processes; there is no web rebuild.
+⚠️ Whether DexScreener answers FROM THE BOX is its egress today (this sandbox
+reaches no host) — a link pasted while it refuses the box is refused with that
+reason, and a bare token goes through as before.
+
 ## Two bot processes, one config
 
 `bot/` runs **two** PM2 processes: `dexvra-bot` (`main.js`) and

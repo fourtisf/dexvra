@@ -51,10 +51,16 @@ const URL_RE = /^https?:\/\/\S+$/i;
 const { AUTOFILL_MAX_MS, INFO_OPTS } = require("../config/autofill");
 const solanaMeta = require("../solanaMeta");
 const sessionStore = require("../helpers/sessionStore");
+const caInput = require("../helpers/caInput");
 
 /** Test seam — the three lookups, swappable without a network. The
  *  `core._deps.providerFor` shape, for the same reason. */
-const _lookups = { fetchTokenInfo, fetchMarket, fetchTokenDescription };
+const _lookups = { fetchTokenInfo, fetchMarket, fetchTokenDescription, resolveInput: (...a) => caInput.resolveInput(...a) };
+
+// The pair check is ONE request to DexScreener's documented pair endpoint (the
+// chain is already picked), so it gets a tighter ceiling than the autofill: a
+// person just pasted and is waiting for the next card.
+const CA_INPUT_MS = Math.max(1000, Number(process.env.CA_INPUT_MS) || 5000);
 
 /** Run one lookup with a ceiling. Resolves null on timeout, rejection, or a
  *  synchronous throw — an autofill source can fail, never the form.
@@ -152,102 +158,34 @@ async function handleText(ctx) {
 
   switch (field) {
     case "address": {
-      if (!isValidAddress(f.chain, input)) {
+      // ⚠️ WHAT TOKEN DOES THIS PASTE MEAN? A DexScreener link — and the bare
+      // address its URL carries — is the POOL, not the token (helpers/caInput.js).
+      // The link used to be refused as "not a valid address", and the pair
+      // address went on to be LISTED as if it were the contract: a paid row no
+      // price read could ever find again. Resolved before anything else, so
+      // every line below works on the token.
+      const isLink = caInput.parseInput(input)?.kind === "dslink";
+      // A link always costs a request, so the paste is answered first.
+      if (isLink) await sendCard(ctx, tpl.render("listing_lookup_wait"), menu.withHome([]));
+      const ref = await bounded(() => _lookups.resolveInput(input, { chain: f.chain }), CA_INPUT_MS);
+      // A link we could not read in time is refused rather than guessed at: it
+      // is almost always a pair, and a pair is exactly what must not be listed.
+      // A BARE address that timed out goes on as typed — the behaviour that
+      // shipped before this check existed.
+      if (isLink && !ref) {
+        return toast(ctx, tpl.render("ca_link_refused", { reason: "couldn't read that DexScreener link in time — paste the token's contract address instead, or try again in a minute" }));
+      }
+      if (ref && ref.refused) return toast(ctx, tpl.render("ca_link_refused", { reason: ref.refused }));
+      // The link names its own network, and it wins over the chain picked one
+      // screen earlier: the price is not decided until the tier step, and the
+      // review card shows the chain the listing is on.
+      if (ref && ref.chain && ref.chain !== f.chain && chainOf(ref.chain)) f.chain = ref.chain;
+      const address = ref && ref.address ? ref.address : input;
+      if (!isValidAddress(f.chain, address)) {
         return toast(ctx, tpl.render("invalid_address", { chain: chainOf(f.chain).label }));
       }
-      // One token, one listing. Checked BEFORE the autofill round-trip so a
-      // repeat contract is answered immediately, and before any of the form is
-      // filled in for a listing that can never be sold.
-      if (await listed.blockIfListed(ctx, input, f.chain)) return;
-      f.address = input;
-      // The paste is ANSWERED before the indexers are asked. The lookups below
-      // are bounded but still seconds long, and a prompted input followed by
-      // seconds of nothing is "the button does nothing" — the report that
-      // produced the atrun fix, on a text prompt. The review card (or the next
-      // prompt) replaces this card, so the flow stays one live message.
-      await sendCard(ctx, tpl.render("listing_lookup_wait"), menu.withHome([]));
-      // Autofill from the token's own indexer — pools.trade on Robinhood Chain,
-      // DexScreener everywhere else (name/symbol/logo + socials: X/Telegram/
-      // Website) — and GeckoTerminal (name/symbol/logo + project overview).
-      // The indexer wins for socials. Each source has AUTOFILL_MAX_MS to
-      // answer; see `bounded` for why a ceiling here is load-bearing.
-      const [ds, gt, desc] = await Promise.all([
-        // The discovery gets a budget INSIDE the form's ceiling, so a source
-        // that hangs costs its own answer and never the ones that arrived.
-        bounded(() => _lookups.fetchTokenInfo(f.chain, input, INFO_OPTS)),
-        bounded(() => _lookups.fetchMarket(f.chain, input)),
-        bounded(() => _lookups.fetchTokenDescription(f.chain, input)),
-      ]);
-      const name = (ds && ds.name) || (gt && gt.name);
-      const symbol = (ds && ds.symbol) || (gt && gt.symbol);
-      const logoUrl = (ds && ds.logoUrl) || (gt && gt.logoUrl);
-      // The project's own words: GeckoTerminal's, then the pad's — and then
-      // whatever the merge carried, which is where the token's ON-CHAIN
-      // metadata document lands. That one was read and thrown away: the merged
-      // record's `description` was never looked at, so a pump.fun token whose
-      // GT entry and pad were both silent got the auto-written intro over a
-      // description its own mint publishes.
-      const overview = desc || (ds && ds.description) || null;
-      if (overview && !f.overview) f.overview = cleanOverview(overview);
-      // ⚠️ KEPT, not thrown away. These two lookups already carry the price,
-      // the market cap and the liquidity — and $SFX's paid post published
-      // "Market cap: TBA · Price: TBA" minutes later because the only thing the
-      // post had was ONE fresh read of its own. The market read (GT-first, with
-      // DexScreener filling its holes and pickTrusted refusing a poisoned pool)
-      // leads; the DexScreener profile fills what it left.
-      f.market = figures.snapshotOf([gt, ds], Date.now());
-      // Only when a launchpad SAID the token is on a curve. `onCurve` is
-      // three-valued — true, false, or null for "no pad knows" — and treating
-      // the null as true would put a bonding notice on every token nothing
-      // happened to index.
-      f.bonding = ds && ds.onCurve === true
-        ? { progressPct: Number.isFinite(ds.progressPct) ? ds.progressPct : null, launchpad: ds.launchpad || null }
-        : null;
-      // An AUTOFILLED ticker has to satisfy the site's rule too. DexScreener and
-      // GeckoTerminal return whatever the token deployer wrote — "SAFE MOON",
-      // "PEPE🐸" — and storing that verbatim only failed at fulfilment, i.e.
-      // after the buyer paid. Repair what we can; when nothing valid survives,
-      // ASK instead of carrying a ticker the site will reject.
-      const autoSym = sanitizeTicker(symbol || name);
-      if (name || autoSym) {
-        f.name = f.name || name || autoSym;
-        if (!f.sym && autoSym) f.sym = autoSym;
-        if (logoUrl && !f.logoUrl) f.logoUrl = logoUrl;
-        if (ds) {
-          if (ds.website && !f.website) f.website = ds.website;
-          if (ds.twitter && !f.twitter) f.twitter = ds.twitter;
-          if (ds.telegram && !f.telegram) f.telegram = ds.telegram;
-        }
-        // ⚠️ A FORM WITH NO SOCIALS SAYS WHY, at INFO. "Website: not set · X:
-        // not set" has four causes — DexScreener has no profile for it, the pad
-        // refused this box, the chain could not be read, or the creator wrote
-        // none — and the review card renders all four identically. This line
-        // is the difference between a diagnosis and a screenshot.
-        if (!f.website && !f.twitter && !f.telegram) {
-          const why = chainMetaWhy(f.chain, input);
-          const pads = padsWhy(f.chain, input);
-          log.info(
-            `[listing] autofill ${f.chain}/${input}: no website, X or Telegram — merged from ${(ds && ds.source) || (ds ? "dexscreener" : "no source")}` +
-              (why ? `; on-chain metadata: ${why}` : "") +
-              (pads ? `; launchpads that did not know it: ${pads}` : ""),
-          );
-        }
-        if (!f.sym) {
-          log.warn(`[listing] autofill gave no usable ticker for ${f.chain}/${input} (symbol=${symbol ?? "-"})`);
-          s.awaitingField = "symbol";
-          return sendCard(ctx, tpl.render("listing_symbol_prompt"), menu.withHome([]));
-        }
-        s.awaitingField = null;
-        const shown = await showReview(ctx);
-        // ⚠️ FIRE AND FORGET — never awaited. Telegraf fetches no further
-        // updates until this handler returns, so a second look that waited
-        // here would make the whole bot deaf for its schedule ("mengapa bot
-        // tidak bisa merespon lagi", one feature over).
-        _late.started = lateFill(ctx, f, shown).catch((e) => log.warn(`[listing] second look for ${f.chain}/${input} failed: ${e.message}`));
-        return shown;
-      }
-      s.awaitingField = "name";
-      return sendCard(ctx, tpl.render("listing_name_prompt"), menu.withHome([]));
+      if (ref && ref.pair) await toast(ctx, tpl.render("ca_pair_resolved", caInput.pairVars(ref.pair)));
+      return captureAddress(ctx, f, address, { waited: isLink });
     }
     case "name":
       f.name = input.slice(0, 60);
@@ -282,6 +220,113 @@ async function handleText(ctx) {
     default:
       return; // no active field
   }
+}
+
+/**
+ * The token's contract, settled: the one-listing check, the wait card, the
+ * autofill, then the review card (or the next prompt).
+ *
+ * Split out of handleText so the resolution in front of it — a DexScreener link,
+ * a pasted pair — hands over the TOKEN, and nothing in here can ever see what
+ * was typed.
+ */
+async function captureAddress(ctx, f, input, { waited = false } = {}) {
+  const s = ctx.session;
+  // One token, one listing. Checked BEFORE the autofill round-trip so a
+  // repeat contract is answered immediately, and before any of the form is
+  // filled in for a listing that can never be sold.
+  if (await listed.blockIfListed(ctx, input, f.chain)) return;
+  f.address = input;
+  // The paste is ANSWERED before the indexers are asked. The lookups below
+  // are bounded but still seconds long, and a prompted input followed by
+  // seconds of nothing is "the button does nothing" — the report that
+  // produced the atrun fix, on a text prompt. The review card (or the next
+  // prompt) replaces this card, so the flow stays one live message. A link
+  // was already answered with this card before it was resolved.
+  if (!waited) await sendCard(ctx, tpl.render("listing_lookup_wait"), menu.withHome([]));
+
+  // Autofill from the token's own indexer — pools.trade on Robinhood Chain,
+  // DexScreener everywhere else (name/symbol/logo + socials: X/Telegram/
+  // Website) — and GeckoTerminal (name/symbol/logo + project overview).
+  // The indexer wins for socials. Each source has AUTOFILL_MAX_MS to
+  // answer; see `bounded` for why a ceiling here is load-bearing.
+  const [ds, gt, desc] = await Promise.all([
+    // The discovery gets a budget INSIDE the form's ceiling, so a source
+    // that hangs costs its own answer and never the ones that arrived.
+    bounded(() => _lookups.fetchTokenInfo(f.chain, input, INFO_OPTS)),
+    bounded(() => _lookups.fetchMarket(f.chain, input)),
+    bounded(() => _lookups.fetchTokenDescription(f.chain, input)),
+  ]);
+  const name = (ds && ds.name) || (gt && gt.name);
+  const symbol = (ds && ds.symbol) || (gt && gt.symbol);
+  const logoUrl = (ds && ds.logoUrl) || (gt && gt.logoUrl);
+  // The project's own words: GeckoTerminal's, then the pad's — and then
+  // whatever the merge carried, which is where the token's ON-CHAIN
+  // metadata document lands. That one was read and thrown away: the merged
+  // record's `description` was never looked at, so a pump.fun token whose
+  // GT entry and pad were both silent got the auto-written intro over a
+  // description its own mint publishes.
+  const overview = desc || (ds && ds.description) || null;
+  if (overview && !f.overview) f.overview = cleanOverview(overview);
+  // ⚠️ KEPT, not thrown away. These two lookups already carry the price,
+  // the market cap and the liquidity — and $SFX's paid post published
+  // "Market cap: TBA · Price: TBA" minutes later because the only thing the
+  // post had was ONE fresh read of its own. The market read (GT-first, with
+  // DexScreener filling its holes and pickTrusted refusing a poisoned pool)
+  // leads; the DexScreener profile fills what it left.
+  f.market = figures.snapshotOf([gt, ds], Date.now());
+  // Only when a launchpad SAID the token is on a curve. `onCurve` is
+  // three-valued — true, false, or null for "no pad knows" — and treating
+  // the null as true would put a bonding notice on every token nothing
+  // happened to index.
+  f.bonding = ds && ds.onCurve === true
+    ? { progressPct: Number.isFinite(ds.progressPct) ? ds.progressPct : null, launchpad: ds.launchpad || null }
+    : null;
+  // An AUTOFILLED ticker has to satisfy the site's rule too. DexScreener and
+  // GeckoTerminal return whatever the token deployer wrote — "SAFE MOON",
+  // "PEPE🐸" — and storing that verbatim only failed at fulfilment, i.e.
+  // after the buyer paid. Repair what we can; when nothing valid survives,
+  // ASK instead of carrying a ticker the site will reject.
+  const autoSym = sanitizeTicker(symbol || name);
+  if (name || autoSym) {
+    f.name = f.name || name || autoSym;
+    if (!f.sym && autoSym) f.sym = autoSym;
+    if (logoUrl && !f.logoUrl) f.logoUrl = logoUrl;
+    if (ds) {
+      if (ds.website && !f.website) f.website = ds.website;
+      if (ds.twitter && !f.twitter) f.twitter = ds.twitter;
+      if (ds.telegram && !f.telegram) f.telegram = ds.telegram;
+    }
+    // ⚠️ A FORM WITH NO SOCIALS SAYS WHY, at INFO. "Website: not set · X:
+    // not set" has four causes — DexScreener has no profile for it, the pad
+    // refused this box, the chain could not be read, or the creator wrote
+    // none — and the review card renders all four identically. This line
+    // is the difference between a diagnosis and a screenshot.
+    if (!f.website && !f.twitter && !f.telegram) {
+      const why = chainMetaWhy(f.chain, input);
+      const pads = padsWhy(f.chain, input);
+      log.info(
+        `[listing] autofill ${f.chain}/${input}: no website, X or Telegram — merged from ${(ds && ds.source) || (ds ? "dexscreener" : "no source")}` +
+          (why ? `; on-chain metadata: ${why}` : "") +
+          (pads ? `; launchpads that did not know it: ${pads}` : ""),
+      );
+    }
+    if (!f.sym) {
+      log.warn(`[listing] autofill gave no usable ticker for ${f.chain}/${input} (symbol=${symbol ?? "-"})`);
+      s.awaitingField = "symbol";
+      return sendCard(ctx, tpl.render("listing_symbol_prompt"), menu.withHome([]));
+    }
+    s.awaitingField = null;
+    const shown = await showReview(ctx);
+    // ⚠️ FIRE AND FORGET — never awaited. Telegraf fetches no further
+    // updates until this handler returns, so a second look that waited
+    // here would make the whole bot deaf for its schedule ("mengapa bot
+    // tidak bisa merespon lagi", one feature over).
+    _late.started = lateFill(ctx, f, shown).catch((e) => log.warn(`[listing] second look for ${f.chain}/${input} failed: ${e.message}`));
+    return shown;
+  }
+  s.awaitingField = "name";
+  return sendCard(ctx, tpl.render("listing_name_prompt"), menu.withHome([]));
 }
 
 async function handlePhoto(ctx) {

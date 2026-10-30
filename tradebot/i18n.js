@@ -75,6 +75,24 @@ const S = {
     id: '🤔 Saya belum mengerti pesan itu.\n\nUntuk trading token, paste <b>alamat kontraknya</b> di sini. Atau tap salah satu tombol di bawah.',
   },
 
+  // A pasted DexScreener link, or the PAIR address its URL carries — resolved to
+  // the token the pool trades (core.resolvePaste). Said out loud, because a
+  // substitution nobody saw is a token nobody chose.
+  'paste.pair_resolved': {
+    en: '🔗 <b>That address is a DexScreener pair</b> ({pair}) — here is the token it trades:',
+    id: '🔗 <b>Alamat itu adalah pair DexScreener</b> ({pair}) — ini token yang diperdagangkan di pair itu:',
+  },
+  'paste.link_refused': {
+    en: "⚠️ <b>Couldn't open that.</b>\n\n{why}",
+    id: '⚠️ <b>Belum bisa membuka itu.</b>\n\n{why}',
+  },
+  // ⚠️ A token resolved from a pair came from an INDEX, not from the user, so
+  // it is shown and never bought blind — auto-buy and /buy stop at the card.
+  'paste.confirm_on_card': {
+    en: '<i>Not bought automatically: this token was resolved from a pair — check it on the card, then tap Buy.</i>',
+    id: '<i>Tidak dibeli otomatis: token ini didapat dari alamat pair — cek dulu di kartu, lalu tap Buy.</i>',
+  },
+
   // ---------------------------------------------------------------- wallets
   // The /wallet screen. Written so the ACTIVE wallet is the subject and every
   // other wallet is one line — the old version printed the active wallet twice

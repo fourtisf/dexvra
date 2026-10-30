@@ -10,8 +10,18 @@ const LISTING = new Set(["xpress_listing", "tiered_listing"]);
 async function bareContract(ctx, raw) {
   if (raw.startsWith("/")) return;
   const listed = require("../helpers/listedGuard");
-  const hit = listed.extractAddress(raw);
-  if (!hit) return;
+  let hit = listed.extractAddress(raw);
+  // A DexScreener link — what a project owner most often has on the clipboard —
+  // names the POOL; resolved to the token before the listing is looked up.
+  // Links only: a bare address that is not listed stays silent, as before, and
+  // costs no request.
+  if (!hit) {
+    const caInput = require("../helpers/caInput");
+    if (caInput.parseInput(raw)?.kind !== "dslink") return;
+    const res = await caInput.resolveInputSoon(raw.trim());
+    if (!res || res.refused || !res.address) return;
+    hit = { address: res.address, chain: res.chain };
+  }
   try {
     const row = await listed.existingListing(hit.address, hit.chain);
     if (row) await listed.sendAlreadyListed(ctx, row);

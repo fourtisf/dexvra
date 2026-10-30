@@ -246,6 +246,13 @@ const DEFAULTS = {
   edit_field_prompt: "✏️ Send the new **{field}**:",
   invalid_address:
     "❌ That doesn't look like a valid **{chain}** contract address.\n\n🔹 Double-check and paste it again:",
+  // A DexScreener URL carries the POOL, not the token (helpers/caInput.js), and
+  // the bot now swaps it for the token the pool trades. Said out loud, because
+  // a substitution nobody saw is a token nobody chose.
+  ca_pair_resolved:
+    "🔗 **That address is a DexScreener pair**\n\n" +
+    "🔹 Using the token it trades: **{symbol}** on **{chain}**\n`{address}`",
+  ca_link_refused: "⚠️ **Couldn't read that link**\n\n🔹 {reason}",
   invalid_url: "❌ That must be a full **https://** URL.\n\n🔹 Please try again:",
   // The site's rule, said in the user's words (see helpers/ticker.js).
   invalid_ticker:
@@ -1341,6 +1348,8 @@ const META = {
   review_card: { group: "Bot Messages", label: "Listing review card", ph: ["chain", "name", "symbol", "address", "logo", "overview", "website", "twitter", "telegram", "bonding"] },
   edit_field_prompt: { group: "Bot Messages", label: "Edit-field prompt", ph: ["field"] },
   invalid_address: { group: "Bot Messages", label: "Error: invalid address", ph: ["chain"] },
+  ca_pair_resolved: { group: "Bot Messages", label: "Contract: a DexScreener pair was pasted (using its token)", ph: ["symbol", "chain", "address"] },
+  ca_link_refused: { group: "Bot Messages", label: "Contract: a link that could not be read", ph: ["reason"] },
   invalid_url: { group: "Bot Messages", label: "Error: invalid URL", ph: [] },
   invalid_ticker: { group: "Bot Messages", label: "Error: invalid ticker", ph: [] },
   listing_incomplete: { group: "Bot Messages", label: "Error: listing incomplete", ph: [] },

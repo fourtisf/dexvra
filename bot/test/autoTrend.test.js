@@ -446,7 +446,13 @@ test("a PAID trending order is never refused for its package", () => {
   // The listing lookup is the only gate: approved, and the address matches.
   // A tier term anywhere in that filter would be refusing a sale. (The file does
   // mention Xpress — as the button offered when the token is NOT listed yet.)
-  const lookup = flow.slice(flow.indexOf("listing = all.find("), flow.indexOf("if (!listing)"));
+  // From the ONE filter (a `find` helper since a DexScreener link is looked up
+  // twice — as typed, then as the token its pool trades) to the not-found card.
+  // ⚠️ Anchored on the filter itself, not on a variable name: the first cut of
+  // this guard pinned `listing = all.find(` and went red over a refactor that
+  // kept the rule exactly.
+  const lookup = flow.slice(flow.indexOf("all.find("), flow.indexOf("if (!listing)"));
+  assert.ok(lookup.length > 40, "the lookup slice is empty — the guard is reading nothing");
   assert.match(lookup, /r\.status === "approved"/);
   assert.ok(!/tier/i.test(lookup), `the purchase flow filters on tier: ${lookup}`);
   assert.ok(!/NEVER_PROMOTE/.test(flow));

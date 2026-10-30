@@ -18,6 +18,7 @@ const report = require('./report');   // ops reporting to admin channel (never s
 const _replyCtx = new AsyncLocalStorage();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const goplus = require('./goplus');
+const dsLink = require('../shared/dexscreener/pair');   // a pasted dexscreener.com link names the POOL — see core.resolvePaste
 const i18n = require('./i18n');       // EN/ID copy — see i18n.js for why this exists
 const receipt = require('./receipt'); // one wallet, one receipt — pure renderer, no I/O
 const pnl = require('./pnl');         // the PnL card — pure renderer, no I/O
@@ -626,6 +627,31 @@ async function orderPrompt(ca, chainKey, kind) {
 const DS_SLUG = { robinhood: 'robinhood', ethereum: 'ethereum', base: 'base', bsc: 'bsc', arbitrum: 'arbitrum', solana: 'solana' };
 const chartUrl = (chainKey, ca) => DS_SLUG[chainKey] ? `https://dexscreener.com/${DS_SLUG[chainKey]}/${ca}` : `https://dexscreener.com/search?q=${ca}`;
 const expTokenUrl = (chainKey, ca) => { const c = core.chainOf(chainKey); return c ? `${c.explorer}/token/${ca}` : ''; };
+
+/**
+ * A paste, as the token it means — core.resolvePaste, worded for a chat.
+ *   { refused }                    — a link we cannot read honestly; send it
+ *   { ca, chain, note, blind }     — `blind` false when the token came from
+ *                                    DexScreener (a pair), so nothing may spend
+ *                                    on it before the user has seen its card
+ */
+async function pasteRef(chatId, raw) {
+  const dx = await core.resolvePaste(raw).catch(() => null);
+  if (!dx) return { ca: raw, chain: null, note: '', blind: true };
+  if (dx.refused) return { refused: T(chatId, 'paste.link_refused', { why: esc(dx.refused) }) };
+  if (dx.via === 'pair') {
+    const p = dx.pair;
+    const label = `${p.token.symbol ? '$' + p.token.symbol : short(dx.ca)}${p.quote.symbol ? '/' + p.quote.symbol : ''}${p.dexId ? ' · ' + p.dexId : ''}`;
+    return { ca: dx.ca, chain: dx.chain, note: T(chatId, 'paste.pair_resolved', { pair: esc(label) }) + '\n\n', blind: false };
+  }
+  return { ca: dx.ca, chain: dx.chain, note: '', blind: true };
+}
+
+/** The resolved token's card, with the note that says it was resolved. */
+async function openPasted(chatId, ref, tail, chainKey) {
+  const c = await tokenCard(chatId, ref.ca, chainKey || ref.chain);
+  return send(chatId, ref.note + c.text + (tail || ''), c.kb);
+}
 
 // Maestro-style chain auto-detect: figure out which enabled chain a pasted CA
 // lives on so the user never has to switch chains to trade. base58 → Solana;
@@ -3737,20 +3763,52 @@ async function onMessageImpl(m) {
   if (text.startsWith('/stats')) return adminStats(chatId);
   if (text.startsWith('/revenue')) return adminRevenue(chatId);
   if (text === '/menu' || text === '/help') return send(chatId, helpText(chatId), mainMenu());
-  if (text.startsWith('/buy')) { const [, ca, amtRaw] = text.split(/\s+/); if (isCa(ca) && amtRaw) { const det = await detectChain(chatId, ca); const cn = core.chainOf(det.chain || core.userChain(core.ensureUser(chatId))); const pa = parseAmt(amtRaw, cn.native); if (!pa) return send(chatId, 'Usage: <code>/buy &lt;contract&gt; &lt;amount|$usd&gt;</code> — e.g. <code>/buy 0x… 0.05</code> or <code>/buy 0x… $10</code>'); if (pa.err) return send(chatId, '❌ ' + esc(pa.err)); return requestBuy(chatId, ca, pa.amt, det.chain); } return send(chatId, 'Usage: <code>/buy &lt;contract&gt; &lt;amount|$usd&gt;</code> — e.g. <code>/buy 0x… 0.05</code> or <code>/buy 0x… $10</code> — or paste a contract address.'); }
-  if (text.startsWith('/sell')) { const [, ca, pct] = text.split(/\s+/); if (isCa(ca) && pct) { const det = await detectChain(chatId, ca); return doSell(chatId, ca, Number(pct), det.chain); } return send(chatId, 'Usage: <code>/sell &lt;contract&gt; &lt;pct&gt;</code>'); }
+  if (text.startsWith('/buy')) {
+    const [, caRaw, amtRaw] = text.split(/\s+/);
+    if ((isCa(caRaw) || dsLink.parseLink(caRaw || '')) && amtRaw) {
+      // A link or a pair resolves to its token — and a token we RESOLVED is
+      // shown, never bought blind: the card is the confirmation.
+      const ref = await pasteRef(chatId, caRaw);
+      if (ref.refused) return send(chatId, ref.refused, mainMenu());
+      if (!ref.blind) return openPasted(chatId, ref, '\n\n' + T(chatId, 'paste.confirm_on_card'));
+      const ca = ref.ca;
+      const det = ref.chain ? { chain: ref.chain } : await detectChain(chatId, ca); const cn = core.chainOf(det.chain || core.userChain(core.ensureUser(chatId))); const pa = parseAmt(amtRaw, cn.native); if (!pa) return send(chatId, 'Usage: <code>/buy &lt;contract&gt; &lt;amount|$usd&gt;</code> — e.g. <code>/buy 0x… 0.05</code> or <code>/buy 0x… $10</code>'); if (pa.err) return send(chatId, '❌ ' + esc(pa.err)); return requestBuy(chatId, ca, pa.amt, det.chain);
+    }
+    return send(chatId, 'Usage: <code>/buy &lt;contract&gt; &lt;amount|$usd&gt;</code> — e.g. <code>/buy 0x… 0.05</code> or <code>/buy 0x… $10</code> — or paste a contract address.');
+  }
+  if (text.startsWith('/sell')) {
+    const [, caRaw, pct] = text.split(/\s+/);
+    if ((isCa(caRaw) || dsLink.parseLink(caRaw || '')) && pct) {
+      const ref = await pasteRef(chatId, caRaw);
+      if (ref.refused) return send(chatId, ref.refused, mainMenu());
+      if (!ref.blind) return openPasted(chatId, ref, '');
+      const det = ref.chain ? { chain: ref.chain } : await detectChain(chatId, ref.ca);
+      return doSell(chatId, ref.ca, Number(pct), det.chain);
+    }
+    return send(chatId, 'Usage: <code>/sell &lt;contract&gt; &lt;pct&gt;</code>');
+  }
 
-  if (isCa(text)) {
+  // ⚠️ A DEXSCREENER LINK, OR THE PAIR ADDRESS ITS URL CARRIES, MEANS A TOKEN.
+  // The link used to fall to "I didn't recognise that", and the pair address was
+  // carded as the pool itself — see core.resolvePaste.
+  const ref = (isCa(text) || dsLink.parseLink(text)) ? await pasteRef(chatId, text) : null;
+  if (ref && ref.refused) return send(chatId, ref.refused, mainMenu());
+  const pasted = ref ? ref.ca : text;
+  if (ref && isCa(pasted)) {
     const u = core.ensureUser(chatId);
     // Detect the token's chain first (Maestro-style) — trading needs no /chain
     // switching. Ambiguous (same contract on several chains) → let the user pick;
     // the card's buttons carry the chain, so the tap trades on the right one.
-    const det = await detectChain(chatId, text);
+    // A link or a pair already named its chain, and that answer wins.
+    const det = ref.chain ? { chain: ref.chain } : await detectChain(chatId, pasted);
     if (det.choices) {
-      const kb = det.choices.map((k) => { const c = core.chainOf(k); return [btn(`${c.emoji} ${c.name}`, `tok:${k}:${walletIndex(chatId)}:${text}`)]; });
+      const kb = det.choices.map((k) => { const c = core.chainOf(k); return [btn(`${c.emoji} ${c.name}`, `tok:${k}:${walletIndex(chatId)}:${pasted}`)]; });
       kb.push([btn('« Menu', 'menu')]);
-      return send(chatId, `🌐 <code>${short(text)}</code> exists on <b>${det.choices.length} chains</b> — pick where to trade:`, { inline_keyboard: kb });
+      return send(chatId, `🌐 <code>${short(pasted)}</code> exists on <b>${det.choices.length} chains</b> — pick where to trade:`, { inline_keyboard: kb });
     }
+    // ⚠️ A token RESOLVED from a pair came from DexScreener, not from the user:
+    // it is shown, and auto-buy stops at the card.
+    if (u.settings && u.settings.autoBuy && !ref.blind) return openPasted(chatId, ref, '\n\n' + T(chatId, 'paste.confirm_on_card'), det.chain);
     // Auto-buy on paste (Settings): buy instantly with the active wallet on the
     // DETECTED chain (falls back to the active chain if detection found nothing).
     if (u.settings && u.settings.autoBuy) {
@@ -3761,19 +3819,19 @@ async function onMessageImpl(m) {
       // (honeypot / can't-sell / freeze-authority / rugged) before spending funds.
       let safetyNote = '';
       if (safety.supported(chainKey)) {
-        const s = await safety.tokenSecurity(chainKey, text).catch(() => null);
+        const s = await safety.tokenSecurity(chainKey, pasted).catch(() => null);
         if (s && safety.verdict(chainKey, s).level === 'danger') {
           const why = safety.verdict(chainKey, s).red.join(', ');
-          return send(chatId, `🚨 <b>Auto-buy blocked</b> — <code>${short(text)}</code> is <b>HIGH RISK</b>: ${esc(why)}. Open the card and review 🛡 Safety before buying manually.`, rows([btn('🔎 Open card', `tok:${chainKey}:${walletIndex(chatId)}:${text}`), btn('« Menu', 'menu')]));
+          return send(chatId, `🚨 <b>Auto-buy blocked</b> — <code>${short(pasted)}</code> is <b>HIGH RISK</b>: ${esc(why)}. Open the card and review 🛡 Safety before buying manually.`, rows([btn('🔎 Open card', `tok:${chainKey}:${walletIndex(chatId)}:${pasted}`), btn('« Menu', 'menu')]));
         }
         // Gate fails OPEN when there's no data (fresh/unindexed token — the riskiest
         // case). Tell the user the check didn't actually run.
         if (!s) safetyNote = '\n⚠️ <i>Safety data unavailable — buying blind on a fresh/unknown token.</i>';
       }
-      await send(chatId, `⚡ <b>Auto-buy</b> ${esc(amt)} of <code>${short(text)}</code>… <i>(toggle in ⚙️ Settings)</i>${safetyNote}`);
-      return doBuy(chatId, text, amt, chainKey);
+      await send(chatId, `⚡ <b>Auto-buy</b> ${esc(amt)} of <code>${short(pasted)}</code>… <i>(toggle in ⚙️ Settings)</i>${safetyNote}`);
+      return doBuy(chatId, pasted, amt, chainKey);
     }
-    const c = await tokenCard(chatId, text, det.chain); return send(chatId, c.text, c.kb);
+    const c = await tokenCard(chatId, pasted, det.chain); return send(chatId, ref.note + c.text, c.kb);
   }
   return send(chatId, T(chatId, 'common.unknown_input'), mainMenu());
 }

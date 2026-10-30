@@ -12,6 +12,7 @@ const tpl = require("../templates");
 const premium = require("../premium");
 const { payloadArgs } = require("../helpers/message");
 const log = require("../helpers/logger");
+const caInput = require("../helpers/caInput");
 
 /**
  * Reply with an admin-editable template.
@@ -43,18 +44,44 @@ const isGroup = (ctx) => ctx.chat && (ctx.chat.type === "group" || ctx.chat.type
 const arg = (ctx) => (ctx.message.text || "").split(/\s+/).slice(1).join(" ").trim();
 
 // Candidate chains to probe for a pasted address, by shape. Ordered so the most
-// likely wins first; the FIRST chain with a live pool is chosen.
-function candidateChains(address) {
-  if (/^0x[a-fA-F0-9]{40}$/.test(address)) return ["ethereum", "bsc", "base", "robinhood", "plasma"];
-  if (/^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(address)) return ["tron"];
-  if (/^(EQ|UQ|0:)/.test(address)) return ["ton"];
-  if (/^0x[a-fA-F0-9]+::/.test(address)) return ["sui"];
-  return ["solana"]; // base58 mint
+// likely wins first. The list lives in helpers/caInput.js now — the listing
+// form, Mass DM and Trending probe the same set, and two copies of it is how
+// one flow comes to find a token the other cannot.
+const candidateChains = caInput.probeChains;
+
+/** The pool the person POINTED AT, when what they pasted was a pair. */
+const fromPair = (pair) => ({ chain: pair.chain, pool: gt.dsPoolOf(pair.raw, pair.token.address), address: pair.token.address, pair });
+
+/**
+ * Probe candidate chains for a live pool.
+ *
+ * → { chain, pool, address?, pair?, refused? } or null
+ *   address — the TOKEN, when it differs from what was pasted (a pair, a link).
+ *             Callers store this one, never the input.
+ *   refused — a link that could not be read honestly; say it and stop.
+ */
+async function resolveToken(input) {
+  // ⚠️ A DEXSCREENER LINK NAMES THE POOL, NOT THE TOKEN (helpers/caInput.js).
+  // For the buy bot that is the best possible input: the pool IS what it
+  // watches. A link whose address turns out to be a token page just narrows
+  // the probe to the chain the link named.
+  let address = String(input || "").trim();
+  let only = null;
+  if (caInput.parseInput(address)?.kind === "dslink") {
+    const r = await caInput.resolveInput(address);
+    if (!r) return null;
+    if (r.refused) return { refused: r.refused };
+    if (r.pair) return fromPair(r.pair);
+    address = r.address;
+    only = r.chain;
+  }
+  const res = await resolveAddress(address, only ? [only] : candidateChains(address));
+  // The token as resolved, even when it was handed over through a link — so a
+  // caller storing `res.address || input` never stores the URL.
+  return res && !res.address && address !== String(input || "").trim() ? { ...res, address } : res;
 }
 
-/** Probe candidate chains for a live pool; return {chain, pool} or null. */
-async function resolveToken(address) {
-  const candidates = candidateChains(address);
+async function resolveAddress(address, candidates) {
 
   // ⚠️ ONE REQUEST ANSWERS EVERY CANDIDATE CHAIN, and not asking it this way is
   // what made a Robinhood contract resolve as "Ethereum".
@@ -74,6 +101,15 @@ async function resolveToken(address) {
   // picked by POOL DEPTH rather than by the candidate list's order.
   const across = await gt.dsResolveAcross(address, candidates).catch(() => null);
   if (across && across.pool && across.pool.poolAddress) return across;
+
+  // ⚠️ THEN: IS IT A PAIR? The address DexScreener shows in its URL and its
+  // "copy" button is the pool, and the token endpoint above knows nothing about
+  // pools — so a pasted pair used to fall all the way through GeckoTerminal and
+  // the chain sweep to "No live pool on that CA", about a pool that plainly
+  // exists. Asked only here, after the token lookup missed, so a token pays
+  // nothing for it.
+  const pair = await caInput.asPair(address, candidates).catch(() => null);
+  if (pair) return fromPair(pair);
 
   // Then per chain, for the tokens that endpoint does not carry. Serial and in
   // candidate order: a bounded caller may not reach the end of it, which is the
@@ -320,7 +356,9 @@ async function groupTokenReply(ctx, next) {
   // must be confirmed rather than skipped, so the card says what it replaces.
   //
   // The admin lookup costs an API call, so it stays the LAST check.
-  if (!looksLikeAddress(body)) return next();
+  // A DexScreener link counts: it is what most people copy, and it names the
+  // pool the buy bot would watch anyway (resolved at the tap, in applyToken).
+  if (!looksLikeAddress(body) && caInput.parseInput(body)?.kind !== "dslink") return next();
   const g = cfg.get(ctx.chat.id);
   if (g && g.address && String(g.address).toLowerCase() === body.toLowerCase()) return next(); // already watching it
   if (!(await isGroupAdmin(ctx))) return next();
@@ -410,14 +448,20 @@ async function settoken(ctx) {
   return applyToken(ctx, address);
 }
 
-async function applyToken(ctx, address) {
+async function applyToken(ctx, input) {
   await say(ctx, "settoken_resolving");
   // ⚠️ BOUNDED, and the two silences get two answers: see resolveTokenSoon.
   // A lookup that ran out of time says nothing about the address, and telling
   // an admin "no live pool on that CA" about a token that has one sends them
   // off to check something that is not broken.
-  const { res, timedOut } = await resolveTokenSoon(address);
+  const { res, timedOut } = await resolveTokenSoon(input);
   if (!res) return say(ctx, timedOut ? "settoken_resolve_slow" : "settoken_not_found");
+  if (res.refused) return say(ctx, "ca_link_refused", { reason: premium.sanitizeVar(res.refused) });
+  // ⚠️ THE TOKEN, NEVER WHAT WAS TYPED. A pair or a link resolves to the token
+  // it trades; storing the input would point every alert's name lookup, /ca and
+  // the trade-bot button at a pool address.
+  const address = res.address || input;
+  if (res.pair) await say(ctx, "ca_pair_resolved", caInput.pairVars(res.pair));
   // One extra lookup, once, for the token's NAME — the pool listing only knows
   // the PAIR ("HOPPY / WETH"), and the name is what headlines every alert.
   const info = await gt.fetchTokenInfo(res.chain, address).catch(() => null);

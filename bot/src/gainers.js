@@ -26,6 +26,7 @@ const { DEXVRA_API_BASE, SITE_URL } = require("./config/constants");
 const api = require("./api/dexvra");
 const market = require("./marketdata");
 const dexscreener = require("./dexscreener");
+const caInput = require("./helpers/caInput");
 const { CHAINS, chainOf, isValidAddress } = require("./config/chains");
 const { fmtCap, fmtPct } = require("./helpers/format");
 const log = require("./helpers/logger");
@@ -510,7 +511,18 @@ function candidateChains(address) {
  * made-up one, so this throws instead and the admin is told which link failed.
  */
 async function resolveToken(input) {
-  const { chain, address } = parseTokenRef(input);
+  let { chain, address } = parseTokenRef(input);
+  // ⚠️ A DEXSCREENER LINK NAMES THE POOL, NOT THE TOKEN (helpers/caInput.js) —
+  // so the one input this function advertises ("send a CA or a dexscreener
+  // link") answered "no market data" for nearly every link an admin pasted.
+  const raw = String(input || "").trim();
+  if (caInput.parseInput(raw)?.kind === "dslink") {
+    const r = await caInput.resolveInputSoon(raw);
+    if (!r) throw new Error("couldn't read that DexScreener link in time — send the token's contract address instead");
+    if (r.refused) throw new Error(r.refused);
+    chain = r.chain || chain;
+    address = r.address;
+  }
   if (!address) throw new Error("couldn't find a contract address in that (send a CA or a dexvra.io / dexscreener link)");
   const tries = chain ? [chain] : candidateChains(address);
   if (!tries.length) throw new Error(`"${address}" doesn't look like an address on any supported chain`);

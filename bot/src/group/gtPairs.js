@@ -580,6 +580,7 @@ module.exports = {
   hasApiKey: () => !!GT_KEY,
   fetchPool,
   dsResolveAcross,
+  dsPoolOf,
   fetchPoolCached,
   isGtPrimary,
   gtGet,

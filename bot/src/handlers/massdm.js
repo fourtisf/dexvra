@@ -14,6 +14,7 @@ const { MASS_DM_PRICE, MASS_DM_ENABLED, isAdminUser, ADMIN_IDS } = require("../c
 // The rule listing.js already states at its own require.
 const payFlow = require("./pay");
 const groupSetup = require("../group/setup");
+const caInput = require("../helpers/caInput");
 const menu = require("./menu");
 const { Markup } = menu;
 const tpl = require("../templates");
@@ -72,14 +73,27 @@ async function entryMassDm(ctx) {
 // Step 1 — capture the token CA, resolve its chain, lock the pay currency.
 async function captureCa(ctx, input) {
   const s = ctx.session;
-  const ca = String(input || "").trim().split(/\s+/)[0];
-  if (!looksLikeCA(ca)) return sendCard(ctx, tpl.render("massdm_ca_invalid"), menu.withHome([]));
+  const typed = String(input || "").trim().split(/\s+/)[0];
+  // A DexScreener link is what most people copy, and it names the POOL, not the
+  // token — resolveToken turns it (and a bare pair address) into the token.
+  const isLink = caInput.parseInput(typed)?.kind === "dslink";
+  if (!looksLikeCA(typed) && !isLink) return sendCard(ctx, tpl.render("massdm_ca_invalid"), menu.withHome([]));
   await ctx.reply("🔍 Detecting your token's chain…").catch(() => {});
   // ⚠️ BOUNDED. resolveToken probes five candidate chains SERIALLY through the
   // shared GeckoTerminal queue, which has no deadline of its own — so on a busy
   // box this step used to sit there for minutes and the paste was answered by
   // nothing at all. See resolveTokenSoon for the whole reasoning.
-  const { res } = await groupSetup.resolveTokenSoon(ca);
+  const { res } = await groupSetup.resolveTokenSoon(typed);
+  // A link has no address SHAPE to fall back on — guessing a chain from a URL is
+  // a guess about nothing — so one that did not resolve is refused, not priced.
+  if (res && res.refused) return sendCard(ctx, tpl.render("ca_link_refused", { reason: res.refused }), menu.withHome([]));
+  if (isLink && !res) {
+    return sendCard(ctx, tpl.render("ca_link_refused", { reason: "couldn't read that DexScreener link in time — paste the token's contract address instead" }), menu.withHome([]));
+  }
+  // ⚠️ THE TOKEN, never what was typed: a pair or a link resolves to the token
+  // it trades, and the broadcast is about that token.
+  const ca = (res && res.address) || typed;
+  if (res && res.pair) await sendCard(ctx, tpl.render("ca_pair_resolved", caInput.pairVars(res.pair)), menu.withHome([]));
   const chain = res ? res.chain : groupSetup.candidateChains(ca)[0]; // fall back to the shape guess
   const pay = payFor(chain);
   s.massForm = { ca, chain, pay };
