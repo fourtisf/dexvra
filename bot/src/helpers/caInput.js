@@ -29,9 +29,29 @@
 //    so the check there is one request to the documented pair endpoint.
 //    Elsewhere the candidates are `probeChains`, the list the buy bot has
 //    always probed — one owner, re-exported by group/setup.js.
+//
+//  • EVERY SUBSTITUTION AND EVERY REFUSAL IS LOGGED, HERE. The card a person
+//    sees says it in chat, and a chat is not something an operator can grep.
+//    The problem this module exists for was found by a screenshot; a pm2 line
+//    per outcome is what lets the next one be found by `grep -F '[ca]'`. A link
+//    refused because DexScreener could not be ASKED is a WARN (the ops channel,
+//    de-duplicated): that state switches link reading off for every person at
+//    once, and it is a fault of ours, never of the paste.
 const dexscreener = require("../dexscreener");
 const dsPair = require("../../../shared/dexscreener/pair");
 const { CHAINS, isValidAddress } = require("../config/chains");
+const log = require("./logger");
+
+const short = (a) => {
+  const s = String(a || "");
+  return s.length > 14 ? `${s.slice(0, 6)}…${s.slice(-4)}` : s;
+};
+/** The pm2 line for a pair resolved to its token. Short addresses only — the
+ *  full ones are on the card the person just got, and this is a log. */
+function notePair(pair, from) {
+  const sym = pair.token.symbol ? ` ($${String(pair.token.symbol).replace(/^\$+/, "")})` : "";
+  log.info(`[ca] ${from} ${short(pair.pairAddress)} is a DexScreener pair on ${pair.chain} — using its token ${short(pair.token.address)}${sym}`);
+}
 
 // https://dexvra.io/token/<chain>/<address> — the site's own token page.
 const DEXVRA_LINK = /\/token\/([a-z0-9]+)\/([^/\s?#]+)/i;
@@ -92,12 +112,16 @@ async function resolveInput(text, { chain = null, chains = null, pairCheck = tru
 
   if (p.kind === "dslink") {
     if (p.slug && !p.chain) {
+      log.info(`[ca] a DexScreener link on "${p.slug}" was refused — not a network Dexvra supports`);
       return { address: p.address, chain: null, via: "link", pair: null, refused: `that DexScreener link is on "${p.slug}", a network Dexvra doesn't support` };
     }
     const ask = p.chain ? [p.chain] : chain ? [chain] : (chains && chains.length ? chains : probeChains(p.address));
     const r = await dexscreener.fetchPairX(p.address, ask);
-    if (r.pair && r.pair.chain) return pairResult(r.pair);
+    if (r.pair && r.pair.chain) return (notePair(r.pair, "link"), pairResult(r.pair));
     if (!r.ok) {
+      // No address in the message: the dedupe key keeps addresses distinct, and
+      // this is ONE fault however many people paste a link while it lasts.
+      log.warn(`[ca] a DexScreener link was refused — DexScreener could not be asked (${r.why}). Links cannot be read until it answers; a bare contract still works.`);
       return {
         address: p.address,
         chain: p.chain,
@@ -115,8 +139,10 @@ async function resolveInput(text, { chain = null, chains = null, pairCheck = tru
   if (pairCheck) {
     const ask = fixed ? [fixed] : (chains && chains.length ? chains : probeChains(p.address));
     const r = await dexscreener.fetchPairX(p.address, ask);
-    if (r.pair && r.pair.chain) return pairResult(r.pair);
-    // r.ok false → could not ask: FAIL OPEN, see the header.
+    if (r.pair && r.pair.chain) return (notePair(r.pair, "address"), pairResult(r.pair));
+    // r.ok false → could not ask: FAIL OPEN, see the header — and SAY so, or a
+    // pair that slipped through as a token is invisible until it is listed.
+    if (!r.ok) log.info(`[ca] ${short(p.address)} taken as typed — could not ask DexScreener whether it is a pair (${r.why})`);
   }
   return { address: p.address, chain: fixed, via: "plain", pair: null, refused: null };
 }
@@ -144,7 +170,8 @@ function resolveInputSoon(text, opts, ms = CA_INPUT_MS) {
 /** Only the pair check, for a caller whose own token lookup just missed. */
 async function asPair(address, chains) {
   const r = await dexscreener.fetchPairX(address, chains && chains.length ? chains : probeChains(address));
-  return r.pair && r.pair.chain ? r.pair : null;
+  if (r.pair && r.pair.chain) return (notePair(r.pair, "address"), r.pair);
+  return null;
 }
 
 /** Template vars for `ca_pair_resolved` — the card that says the address was a

@@ -118,7 +118,12 @@ test("the lookup only fires on a WHOLE address with no local match", () => {
 
 test("the row leads somewhere — the token page, on the chain that was found", () => {
   assert.match(TOPBAR, /router\.push\(to\)/);
-  assert.match(TOPBAR, /`\/token\/\$\{probe\.chain\}\/\$\{encodeURIComponent\(homeQuery\.trim\(\)\)\}`/);
+  // ⚠️ To the address the LOOKUP returned, never the typed text. For a pasted
+  // DexScreener link or a pair address those differ, and the typed one is the
+  // POOL (lib/dsPairLink.ts) — the old guard pinned `homeQuery.trim()` here,
+  // which is exactly the navigation that opened a pool as a token.
+  assert.match(TOPBAR, /`\/token\/\$\{probe\.chain\}\/\$\{encodeURIComponent\(probe\.address\)\}`/);
+  assert.ok(!/`\/token\/\$\{probe\.chain\}\/\$\{encodeURIComponent\(homeQuery/.test(TOPBAR), "the row opens what was typed — a pool, for a pair");
 });
 
 test("one address shape spans eight EVM chains, so they are probed in parallel", () => {

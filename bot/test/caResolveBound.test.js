@@ -45,6 +45,14 @@ const groupSetup = require("../src/group/setup");
 const massdm = require("../src/handlers/massdm");
 const tpl = require("../src/templates");
 
+// ⚠️ NO REAL NETWORK. resolveToken asks DexScreener first (one request for
+// every chain) and then whether the paste is a PAIR; left to the real fetch,
+// those went out through whatever egress the runner had, and "answers in time"
+// then measured the network rather than the bound — green alone, red under a
+// loaded full suite. DexScreener here answers instantly, with nothing, so the
+// timing under test is the GeckoTerminal queue's and nothing else.
+global.fetch = async () => new Response(JSON.stringify({ pairs: null }), { status: 200, headers: { "content-type": "application/json" } });
+
 const CA = "0x92e4b008161ac64a7d0c5e540f453f8e6b8bd8d7"; // the address in the report
 const DEADLINE = 1000; // the floor, i.e. what the driven flows actually wait
 

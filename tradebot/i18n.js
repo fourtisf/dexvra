@@ -92,6 +92,13 @@ const S = {
     en: '<i>Not bought automatically: this token was resolved from a pair — check it on the card, then tap Buy.</i>',
     id: '<i>Tidak dibeli otomatis: token ini didapat dari alamat pair — cek dulu di kartu, lalu tap Buy.</i>',
   },
+  // The one-line CA snipe's version of the same rule: a snipe arms a future
+  // spend, so a target resolved from a pair lands on the 🎛 panel instead of
+  // arming, and ⚡ ARM is the confirmation.
+  'paste.snipe_confirm_arm': {
+    en: '<i>Not armed yet: this target was resolved from a pair — check the 🎯 Target row, then tap ⚡ ARM.</i>',
+    id: '<i>Belum di-arm: target ini didapat dari alamat pair — cek baris 🎯 Target, lalu tap ⚡ ARM.</i>',
+  },
 
   // ---------------------------------------------------------------- wallets
   // The /wallet screen. Written so the ACTIVE wallet is the subject and every

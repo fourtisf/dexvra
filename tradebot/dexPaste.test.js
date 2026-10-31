@@ -181,3 +181,77 @@ test('DRIVEN: a plain token paste is untouched — no note, carded as typed', { 
     assert.ok(!sent.some((t) => /DexScreener pair/.test(t)));
   } finally { s.undo(); }
 });
+
+// ── the doors the audit found still open (2026-10-31) ───────────────────────
+// "bagaimana agar masalah ini tidak terjadi lgi": /pnl and both ways of arming
+// a CA snipe still read a pasted link as unrecognised and a pair as the token.
+
+test('DRIVEN: /pnl with the reported link answers for the TOKEN on BNB Chain, not the pool', { skip: !tg }, async () => {
+  core.ensureUser(CHAT);
+  stub();
+  const asked = [];
+  const real = core.tokenPnl;
+  core.tokenPnl = async (_c, ca, chain) => (asked.push([ca, chain]), null);
+  try {
+    await tg._test.onMessage(msg(`/pnl ${LINK}`));
+    assert.deepStrictEqual(asked, [[TOKEN, 'bsc']], `asked ${JSON.stringify(asked)}`);
+    assert.ok(sent.some((t) => /DexScreener pair/.test(t)), 'the substitution was not said');
+  } finally { core.tokenPnl = real; }
+});
+
+test('DRIVEN: the 🎛 panel Target step turns a pasted link into the TOKEN, on the pair\'s own chain', { skip: !tg }, async () => {
+  core.ensureUser(CHAT);
+  core.newSnipeDraft(CHAT);
+  core.updateSnipeDraft(CHAT, { chain: 'ethereum', kind: 'ca' });
+  stub();
+  await tg._test.resolvePending(CHAT, { action: 'snw_ca' }, `${LINK} 0.05`, {});
+  const d = core.snipeDraft(core.getUser(CHAT));
+  assert.strictEqual(d.ca, TOKEN, 'the snipe watches the POOL');
+  assert.strictEqual(d.chain, 'bsc', 'two EVM chains share one shape — the pair\'s chain must win over the row\'s');
+  assert.ok(sent.some((t) => /DexScreener pair/.test(t)), sent.join(' | '));
+});
+
+test('⚠️ DRIVEN: a one-line CA snipe on a PAIR address does not arm — it lands on the panel for ⚡ ARM', { skip: !tg }, async () => {
+  const u = core.ensureUser(CHAT);
+  const before = (u.snipeTargets || []).length;
+  // A FRESH draft: the panel test above leaves one behind with an amount, and an
+  // inherited amount would pass the "the line's amount reached the panel" check
+  // for a reason that has nothing to do with this door (a mutation run said so).
+  core.clearSnipeDraft(CHAT);
+  stub({ tokensFor: {} });
+  await tg._test.resolvePending(CHAT, { action: 'ca_snipe', chain: 'ethereum' }, `${PAIR} 0.07`, {});
+  assert.strictEqual((core.getUser(CHAT).snipeTargets || []).length, before, 'a spend was armed on an address DexScreener handed us');
+  const d = core.snipeDraft(core.getUser(CHAT));
+  assert.strictEqual(d.ca, TOKEN);
+  assert.strictEqual(d.chain, 'bsc');
+  assert.strictEqual(Number(d.amount), 0.07, 'the line\'s amount was dropped on the way to the panel');
+  assert.ok(sent.some((t) => /Not armed yet/.test(t)), sent.join(' | '));
+});
+
+test('DRIVEN: a one-line CA snipe on a plain token still arms straight away', { skip: !tg }, async () => {
+  const u = core.ensureUser(CHAT);
+  const before = (u.snipeTargets || []).length;
+  stub({ tokensFor: { [TOKEN.toLowerCase()]: [pairRecord] } });
+  await tg._test.resolvePending(CHAT, { action: 'ca_snipe', chain: 'bsc' }, `${TOKEN} 0.05`, {});
+  const after = core.getUser(CHAT).snipeTargets || [];
+  assert.strictEqual(after.length, before + 1, sent.join(' | '));
+  assert.strictEqual(after[after.length - 1].ca, TOKEN);
+});
+
+test('a pair resolved to its token is a [ca] line in pm2 — found with grep, not a screenshot', async () => {
+  stub();
+  const real = console.log;
+  const lines = [];
+  console.log = (...a) => lines.push(a.join(' '));
+  try { await core.resolvePaste(LINK); } finally { console.log = real; }
+  assert.ok(lines.some((l) => l.startsWith('[ca]') && /DexScreener pair on bsc/.test(l) && /\$REAL/.test(l)), lines.join(' | '));
+});
+
+test('a plain token paste writes no [ca] line', async () => {
+  stub({ tokensFor: { [TOKEN.toLowerCase()]: [pairRecord] } });
+  const real = console.log;
+  const lines = [];
+  console.log = (...a) => lines.push(a.join(' '));
+  try { await core.resolvePaste(TOKEN); } finally { console.log = real; }
+  assert.deepStrictEqual(lines.filter((l) => l.startsWith('[ca]')), []);
+});

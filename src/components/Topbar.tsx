@@ -14,6 +14,7 @@ import { NAV_GROUPS } from "./Sidebar";
 import { usePathname, useRouter } from "next/navigation";
 import { logoSrc } from "@/lib/logo";
 import { changeReading } from "@/lib/home";
+import { parseDsLink } from "@/lib/dsPairLink";
 
 /** What /api/token-preview hands back for a contract nobody has listed. */
 interface UnlistedHit {
@@ -64,10 +65,16 @@ export function Topbar() {
   // The buy bot is free and runs on any contract, so a pasted address is far
   // more often an UNLISTED token than a listed one — and the box answered "No
   // token matches", which is both wrong (the token exists) and a dead end.
-  const isCa = /^(0x[a-fA-F0-9]{40}|0x[a-fA-F0-9]+::.+|T[1-9A-HJ-NP-Za-km-z]{33}|(EQ|UQ|0:).{10,}|[1-9A-HJ-NP-Za-km-z]{32,44})$/.test(
-    homeQuery.trim(),
-  );
-  const [probe, setProbe] = useState<{ chain: string; token: UnlistedHit } | null>(null);
+  //
+  // ⚠️ A DEXSCREENER LINK COUNTS AS A CONTRACT TOO — it is what people have on
+  // the clipboard, and the address it carries is the POOL (lib/dsPairLink.ts).
+  // The route reads the link and answers with the token the pool trades, and
+  // `address` in its answer is what the row opens — never the text typed.
+  const isCa =
+    /^(0x[a-fA-F0-9]{40}|0x[a-fA-F0-9]+::.+|T[1-9A-HJ-NP-Za-km-z]{33}|(EQ|UQ|0:).{10,}|[1-9A-HJ-NP-Za-km-z]{32,44})$/.test(homeQuery.trim()) ||
+    parseDsLink(homeQuery) !== null;
+  const [probe, setProbe] = useState<{ chain: string; token: UnlistedHit; address: string; pair: string | null } | null>(null);
+  const [refused, setRefused] = useState<string | null>(null);
   const [probing, setProbing] = useState(false);
 
   useEffect(() => {
@@ -77,6 +84,7 @@ export function Topbar() {
     // ticker search that is about to match locally anyway.
     if (!isCa || matches.length > 0) {
       setProbe(null);
+      setRefused(null);
       setProbing(false);
       return;
     }
@@ -87,7 +95,12 @@ export function Topbar() {
         .then((r) => r.json())
         .then((j) => {
           if (!live) return;
-          setProbe(j?.token && j?.chain ? { chain: j.chain, token: j.token } : null);
+          setRefused(typeof j?.refused === "string" ? j.refused : null);
+          setProbe(
+            j?.token && j?.chain
+              ? { chain: j.chain, token: j.token, address: typeof j.address === "string" && j.address ? j.address : address, pair: j.pair ?? null }
+              : null,
+          );
         })
         .catch(() => live && setProbe(null))
         .finally(() => live && setProbing(false));
@@ -100,7 +113,9 @@ export function Topbar() {
 
   const goUnlisted = () => {
     if (!probe) return;
-    const to = `/token/${probe.chain}/${encodeURIComponent(homeQuery.trim())}`;
+    // The address the LOOKUP returned — the token's own — never the typed text:
+    // for a link or a pair those differ, and the typed one is the pool.
+    const to = `/token/${probe.chain}/${encodeURIComponent(probe.address)}`;
     setHomeQuery("");
     setOpen(false);
     router.push(to);
@@ -211,7 +226,8 @@ export function Topbar() {
                   <div className="sdd-id">
                     <div className="sdd-sym">{probe.token.symbol ?? "Unknown"}</div>
                     <div className="sdd-nm">
-                      {probe.token.name ?? shortAddr(homeQuery.trim())} · {CHAINS[probe.chain]?.label ?? probe.chain}
+                      {probe.token.name ?? shortAddr(probe.address)} · {CHAINS[probe.chain]?.label ?? probe.chain}
+                      {probe.pair && " · from a DexScreener pair"}
                     </div>
                   </div>
                   <div className="sdd-px">
@@ -222,8 +238,14 @@ export function Topbar() {
                 </button>
               ) : (
                 <div className="sdd-empty">
-                  No token matches “{homeQuery.trim()}”.
-                  {isCa && " That contract isn't on any network we index."}
+                  {refused ? (
+                    <>Can&apos;t open that — {refused}.</>
+                  ) : (
+                    <>
+                      No token matches “{homeQuery.trim()}”.
+                      {isCa && " That contract isn't on any network we index."}
+                    </>
+                  )}
                 </div>
               )
             ) : (

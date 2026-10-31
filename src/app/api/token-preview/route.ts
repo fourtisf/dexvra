@@ -3,6 +3,7 @@ import { CHAINS } from "@/config/chains";
 import { cached } from "@/lib/cache";
 import { internalAuthorized } from "@/lib/internalAuth";
 import { gtGet } from "@/lib/providers/gt";
+import { dsQuery, parseDsLink, pickPair, type DsPairRecord } from "@/lib/dsPairLink";
 
 export const dynamic = "force-dynamic";
 
@@ -75,15 +76,24 @@ const CHAIN_OF_DS = new Map(
     .map((c) => [c.dexscreener as string, c.id]),
 );
 
-interface DsPair {
-  chainId?: string;
-  pairAddress?: string;
-  baseToken?: { address?: string; name?: string; symbol?: string };
-  priceUsd?: string;
-  fdv?: number;
-  marketCap?: number;
-  liquidity?: { usd?: number };
-  info?: { imageUrl?: string };
+type DsPair = DsPairRecord;
+
+/** A DexScreener pair record → the preview of its BASE token. One mapping for
+ *  the token lookup and the pair lookup, so the two cannot describe one token
+ *  two ways. */
+function previewOfPair(top: DsPair): Preview {
+  const price = Number(top.priceUsd);
+  return {
+    name: top.baseToken?.name ?? null,
+    symbol: top.baseToken?.symbol ?? null,
+    priceUsd: Number.isFinite(price) ? price : null,
+    // marketCap when the supply is known, fdv otherwise — for a fresh launch
+    // fdv is the only one either source reports.
+    mcap: top.marketCap ?? top.fdv ?? null,
+    logoUrl: top.info?.imageUrl ?? null,
+    poolAddress: top.pairAddress ?? null,
+    source: "dexscreener",
+  };
 }
 
 /**
@@ -118,20 +128,66 @@ async function fromDexScreener(address: string, wantChain?: string): Promise<{ c
     .sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0));
   const top = usable[0];
   if (!top) return null;
-  const price = Number(top.priceUsd);
+  return { chain: CHAIN_OF_DS.get(top.chainId ?? "") as string, token: previewOfPair(top) };
+}
+
+/** Chains a pasted address could be a DexScreener PAIR on — every chain whose
+ *  own address pattern fits and that DexScreener indexes. From the registry,
+ *  never a hand-kept list (see candidateChains below for what that cost). */
+const dsPairChains = (address: string): string[] =>
+  Object.values(CHAINS)
+    .filter((c) => c.dexscreener && c.addressPattern.test(address))
+    .map((c) => c.id);
+
+/**
+ * Is `address` a DexScreener PAIR? Then the answer is the token it trades.
+ *
+ * ⚠️ THE ADDRESS IN A DEXSCREENER URL IS THE POOL (lib/dsPairLink.ts), and the
+ * token endpoint above knows nothing about pools — so a pasted pair answered
+ * "That contract isn't on any network we index" about a token trading fine.
+ * `latest/dex/pairs/{chain}/{pair}` is the documented pair endpoint; asked per
+ * candidate chain, concurrently, BEFORE GeckoTerminal — DexScreener's pair
+ * budget is the plentiful one and GT's is the one every chart on the site
+ * shares, so a pair must not cost a GT search plus a probe per chain to fail.
+ *
+ * "Not a pair" is an ANSWER (null); "could not ask" THROWS, so the caller's
+ * `cached()` never stores a refusal as a fact about the address — the same line
+ * the `ds:` lookup below draws.
+ */
+async function fromDsPair(address: string, chains: string[]): Promise<{ chain: string; token: Preview; address: string; pair: string } | null> {
+  const slugs = [...new Set(chains.map((c) => CHAINS[c]?.dexscreener).filter((x): x is string => !!x))];
+  if (!slugs.length) return null;
+  const q = encodeURIComponent(dsQuery(address));
+  const answers = await Promise.all(
+    slugs.map(async (slug) => {
+      try {
+        const r = await fetch(`https://api.dexscreener.com/latest/dex/pairs/${slug}/${q}`, {
+          signal: AbortSignal.timeout(6000),
+          cache: "no-store",
+        });
+        if (!r.ok) {
+          try { await r.body?.cancel(); } catch { /* nothing to release */ }
+          // 404 is "no such pair here" — an answer, never an outage.
+          return { ok: r.status === 404, pair: null as DsPair | null };
+        }
+        return { ok: true, pair: pickPair(await r.json(), address) };
+      } catch {
+        return { ok: false, pair: null as DsPair | null };
+      }
+    }),
+  );
+  const hits = answers.map((a) => a.pair).filter((p): p is DsPair => !!p && !!CHAIN_OF_DS.get(p.chainId ?? ""));
+  hits.sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0));
+  const top = hits[0];
+  if (!top) {
+    if (answers.some((a) => !a.ok)) throw new Error("DexScreener pair lookup did not answer");
+    return null;
+  }
   return {
     chain: CHAIN_OF_DS.get(top.chainId ?? "") as string,
-    token: {
-      name: top.baseToken?.name ?? null,
-      symbol: top.baseToken?.symbol ?? null,
-      priceUsd: Number.isFinite(price) ? price : null,
-      // marketCap when the supply is known, fdv otherwise — for a fresh launch
-      // fdv is the only one either source reports.
-      mcap: top.marketCap ?? top.fdv ?? null,
-      logoUrl: top.info?.imageUrl ?? null,
-      poolAddress: top.pairAddress ?? null,
-      source: "dexscreener",
-    },
+    token: previewOfPair(top),
+    address: top.baseToken?.address as string,
+    pair: top.pairAddress as string,
   };
 }
 
@@ -223,13 +279,16 @@ async function searchNetwork(address: string): Promise<{ chain: string; token: s
  * several chains often enough (a bridged token, a copycat) that "first to
  * answer" would be a race deciding which one a user sees.
  */
-async function findAnyChain(address: string): Promise<{ chain: string; token: Preview } | null> {
+async function findAnyChain(address: string): Promise<{ chain: string; token: Preview; address?: string; pair?: string } | null> {
   try {
     const ds = await fromDexScreener(address);
     if (ds) return ds;
   } catch {
     /* fall through to GeckoTerminal */
   }
+  // A PAIR, before a single GeckoTerminal request is spent on it (see fromDsPair).
+  const pr = await cached(`dspair:any:${dsQuery(address)}`, TTL, () => fromDsPair(address, dsPairChains(address))).catch(() => null);
+  if (pr) return pr;
   try {
     const hit = await searchNetwork(address);
     if (hit) {
@@ -257,8 +316,18 @@ async function findAnyChain(address: string): Promise<{ chain: string; token: Pr
 }
 
 export async function GET(req: NextRequest) {
-  const chain = (req.nextUrl.searchParams.get("chain") ?? "").trim();
-  const address = (req.nextUrl.searchParams.get("address") ?? "").trim();
+  let chain = (req.nextUrl.searchParams.get("chain") ?? "").trim();
+  const typed = (req.nextUrl.searchParams.get("address") ?? "").trim();
+  // A pasted dexscreener.com LINK is read for the address it carries — and,
+  // when it names one, its chain. A link on a network we do not index is
+  // refused BY NAME rather than looked up somewhere it cannot be.
+  const link = parseDsLink(typed);
+  const address = link ? link.address : typed;
+  if (link?.slug) {
+    const fromSlug = CHAIN_OF_DS.get(link.slug);
+    if (!fromSlug) return NextResponse.json({ token: null, chain: null, refused: `that DexScreener link is on "${link.slug}", a network we don't index` });
+    if (!chain) chain = fromSlug;
+  }
   // The address goes into an upstream URL path, so it is bounded and character
   // -restricted here rather than trusted — the same guard /api/pool uses.
   if (!address || address.length > 90 || /[^A-Za-z0-9:_-]/.test(address)) {
@@ -286,9 +355,12 @@ export async function GET(req: NextRequest) {
   try {
     // No chain given — the search box has a pasted CA and nothing else. Work
     // out which chain it is on rather than making the person pick.
+    // `address` in the answer is what to OPEN: the token's own address, which
+    // differs from what was typed exactly when the input was a pair or a link
+    // (`pair` then names the pool it was resolved from).
     if (!chain) {
       const hit = await findAnyChain(address);
-      return NextResponse.json({ token: hit?.token ?? null, chain: hit?.chain ?? null });
+      return NextResponse.json({ token: hit?.token ?? null, chain: hit?.chain ?? null, address: hit?.address ?? address, pair: hit?.pair ?? null });
     }
     if (!CHAINS[chain]) return NextResponse.json({ token: null, chain: null }, { status: 200 });
     // Same order as the no-chain path, for the same reason: the token page is
@@ -302,11 +374,16 @@ export async function GET(req: NextRequest) {
     // is the source that carries this whole site while GeckoTerminal's per-IP
     // cooldown holds, so its bad minute must not become the app's bad five.
     const ds = await cached(`ds:${chain}:${address}`, TTL, () => fromDexScreener(address, chain)).catch(() => null);
-    if (ds) return NextResponse.json({ token: ds.token, chain });
+    if (ds) return NextResponse.json({ token: ds.token, chain, address, pair: null });
+    // The token page reached with a POOL in its URL (a shared DexScreener link,
+    // a hand-built URL) — answered with the token it trades, so the page can go
+    // there instead of describing a pool as if it were a token.
+    const pr = await cached(`dspair:${chain}:${dsQuery(address)}`, TTL, () => fromDsPair(address, [chain])).catch(() => null);
+    if (pr) return NextResponse.json({ token: pr.token, chain: pr.chain, address: pr.address, pair: pr.pair });
     const network = CHAINS[chain].geckoNetwork;
     if (!network) return NextResponse.json({ token: null, chain: null }, { status: 200 });
     const token = await cached(`preview:${network}:${address}`, TTL, () => fetchPreview(network, forQuery(address)));
-    return NextResponse.json({ token, chain: token ? chain : null });
+    return NextResponse.json({ token, chain: token ? chain : null, address, pair: null });
   } catch {
     // A feed outage must not turn the page into an error screen — it still has
     // the network, the contract and the way to list it.

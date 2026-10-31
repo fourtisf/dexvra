@@ -29,7 +29,8 @@
     "listings:fix": "node scripts/fix-listings.js",
     "listing:check": "node scripts/listing-check.js",
     "post:check": "node scripts/post-check.js",
-    "x:retarget": "node scripts/retarget-x-handle.js"
+    "x:retarget": "node scripts/retarget-x-handle.js",
+    "ca:check": "node scripts/ca-check.js"
   },
   "engines": {
     "node": ">=18"

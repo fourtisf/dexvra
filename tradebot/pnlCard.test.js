@@ -353,6 +353,19 @@ test('a user can actually reach it: command, menu, paste and the token card', ()
   // The chain is DETECTED from the pasted address, never assumed: a Solana mint
   // answered against the active EVM chain would report "no trades on file" —
   // a false statement about the user's own money.
+  //
+  // Both ways in (the /pnl argument and the pasted reply) go through pnlFor,
+  // which resolves a DexScreener pair or link to its token first — and then
+  // takes the PAIR's own chain or DETECTS one. Asserted as that property, not
+  // as the spelling of one call site: the old guard pinned
+  // `await detectChain(chatId, raw)` and went red the day the detection moved
+  // one function over to serve both doors.
   const branch = TG.slice(TG.indexOf("if (p.action === 'pnl_ca')"), TG.indexOf("if (p.action === 'snw_dev')"));
-  assert.match(branch, /await detectChain\(chatId, raw\)/);
+  assert.match(branch, /return pnlFor\(chatId, raw\)/, 'the pasted reply bypasses pnlFor');
+  const cmd = TG.slice(TG.indexOf("text === '/pnl' || text.startsWith('/pnl ')"), TG.indexOf('pnlBookScreen(chatId)', TG.indexOf("text === '/pnl'")));
+  assert.match(cmd, /pnlFor\(chatId, arg\)/, 'the /pnl argument bypasses pnlFor');
+  const fn = TG.slice(TG.indexOf('async function pnlFor('), TG.indexOf('async function snipeTargetRef('));
+  assert.ok(fn.length > 0, 'pnlFor is gone');
+  assert.match(fn, /pasteRef\(chatId, raw\)/, 'a pair is answered as the POOL again');
+  assert.match(fn, /ref\.chain \? \{ chain: ref\.chain \} : await detectChain\(chatId, ref\.ca\)/, 'the chain is assumed instead of taken from the pair or detected');
 });

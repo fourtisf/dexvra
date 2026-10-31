@@ -23,6 +23,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useApp } from "@/components/AppState";
 import { ChainLogo } from "@/components/ChainLogo";
 import { CHAINS } from "@/config/chains";
@@ -41,6 +42,7 @@ interface Preview {
 
 export function UnlistedToken({ chain, address }: { chain: string; address: string }) {
   const { toast } = useApp();
+  const router = useRouter();
   const [tok, setTok] = useState<Preview | null>(null);
   const [done, setDone] = useState(false);
   const c = CHAINS[chain];
@@ -54,7 +56,18 @@ export function UnlistedToken({ chain, address }: { chain: string; address: stri
     fetch(`/api/token-preview?chain=${encodeURIComponent(chain)}&address=${encodeURIComponent(address)}`)
       .then((r) => r.json())
       .then((j) => {
-        if (live) setTok(j?.token ?? null);
+        if (!live) return;
+        // ⚠️ A POOL IN THE URL. A DexScreener "copy link" and the buy alert's
+        // 📈 Chart button hand out the PAIR, and a URL built from one used to
+        // describe the pool as if it were the token — its LP ticker, its own
+        // "contract", a Copy button that put the pool on the clipboard. The
+        // preview names the token the pair trades; the page goes THERE (replace,
+        // not push: Back must not land on the pool page again).
+        if (j?.pair && typeof j.address === "string" && j.address && j.address !== address) {
+          router.replace(`/token/${encodeURIComponent(j.chain || chain)}/${encodeURIComponent(j.address)}`);
+          return;
+        }
+        setTok(j?.token ?? null);
       })
       .catch(() => {})
       // `done` and not `!tok`: a contract GeckoTerminal has never seen answers
@@ -64,7 +77,7 @@ export function UnlistedToken({ chain, address }: { chain: string; address: stri
     return () => {
       live = false;
     };
-  }, [chain, address, c]);
+  }, [chain, address, c, router]);
 
   const copyCa = () => {
     navigator.clipboard?.writeText(address).catch(() => {});

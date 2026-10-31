@@ -7979,6 +7979,110 @@ check on a paste. ⚠️ `shared/`, `bot/` and `tradebot/` changed, so
 reaches no host) — a link pasted while it refuses the box is refused with that
 reason, and a bare token goes through as before.
 
+### "bagaiamana agar masalah ini tidak terjadi llgi" — every door was written by hand
+
+Asked straight after the fix above. The fix wired one resolver into seven
+flows, by hand — and **an audit the same day found five more doors nobody had
+wired**, on three surfaces, each reading a DexScreener link or pair exactly the
+way the original report did:
+
+| door | what a pasted link / pair did |
+| --- | --- |
+| bot · Banner ad, contract step | stored the URL or the POOL as the "contract" the banner shows buyers to copy |
+| bot · bare PAIR pasted in the DM | looked up the pool, missed, said nothing — even when its token is listed |
+| tradebot · `/pnl` and its paste step | "not a valid address" for a link; "no trades on file" about the pool |
+| tradebot · 🎛 snipe panel and the one-line CA snipe | a link refused; a pair ARMED — a snipe polling a pool that will never trade as a token, expiring in silence |
+| dexvra.io · search box, unlisted token page | "No token matches" for a link; a pair opened as if it were the token |
+
+So the fix is not the five wirings. It is that **a sixth cannot be written
+without somebody deciding, in the open, whether it is a door.**
+
+- **`bot/test/caOneDoor.test.js` COUNTS the rule.** Any module under `bot/src`
+  that calls an address validator, holds a private EVM regex, or runs a
+  "send me the contract" step (`awaitingField === "…_ca"`, `case "address"`)
+  must require `helpers/caInput` — or sit in `EXEMPT` with the reason it is not
+  a door (it defines the predicate, it reads outgoing tweet text, it reads an
+  API response). A vacuity check pins the six doors it was written against, and
+  an exemption that no longer trips a trigger is a dead entry and fails too.
+- **`tradebot/caOneDoor.test.js` does it per BRANCH**, because the trade bot's
+  doors are branches of one file: every `isCa(` / `isAddrFor(` is classified by
+  the pending step, command or function it sits in. RESOLVED branches must call
+  `pasteRef` / `snipeTargetRef` / `pnlFor`; EXEMPT ones say why — a withdrawal
+  DESTINATION and a dev WALLET are not tokens, and resolving one would rewrite
+  where money goes or whom the bot follows. A new branch fails until it is put
+  in one list or the other.
+- ⚠️ **A snipe target resolved from a pair never arms from the one-line
+  command.** It lands on the 🎛 panel with every row from the line filled in, and
+  ⚡ ARM is the confirmation — the rule `/buy` and auto-buy already keep (a token
+  DexScreener handed us is SHOWN before anything spends on it). The panel itself
+  needs no extra step: it never arms by itself. And the pair's OWN chain wins
+  over the row's, because two EVM chains share one address shape and the shape
+  test would keep a BNB pair on Ethereum.
+- **dexvra.io carries a PORT** (`src/lib/dsPairLink.ts`) — the Next build has
+  never imported a CommonJS module from outside `src/` — and
+  `dsPairLink.test.ts` LOADS `shared/dexscreener/pair.js` and fails if the two
+  ever answer a fixture differently. The route asks the documented pair endpoint
+  BEFORE GeckoTerminal (DexScreener's pair budget is the plentiful one; GT's is
+  the one every chart shares), a refusal THROWS so `cached()` never stores it as
+  "not a pair", the search row opens the address the lookup RETURNED (never the
+  typed text, which is the pool), and the unlisted token page reached with a
+  pool in its URL `router.replace`s to the token — replace, so Back does not
+  land on the pool again.
+- **Every substitution and every refusal is a `[ca]` line**, in the ONE owner
+  of each package (`caInput`, `core.resolvePaste`), so every door logs without
+  remembering to. A link refused because DexScreener could not be ASKED is a
+  WARN in the bot — the ops channel, de-duplicated, with no address in it so one
+  outage pages once however many people paste: that state switches link
+  reading off for everybody, and it is ours, never the paste's. A pair that
+  slipped through as a token because DexScreener did not answer is said too. A
+  plain token paste writes nothing.
+- **`npm run ca:check` measures the promise on the box**, through the bot's
+  own resolver: a listed token must read as ITSELF; the DexScreener link to its
+  deepest pair must read BACK as the same token; with `--all`, every listing's
+  stored address is asked whether it is a PAIR — the rows created before the fix
+  with the pool as their contract, which no price read will ever find. It names
+  them and the token each should be, and changes nothing: the contract is not an
+  editable field, so replacing one is an admin decision. A token DexScreener has
+  no pair for is skipped and said; DexScreener refusing the box is a fault,
+  never a green "nothing to check". It prints the build stamp.
+- ⚠️ **And the old test it touched was measuring the network.**
+  `caResolveBound`'s "answers in time" let `resolveToken` reach the real
+  DexScreener — green alone, red under a loaded full suite. It stubs fetch now.
+
+```bash
+cd /opt/dexvra/bot && npm run ca:check                                    # round trip on real listings, from THIS box
+cd /opt/dexvra/bot && npm run ca:check -- --all                           # any listing stored as a pair?
+cd /opt/dexvra/bot && npm run ca:check -- https://dexscreener.com/bsc/0x20da3ebe08379117fdb7f15ff55456813b546554
+pm2 logs dexvra-bot      --lines 300 --nostream | grep -F '[ca]'
+pm2 logs dexvra-tradebot --lines 300 --nostream | grep -F '[ca]'
+cd bot && node scripts/run-tests.js test/caOneDoor.test.js test/caInputWiring.test.js test/caLog.test.js test/caCheck.test.js
+cd tradebot && SKIP_DOTENV=1 node --test caOneDoor.test.js dexPaste.test.js
+node --test --experimental-strip-types src/lib/dsPairLink.test.ts
+```
+
+Thirty-four guarantees are MUTATION-TESTED rather than argued: each new door
+reverting (the banner storing the typed link, storing an unreadable one, saying
+nothing; the DM never resolving a pair, or asking DexScreener before the
+listing lookup; the snipe target never resolved; the one-line snipe arming a
+resolved pair, or dropping the line's amount on the way to the panel; the
+panel keeping the row's chain; `/pnl` answering the pool); each `[ca]` rule
+(no line on a substitution, a refusal at INFO, an address in the WARN, the
+fail-open unsaid, a plain paste logging, the tradebot line gone); both guards
+(a door requiring caInput by a computed path, a blind step trigger, a new
+unclassified branch); `ca:check` (no round-trip comparison, green while
+DexScreener refuses, a stored pair missed, `--all` never scanning, no build
+stamp); and the site (no pair lookup before GT, a refusal cached, a link
+ignored, the row opening the typed pool, a link never looked up, `push` for
+`replace`, and the port drifting on its address segment, its exact match, its
+case rule and its lowercasing). Each fails between one and two tests; one
+SURVIVED its first run, a test inheriting the previous test's draft, and that
+is what isolated it.
+
+**Config a fix depends on:** nothing. ⚠️ This touches `bot/`, `tradebot/` AND
+`src/`, so `npm run deploy` restarts all three bot processes and rebuilds the
+site. ⚠️ Run `npm run ca:check -- --all` once after the deploy: a listing stored
+as a pair before the fix stays that way until an admin replaces it.
+
 ## Two bot processes, one config
 
 `bot/` runs **two** PM2 processes: `dexvra-bot` (`main.js`) and

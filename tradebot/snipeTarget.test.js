@@ -448,10 +448,18 @@ test('the one-line grammar lives in ONE parser, used by both ways in', () => {
   assert.match(fn, /ttlH < 1 \|\| out\.ttlH > 168/);
   // The 🎛 panel's Target paste and the ⌨️ one-line arm both go through it, so
   // the two ways in cannot drift into two grammars.
+  // Asserted as a PROPERTY — parses through parseSnipeLine, carries no tp/sl
+  // grammar of its own — not as the variable it parses: both now parse the line
+  // with a DexScreener pair resolved to its token, and pinning `(t, …)` went red
+  // over code that keeps the rule.
+  const OWN_TPSL = /\\d\+\(\?:\\\.\\d\+\)\?\)\\\//;
+  assert.ok(OWN_TPSL.test(fn), 'vacuity: the tp/sl pattern no longer matches the parser itself, so it can see nothing');
   const one = TGs.slice(TGs.indexOf("if (p.action === 'ca_snipe')"), TGs.indexOf("if (p.action === 'snw_ca')"));
   assert.match(one, /parseSnipeLine\(t, ch\.key\)/, 'the one-line arm grew its own parser');
+  assert.ok(!OWN_TPSL.test(one), 'the one-line arm grew its own tp/sl grammar');
   const panel = TGs.slice(TGs.indexOf("if (p.action === 'snw_ca')"), TGs.indexOf("if (p.action === 'snw_amt')"));
-  assert.match(panel, /parseSnipeLine\(t, chainKey\)/, "the panel's Target step grew its own parser");
+  assert.match(panel, /parseSnipeLine\(line, chainKey\)/, "the panel's Target step grew its own parser");
+  assert.ok(!OWN_TPSL.test(panel), "the panel's Target step grew its own tp/sl grammar");
   // The confirmation names the exits it armed — a config the bot accepted
   // silently is the auto-snipe lesson over again. ONE renderer serves both
   // arms, so the two confirmations cannot disagree about what was configured.

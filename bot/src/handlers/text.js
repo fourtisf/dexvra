@@ -11,19 +11,31 @@ async function bareContract(ctx, raw) {
   if (raw.startsWith("/")) return;
   const listed = require("../helpers/listedGuard");
   let hit = listed.extractAddress(raw);
+  let viaLink = false;
   // A DexScreener link — what a project owner most often has on the clipboard —
-  // names the POOL; resolved to the token before the listing is looked up.
-  // Links only: a bare address that is not listed stays silent, as before, and
-  // costs no request.
+  // names the POOL; resolved to the token before the listing is looked up. A
+  // bare address is looked up as typed first and asked about as a pair only on
+  // a miss (below); one that is neither listed nor a pair stays silent.
   if (!hit) {
     const caInput = require("../helpers/caInput");
     if (caInput.parseInput(raw)?.kind !== "dslink") return;
     const res = await caInput.resolveInputSoon(raw.trim());
     if (!res || res.refused || !res.address) return;
     hit = { address: res.address, chain: res.chain };
+    viaLink = true;
   }
   try {
-    const row = await listed.existingListing(hit.address, hit.chain);
+    let row = await listed.existingListing(hit.address, hit.chain);
+    // ⚠️ A BARE PAIR ADDRESS is the other half of the same report: the buy
+    // alert's 📈 Chart button and every DexScreener "copy address" hand out the
+    // POOL. Asked only on a MISS, so a listed token pays nothing new — and an
+    // unlisted one pays one DexScreener request, on a message that is already
+    // shaped like a contract (chatter never reaches this line).
+    if (!row && !hit.chain && !viaLink) {
+      const caInput = require("../helpers/caInput");
+      const res = await caInput.resolveInputSoon(raw.trim());
+      if (res && res.pair && res.address) row = await listed.existingListing(res.address, res.chain);
+    }
     if (row) await listed.sendAlreadyListed(ctx, row);
   } catch (e) {
     // Not listed, or we could not tell: say nothing. An unprompted error card

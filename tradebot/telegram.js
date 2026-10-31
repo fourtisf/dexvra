@@ -653,6 +653,37 @@ async function openPasted(chatId, ref, tail, chainKey) {
   return send(chatId, ref.note + c.text + (tail || ''), c.kb);
 }
 
+/** /pnl for a paste — a pair or a DexScreener link is answered for the token it
+ *  trades, not "no trades on file" about the POOL. Read-only, so a resolved pair
+ *  needs no confirmation; the note still says the substitution happened. The
+ *  chain is the pair's own when DexScreener named one, else DETECTED from the
+ *  address — never assumed from the active chain (see pnlCardScreen). */
+async function pnlFor(chatId, raw) {
+  const ref = await pasteRef(chatId, raw);
+  if (ref.refused) return send(chatId, ref.refused);
+  if (ref.note) await send(chatId, ref.note.trim());
+  const det = ref.chain ? { chain: ref.chain } : await detectChain(chatId, ref.ca);
+  return sendPnlCard(chatId, ref.ca, det.chain || core.userChain(core.ensureUser(chatId)));
+}
+
+/**
+ * A snipe target as typed → the TOKEN it means. A snipe ARMS A FUTURE SPEND,
+ * and the address it watches is exactly what a DexScreener "copy address" or
+ * the buy alert's 📈 Chart link hands out: the POOL. Armed on a pool, a snipe
+ * polls a contract that will never become tradeable as a token and expires in
+ * silence; a pasted link was refused as "not a valid contract address" — the
+ * reported symptom, on the money path.
+ *   { refused }            — a link we could not read; say it, arm nothing
+ *   { ca, chain, note }    — chain/note set only when the input was resolved
+ */
+async function snipeTargetRef(chatId, first) {
+  if (!first || (!isCa(first) && !dsLink.parseLink(first))) return { ca: first, chain: null, note: '' };
+  const ref = await pasteRef(chatId, first);
+  if (ref.refused) return { refused: ref.refused };
+  if (ref.ca === first) return { ca: first, chain: null, note: '' };
+  return { ca: ref.ca, chain: ref.chain, note: ref.note };
+}
+
 // Maestro-style chain auto-detect: figure out which enabled chain a pasted CA
 // lives on so the user never has to switch chains to trade. base58 → Solana;
 // 0x → probe every enabled EVM chain for contract code in parallel (bounded).
@@ -3673,12 +3704,7 @@ async function onMessageImpl(m) {
   if (text === '/portfolio' || text === '/positions') { const s = await portfolioScreen(chatId); return send(chatId, s.text, s.kb); }
   if (text === '/pnl' || text.startsWith('/pnl ')) {
     const arg = text.split(/\s+/)[1];
-    if (arg && isCa(arg)) {
-      // The chain is DETECTED from the address, never assumed from the active
-      // chain — see pnlCardScreen.
-      const det = await detectChain(chatId, arg);
-      return sendPnlCard(chatId, arg, det.chain || core.userChain(core.ensureUser(chatId)));
-    }
+    if (arg && (isCa(arg) || dsLink.parseLink(arg))) return pnlFor(chatId, arg);
     if (arg) return send(chatId, T(chatId, 'pnl.bad_ca'));
     const s = await pnlBookScreen(chatId);
     return send(chatId, s.text, s.kb);
@@ -4647,7 +4673,32 @@ async function resolvePending(chatId, p, text, m) {
       // Three prompts would be three round trips for a feature whose whole
       // point is being ready before a pool opens. The grammar lives in
       // parseSnipeLine, shared with the 🎛 panel's Target step.
-      const ch = (p.chain && core.chainOf(p.chain)) || activeChain(chatId);
+      let ch = (p.chain && core.chainOf(p.chain)) || activeChain(chatId);
+      // ⚠️ A PAIR OR A DEXSCREENER LINK NEVER ARMS STRAIGHT FROM HERE. The token
+      // it resolves to is a pointer DexScreener handed us, and this line arms a
+      // spend with no screen in between — the rule /buy and auto-buy already
+      // keep (core.resolvePaste). It lands on the 🎛 panel instead, every row
+      // from the line filled in, and ⚡ ARM is the confirmation.
+      const words = String(t).trim().split(/\s+/);
+      const tref = await snipeTargetRef(chatId, words[0]);
+      if (tref.refused) return send(chatId, tref.refused);
+      if (tref.chain) {
+        ch = core.chainOf(tref.chain) || ch;
+        const r2 = parseSnipeLine([tref.ca, ...words.slice(1)].join(' '), ch.key);
+        if (r2.err) return send(chatId, T(chatId, r2.err, r2.vars));
+        try {
+          const u = core.ensureUser(chatId);
+          if (!core.snipeDraft(u)) core.newSnipeDraft(chatId);
+          const patch = { kind: 'ca', chain: ch.key, ca: r2.ca };
+          if (r2.amount > 0) patch.amount = r2.amount;
+          if (r2.slipPct > 0) patch.slipPct = r2.slipPct;
+          if (r2.tpPct > 0 || r2.slPct > 0) { patch.tpPct = r2.tpPct; patch.slPct = r2.slPct; }
+          if (r2.ttlH > 0) patch.ttlH = r2.ttlH;
+          core.updateSnipeDraft(chatId, patch);
+        } catch (e) { return send(chatId, '❌ ' + esc(e.message || String(e))); }
+        const s = snipeSetupScreen(chatId, tref.note + T(chatId, 'paste.snipe_confirm_arm'));
+        return send(chatId, s.text, s.kb);
+      }
       const r = parseSnipeLine(t, ch.key);
       if (r.err) return send(chatId, T(chatId, r.err, r.vars));
       // The one-line arm REQUIRES the amount — an address alone arms nothing
@@ -4663,8 +4714,18 @@ async function resolvePending(chatId, p, text, m) {
     if (p.action === 'snw_ca') {
       const u = core.ensureUser(chatId);
       const d = core.snipeDraft(u) || core.newSnipeDraft(chatId);
-      const first = String(t).trim().split(/\s+/)[0] || '';
+      const words = String(t).trim().split(/\s+/);
+      // A pair or a DexScreener link becomes the token it trades (see
+      // snipeTargetRef). Safe to fill in here without a second confirmation:
+      // the panel never arms by itself — ⚡ ARM does, over a row showing it.
+      const tref = await snipeTargetRef(chatId, words[0] || '');
+      if (tref.refused) return send(chatId, tref.refused);
+      const first = tref.ca || '';
+      const line = [first, ...words.slice(1)].join(' ');
       let chainKey = d.chain, switched = null;
+      // The pair's own chain, not the row's: two EVM chains share one address
+      // shape, so the shape test below would keep a BNB pair on Ethereum.
+      if (tref.chain && tref.chain !== chainKey) { chainKey = tref.chain; switched = core.chainOf(chainKey); }
       if (!isAddrFor(first, chainKey)) {
         // The paste knows its chain better than the row does — a base58 mint
         // under an EVM row is the wrong-chain bounce the chain-first rule
@@ -4675,7 +4736,7 @@ async function resolvePending(chatId, p, text, m) {
         else if (fits.length > 1) return send(chatId, T(chatId, 'snipe.panel.which_chain'));
         else return send(chatId, T(chatId, 'snipe.ca.bad_addr', { chain: esc((core.chainOf(d.chain) || { name: d.chain }).name) }));
       }
-      const r = parseSnipeLine(t, chainKey);
+      const r = parseSnipeLine(line, chainKey);
       if (r.err) return send(chatId, T(chatId, r.err, r.vars));
       try {
         const patch = { chain: chainKey, ca: r.ca };
@@ -4685,7 +4746,7 @@ async function resolvePending(chatId, p, text, m) {
         if (r.ttlH > 0) patch.ttlH = r.ttlH;
         core.updateSnipeDraft(chatId, patch);
       } catch (e) { return send(chatId, '❌ ' + esc(e.message || String(e))); }
-      const swNote = switched ? T(chatId, 'snipe.panel.switched', { chain: `${switched.emoji} ${switched.name}` }) : null;
+      const swNote = [tref.note.trim(), switched ? T(chatId, 'snipe.panel.switched', { chain: `${switched.emoji} ${switched.name}` }) : ''].filter(Boolean).join('\n\n') || null;
       // Flow FORWARD ("jangan pisah2"): the next missing required row is asked
       // for immediately — target, then amount — instead of dropping the user
       // back at the panel to find the next ⏳ themselves. The amount screen's
@@ -4773,9 +4834,8 @@ async function resolvePending(chatId, p, text, m) {
     // ── the panel's dev-wallet target: address (+ optional one-line tail).
     if (p.action === 'pnl_ca') {
       const raw = String(t).trim().split(/\s+/)[0];
-      if (!isCa(raw)) return send(chatId, T(chatId, 'pnl.bad_ca'));
-      const det = await detectChain(chatId, raw);
-      return sendPnlCard(chatId, raw, det.chain || core.userChain(core.ensureUser(chatId)));
+      if (!isCa(raw) && !dsLink.parseLink(raw)) return send(chatId, T(chatId, 'pnl.bad_ca'));
+      return pnlFor(chatId, raw);
     }
     if (p.action === 'snw_dev') {
       const u = core.ensureUser(chatId);

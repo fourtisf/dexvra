@@ -14,6 +14,7 @@ const { escapeHtml } = require("../helpers/format");
 const { usdToNative } = require("../nativeprice");
 const { startPayment } = require("./pay");
 const menu = require("./menu");
+const caInput = require("../helpers/caInput");
 const { Markup } = menu;
 
 const URL_RE = /^https?:\/\/\S+$/i;
@@ -117,7 +118,26 @@ async function handleText(ctx) {
     // No chain validation on purpose — an advertiser may be on a chain Dexvra
     // doesn't sell listings for, and this is only ever displayed, never used to
     // look anything up.
-    bf.address = input === "/skip" ? null : input.split(/\s+/)[0].slice(0, 120);
+    //
+    // ⚠️ …BUT A DISPLAYED CA THAT IS THE POOL IS STILL WRONG. "Displayed" means
+    // somebody copies it into a wallet, and a DexScreener link — what an
+    // advertiser has on the clipboard — names the PAIR (helpers/caInput.js).
+    // So it goes through the same door as every other CA: a pair becomes the
+    // token it trades, said out loud; a link we cannot read is refused and the
+    // step asked again; anything else (an address on a chain we do not
+    // support included) is kept exactly as typed, as before.
+    if (input === "/skip") bf.address = null;
+    else {
+      const typed = input.split(/\s+/)[0].slice(0, 120);
+      const isLink = caInput.parseInput(typed)?.kind === "dslink";
+      const res = await caInput.resolveInputSoon(typed);
+      if (isLink && (!res || res.refused || !res.address)) {
+        const reason = (res && res.refused) || "couldn't read that DexScreener link in time — paste the token's contract address instead";
+        return toast(ctx, require("../templates").render("ca_link_refused", { reason }));
+      }
+      bf.address = res && res.address ? res.address : typed;
+      if (res && res.pair) await toast(ctx, require("../templates").render("ca_pair_resolved", caInput.pairVars(res.pair)));
+    }
     s.awaitingField = "banner_socials";
     return sendCard(ctx, require("../templates").render("banner_socials_prompt"), menu.withHome([]));
   }

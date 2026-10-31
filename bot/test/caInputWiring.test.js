@@ -314,3 +314,80 @@ test("a DexScreener link pasted into the DM with no flow running finds the listi
     listedGuard.sendAlreadyListed = realSend;
   }
 });
+
+// ── the doors the audit found still open (2026-10-31) ────────────────────────
+
+test("⚠️ a bare PAIR pasted into the DM finds the listing by its TOKEN — asked only after a miss", async () => {
+  const text = require("../src/handlers/text");
+  const realExisting = listedGuard.existingListing;
+  const realSend = listedGuard.sendAlreadyListed;
+  const looked = [];
+  let answered = null;
+  listedGuard.existingListing = async (addr, chain) => (looked.push([addr, chain]), addr === TOKEN ? { chain: "bsc", address: TOKEN } : null);
+  listedGuard.sendAlreadyListed = async (_ctx, row) => { answered = row; };
+  try {
+    const ctx = { chat: { id: 7, type: "private" }, from: { id: 7 }, session: {}, message: { text: PAIR }, reply: async () => ({}) };
+    await text.textRouter(ctx);
+    assert.deepEqual(looked, [[PAIR, null], [TOKEN, "bsc"]], "the typed address is looked up FIRST, the pair's token second");
+    assert.equal(answered && answered.address, TOKEN);
+  } finally {
+    listedGuard.existingListing = realExisting;
+    listedGuard.sendAlreadyListed = realSend;
+  }
+});
+
+test("a LISTED token pasted into the DM pays no DexScreener request", async () => {
+  const text = require("../src/handlers/text");
+  const realExisting = listedGuard.existingListing;
+  const realSend = listedGuard.sendAlreadyListed;
+  listedGuard.existingListing = async (addr) => (addr === TOKEN ? { chain: "bsc", address: TOKEN } : null);
+  listedGuard.sendAlreadyListed = async () => {};
+  try {
+    const ctx = { chat: { id: 7, type: "private" }, from: { id: 7 }, session: {}, message: { text: TOKEN }, reply: async () => ({}) };
+    await text.textRouter(ctx);
+    assert.ok(!calls.some((u) => u.includes("dexscreener")), calls.join(" | "));
+  } finally {
+    listedGuard.existingListing = realExisting;
+    listedGuard.sendAlreadyListed = realSend;
+  }
+});
+
+function bannerCtx(text) {
+  const replies = [];
+  return {
+    replies,
+    chat: { id: 7, type: "private" },
+    from: { id: 7 },
+    session: { type: "banner", bannerForm: { slot: "home", size: "wide" }, awaitingField: "banner_ca" },
+    message: { text },
+    reply: async (t, extra) => (replies.push({ text: String(t), extra }), { message_id: replies.length }),
+    replyWithPhoto: async (p, extra) => (replies.push({ text: String((extra && extra.caption) || "") }), { message_id: replies.length }),
+    telegram: { deleteMessage: async () => {} },
+    answerCbQuery: async () => {},
+  };
+}
+
+test("⚠️ the banner's displayed CA is the TOKEN, not the pool its DexScreener link names", async () => {
+  const banner = require("../src/handlers/banner");
+  const ctx = bannerCtx(LINK);
+  await banner.handleText(ctx);
+  assert.equal(ctx.session.bannerForm.address, TOKEN, "a banner would show buyers the POOL as the contract to copy");
+  assert.equal(ctx.session.awaitingField, "banner_socials");
+  assert.match(said(ctx), /DexScreener pair/i, "the substitution was not said");
+});
+
+test("a banner link DexScreener cannot read is refused and the step asked again — never stored as the CA", async () => {
+  dsDown = true;
+  const banner = require("../src/handlers/banner");
+  const ctx = bannerCtx(LINK);
+  await banner.handleText(ctx);
+  assert.equal(ctx.session.bannerForm.address, undefined, "a URL was stored as the contract address");
+  assert.equal(ctx.session.awaitingField, "banner_ca");
+});
+
+test("a banner CA on a chain Dexvra does not sell is still kept exactly as typed", async () => {
+  const banner = require("../src/handlers/banner");
+  const ctx = bannerCtx("not-a-supported-chain-address-1234567890");
+  await banner.handleText(ctx);
+  assert.equal(ctx.session.bannerForm.address, "not-a-supported-chain-address-1234567890");
+});

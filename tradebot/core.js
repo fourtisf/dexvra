@@ -2176,6 +2176,18 @@ const isEvmHex = (a) => /^0x[0-9a-fA-F]+$/.test(String(a || ''));
  * asked leaves the paste as typed — the behaviour that shipped before this.
  */
 async function resolvePaste(text) {
+  const out = await _resolvePaste(text);
+  // EVERY substitution and every refusal is a pm2 line. The chat already says
+  // it to the person; a chat is not something an operator can grep, and the
+  // defect this exists for ("bot tidak bisa baca ca token") was found by a
+  // screenshot. `grep -F '[ca]'` is the next one's first move.
+  if (out && out.via === 'pair') console.log(`[ca] ${_shortA(out.pair.pairAddress)} is a DexScreener pair on ${out.chain} — using its token ${_shortA(out.ca)}${out.pair.token.symbol ? ` ($${out.pair.token.symbol})` : ''}`);
+  else if (out && out.refused) console.log(`[ca] paste refused — ${out.refused}`);
+  return out;
+}
+const _shortA = (a) => { const s = String(a || ''); return s.length > 14 ? `${s.slice(0, 6)}…${s.slice(-4)}` : s; };
+
+async function _resolvePaste(text) {
   const s = String(text || '').trim();
   const enabled = new Set(chains.enabledChains().map((c) => c.key));
   const usable = (k) => k && enabled.has(k);
@@ -2192,8 +2204,13 @@ async function resolvePaste(text) {
   }
   const isCaShape = /^0x[0-9a-fA-F]{40}$/.test(s) || solana.isSolAddress(s);
   if (!isCaShape) return null;
-  const ds = await dsPairsX(s).catch(() => ({ pairs: [], ok: false }));
-  if (!ds.ok) return null;
+  const ds = await dsPairsX(s).catch(() => ({ pairs: [], ok: false, why: 'threw' }));
+  if (!ds.ok) {
+    // FAIL OPEN (a bare address is almost always a token) — and SAY so, or a
+    // pair that slipped through as a token is invisible until it is traded.
+    console.log(`[ca] ${_shortA(s)} taken as typed — could not ask DexScreener whether it is a pair${ds.why ? ` (${ds.why})` : ''}`);
+    return null;
+  }
   const same = dsPairRule.sameAddress;
   const direct = ds.pairs.find((p) => p && same(p.pairAddress, s) && p.baseToken && p.baseToken.address);
   if (direct) return _fromPair(dsPairRule.summarize(direct), usable);
