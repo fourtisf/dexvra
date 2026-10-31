@@ -25,8 +25,23 @@
 //
 // Exit 0 when links and pairs read as their token (a token DexScreener has no
 // pair for is skipped and SAID, not failed); non-zero when a round trip comes
-// back wrong, a listing is stored as a pair, or DexScreener cannot be asked at
-// all — the state in which every pasted link is refused, for everybody.
+// back wrong, a listing is stored as a pair, DexScreener cannot be asked at
+// all — the state in which every pasted link is refused, for everybody — or the
+// --all scan could not finish.
+//
+// ⚠️ "WE COULD NOT ASK" IS NOT "NOT A PAIR". The first live --all run sent four
+// unpaced workers at DexScreener, drew a 429 within seconds, benched itself —
+// and then resolved every remaining listing instantly "as typed" and counted
+// each one as not a pair, ending on a green "✓ no listing is stored as a pair"
+// over hundreds of rows it never asked about. The resolver now says when a bare
+// address went unchecked (`unverified`), and nothing here counts one as clean.
+//
+// ⚠️ AND THE SCAN WAS SPENDING THE BOT'S ALLOWANCE. DexScreener meters per IP
+// and the running bot reads it all day from this same box, so a diagnostic
+// that draws a 429 backs the bot off too. One request at a time, paced to half
+// of DexScreener's documented 300/min (`CA_CHECK_GAP_MS`), and it STOPS at the
+// first refusal rather than keep the box refused — printing the complete line
+// that resumes it from the row where it stopped.
 
 // ⚠️ .env FIRST — config/constants freezes every value at require time.
 require("../src/config/loadEnv").loadEnv();
@@ -36,6 +51,28 @@ const caInput = require("../src/helpers/caInput");
 const api = require("../src/api/dexvra");
 const { DEXSCREENER_SLUG } = require("../src/config/chains");
 const dsPair = require("../../shared/dexscreener/pair");
+const dexscreener = require("../src/dexscreener");
+const log = require("../src/helpers/logger");
+
+// Half of DexScreener's documented 300 requests/min for its pair endpoints: the
+// running bot shares this IP and its allowance. Blank is ABSENT (`Number('')`
+// is 0); an explicit 0 is honoured, for a box that knows it is alone.
+const envGap = String(process.env.CA_CHECK_GAP_MS ?? "").trim();
+const GAP_MS = envGap !== "" && Number.isFinite(Number(envGap)) ? Math.max(0, Number(envGap)) : 500;
+const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** The --all scan reports every outcome itself, with more than the resolver's
+ *  one-line `[ca]` note — so those notes are held for its duration rather than
+ *  printed once per listing. Restored in `finally`, warnings untouched. */
+async function withCaNotesHeld(fn) {
+  const info = log.info;
+  log.info = (...a) => (String(a[0]).startsWith("[ca]") ? undefined : info(...a));
+  try {
+    return await fn();
+  } finally {
+    log.info = info;
+  }
+}
 
 const tty = process.stdout.isTTY;
 const B = tty ? "\x1b[1m" : "";
@@ -72,8 +109,17 @@ function sample(rows, n) {
   return out;
 }
 
-async function run({ argv = process.argv.slice(2), print = console.log, fetchJson = dsPair.defaultFetchJson, getListings = api.getListings } = {}) {
+async function run({
+  argv = process.argv.slice(2),
+  print = console.log,
+  fetchJson = dsPair.defaultFetchJson,
+  getListings = api.getListings,
+  gapMs = GAP_MS,
+  sleep = sleepMs,
+} = {}) {
   const all = argv.includes("--all");
+  const fromArg = argv.find((a) => /^--from=\d+$/.test(a));
+  const from = fromArg ? Number(fromArg.slice(7)) : 0;
   const arg = argv.find((a) => !a.startsWith("--"));
   print(`\n${B}Contract input — does a DexScreener link or pair read as the TOKEN?${X}   ${D}build ${build.stamp()}${X}\n`);
   const faults = [];
@@ -114,6 +160,19 @@ async function run({ argv = process.argv.slice(2), print = console.log, fetchJso
       print(`  ✗ ${label} — the listing's own address is a DexScreener PAIR; its token is ${self.address}`);
       continue;
     }
+    if (self && self.unverified) {
+      unread++;
+      print(`  ⚠ ${label} — could not ask DexScreener whether its own address is a pair: ${self.unverified}`);
+      continue;
+    }
+    // The fixture read below is not the resolver's transport, so it would ask a
+    // host this process has just been told to leave alone.
+    const held = dexscreener.benched();
+    if (held) {
+      unread++;
+      print(`  ⚠ ${label} — not asked for its pair: ${held}`);
+      continue;
+    }
     const tp = await topPair(row, fetchJson);
     if (!tp.ok) {
       unread++;
@@ -142,21 +201,49 @@ async function run({ argv = process.argv.slice(2), print = console.log, fetchJso
   }
 
   if (all) {
-    const live = rows.filter((r) => r && r.address && r.chain && DEXSCREENER_SLUG[r.chain]);
-    print(`\n${B}2 · Every listing (${live.length}) — is any STORED as a pair?${X}  ${D}read-only${X}`);
-    let i = 0;
+    // Oldest first, so a listing added between two runs lands at the END and a
+    // printed --from still points at the row where the last run stopped.
+    const live = rows
+      .filter((r) => r && r.address && r.chain && DEXSCREENER_SLUG[r.chain])
+      .sort((a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || "")) || `${a.chain}:${a.address}`.localeCompare(`${b.chain}:${b.address}`));
+    const start = Math.min(from, live.length);
+    const todo = live.length - start;
+    print(
+      `\n${B}2 · Every listing (${live.length}) — is any STORED as a pair?${X}  ${D}read-only · one at a time, ${gapMs}ms apart${start ? ` · from row ${start}` : ""}${X}`,
+    );
     const stored = [];
-    const worker = async () => {
-      while (i < live.length) {
-        const row = live[i++];
-        const r = await caInput.resolveInput(row.address, { chain: row.chain }).catch(() => null);
-        if (r && r.pair) stored.push({ row, token: r.address });
+    const unchecked = new Map(); // reason → count
+    let checked = 0;
+    let stoppedAt = null;
+    let stoppedWhy = null;
+    await withCaNotesHeld(async () => {
+      // No bench check up here: a benched host answers the resolver without a
+      // request, as `unverified`, and the check below stops on that same row.
+      for (let k = start; k < live.length; k++) {
+        if (k > start && gapMs > 0) await sleep(gapMs);
+        const row = live[k];
+        const r = await caInput.resolveInput(row.address, { chain: row.chain }).catch((e) => ({ unverified: `the lookup threw: ${e.message}` }));
+        if (!r || r.unverified) {
+          const why = r ? r.unverified : "not an address on its own chain";
+          // A refusal benched the host: stop HERE, with this row unchecked, so
+          // the resume line starts on it. Anything else (a timeout, a 5xx) is
+          // one row, said, and the scan goes on.
+          if (dexscreener.benched()) {
+            stoppedAt = k;
+            stoppedWhy = why;
+            break;
+          }
+          unchecked.set(why, (unchecked.get(why) || 0) + 1);
+          continue;
+        }
+        checked++;
+        if (r.pair) stored.push({ row, token: r.address });
+        if (checked % 50 === 0) print(`  ${D}… ${k + 1 - start}/${todo}${X}`);
       }
-    };
-    await Promise.all([worker(), worker(), worker(), worker()]);
-    for (const s of stored) {
-      faults.push(`${s.row.chain}/${s.row.address} is stored as a pair`);
-      print(`  ✗ ${s.row.sym || "$?"} ${s.row.chain}/${s.row.address} is a PAIR — the token is ${s.token}`);
+    });
+    for (const st of stored) {
+      faults.push(`${st.row.chain}/${st.row.address} is stored as a pair`);
+      print(`  ✗ ${st.row.sym || "$?"} ${st.row.chain}/${st.row.address} is a PAIR — the token is ${st.token}`);
     }
     if (stored.length) {
       // The contract is not an editable field (adminValidate refuses it), and a
@@ -164,7 +251,23 @@ async function run({ argv = process.argv.slice(2), print = console.log, fetchJso
       // to do with one is an admin's decision: 🗑 in the admin panel, then list
       // the token above.
       print(`  ${D}these rows can never be priced as they stand; replacing one is an admin decision in the panel${X}`);
-    } else print(`  ✓ no listing is stored as a pair`);
+    }
+    const skipped = [...unchecked.values()].reduce((a, b) => a + b, 0);
+    if (skipped) {
+      faults.push(`${skipped} listing(s) could not be asked`);
+      for (const [why, n] of unchecked) print(`  ⚠ ${n} listing(s) not checked — ${why}`);
+    }
+    if (stoppedAt != null) {
+      faults.push(`--all stopped after ${checked} of ${todo}`);
+      print(`  ⚠ stopped after ${checked} of ${todo} — ${stoppedWhy}`);
+      print(`    ${D}the running bot reads DexScreener from this same server, so the scan stops rather than keep it refused${X}`);
+      print(`    continue from where it stopped, once DexScreener answers again:`);
+      print(`    cd /opt/dexvra/bot && npm run ca:check -- --all --from=${stoppedAt}`);
+    }
+    if (!stored.length) {
+      if (stoppedAt == null && !skipped) print(`  ✓ no listing is stored as a pair  ${D}(${checked} checked)${X}`);
+      else print(`  · none of the ${checked} checked is stored as a pair — ${todo - checked} were NOT checked, so this says nothing about them`);
+    }
   }
 
   print("");

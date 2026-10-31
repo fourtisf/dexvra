@@ -8083,6 +8083,57 @@ is what isolated it.
 site. ⚠️ Run `npm run ca:check -- --all` once after the deploy: a listing stored
 as a pair before the fix stays that way until an admin replaces it.
 
+#### "LIAT IN" — the first live `--all` run printed ✓ over rows it never asked
+
+The operator ran `ca:check -- --all` straight after the deploy and got a
+terminal full of
+
+```
+[ca] 0x95aD…C4cE taken as typed — could not ask DexScreener whether it is a pair
+     (DexScreener is refusing this server (HTTP 429) — backing off for 60s)
+```
+
+…ending `✓ no listing is stored as a pair` and `✓ A pasted DexScreener link or
+pair reads as the token it trades, from this box`. **Neither ✓ was earned.**
+The scan sent four unpaced workers at DexScreener, drew a 429 within seconds,
+benched the host, and resolved every remaining listing instantly "as typed" —
+which `resolveInput` returned in exactly the shape of an answered "not a pair".
+So the check counted hundreds of unasked rows as clean. And DexScreener meters
+per IP: the running bot's own DexScreener reads were refused for that minute
+too, caused by the diagnostic.
+
+- **`resolveInput` says when a bare address went unchecked** (`unverified`, the
+  reason). It still fails OPEN — that rule is unchanged — but "not a pair" and
+  "we could not ask" are no longer one answer. Section 1 counts an unchecked
+  self read as unread, never as a pass (a lone 503 arms no bench, so this check
+  is what stops a ✓ there).
+- **`--all` asks ONE listing at a time, paced** — `CA_CHECK_GAP_MS`, 500ms by
+  default, half DexScreener's documented 300/min, because the bot shares this
+  IP's allowance. Blank is absent, an explicit 0 is honoured.
+- **It STOPS at the first refusal** and prints the complete line that resumes
+  it on the row it stopped at (`--all --from=N`, oldest-first so a new listing
+  cannot shift N). A timeout or a 5xx is one row, said, and the scan goes on.
+- **An incomplete scan is a fault and never prints ✓**: "none of the N checked
+  is stored as a pair — M were NOT checked, so this says nothing about them".
+- **The per-row `[ca]` notes are held during `--all`** and the logger restored
+  after; the scan reports every outcome itself.
+
+```bash
+cd bot && node scripts/run-tests.js test/caCheck.test.js   # 17 tests, no network
+```
+
+Thirteen guarantees are MUTATION-TESTED: the resolver not marking an unchecked
+address, an unchecked row counted clean, no stop at a refusal, ✓ printed
+regardless, the stop not a fault, the resume line off by one, `--from` ignored,
+the pacing removed, the four-worker burst restored, the notes never held, the
+logger left muted, section 1 passing an unchecked self read, and a blank gap
+env read as zero. Each fails between one and four tests. A fourteenth — a bench
+check at the top of each row — SURVIVED: a benched host already answers the
+resolver as `unverified` without a request, so the line was dead and is gone.
+
+**Config a fix depends on:** nothing. `bot/` only, so the deploy is the
+ecosystem restart. ⚠️ The earlier `--all` run's verdict is void — run it again.
+
 ## Two bot processes, one config
 
 `bot/` runs **two** PM2 processes: `dexvra-bot` (`main.js`) and

@@ -104,6 +104,12 @@ const pairResult = (pair) => ({ address: pair.token.address, chain: pair.chain, 
  *       refused: a sentence when the input cannot be read honestly (a link we
  *                could not verify, a network Dexvra does not support); the
  *                caller says it and stops
+ *       unverified: on a BARE address, the reason DexScreener could not be
+ *                asked whether it is a pair — it is used as typed (fail open,
+ *                see the header). null when it was asked. ⚠️ "not a pair" and
+ *                "we could not ask" otherwise come back identical, and ca:check
+ *                once printed a green "no listing is stored as a pair" over
+ *                hundreds of rows its own 429 had stopped it asking about.
  */
 async function resolveInput(text, { chain = null, chains = null, pairCheck = true } = {}) {
   const p = parseInput(text);
@@ -136,15 +142,19 @@ async function resolveInput(text, { chain = null, chains = null, pairCheck = tru
 
   // A bare address.
   const fixed = chain && isValidAddress(chain, p.address) ? chain : null;
+  let unverified = null;
   if (pairCheck) {
     const ask = fixed ? [fixed] : (chains && chains.length ? chains : probeChains(p.address));
     const r = await dexscreener.fetchPairX(p.address, ask);
     if (r.pair && r.pair.chain) return (notePair(r.pair, "address"), pairResult(r.pair));
     // r.ok false → could not ask: FAIL OPEN, see the header — and SAY so, or a
     // pair that slipped through as a token is invisible until it is listed.
-    if (!r.ok) log.info(`[ca] ${short(p.address)} taken as typed — could not ask DexScreener whether it is a pair (${r.why})`);
+    if (!r.ok) {
+      unverified = r.why || "DexScreener did not answer";
+      log.info(`[ca] ${short(p.address)} taken as typed — could not ask DexScreener whether it is a pair (${r.why})`);
+    }
   }
-  return { address: p.address, chain: fixed, via: "plain", pair: null, refused: null };
+  return { address: p.address, chain: fixed, via: "plain", pair: null, refused: null, unverified };
 }
 
 /**
