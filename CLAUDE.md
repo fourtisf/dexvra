@@ -15360,6 +15360,16 @@ is the `DEXVRA TERMINAL` layer, appended last in `globals.css`, over DEXVRA DATA
   rank is never chosen. A short market renders a short spotlight; it is never
   padded. No sparkline: `trend` is synthesised (`syntheticTrend`), and at card
   size that is a price history nobody measured. The bar is real: share of buys.
+- **Each card names its PACKAGE, not "Featured"** ("feature ini diganti …
+  diamond gold platinum … yang express ya tulis express"). `spotlightTier` is
+  the one rule: a booked slot always shows its package (Diamond, Gold,
+  Platinum, Silver, Bronze, Xpress) because that purchase is why it leads; a
+  card there on its 24h move follows the board's 48h launch-tag rule, or the
+  card and its row would disagree; FREE is never named. The chip is the
+  board's own `TierTag`. Booked slots order Diamond → Bronze → **Xpress → the
+  bot's free slots**: Xpress used to tie with Free at the back, so a slot the
+  bot booked for itself could sit ahead of one a project paid for. The label is
+  the package's own, "Xpress", as everywhere else on the site and in the bot.
 - ⚠️ **ONE SEARCH INPUT, PINNED.** The header's input (its "/" shortcut, CA
   probe, dropdown) is `position:fixed` over the rail's empty slot at ≥1101px. A
   second input would mean two probes per pasted contract. Two things make the

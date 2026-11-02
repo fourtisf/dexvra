@@ -14,8 +14,8 @@
 // the home lists are a doorway to them, which is why every cap carries its
 // total and every section carries a way through.
 import { CHAIN_IDS } from "../config/chains.ts";
-import { tierRank } from "./packages.ts";
-import type { BoardToken, PeriodKey } from "./types.ts";
+import { TIER_TAG_MAX_MIN, isPackage, tierRank } from "./packages.ts";
+import type { BoardToken, ListingTier, PeriodKey } from "./types.ts";
 
 /**
  * The largest 24h/period change the board will SHOW or RANK as a real reading.
@@ -441,9 +441,10 @@ export function byChange(tokens: readonly BoardToken[], frame: PeriodKey, dir: 1
 // a second copy of the board under it:
 //
 //   1. the BOOKED Trending slots (a non-null `trendingRank`), in the order the
-//      /trending rail already uses — the package bought, Diamond first, Xpress
-//      and Free after every ranked tier — because that is what a project paid
-//      for and what the Telegram board pins;
+//      /trending rail already uses — the package bought: Diamond, Gold,
+//      Platinum, Silver, Bronze, then Xpress, and a slot the BOT booked for a
+//      free auto-listing after every package somebody paid for — because that
+//      is what a project paid for and what the Telegram board pins;
 //   2. then, only to fill what is left, the board's own 24h ranking — through
 //      `changeRank`, so a row with no readable change or no trading behind it
 //      can NEVER be chosen by us (the rule the bot's promoter and its market
@@ -455,13 +456,19 @@ export function byChange(tokens: readonly BoardToken[], frame: PeriodKey, dir: 1
 /** How many listings the home spotlight carries. */
 export const SPOTLIGHT_SIZE = 10;
 
-/** Booked-slot priority: Diamond (1) … Bronze (5), then the unranked
- *  packages. The /trending rail and the spotlight read this ONE comparator —
- *  two orders for the same paid inventory is how the two surfaces come to
- *  disagree about who leads. */
+/** Booked-slot priority: Diamond (1) … Bronze (5), then Xpress — unranked, but
+ *  BOUGHT — then anything that is not a package at all (the bot's own free
+ *  auto-listings). Xpress and Free used to tie at the back, so a slot the bot
+ *  booked for itself could sit ahead of one a project paid for
+ *  ("yang pesen package otomatis diutamakan").
+ *
+ *  The /trending rail and the spotlight read this ONE comparator — two orders
+ *  for the same paid inventory is how the two surfaces come to disagree about
+ *  who leads. */
 const slotPriority = (tier: string): number => {
   const r = tierRank(tier);
-  return r === 0 ? 90 : r;
+  if (r > 0) return r;
+  return isPackage(tier) ? 50 : 90;
 };
 
 /** Every booked Trending slot, in priority order. The tie-break is the token
@@ -476,6 +483,23 @@ export function featuredSlots(tokens: readonly BoardToken[]): BoardToken[] {
         (a.trendingRank ?? 99) - (b.trendingRank ?? 99) ||
         a.key.localeCompare(b.key),
     );
+}
+
+/** The package a spotlight card names — Diamond, Gold, Platinum… or Xpress —
+ *  in place of the bare "Featured" pill, so the order the cards are in can be
+ *  READ off them ("feature ini diganti … yang express ya tulis express").
+ *
+ *  - A BOOKED slot always names its package: that purchase is why the card is
+ *    where it is, and hiding it after 48h would leave the lead cards unexplained.
+ *  - A card that is there on its 24h move follows the board's own rule — the
+ *    tag is a launch perk, shown for 48h — or the spotlight and the row beneath
+ *    it would disagree about the same token.
+ *  - FREE is never named: it is the bot's own stock, and TierTag refuses it for
+ *    the reason written there. */
+export function spotlightTier(t: BoardToken): ListingTier | null {
+  if (!isPackage(t.tier)) return null;
+  if (t.trendingRank != null) return t.tier;
+  return t.listedMinutesAgo < TIER_TAG_MAX_MIN ? t.tier : null;
 }
 
 /** The spotlight: booked slots first, topped up from the 24h ranking. */

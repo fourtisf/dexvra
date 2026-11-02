@@ -6,7 +6,7 @@ import test from "node:test";
 import assert from "node:assert";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { SPOTLIGHT_SIZE, featuredSlots, marketTotals, spotlight } from "./home.ts";
+import { SPOTLIGHT_SIZE, featuredSlots, marketTotals, spotlight, spotlightTier } from "./home.ts";
 import type { BoardToken, ListingTier, PeriodKey } from "./types.ts";
 
 const PERIODS: PeriodKey[] = ["5m", "1h", "6h", "24h"];
@@ -19,6 +19,7 @@ function tok(p: {
   slot?: number | null;
   source?: "live" | "seed";
   tx?: number;
+  listed?: number;
 }): BoardToken {
   const per = <T,>(v: T) => Object.fromEntries(PERIODS.map((k) => [k, v])) as Record<PeriodKey, T>;
   const tx = p.tx ?? 2;
@@ -45,7 +46,7 @@ function tok(p: {
     source: p.source ?? "live",
     tier: p.tier ?? "BRONZE",
     trendingRank: p.slot ?? null,
-    listedMinutesAgo: 60,
+    listedMinutesAgo: p.listed ?? 60,
     score: 50,
     poolAddress: null,
     links: { website: null, twitter: null, telegram: null },
@@ -70,7 +71,7 @@ test("booked Trending slots lead, in package order, before any top-up", () => {
     tok({ sym: "GLD", tier: "GOLD", slot: 1 }),
   ];
   const out = syms(spotlight(list));
-  assert.deepStrictEqual(out.slice(0, 4), ["DIA", "GLD", "BRZ", "XP"], "Diamond first, the unranked packages after every ranked tier");
+  assert.deepStrictEqual(out.slice(0, 4), ["DIA", "GLD", "BRZ", "XP"], "Diamond first, Xpress after every ranked tier");
   assert.strictEqual(out[4], "MOON", "…and the ranking only fills what is left");
 });
 
@@ -111,4 +112,35 @@ test("the market line's txns total is null when nothing in it was measured", () 
   assert.strictEqual(marketTotals([tok({ sym: "A", source: "seed", tx: 0 })]).txns24h, null, "a captured zero is not a reading");
   assert.strictEqual(marketTotals([tok({ sym: "A", tx: 0 })]).txns24h, 0, "…a live zero is");
   assert.deepStrictEqual(marketTotals([tok({ sym: "A", tx: 4 }), tok({ sym: "B", tx: 6 })]), { txns24h: 10, listed: 2 });
+});
+
+test("a package somebody BOUGHT leads a slot the bot booked for itself", () => {
+  // Xpress and Free used to tie at the back, so the order between a paid Xpress
+  // slot and a bot-booked free one fell to the token key — i.e. to chance.
+  const list = [tok({ sym: "AAA", tier: "FREE", slot: 1, chg: 300 }), tok({ sym: "ZZZ", tier: "XPRESS", slot: 9, chg: -40 })];
+  assert.deepStrictEqual(syms(featuredSlots(list)), ["ZZZ", "AAA"]);
+  assert.deepStrictEqual(syms(featuredSlots([...list].reverse())), ["ZZZ", "AAA"]);
+});
+
+test("each card names the package it bought, where it used to say Featured", () => {
+  // "feature ini diganti … diamond gold platinum … yang express ya tulis express"
+  const old = 30 * 24 * 60; // a month — far past the board's 48h tag
+  assert.strictEqual(spotlightTier(tok({ sym: "D", tier: "DIAMOND", slot: 1, listed: old })), "DIAMOND", "a booked slot names its package for as long as it holds the slot");
+  assert.strictEqual(spotlightTier(tok({ sym: "P", tier: "PLATINUM", slot: 2, listed: old })), "PLATINUM");
+  assert.strictEqual(spotlightTier(tok({ sym: "X", tier: "XPRESS", slot: 3, listed: old })), "XPRESS", "…Xpress included");
+  assert.strictEqual(spotlightTier(tok({ sym: "F", tier: "FREE", slot: 4 })), null, "the bot's own stock is never labelled");
+});
+
+test("a card that is there on its move follows the board's 48h tag rule", () => {
+  assert.strictEqual(spotlightTier(tok({ sym: "G", tier: "GOLD", listed: 10 })), "GOLD");
+  assert.strictEqual(spotlightTier(tok({ sym: "G", tier: "GOLD", listed: 3 * 24 * 60 })), null, "or the card and its row would disagree");
+  assert.strictEqual(spotlightTier(tok({ sym: "F", tier: "FREE", listed: 10 })), null);
+});
+
+test("the spotlight draws the package through the board's own TierTag, and no Featured pill", () => {
+  const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+  const src = strip(readFileSync(join(process.cwd(), "src/components/Spotlight.tsx"), "utf8"));
+  assert.match(src, /spotlightTier\(t\)/, "the rule has one owner, in lib/home");
+  assert.match(src, /<TierTag tier=\{pkg\}/, "one chip design for a package, here and on the board");
+  assert.ok(!/>\s*Featured\s*</.test(src) && !/spot-feat/.test(src), "the bare Featured pill is gone");
 });

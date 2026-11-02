@@ -1,10 +1,11 @@
 "use client";
 
-import { changeReading, figureReading, SPOTLIGHT_SIZE } from "@/lib/home";
+import { changeReading, figureReading, SPOTLIGHT_SIZE, spotlightTier } from "@/lib/home";
 import { fmtCap, fmtPrice } from "@/lib/format";
 import { chainOf } from "@/config/chains";
 import type { BoardToken } from "@/lib/types";
 import { Coin } from "./Coin";
+import { TierTag } from "./TierTag";
 import { useApp } from "./AppState";
 
 /**
@@ -14,6 +15,10 @@ import { useApp } from "./AppState";
  * WHAT fills it is decided in lib/home.ts `spotlight()`: the booked Trending
  * slots first, in package order, then the board's own 24h ranking for whatever
  * is left. This component only draws it.
+ *
+ * Each card names its PACKAGE (Diamond, Gold, Platinum… Xpress) where it used
+ * to say "Featured" — `spotlightTier` decides when, and the chip is the board's
+ * own TierTag, so a package looks the same here as on its row.
  *
  * Deliberately NO sparkline. A token's `trend` points are synthesised from its
  * ticker and its 24h change (lib/visual `syntheticTrend`); at 34px on a mover
@@ -36,7 +41,7 @@ export function Spotlight({ tokens, loading = false }: { tokens: BoardToken[]; l
           </div>
           <h2>Trending Spotlight</h2>
         </div>
-        <span className="spot-sub">Featured listings first, then the biggest 24h movers</span>
+        <span className="spot-sub">Paid packages first — Diamond, Gold, Platinum — then the biggest 24h movers</span>
       </div>
 
       <div className="spot-grid" aria-busy={loading || undefined}>
@@ -55,6 +60,7 @@ export function Spotlight({ tokens, loading = false }: { tokens: BoardToken[]; l
 }
 
 function SpotCard({ t, i, onOpen }: { t: BoardToken; i: number; onOpen: () => void }) {
+  const pkg = spotlightTier(t);
   const price = figureReading(t, t.priceUsd);
   const mcap = figureReading(t, t.mcap);
   const vol = figureReading(t, t.vol["24h"]);
@@ -69,7 +75,7 @@ function SpotCard({ t, i, onOpen }: { t: BoardToken; i: number; onOpen: () => vo
     <button type="button" className={`spot-card ${i < 3 ? `spot-top${i + 1}` : ""}`} onClick={onOpen}>
       <div className="spot-row1">
         <span className="spot-rank">#{i + 1}</span>
-        {t.trendingRank != null && <span className="spot-feat">Featured</span>}
+        {pkg && <TierTag tier={pkg} showRank={false} />}
       </div>
       <div className="spot-id">
         <Coin token={t} size={38} fontSize={15} />

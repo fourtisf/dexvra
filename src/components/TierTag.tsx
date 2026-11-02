@@ -1,10 +1,11 @@
 import type { CSSProperties } from "react";
 import type { ListingTier } from "@/lib/types";
-import { tierColor, tierGlyph, tierLabel, tierRank, tierTip } from "@/lib/packages";
+import { TIER_TAG_MAX_MIN, tierColor, tierGlyph, tierLabel, tierRank, tierTip } from "@/lib/packages";
 
 // Tier badges are a LAUNCH perk — shown only for the first 48h after listing,
 // then the token blends into the board like any other (no permanent tier).
-export const TIER_TAG_MAX_MIN = 48 * 60;
+// The number lives in lib/packages so the spotlight reads the same one.
+export { TIER_TAG_MAX_MIN };
 
 /** The paid-listing tag a token carries for its first 48h — Diamond/Gold/
  *  Platinum/Silver/Bronze (ranked #1–#5) or Xpress (instant). Pass

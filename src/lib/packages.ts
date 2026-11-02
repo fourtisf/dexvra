@@ -113,6 +113,15 @@ const TIER_MAP: Record<string, ListingTierMeta> = Object.fromEntries(
   [...LISTING_TIERS, FREE_TIER].map((t) => [t.key, t]),
 );
 
+/** A tier somebody can BUY — every package in LISTING_TIERS, Xpress included.
+ *  FREE is the bot's own auto-listing and is not one. */
+export const isPackage = (key: string): boolean => LISTING_TIERS.some((t) => t.key === key);
+
+/** Tier tags are a LAUNCH perk: a row shows its package for its first 48h,
+ *  then blends into the board. One number for every surface that draws the
+ *  tag — the board's TierTag and the home spotlight read it from here. */
+export const TIER_TAG_MAX_MIN = 48 * 60;
+
 export const tierMeta = (key: string): ListingTierMeta | undefined => TIER_MAP[key];
 export const tierLabel = (key: string): string => TIER_MAP[key]?.label ?? key;
 export const tierTip = (key: string): string => TIER_MAP[key]?.blurb ?? "";
