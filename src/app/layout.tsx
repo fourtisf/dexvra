@@ -4,6 +4,7 @@ import { BRAND_NAME, BRAND_TAGLINE } from "@/config/brand";
 import { SITE_ORIGIN, OG_IMAGE } from "@/config/site";
 import { SITE_DESCRIPTION, siteJsonLd, jsonLdText } from "@/lib/seo";
 import "./globals.css";
+import { ChainLogoDefs } from "@/components/ChainLogo";
 
 export const metadata: Metadata = {
   // Without this, every relative image in openGraph/twitter resolves against
@@ -68,9 +69,16 @@ export const metadata: Metadata = {
  * and the <noscript> fallback), and two spellings would eventually load two
  * different sets of faces. `display=swap` is part of the contract: text renders
  * in the fallback stack immediately and swaps when the face arrives.
+ *
+ * Instrument Serif and Archivo are GONE from it: the serif accent was retired
+ * with the Privé direction, and the display face is Inter now (globals.css,
+ * DEXVRA DATA — one sans for everything, DexScreener as the reference), so
+ * each was a download for no glyph. Inter carries 700 because it draws the
+ * headings, the figures and the primary action — Google serves Inter as one
+ * variable file, so the extra weight costs no extra request.
  */
 const FONT_CSS =
-  "https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Instrument+Serif:ital@1&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;600;700&display=swap";
+  "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600;700&display=swap";
 
 export const viewport: Viewport = {
   themeColor: "#090C12",
@@ -121,6 +129,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           // it can close this element early.
           dangerouslySetInnerHTML={{ __html: jsonLdText(siteJsonLd()) }}
         />
+        <ChainLogoDefs />
         {children}
       </body>
     </html>

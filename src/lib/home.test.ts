@@ -518,28 +518,52 @@ test("every class a page still renders has a style — .board-loading kept its c
     assert.match(CSS, /\.board-loading\{/, `still styled — rendered by ${users.join(", ")}`);
 });
 
-// ── the Moontok arrangement ─────────────────────────────────────────────────
+// ── the arrangement: mockup A ───────────────────────────────────────────────
 //
-// "saya ingin buat seperti moontok", said with a screenshot. The page opens
-// on the INSTRUMENTS: the intel cards across the top (Pulse · Fear & Greed ·
-// Signals — the reference's Moon-Satellite row), the banner placements, then
-// straight into the trending board. No rotating hero, no editorial deck, no
-// side rail — both earlier shapes were shown to the operator and rejected.
+// The Moontok arrangement (intel cards on top, no side rail) was the shape
+// before; shown three structurally different mockups, the operator picked A —
+// "Tabel Terminal" ("yang ini bagus") — and asked for a spotlight of at least
+// nine or ten on top of it ("masa cuma 3, minimal 9 atau 10"). So the page now
+// opens on the market: the spotlight, then the terminal board, with the intel
+// cards under the movers. The rail lives in the SITE layout, not on this page.
 
-test("the home opens on the intel cards, then banners, then the board", () => {
+test("the home opens on the spotlight, then the board, then the movers and the intel", () => {
   const page = read("src/app/(site)/page.tsx");
   const at = (m: string) => page.indexOf(m);
-  assert.ok(at("<PulseStrip") > -1, "the intel row leads");
-  assert.ok(at("<PulseStrip") < at("<HomeBannerStrip"), "banners under the instruments");
-  assert.ok(at("<HomeBannerStrip") < at("<ChainFilter"), "…then the market area");
+  for (const c of ["<ChainFilter", "<Spotlight", "<HomeBannerStrip", "<StdBoard", "<MarketMovers", "<PulseStrip", "<TopCoinsBoard"])
+    assert.ok(at(c) > -1, `${c} is on the page`);
+  assert.ok(at("<ChainFilter") < at("<Spotlight"), "the one chain filter governs the spotlight too");
+  assert.ok(at("<Spotlight") < at("<HomeBannerStrip"), "the spotlight leads");
+  assert.ok(at("<HomeBannerStrip") < at("<StdBoard"), "the paid banners sit over the board");
+  assert.ok(at("<StdBoard") < at("<MarketMovers"), "…then the movers");
+  assert.ok(at("<MarketMovers") < at("<PulseStrip"), "…then the intel cards");
+  assert.ok(at("<PulseStrip") < at("<TopCoinsBoard"), "…and Top Coins closes");
+  assert.match(page, /variant="terminal"/, "the home board is the terminal table");
+  assert.match(page, /spotlight\(onChain\)/, "the spotlight reads the chain-filtered list, not the raw payload");
   // the rejected shapes must not creep back
   for (const dead of ["PromoCarousel", "HomeHero", "home-rail", "home-grid"])
     assert.ok(!page.includes(dead), `${dead} is retired`);
   for (const f of ["src/components/PromoCarousel.tsx", "src/components/HomeHero.tsx"])
     assert.ok(!existsSync(join(process.cwd(), f)), `${f} is out of the tree — a dead hero is the next "which one is real?"`);
-  // nothing on the opening screen moves on its own — the autoplay carousel
-  // stays dead whatever the skin does
+  // nothing on the opening screen moves on its own
   assert.ok(!/setInterval/.test(page), "no rotation timer on the page");
+});
+
+test("the chain filter lives in the URL, so the rail and every chain row are one control", () => {
+  // One hook owns reading and writing ?chain= — three pages each keeping a
+  // useState("all") is how the rail said Solana while a page said All chains.
+  const hook = read("src/components/useChainParam.ts");
+  assert.match(hook, /params\.get\("chain"\)/, "it reads ?chain=");
+  assert.match(hook, /router\.replace\(/, "…and writes it without stacking history");
+  for (const f of ["src/app/(site)/page.tsx", "src/app/(site)/trending/page.tsx", "src/app/(site)/leaderboard/page.tsx"]) {
+    const page = read(f);
+    assert.match(page, /useChainParam\(\)/, `${f} reads the shared filter`);
+    assert.match(page, /<ChainFilter/, `${f} draws the one chain row`);
+    assert.ok(!/useState(<string>)?\(\s*"all"\s*\)/.test(page), `${f} keeps no private chain state`);
+  }
+  const rail = read("src/components/Rail.tsx");
+  assert.match(rail, /href=\{`\$\{base\}\?chain=\$\{encodeURIComponent\(c\.id\)\}`\}/, "the rail's chains are links to the same parameter");
+  assert.match(rail, /CHAIN_PAGES\.includes\(pathname\)/, "…on the page you are on, when it takes a chain filter");
 });
 
 test("the skin is the BRAND BLUE accent, and the serif identity is fully retired", () => {

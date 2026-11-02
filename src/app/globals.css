@@ -2006,3 +2006,618 @@ body{
 .pons-progress{min-width:108px}
 .pons-bar{height:5px;border-radius:999px;background:rgba(255,255,255,.08);overflow:hidden}
 .pons-bar-fill{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,var(--cyan),#CCFF00)}
+
+/* ============================================================
+   DEXVRA ATELIER — the premium finish, by measurement
+   ("bisakah kita buat ui ux lebih premium?", over the live home)
+
+   Same Moontok arrangement, same Dexvra blue — both are operator decisions
+   pinned in home.test.ts, and neither was the problem. Read against the live
+   page, four things kept it reading as a terminal rather than a product:
+
+   1. THE MONO VOICE WAS EVERYWHERE. JetBrains Mono drew every figure AND
+      every tracked-uppercase label, so a price, a column heading, a chip
+      count and a link all spoke in one typewriter voice. Premium market
+      products draw figures in a grotesk with TABULAR digits (the body already
+      sets tabular-nums, so columns still replace in place on every poll).
+      `--fm` is therefore REDEFINED to Inter below and the true monospace
+      moves to `--fc`, kept only for strings that ARE code — contract and
+      wallet addresses, the trader column, the kbd hint, the chart axes.
+      One token change, so no page is left half on the old voice.
+   2. THE HEADER HAD FOUR CONTROL HEIGHTS (38 · 40 · 41 · 44px). It is one
+      40px rhythm now, the nav sits in a capsule, and the primary action draws
+      its bolt instead of borrowing the OS emoji of the day — the rule the
+      board's drawn medals already state.
+   3. BOXES INSIDE BOXES. The signal feed drew a bordered card per line inside
+      a bordered card; it is a hairline list now. The intel cards take a lit
+      gradient edge rather than a flat outline.
+   4. THE GAUGE WAS A THUMBNAIL. Fear & Greed sat 122px wide in the corner of
+      a 450px card; it is centred and sized to be read.
+
+   ⚠️ Nothing here moves layout tracks, overflow or the sticky identity cells —
+   the phone board's fixed column widths and its sticky backgrounds are tuned
+   against the board's surface colour, which this layer deliberately leaves
+   alone. Animations: none added; transitions only, which the reduced-motion
+   block already zeroes with !important.
+   ============================================================ */
+
+:root{
+  color-scheme:dark;
+  /* the figures + microlabel voice (was JetBrains Mono — see note 1) */
+  --fm:'Inter',-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;
+  /* true monospace, for strings that are code */
+  --fc:'JetBrains Mono',ui-monospace,'SF Mono','Cascadia Code',Menlo,Consolas,monospace;
+  --hair:rgba(190,215,255,.08);
+  --hair2:rgba(190,215,255,.13);
+}
+html{scrollbar-color:rgba(190,215,255,.16) transparent}
+body{text-rendering:optimizeLegibility}
+
+/* ── code stays mono ─────────────────────────────────────────────────────── */
+.ca-box code,.btn-wallet.connected,.tr-trader,.search kbd,
+.ck-axis,.ck-lasttx,.ck-tip{font-family:var(--fc)}
+
+/* ── the figures: one weight scale, sized for a proportional face ─────────── */
+.price{font-size:13.5px;font-weight:600;letter-spacing:-.005em}
+.mono-dim{font-size:13px;font-weight:500;color:#A7AFBC}
+.rank{font-size:13px;font-weight:600}
+.tx-main{font-size:13px;font-weight:600}
+.tx-split{font-size:11px;font-weight:500}
+.chg{font-size:12px;font-weight:600;border-radius:8px}
+.chg.up{box-shadow:inset 0 0 0 1px rgba(74,222,156,.18)}
+.chg.dn{box-shadow:inset 0 0 0 1px rgba(255,129,153,.18)}
+.dscore{font-size:12px;font-weight:600;background:rgba(255,255,255,.025)}
+.dscore .dl{font-size:9px;letter-spacing:.06em;opacity:.7}
+.ichip{font-size:11px;font-weight:600}
+.tc-px{font-size:13px;font-weight:600}
+.tc-chg{font-size:12.5px;font-weight:600}
+.tc-mono{font-size:12.5px;font-weight:500;color:#A7AFBC}
+.tc-rank,.mv-rank{font-weight:600}
+.mv-pct{font-size:11.5px;font-weight:600}
+.ds .v{font-size:14px;font-weight:600}
+.sdd-px{font-weight:600}
+.tier .tprice,.co .v{font-weight:700}
+.trades-row{font-size:12.5px}
+.tr-type{font-weight:600}
+
+/* ── identity lines: the display face, a touch tighter ───────────────────── */
+.tok .sym{font-size:15.5px;font-weight:600;letter-spacing:-.01em}
+.tok .nm{font-size:12px}
+.tc-sym{font-size:14px;font-weight:600;letter-spacing:-.005em}
+.mv-sym{font-family:var(--fb);font-weight:600;font-size:13px}
+.mv-nm{font-size:11px}
+.mv-head h3,.wcard-head h3{font-weight:600;font-size:14.5px;letter-spacing:-.01em}
+
+/* ── microlabels: small caps-voice, not a typewriter shout ───────────────── */
+.row.head,.tc-row.tc-head,.trades-hd{font-size:10.5px;font-weight:600;letter-spacing:.08em}
+.wcard-head .more,.mv-all,.board-expand,.board-all,.tc-more,.fg-label,.trades-live,
+.fld label,.ds .k,.s-eyebrow,.nav-label,.tmg-label,.co .l,.feat-head,
+.banner-example-cap,.home-banner-tag,.sig-kind,.board-foot,.tc-foot,.mv-stamp{letter-spacing:.08em}
+.wcard-head .more,.mv-all,.board-expand,.board-all,.tc-more{font-size:10.5px;font-weight:600}
+.live-pill,.src-pill{font-size:9px;font-weight:700;letter-spacing:.1em}
+.tier-chip{font-weight:700}
+
+/* ── header: one 40px rhythm, the nav in a capsule ───────────────────────── */
+.topbar{background:rgba(7,11,17,.8);
+  backdrop-filter:saturate(160%) blur(18px);-webkit-backdrop-filter:saturate(160%) blur(18px)}
+.topnav{height:40px;padding:3px;gap:2px;border:1px solid var(--hair);border-radius:12px;
+  background:rgba(255,255,255,.025)}
+.topnav a{height:32px;padding:0 13px;border-radius:9px;font-weight:500}
+.topnav a.active{color:#FFFFFF;
+  background:linear-gradient(180deg,rgba(38,198,245,.2),rgba(38,198,245,.08));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.1), inset 0 0 0 1px rgba(38,198,245,.24)}
+@media (max-width:1180px){.topnav a{padding:0 9px;font-size:13px}}
+/* ⚠️ THE OLD SIDEBAR'S COLLAPSE RULE STILL REACHES THIS NAV. `.nav{width:100%}`
+   (≤1140px, RESPONSIVE) was written for the retired left rail, and the header
+   nav carries the same class — so from 981 to 1140px the nav stretched to the
+   whole bar, `flex:none` refused to shrink it, and the search, wallet and List
+   Token were pushed past the right edge: a horizontal page scroll on every
+   small laptop and landscape tablet, predating this layer. The capsule only
+   made it visible (a 972px pill). Measured at 1024px: scrollWidth 1314. */
+.topnav{width:auto}
+.topmenu-btn{width:40px;height:40px;border-radius:12px;border-color:var(--hair);
+  background:rgba(255,255,255,.025);color:var(--muted);transition:color .15s,background .15s}
+.topmenu-btn:hover{color:var(--text);background:rgba(255,255,255,.055)}
+.search{height:40px;padding:0 14px;border-radius:12px;background:rgba(255,255,255,.035);border-color:var(--hair)}
+.search kbd{font-size:10px;padding:1px 7px;border-color:var(--hair2)}
+.top-stat{font-size:11px;font-weight:500;letter-spacing:.06em;color:var(--faint)}
+.top-stat b{font-weight:600;font-size:12px;letter-spacing:0}
+.btn-wallet{height:40px;padding:0 16px;border-radius:12px;font-weight:600;background:rgba(255,255,255,.035)}
+.btn-wallet:hover{border-color:rgba(38,198,245,.45);background:rgba(255,255,255,.06)}
+.topbar .btn-primary{height:40px;padding:0 18px;border-radius:12px;font-weight:700;gap:7px}
+.cta-ic{width:15px;height:15px;flex:none;fill:currentColor}
+/* the primary action: the jewel, minus the floodlight */
+.btn-primary,.fasttrack{
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.6), inset 0 -2px 4px rgba(3,50,70,.3),
+    0 8px 22px -8px rgba(14,155,216,.7)!important;
+}
+.btn-primary:hover,.fasttrack:hover{
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.7), inset 0 -2px 4px rgba(3,50,70,.3),
+    0 12px 28px -8px rgba(14,155,216,.85)!important;
+}
+
+/* ── the ticker: calmer, so the market reads first ───────────────────────── */
+.ticker{border-bottom-color:var(--hair)}
+.ticker-track{gap:30px}
+.tick-item .sym{font-weight:600;font-size:12.5px}
+.tick-item .px{font-size:12.5px}
+.tick-item .pct{font-weight:600;font-size:12px}
+.tick-item .rnk{font-weight:600;font-size:11.5px}
+.tick-coin{border:1px solid rgba(255,255,255,.16)}
+
+/* ── intel cards: a lit gradient edge instead of a flat outline ──────────── */
+.wcard,.mv-card{
+  border:1px solid transparent;border-radius:18px;
+  background:
+    linear-gradient(180deg,rgba(130,185,255,.055),rgba(130,185,255,0) 34%) padding-box,
+    linear-gradient(#0A0E15,#0A0E15) padding-box,
+    linear-gradient(180deg,rgba(200,225,255,.2),rgba(200,225,255,.06) 38%,rgba(200,225,255,.045)) border-box;
+  box-shadow:0 24px 48px -24px rgba(0,0,0,.75), inset 0 1px 0 rgba(255,255,255,.04);
+  transition:box-shadow .2s;
+}
+.wcard:hover,.mv-card:hover{box-shadow:0 28px 56px -24px rgba(0,0,0,.85), inset 0 1px 0 rgba(255,255,255,.06)}
+.wcard{padding:14px 16px;flex-basis:320px}
+
+/* the heat cells */
+/* sized so the longest chain name we draw ("Ethereum") fits a cell at the
+   card's narrowest width — 320px is the floor below */
+.heat{gap:6px}
+.heat-cell{padding:9px 7px;border-radius:12px;border-color:var(--hair);background:rgba(255,255,255,.022)}
+.heat-chain{gap:5px}
+.heat-chain .heat-name{font-family:var(--fb);font-size:11px;font-weight:500}
+.heat-temp{font-family:var(--fd);font-size:22px;font-weight:600;letter-spacing:-.02em}
+.heat-kv{font-size:10px}
+.heat-kv b{font-weight:600}
+
+/* Fear & Greed: centred, and big enough to read */
+.fg{justify-content:center;gap:24px}
+.fg svg{width:146px;height:80px}
+.fg-num{font-family:var(--fd);font-size:36px;font-weight:600;letter-spacing:-.03em}
+.fg-label{font-size:10.5px;font-weight:600;letter-spacing:.14em}
+.fg-note{font-size:11px}
+
+/* Signals: a hairline list, not a card per line */
+.wire-list{gap:0}
+.wire-item{border:0;border-bottom:1px solid var(--hair);border-radius:0;background:transparent;
+  padding:7px 2px;font-size:12px}
+.wire-item:last-child{border-bottom:0}
+.wire-item b{font-weight:600;font-size:12px}
+.wire-item .t{font-size:10.5px}
+
+/* ── controls ────────────────────────────────────────────────────────────── */
+.chain-chip{font-family:var(--fb);font-weight:500;font-size:13px;gap:7px;
+  border-color:var(--hair);background:rgba(255,255,255,.025)}
+.chain-chip:hover{background:rgba(255,255,255,.05);border-color:var(--hair2)}
+.chain-n{font-weight:600;font-size:10.5px}
+.ttabs{padding:3px;gap:2px;border-radius:11px}
+.ttab{font-size:12px;font-weight:600;padding:6px 12px;border-radius:8px}
+.filter-btn{font-family:var(--fb);font-size:12.5px;font-weight:500;border-radius:11px;border-color:var(--hair)}
+.tab{font-family:var(--fb);font-weight:500;font-size:12.5px}
+
+/* ── the boards ──────────────────────────────────────────────────────────── */
+.board,.tc-board{border-color:var(--hair2);border-radius:18px}
+/* the token disc: a hairline ring and a seat, not a sticker's white border */
+.coin{border:1px solid rgba(255,255,255,.16);
+  box-shadow:inset 0 2px 5px rgba(255,255,255,.28), inset 0 -3px 6px rgba(0,0,0,.18), 0 6px 16px rgba(0,0,0,.35)}
+.tok .coin,.mv-row .coin{border-width:1px}
+/* the podium: a whisper of the medal's metal under the top three rows.
+   background-IMAGE only, so the price flash (background-color) still shows;
+   desktop only, because on phones the sticky identity cells paint over the
+   left of the row and the wash would start mid-table. The hover sweep is
+   restated one notch higher, or the podium would swallow it. */
+@media (min-width:601px){
+  .board .row:has(.medal-1){background-image:linear-gradient(90deg,rgba(255,197,61,.06),transparent 42%)}
+  .board .row:has(.medal-2){background-image:linear-gradient(90deg,rgba(199,208,220,.05),transparent 42%)}
+  .board .row:has(.medal-3){background-image:linear-gradient(90deg,rgba(217,138,76,.055),transparent 42%)}
+  .board .row:not(.head):hover{background-image:linear-gradient(90deg,rgba(38,198,245,.08),transparent 65%)}
+}
+
+/* ── footer: a real foot, not a stray line ───────────────────────────────── */
+.foot{margin-top:22px;padding:22px 4px 28px;border-top:1px solid var(--hair);
+  font-family:var(--fb);font-size:12.5px;font-weight:500}
+.foot a{transition:color .15s}
+.foot a:hover{color:var(--acc)}
+
+/* ── small things that read as care ──────────────────────────────────────── */
+.live-pill,.src-pill{white-space:nowrap}
+/* a placeholder cut mid-letter reads as a bug; an ellipsis reads as a choice */
+.search input{text-overflow:ellipsis}
+.heat-kv{gap:4px}
+
+@media (max-width:600px){
+  /* the intel cards are a swipe rail on phones — wide enough that "Ethereum"
+     fits its heat cell, narrow enough that the next card peeks in to say so */
+  .wcard{flex:0 0 min(340px,92%)}
+  .heat-kv{font-size:9.5px}
+  /* ⚠️ THE STICKY IDENTITY CELLS PAINT #0C1017 AND THE BOARD UNDER THEM WAS
+     TRANSLUCENT (rgba .72 over the page's dot grid), so on every phone the
+     token column sat in a visibly lighter box — the seam predates this layer.
+     An opaque board in exactly the sticky colour makes the column disappear
+     into the row; the header row's .02 white lift lands on #11151C, which is
+     what its sticky cells already paint. */
+  .board,.tc-board{background:#0C1017}
+  .fg svg{width:124px;height:68px}
+  .fg{gap:18px}
+  .topbar .btn-primary{width:44px;padding:0;justify-content:center}
+}
+/* the smallest phones in use (360px): the last 2px "Ethereum" needs */
+@media (max-width:380px){.heat-chain{gap:4px}.heat-chain .heat-name{font-size:10.5px}}
+
+/* ============================================================
+   DEXVRA DATA — flat, dense, the numbers first
+   ("still looks bad" — every opening shape was rejected: the space hero,
+   the gem, the bento, the podium. Asked for a reference, the operator named
+   DEXSCREENER: no banner, no artwork, no glow. One sans for everything, flat
+   graphite panels on near-black, hairline dividers, compact rows, and colour
+   spent ONLY on data — green/red for moves — and on the brand blue for the
+   things you can act on.)
+
+   Built on DEXVRA ATELIER above (the figures in Inter with tabular digits,
+   one 40px header rhythm, the drawn CTA bolt). Everything decorative those
+   older layers added — glows, gradient edges, the podium wash — is switched
+   off here rather than deleted, so this layer alone decides the look.
+   ============================================================ */
+:root{
+  /* one family: the display face is Inter too (Archivo is no longer loaded) */
+  --fd:'Inter',-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;
+  --x-bg:#0A0B0E; --x-panel:#111318; --x-head:#15171D; --x-hover:#181A20; --x-on:#22252D;
+  --x-line:#1F222A; --x-line2:#2B2F38; --x-div:#1A1C22;
+  --text:#E9EAED; --muted:#9196A0; --faint:#636872;
+  --up:#3DD68C; --dn:#F2566E;
+}
+body{background:var(--x-bg)}
+.brand-name{font-weight:700;letter-spacing:-.02em}
+
+/* header: flat, one hairline */
+.topbar{background:rgba(10,11,14,.94);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-bottom:1px solid var(--x-line)}
+.topbar::after{content:none}
+.topnav{background:transparent;border:0;padding:0}
+.topnav a{color:var(--muted);font-weight:500;border-radius:8px}
+.topnav a:hover{color:var(--text);background:var(--x-hover)}
+.topnav a.active{color:var(--text);background:var(--x-on);box-shadow:none}
+.topmenu-btn,.search,.btn-wallet{background:var(--x-panel);border:1px solid var(--x-line);border-radius:10px;color:var(--text)}
+.topmenu-btn:hover,.btn-wallet:hover{background:var(--x-hover);border-color:var(--x-line2)}
+.search:focus-within{border-color:rgba(38,198,245,.55);box-shadow:0 0 0 3px rgba(38,198,245,.12)}
+.btn-primary,.fasttrack{background:#26C6F5!important;color:#04141B!important;box-shadow:none!important;border-radius:10px}
+.btn-primary:hover,.fasttrack:hover{background:#52D3F8!important;box-shadow:none!important;transform:none}
+
+/* ticker */
+.ticker{background:#0D0E12;border-bottom:1px solid var(--x-line)}
+
+/* surfaces: graphite, hairline, no glow */
+.wcard,.mv-card,.panel,.modal{background:var(--x-panel);border:1px solid var(--x-line);border-radius:12px;box-shadow:none}
+.panel,.modal{border-top-color:var(--x-line)}
+.wcard:hover,.mv-card:hover{box-shadow:none;border-color:var(--x-line2)}
+.board,.tc-board{background:var(--x-panel);border:1px solid var(--x-line);border-radius:12px;box-shadow:none}
+.heat-cell{background:var(--x-head);border:1px solid var(--x-line);border-radius:8px}
+.heat-bar{background:var(--x-on)}
+.heat-bar i{background:#26C6F5}
+.heat-temp .deg{color:#26C6F5}
+.wcard-head .ic,.flame,.sec-ic,.tc-ic{width:28px;height:28px;border-radius:8px;background:var(--x-head);border:1px solid var(--x-line);color:#26C6F5;box-shadow:none}
+.wire-item{border-bottom-color:var(--x-div)}
+.mv-head{border-bottom-color:var(--x-line)}
+.mv-card::before{height:2px}
+.mv-row:hover{background:var(--x-hover)}
+
+/* headings: one face, quieter sizes */
+.sec-title h2{font-size:18px;font-weight:600;letter-spacing:-.015em;text-shadow:none}
+.page-head h2{font-size:24px;font-weight:600;letter-spacing:-.02em}
+.wcard-head h3,.mv-head h3{font-size:14px;font-weight:600}
+.fg-num{font-weight:700}
+.heat-temp{font-weight:700}
+
+/* controls: neutral at rest, blue only when chosen */
+.chain-chip{background:var(--x-panel);border:1px solid var(--x-line);border-radius:8px;color:var(--muted)}
+.chain-chip:hover{background:var(--x-hover);color:var(--text);border-color:var(--x-line2)}
+.chain-chip.active{background:rgba(38,198,245,.12);border-color:rgba(38,198,245,.5);color:#E9F9FF;box-shadow:none}
+.chain-n{background:var(--x-head);color:var(--muted)}
+.chain-chip.active .chain-n{background:#26C6F5;color:#04141B}
+.ttabs{background:var(--x-panel);border:1px solid var(--x-line);border-radius:10px}
+.ttab{color:var(--muted);border-radius:7px}
+.ttab.active{background:var(--x-on);color:#FFFFFF;box-shadow:none}
+.tab,.chip-chain{background:var(--x-panel);border:1px solid var(--x-line)}
+.tab.active,.chip-chain.on{background:rgba(38,198,245,.12);border-color:rgba(38,198,245,.5);color:#E9F9FF;box-shadow:none}
+.filter-btn{background:var(--x-panel);border:1px solid var(--x-line);border-radius:10px;color:var(--muted)}
+.wcard-head .more,.board-expand,.board-all,.mv-all:hover{color:#26C6F5}
+
+/* the table: compact rows, plain coloured moves */
+.row.head,.tc-row.tc-head{background:var(--x-head);color:var(--faint);border-bottom:1px solid var(--x-line);font-size:11px;letter-spacing:.06em}
+.row,.tc-row{border-bottom:1px solid var(--x-div);padding-top:11px;padding-bottom:11px}
+.tok .coin{width:32px;height:32px}
+.tok .sym{font-size:14px}
+.tok .nm,.tc-nm,.mv-nm{color:var(--faint)}
+.price{font-size:13.5px;font-weight:500}
+.mono-dim,.tc-mono{color:#B4B8C1}
+.chg,.chg.up,.chg.dn{background:transparent;box-shadow:none;padding:0;min-width:0;justify-content:flex-end;font-size:13px;font-weight:600}
+.chg.up,.tc-chg.up,.tx-split .b{color:var(--up)}
+.chg.dn,.tc-chg.dn,.tx-split .s{color:var(--dn)}
+.mv-pct.up{background:transparent;color:var(--up)}
+.mv-pct.dn{background:transparent;color:var(--dn)}
+.dscore,.ichip{background:transparent;border-color:var(--x-line2);border-radius:6px}
+.rank .medal{width:20px;height:20px;font-size:10px;box-shadow:none}
+.board .row:not(.head):hover,.tc-row:not(.tc-head):hover{background-color:var(--x-hover);background-image:none;box-shadow:none}
+.board .row:has(.medal-1),.board .row:has(.medal-2),.board .row:has(.medal-3){background-image:none}
+.board-expand,.board-foot{background:transparent;border-top:1px solid var(--x-div)}
+/* ⚠️ PHONES: the sticky identity cells must paint EXACTLY the board's colour,
+   or the token column sits in a visible box — the seam ATELIER fixed for the
+   old surface, restated for this one from the same two tokens. */
+@media (max-width:600px){
+  .board,.tc-board{background:var(--x-panel)}
+  .row.head,.tc-row.tc-head{background:var(--x-head)}
+  :is(.board .row>.rank,.tc-row>.tc-rank){background:var(--x-panel);box-shadow:-12px 0 0 0 var(--x-panel)}
+  :is(.board .row>.tok,.tc-row>.tc-tok){background:var(--x-panel);box-shadow:-8px 0 0 0 var(--x-panel),10px 0 14px -10px rgba(0,0,0,.7)}
+  :is(.board .row.head>:first-child,.tc-row.tc-head>:first-child){background:var(--x-head);box-shadow:-12px 0 0 0 var(--x-head)}
+  :is(.board .row.head>:nth-child(2),.tc-row.tc-head>:nth-child(2)){background:var(--x-head);box-shadow:-8px 0 0 0 var(--x-head),10px 0 14px -10px rgba(0,0,0,.7)}
+}
+.foot{border-top-color:var(--x-line)}
+/* ============================================================
+   DEXVRA TERMINAL — mockup A, "Tabel Terminal" ("yang ini bagus"),
+   with the spotlight asked for on top of it ("minimal 9 atau 10")
+
+   Built on DEXVRA DATA above (flat graphite on near-black, one sans, colour
+   spent only on moves and on the things you can act on). What this layer adds
+   is STRUCTURE, the thing every earlier skin left alone:
+
+   · a RAIL at desktop widths — brand, search, pages, chains with counts, the
+     one primary action at its foot — and the header becomes the market line;
+   · the trending board as a dense terminal table (every move side by side);
+   · a ten-card spotlight over it, a rail below 1300px;
+   · a thumb bar on phones.
+
+   ⚠️ THE SEARCH IS PINNED, NOT DUPLICATED. There is one search input (the
+   header's) and at ≥1101px it is position:fixed over the rail's empty slot.
+   A fixed element is placed against the VIEWPORT only while none of its
+   ancestors has a transform, filter or backdrop-filter — so the header's blur
+   is switched off here, at every width, which also lets the ⋮ menu's scrim
+   cover the whole screen instead of only the header box. Pinned by a test.
+   ============================================================ */
+:root{--rail:220px}
+.topbar{backdrop-filter:none;-webkit-backdrop-filter:none;background:rgba(10,11,14,.97)}
+
+/* ── the market line (header at desktop, a panel on the home page below) ── */
+.mstats{display:flex;align-items:center;gap:28px;min-width:0}
+.mstat{display:flex;flex-direction:column;gap:3px;min-width:0}
+.mstat small{font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);white-space:nowrap}
+.mstat b{font-size:15px;font-weight:600;color:var(--text);white-space:nowrap;font-variant-numeric:tabular-nums}
+.mstat b.up{color:var(--up)}
+.mstat b.dn{color:var(--dn)}
+.hdr-stats,.home-stats{display:none}
+
+/* ── the rail ─────────────────────────────────────────────────────────────── */
+.rail{display:none}
+.rail svg{width:16px;height:16px;flex:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+.rail-brand{display:flex;align-items:center;gap:10px;height:40px;padding:0 6px;flex:none;
+  font-size:18px;font-weight:700;letter-spacing:-.02em;color:var(--text);text-decoration:none}
+.rail-brand svg{width:auto;height:auto;stroke:none}
+.rail-search-slot{height:38px;flex:none}
+.rail-scroll{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:4px;
+  margin:0 -6px;padding:0 6px;scrollbar-width:thin}
+.rail-nav{display:flex;flex-direction:column;gap:2px}
+.rail-nav a,.rail-more,.rail-more-chains{display:flex;align-items:center;gap:10px;height:34px;padding:0 10px;
+  border-radius:9px;color:var(--muted);font-family:inherit;font-size:13.5px;font-weight:500;line-height:1;text-decoration:none;
+  border:0;background:transparent;width:100%;text-align:left;cursor:pointer;transition:background .12s,color .12s}
+.rail-nav a:hover,.rail-more:hover,.rail-more-chains:hover{background:var(--x-hover);color:var(--text)}
+.rail-nav a.on{background:rgba(38,198,245,.12);color:#E9F9FF}
+.rail-nav a.on svg{color:#26C6F5}
+.rail-nav a.on2{background:var(--x-on);color:var(--text)}
+.rail-nav span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rail-nav em{margin-left:auto;font-style:normal;font-size:11px;color:var(--faint);font-variant-numeric:tabular-nums}
+.rail-sub{padding-left:18px!important;font-size:13px!important}
+.rail-caret{margin-left:auto;width:14px!important;height:14px!important;transition:transform .15s}
+.rail-more.open .rail-caret{transform:rotate(180deg)}
+.rail-lbl{font-size:10.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--faint);padding:14px 10px 4px}
+.rail-all{width:16px;height:16px;border-radius:50%;flex:none;background:linear-gradient(135deg,#26C6F5,#2F6BFF)}
+.rail-zero{opacity:.5}
+.rail-more-chains{font-size:12px;color:var(--faint);height:30px}
+.rail-cta{flex:none;display:flex;align-items:center;justify-content:center;gap:8px;height:40px;border-radius:10px;
+  background:#26C6F5;color:#04141B;font-weight:700;font-size:13.5px;text-decoration:none;transition:background .15s}
+.rail-cta:hover{background:#52D3F8}
+.rail-cta .cta-ic{width:15px;height:15px;fill:currentColor;stroke:none}
+
+@media (min-width:1101px){
+  .app{padding-left:var(--rail)}
+  /* ⚠️ BELOW the header's 60: the header is a stacking context, so the search
+     pinned over this rail's slot can only ever paint as high as the header
+     itself does — with the rail above it, the input sat hidden under it. */
+  .rail{position:fixed;left:0;top:0;bottom:0;width:var(--rail);z-index:59;display:flex;flex-direction:column;gap:12px;
+    padding:14px 12px 16px;background:#0D0F13;border-right:1px solid var(--x-line)}
+  /* the header is the market line now */
+  .topbar{height:60px;padding:0 22px;gap:24px;background:var(--x-bg)}
+  .topbar .brand-top,.topbar .topnav,.topbar .topmenu,.topbar .btn-primary,.topbar .top-stat{display:none}
+  .hdr-stats{display:flex}
+  .topbar .wallet-wrap{margin-left:auto}
+  /* …and its one search input sits in the rail's slot (see the note above) */
+  .topbar .search-wrap{position:fixed;top:66px;left:12px;width:calc(var(--rail) - 24px);max-width:none;z-index:62;flex:none}
+  .topbar .search{height:38px;padding:0 10px;max-width:none}
+  .topbar .search input{font-size:13px}
+  .topbar .search-dd{right:auto;width:440px}
+  /* the rail carries the chain filter at these widths */
+  .view>.chain-row{display:none}
+  .content{padding:18px 18px 24px}
+}
+
+/* ── the ticker: labelled chips ───────────────────────────────────────────── */
+.ticker{display:flex;align-items:center;height:44px;padding-left:18px;background:var(--x-bg);
+  border-bottom:1px solid var(--x-line);-webkit-mask:none;mask:none}
+.tick-lbl{flex:none;display:flex;align-items:center;gap:6px;padding-right:12px;white-space:nowrap;
+  font-size:10.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#F5A524}
+.tick-lbl i{font-style:normal;color:var(--faint)}
+.ticker-view{flex:1;min-width:0;overflow:hidden;
+  -webkit-mask:linear-gradient(90deg,transparent,#000 22px,#000 calc(100% - 22px),transparent);
+  mask:linear-gradient(90deg,transparent,#000 22px,#000 calc(100% - 22px),transparent)}
+.ticker-track{gap:8px;padding:0}
+.tick-item{height:28px;padding:0 10px;gap:7px;border-radius:8px;background:var(--x-panel);border:1px solid var(--x-line)}
+.tick-item .rnk{color:var(--faint);font-weight:600;font-size:11px}
+.tick-item .sym{color:var(--text);font-weight:600;font-size:12.5px}
+.tick-item .pct{font-weight:600;font-size:12px}
+.tick-item .pct.up{color:var(--up)}
+.tick-item .pct.dn{color:var(--dn)}
+.tick-coin{width:18px;height:18px;border:0}
+
+/* ── chosen controls are solid brand blue (the mockup's segments) ────────── */
+.ttab.active{background:#26C6F5;color:#04141B;box-shadow:none}
+.board-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.board-tools .ttab{text-transform:uppercase;font-weight:600}
+.board-tools .rank-by .ttab{text-transform:none}
+
+/* ── the spotlight ───────────────────────────────────────────────────────── */
+.spot{display:flex;flex-direction:column;gap:12px}
+.spot-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.spot-sub{font-size:12px;color:var(--faint)}
+.spot-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}
+.spot-card{display:flex;flex-direction:column;gap:10px;min-width:0;padding:12px 13px 13px;text-align:left;
+  background:var(--x-panel);border:1px solid var(--x-line);border-radius:12px;color:var(--text);
+  font:inherit;cursor:pointer;transition:border-color .15s,background .15s}
+.spot-card:hover{border-color:rgba(38,198,245,.45);background:#14171D}
+.spot-card:focus-visible{outline:2px solid #26C6F5;outline-offset:2px}
+.spot-row1{display:flex;align-items:center;justify-content:space-between;height:18px}
+.spot-rank{font-size:11.5px;font-weight:700;color:var(--faint);font-variant-numeric:tabular-nums}
+.spot-top1 .spot-rank{color:#F5C451}
+.spot-top2 .spot-rank{color:#C9D1DC}
+.spot-top3 .spot-rank{color:#D9935B}
+.spot-feat{font-size:9.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#7FDCF8;
+  background:rgba(38,198,245,.1);border:1px solid rgba(38,198,245,.3);border-radius:6px;padding:2px 6px}
+.spot-id{display:flex;align-items:center;gap:10px;min-width:0}
+.spot-idt{min-width:0}
+.spot-sym{font-size:14.5px;font-weight:700;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.spot-nm{margin-top:2px;font-size:11.5px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.spot-px{display:flex;align-items:baseline;justify-content:space-between;gap:8px;min-width:0}
+.spot-px b{font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
+.spot-chg{flex:none;font-size:13px;font-weight:700;font-variant-numeric:tabular-nums}
+.spot-chg.up{color:var(--up)}
+.spot-chg.dn{color:var(--dn)}
+.spot-chg.none{color:var(--faint)}
+.spot-meta{display:flex;justify-content:space-between;gap:8px;font-size:11.5px;color:var(--faint);white-space:nowrap}
+.spot-meta b{color:#B4B8C1;font-weight:600}
+.spot-bs{display:flex;height:4px;border-radius:9px;background:var(--x-on);overflow:hidden}
+.spot-bs:has(i){background:rgba(242,86,110,.85)}
+.spot-bs i{display:block;height:100%;background:var(--up)}
+.spot-sk{min-height:150px;cursor:default}
+.spot-sk .sk-coin{width:38px;height:38px;border-radius:50%}
+/* below 1300px a card would be ~150px wide — a swipeable rail instead */
+@media (max-width:1300px){
+  .spot-grid{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;padding-bottom:4px;scrollbar-width:none}
+  .spot-grid::-webkit-scrollbar{display:none}
+  .spot-card{flex:0 0 204px;scroll-snap-align:start}
+}
+
+/* ── the terminal table ───────────────────────────────────────────────────── */
+/* ONE fixed track list per width, cell-for-cell with TermRow/TermHead (15
+   cells) — a template that disagrees with its child count reflows silently,
+   which the grid-arithmetic tests in home.test.ts exist for. Nothing is
+   hidden at any width: the table scrolls sideways with its identity pinned,
+   the pattern the operator asked for on phones. */
+.board.term .row{grid-template-columns:34px minmax(156px,1fr) 90px 50px 66px 76px 70px 56px 56px 56px 60px 76px 76px 44px 32px;
+  gap:6px;padding:10px 12px;min-width:1106px;width:auto}
+.board.term .row.head{padding-top:10px;padding-bottom:10px}
+.board.term .row.head .sortable{justify-content:flex-end}
+.board.term .row.head .sortable.on,.board.term .row.head .t-chg.sel{color:#26C6F5}
+.board.term .tok .coin{width:28px;height:28px}
+.board.term .tok .sym{font-size:13.5px}
+.board.term .tok .nm{font-size:11.5px}
+.board.term .price{font-size:13px;font-weight:600}
+.board.term .row:not(.head) :is(.mono-dim,.t-tx){font-size:12.5px;font-weight:500;color:#B4B8C1}
+.board.term .t-tx{text-align:right}
+/* the head: one sans size, and an arrow only on the column actually sorting —
+   fifteen dimmed arrows were most of the head's ink */
+.board.term .row.head{font-size:10.5px;letter-spacing:.05em}
+.board.term .row.head .sortable:not(.on) .sarrow{display:none}
+.board.term .row.head .t-bs{text-align:right;white-space:nowrap;line-height:normal}
+.board.term .t-age{color:var(--muted)}
+.board.term .t-chg .chg{font-size:12.5px;font-weight:600}
+.board.term .t-chg.sel .chg{font-weight:700}
+.board.term .t-bs{text-align:right;line-height:0}
+.bsbar{display:inline-block;width:100%;max-width:62px;height:5px;border-radius:9px;overflow:hidden;
+  background:rgba(242,86,110,.85);vertical-align:middle}
+.bsbar i{display:block;height:100%;background:var(--up)}
+.bsbar.none{background:var(--x-on)}
+.board.term .t-dxs{display:flex;justify-content:flex-end}
+.board.term .t-dxs .dscore{min-width:30px;padding:3px 6px;border:1px solid var(--x-line2);border-radius:6px;
+  font-size:12px;font-weight:700;text-align:center;justify-content:center}
+/* identity pinned while the numbers slide under it — at every width */
+.board.term .row>.rank,.board.term .row>.tok{position:sticky;z-index:2;align-self:stretch;display:flex;align-items:center;
+  background:var(--x-panel)}
+.board.term .row>.rank{left:12px;box-shadow:-12px 0 0 0 var(--x-panel)}
+.board.term .row>.tok{left:52px;box-shadow:-6px 0 0 0 var(--x-panel);padding-right:6px}
+.board.term .row.head>.rank,.board.term .row.head>:first-child,.board.term .row.head>:nth-child(2){position:sticky;z-index:2;
+  align-self:stretch;display:flex;align-items:center;background:var(--x-head)}
+.board.term .row.head>:first-child{left:12px;box-shadow:-12px 0 0 0 var(--x-head)}
+.board.term .row.head>:nth-child(2){left:52px;box-shadow:-6px 0 0 0 var(--x-head)}
+.board.term .row:not(.head):hover>.rank,.board.term .row:not(.head):hover>.tok{background:var(--x-hover)}
+/* the demo flicker's row flash reaches the pinned cells too, or the token
+   cell sits in a visible box for the 700ms the row is lit. SOLID colours —
+   the row's 5% tint already mixed over the panel — because the cells' edge
+   shadows that cover the row padding cannot take a gradient, and a shadow in
+   the plain panel colour left a dark sliver either side of the rank. */
+.board.term .row.flash-up>:is(.rank,.tok){background:#131D1E}
+.board.term .row.flash-dn>:is(.rank,.tok){background:#1D171D}
+.board.term .row.flash-up>.rank{box-shadow:-12px 0 0 0 #131D1E}
+.board.term .row.flash-dn>.rank{box-shadow:-12px 0 0 0 #1D171D}
+.board.term .row.flash-up>.tok{box-shadow:-6px 0 0 0 #131D1E}
+.board.term .row.flash-dn>.tok{box-shadow:-6px 0 0 0 #1D171D}
+.board.term .row:not(.head):hover>.rank{box-shadow:-12px 0 0 0 var(--x-hover)}
+.board.term .row:not(.head):hover>.tok{box-shadow:-6px 0 0 0 var(--x-hover)}
+.board.term>.board-expand,.board.term>.board-foot,.board.term>.empty,.board.term>[aria-busy]{position:sticky;left:0}
+
+@media (max-width:600px){
+  .board.term .row{grid-template-columns:26px 140px 84px 44px 60px 68px 60px 54px 54px 54px 56px 68px 68px 40px 30px;
+    width:max-content;min-width:100%;padding:10px 12px}
+  .board.term .row>.tok{left:44px;box-shadow:-6px 0 0 0 var(--x-panel),10px 0 14px -10px rgba(0,0,0,.7)}
+  .board.term .row.head>:nth-child(2){left:44px;box-shadow:-6px 0 0 0 var(--x-head),10px 0 14px -10px rgba(0,0,0,.7)}
+  .board.term .row:not(.head):hover>.tok{box-shadow:-6px 0 0 0 var(--x-hover),10px 0 14px -10px rgba(0,0,0,.7)}
+}
+
+/* ── below 1100px: the market line moves onto the page ───────────────────── */
+@media (max-width:1100px){
+  .home-stats{display:grid;grid-template-columns:repeat(4,auto);justify-content:space-between;gap:12px;
+    padding:12px 14px;background:var(--x-panel);border:1px solid var(--x-line);border-radius:12px}
+}
+@media (max-width:520px){
+  .home-stats{grid-template-columns:1fr 1fr;row-gap:12px}
+  .mstat b{font-size:14px}
+}
+
+/* ── the phone's thumb bar ───────────────────────────────────────────────── */
+.bnav{display:none}
+@media (max-width:720px){
+  .bnav{position:fixed;left:0;right:0;bottom:0;z-index:58;display:flex;height:calc(60px + env(safe-area-inset-bottom));
+    padding-bottom:env(safe-area-inset-bottom);background:rgba(10,11,14,.98);border-top:1px solid var(--x-line)}
+  .bnav a,.bnav button{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;
+    font-family:inherit;font-size:10.5px;font-weight:600;line-height:1;color:var(--faint);background:none;border:0;
+    text-decoration:none;cursor:pointer}
+  .bnav svg{width:20px;height:20px;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+  .bnav a.on{color:#26C6F5}
+  .app{padding-bottom:calc(60px + env(safe-area-inset-bottom))}
+  .toast{bottom:84px}
+  .ticker{padding-left:14px}
+  /* the header's 26px padding and 16px gaps predate the thumb bar: at 360px
+     they left the search box 13px wide, its button drawn over the wallet's */
+  .topbar{padding:10px 14px;gap:10px}
+  /* the search is a narrow box between the menu and the wallet here, so it
+     takes the whole header while it is being typed into — at 390px it was a
+     43px box you typed into blind. The header is sticky, so it is the box the
+     expanded search is placed in, and the dropdown follows it full-width. */
+  .topbar .search-wrap:focus-within{position:absolute;left:14px;right:14px;top:10px;z-index:5;max-width:none}
+}
+/* a placeholder cut mid-letter reads as a bug; where the box cannot hold a
+   word, it shows the glass alone until it is focused and wide */
+@media (max-width:480px){
+  .topbar .search input::placeholder{color:transparent}
+  .topbar .search-wrap:focus-within input::placeholder{color:var(--faint)}
+}
+
+/* ── the tidy pass ("rapihkan semuanya dari tampilan pc dan phone") ────── */
+/* The form pages (Alerts, Scanner, Account, Signals, Install) are one narrow
+   column by design — a form stretched to 1200px is a worse form — and with the
+   rail they hugged its edge and left half the screen empty. The column is
+   centred in the space instead; its own panels keep their widths. */
+.view.narrow{width:100%;max-width:780px;margin:0 auto}
+/* Top Coins: the coin column took ALL the spare width, so the numbers sat
+   crushed against the right edge behind a hole. Seven tracks still, so the
+   column-count guard holds; the numbers now share the room. Phones keep their
+   fixed sideways-scrolling template. */
+@media (min-width:601px){
+  .tc-row{grid-template-columns:44px minmax(190px,2fr) minmax(100px,1fr) minmax(76px,.8fr) minmax(84px,.8fr) minmax(112px,1fr) 62px}
+}
+/* the plain head on boards whose page owns the order */
+.board.term .row.head>.c-num{white-space:nowrap}

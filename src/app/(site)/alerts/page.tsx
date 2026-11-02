@@ -22,11 +22,11 @@ export default function AlertsPage() {
     const t = tokens.find((x) => x.key === selectedKey);
     if (!t) return;
     addAlert({ key: t.key, symbol: t.symbol, cond, pct });
-    toast("Alert created 🔔 — Telegram delivery ships with the bot");
+    toast("Alert created — Telegram delivery ships with the bot");
   };
 
   return (
-    <section className="view">
+    <section className="view narrow">
       <PageHead icon="🔔" title="Alerts" sub="Get pinged when a token moves. Telegram delivery coming with the bot." />
       <div className="panel" style={{ display: "flex", flexDirection: "column", gap: 13, maxWidth: 640 }}>
         <div className="frow">
@@ -53,7 +53,7 @@ export default function AlertsPage() {
           </div>
           <div className="fld" style={{ justifyContent: "flex-end" }}>
             <label>&nbsp;</label>
-            <button className="btn-primary" onClick={create}>🔔 Create alert</button>
+            <button className="btn-primary" onClick={create}>Create alert</button>
           </div>
         </div>
       </div>

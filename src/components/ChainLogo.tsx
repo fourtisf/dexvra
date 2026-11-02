@@ -4,17 +4,39 @@ import { chainOf } from "@/config/chains";
 // Recognizable per-chain mark (nominative use — labels which chain a token
 // trades on, like every DEX aggregator). Kept as compact inline SVG so it
 // stays crisp and needs no network image.
-function Solana({ s }: { s: number }) {
+/** The id of the ONE Solana gradient on the page — see ChainLogoDefs. */
+const SOL_GRAD = "dxv-sol-grad";
+
+/**
+ * Paint servers the chain marks share, rendered ONCE at the root of every page
+ * (app/layout.tsx).
+ *
+ * ⚠️ EACH SOLANA MARK USED TO CARRY ITS OWN `<linearGradient id="sol">`, and a
+ * page draws dozens of them — so every `url(#sol)` resolved to the FIRST one in
+ * the document. When that first copy sat in a hidden subtree (the desktop
+ * rail's chain list, `display:none` below 1100px), the gradient painted nothing
+ * and every Solana mark on tablets and phones rendered blank. One definition
+ * that is always rendered (zero-sized, never `display:none`) cannot be hidden
+ * by the layout of whatever happens to come first.
+ */
+export function ChainLogoDefs() {
   return (
-    <svg width={s} height={s} viewBox="0 0 24 24" aria-label="Solana">
+    <svg width="0" height="0" aria-hidden focusable="false" style={{ position: "absolute", width: 0, height: 0, overflow: "hidden" }}>
       <defs>
-        <linearGradient id="sol" x1="3" y1="20" x2="21" y2="4" gradientUnits="userSpaceOnUse">
+        <linearGradient id={SOL_GRAD} x1="3" y1="20" x2="21" y2="4" gradientUnits="userSpaceOnUse">
           <stop offset="0" stopColor="#9945FF" />
           <stop offset="1" stopColor="#19FB9B" />
         </linearGradient>
       </defs>
+    </svg>
+  );
+}
+
+function Solana({ s }: { s: number }) {
+  return (
+    <svg width={s} height={s} viewBox="0 0 24 24" aria-label="Solana">
       {/* three slanted bars — top & bottom lean one way, middle the other */}
-      <g fill="url(#sol)">
+      <g fill={`url(#${SOL_GRAD})`}>
         <path d="M6.4 4.6H21l-3.4 3.2H3z" />
         <path d="M3 10.4h14.6L21 13.6H6.4z" />
         <path d="M6.4 16.2H21l-3.4 3.2H3z" />

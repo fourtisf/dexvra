@@ -15,6 +15,8 @@ import { usePathname, useRouter } from "next/navigation";
 import { logoSrc } from "@/lib/logo";
 import { changeReading } from "@/lib/home";
 import { parseDsLink } from "@/lib/dsPairLink";
+import { MarketStats } from "./MarketStats";
+import { OPEN_MENU_EVENT } from "./BottomNav";
 
 /** What /api/token-preview hands back for a contract nobody has listed. */
 interface UnlistedHit {
@@ -33,6 +35,14 @@ export function Topbar() {
   const [menu, setMenu] = useState(false); // mobile ⋮ feature menu
   const pathname = usePathname();
   const router = useRouter();
+
+  // The phone's bottom bar "More" opens THIS menu — one owner of the full page
+  // list, so the two can never offer different pages.
+  useEffect(() => {
+    const open = () => setMenu(true);
+    window.addEventListener(OPEN_MENU_EVENT, open);
+    return () => window.removeEventListener(OPEN_MENU_EVENT, open);
+  }, []);
 
   // "/" focuses the topbar search from anywhere (prototype behavior)
   useEffect(() => {
@@ -192,7 +202,7 @@ export function Topbar() {
           <input
             ref={inputRef}
             type="text"
-            placeholder="Search token, name, or paste CA…"
+            placeholder="Search or paste CA…"
             value={homeQuery}
             onChange={(e) => {
               setHomeQuery(e.target.value);
@@ -274,10 +284,11 @@ export function Topbar() {
           </div>
         )}
       </div>
-      <div className="top-stat">
-        <span className="dot-live" />
-        24H TRACKED <b>{data ? fmtCap(data.trackedVol24h) : "…"}</b>
-      </div>
+      {/* Desktop: the header IS the market line (mockup A) — the brand, the
+          pages and the primary action live in the rail. Below 1100px the
+          header goes back to brand · search · menu · wallet · List Token and
+          the home page carries this line instead. */}
+      <MarketStats className="hdr-stats" />
       <div className="wallet-wrap">
         <button
           className={`btn-wallet ${wallet ? "connected" : ""}`}
@@ -326,7 +337,12 @@ export function Topbar() {
         )}
       </div>
       <a className="btn-primary" href={BOT_URL} target="_blank" rel="noopener noreferrer">
-        ⚡ <span className="lbl">List Token</span>
+        {/* Drawn, not the OS emoji — the board's medals state the rule: an
+            Apple bolt next to a Windows bolt is two different products. */}
+        <svg className="cta-ic" viewBox="0 0 24 24" aria-hidden>
+          <path d="M13.2 2 4.6 13.4h6.1L9.8 22l8.6-11.4h-6.1L13.2 2Z" />
+        </svg>
+        <span className="lbl">List Token</span>
       </a>
     </header>
   );

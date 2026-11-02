@@ -3,6 +3,8 @@ import { BOT_URL, BRAND_NAME, SUPPORT_EMAIL, SUPPORT_MAILTO, TELEGRAM_TRENDING_U
 import { within } from "@/lib/cache";
 import { getFearGreed, getTokensPayload } from "@/lib/providers";
 import { AppProvider } from "@/components/AppState";
+import { BottomNav } from "@/components/BottomNav";
+import { Rail } from "@/components/Rail";
 import { WalletModal } from "@/components/WalletModal";
 import { ListingModal } from "@/components/ListingModal";
 import { PwaRegister } from "@/components/PwaRegister";
@@ -10,11 +12,13 @@ import { Ticker } from "@/components/Ticker";
 import { Toast } from "@/components/Toast";
 import { Topbar } from "@/components/Topbar";
 
-// Public site shell — top-navigation, one column. The sidebar was the old
-// identity's strongest structural signature; navigation lives in the header
-// now (primary links inline, everything else behind the ⋮ menu, which
-// Sidebar.tsx still feeds via NAV_GROUPS). The admin panel (/panel) lives
-// outside this group and never renders any of it.
+// Public site shell — mockup A, "Tabel Terminal" ("yang ini bagus"): a rail
+// on the left at desktop widths (brand, search, pages, chains, List your
+// token), the header as the market line, and the board as a dense terminal
+// table. Below 1100px the rail is gone and the header carries the navigation
+// again (⋮ holds every page, fed by Sidebar.tsx's NAV_GROUPS); phones add a
+// thumb bar at the bottom. The admin panel (/panel) lives outside this group
+// and never renders any of it.
 /**
  * ⚠️ RENDERED PER REQUEST, because it now carries data.
  *
@@ -62,6 +66,7 @@ export default async function SiteLayout({ children }: { children: ReactNode }) 
   return (
     <AppProvider initialData={initialData} initialFng={initialFng}>
       <div className="app">
+        <Rail />
         <div className="main">
           <Topbar />
           <Ticker />
@@ -90,6 +95,7 @@ export default async function SiteLayout({ children }: { children: ReactNode }) 
             </footer>
           </main>
         </div>
+        <BottomNav />
       </div>
       <ListingModal />
       <WalletModal />

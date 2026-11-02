@@ -15332,6 +15332,92 @@ node --test --experimental-strip-types src/lib/relist.test.ts
 `tradebot/`, so `npm run deploy` rebuilds the site and restarts all four
 processes. `V4_MAX_QUOTE_DIVERGENCE`, `V4_PROBE_MISS_MS` are the new knobs.
 
+## The site's look — mockup A, "Tabel Terminal"
+
+"bisakah kita buat ui ux lebih premium?" took several rejected rounds, each
+shown as screenshots before anything shipped: the subtle polish, the aurora
+and blue skins, a Moontok-style space hero with a podium, a gem hero in a bento
+grid, and a flat recolour ("ini tidak ada bedanya"). Shown three structurally
+different mockups, the operator picked A ("yang ini bagus"), asked for a
+spotlight of at least nine or ten on top of it ("masa cuma 3, minimal 9 atau
+10"), then for everything tidied on PC and phone ("rapihkan semuanya"). The CSS
+is the `DEXVRA TERMINAL` layer, appended last in `globals.css`, over DEXVRA DATA
+(flat graphite, one sans, colour only on moves and actions).
+
+| where | what |
+| --- | --- |
+| ≥1101px | a 220px **rail** (`Rail.tsx`): brand, search, pages, More, CHAINS with counts, List your token |
+| header | the **market line** (`MarketStats`): 24h volume · 24h txns · listed · Fear & Greed |
+| ticker | **Top movers 24h** chips, ten |
+| home | **Trending Spotlight** (ten cards) → banners → the **terminal table** → movers → Pulse → Top Coins |
+| ≤1100px | no rail; the header carries brand/search/⋮/wallet/List, the page carries the market line and the chain row |
+| ≤720px | a **thumb bar** (`BottomNav`); its More opens the header's ⋮ menu, the one owner of the page list |
+
+- **The spotlight is the business, not a copy of the table.** `home.spotlight()`
+  takes the BOOKED Trending slots first, in package order (`featuredSlots`,
+  shared with the /trending rail so the two cannot disagree), then tops up from
+  the board's own 24h ranking through `changeRank` — a row the board cannot
+  rank is never chosen. A short market renders a short spotlight; it is never
+  padded. No sparkline: `trend` is synthesised (`syntheticTrend`), and at card
+  size that is a price history nobody measured. The bar is real: share of buys.
+- ⚠️ **ONE SEARCH INPUT, PINNED.** The header's input (its "/" shortcut, CA
+  probe, dropdown) is `position:fixed` over the rail's empty slot at ≥1101px. A
+  second input would mean two probes per pasted contract. Two things make the
+  pin work and both are tested: the header has **no backdrop-filter** (it would
+  become the fixed element's containing block), and the rail's z-index is
+  **below the header's 60** — the header is a stacking context, so with the rail
+  at 61 the input sat in the DOM, focusable and invisible. The smoke script
+  hit-tests the pixel, because only that tells the truth.
+- ⚠️ **THE CHAIN FILTER LIVES IN THE URL** (`useChainParam`, `?chain=`), on
+  Home, Gainers & Losers and Leaderboard (`CHAIN_PAGES`). The rail's chain links
+  filter the page you are on (elsewhere they open the home board), and the chain
+  row below 1100px writes the same parameter. Three pages each keeping a
+  `useState("all")` is how the rail said Solana while a page said All chains —
+  and Leaderboard drew all twenty-three registry chains as three wrapped rows.
+- **Every token board is the terminal table** (`StdBoard` defaults to
+  `variant="terminal"`): # · token · price · listed · txns · volume · buys/sells
+  · 5m 1h 6h 24h · liquidity · mcap · DXS · ☆ — fifteen cells, one track list
+  per width, nothing hidden at any width, identity pinned while the numbers
+  scroll (the operator's phone rule). A board whose PAGE owns the order
+  (Leaderboard by score, Gainers & Losers by move) gets a plain head: a lit
+  column claiming a sort the rows do not follow is the worse lie. Home's "Rank
+  by" presets and the column heads are one controlled sort state.
+- ⚠️ **AN SVG GRADIENT ID MUST BE UNIQUE OR ALWAYS RENDERED.** Every Solana mark
+  carried `id="sol"`, so `url(#sol)` resolved to the FIRST copy — the hidden
+  rail's below 1100px — and every Solana icon and the brand logo painted blank
+  on tablets and phones. `ChainLogoDefs` renders the one definition at the root
+  of every page; the rail's logo has its own `gid`.
+- **Form pages are a centred column** (`.view.narrow`: Alerts, Scanner,
+  Account, Signals, Install) instead of hugging the rail. **No emoji on
+  actions** — the drawn-icon rule the medals state. **Phones:** the header's
+  padding was tightened (at 360px the search box was 13px wide, its button
+  drawn over the wallet's), and the search expands across the header while it
+  is typed into.
+
+```bash
+npm test                                                  # spotlight, premiumUi, home — arrangement + rules
+npm run build && npm start &
+BASE_URL=http://127.0.0.1:3000 node scripts/e2e-smoke.mjs  # the layout checks run before the dead /new-pairs step
+```
+
+Sixteen guarantees are MUTATION-TESTED: the top-up taking unrankable rows, the
+paid order ignoring the tier, no identity tie-break, the spotlight back to
+three, unread txns counted as 0, the rail over the header, the header blur
+back, the Solana mark carrying its own gradient, the spotlight ignoring the
+chain filter, the /trending rail growing its own order, the boards back to the
+old row, a form page losing its column, an emoji back on an action, a private
+chain state on Leaderboard, the rail's chains always going home, and a plain
+head lit anyway — each fails a test.
+
+⚠️ `scripts/e2e-smoke.mjs` still dies at `/new-pairs`, a route that no longer
+exists, and everything after it (`/all-coins`, `/calculator`, `.fasttrack`) is
+stale too. That predates this work; the new checks were placed in the blocks
+that run.
+
+**Config a fix depends on:** nothing. `src/` only (plus this file and a root
+script), so `npm run deploy` rebuilds the web app and restarts `dexvra`; the
+bots are untouched.
+
 ## Conventions
 
 - Tests live beside the code they cover, in `bot/test/`, `tradebot/*.test.js`

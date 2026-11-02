@@ -27,13 +27,28 @@ await page.goto(BASE, { waitUntil: "networkidle" });
 await page.waitForSelector(".board .row:not(.head)", { timeout: 15000 });
 check("home board rows render", (await page.locator(".board .row:not(.head)").count()) >= 10);
 check("ticker items render", (await page.locator(".tick-item").count()) >= 8);
-// the Moontok arrangement: the intel cards LEAD the page — above the board,
-// with the heat, gauge and news cards all present
-check("intel cards lead the page", await page.evaluate(() => {
-  const strip = document.querySelector(".pulse-strip");
-  const board = document.querySelector(".board");
-  return !!strip && !!board && strip.getBoundingClientRect().top < board.getBoundingClientRect().top;
+// Mockup A ("yang ini bagus"): the ten-card spotlight leads, the terminal
+// board follows, and the intel cards (heat, gauge, news — all still present)
+// sit under the market rather than over it.
+check("the spotlight leads, then the board, then the intel cards", await page.evaluate(() => {
+  const top = (sel) => document.querySelector(sel)?.getBoundingClientRect().top ?? NaN;
+  return top(".spot") < top(".board") && top(".board") < top(".pulse-strip");
 }));
+check("the spotlight carries ten listings", (await page.locator(".spot-card").count()) === 10);
+// ⚠️ The one search input is the header's, PINNED over the rail's slot. It
+// shipped once painting UNDER the rail (the header is a stacking context, so
+// its child could rise no higher than the header did) — present in the DOM,
+// focusable, and invisible. Only hit-testing the pixel tells the truth.
+check("desktop: the search is visible in the rail, not under it", await page.evaluate(() => {
+  const w = document.querySelector(".topbar .search-wrap").getBoundingClientRect();
+  const rail = document.querySelector(".rail").getBoundingClientRect();
+  const hit = document.elementFromPoint(w.left + w.width / 2, w.top + w.height / 2);
+  return w.right <= rail.right && !!hit && !!hit.closest(".search-wrap");
+}));
+// A grid whose track count disagrees with its child count reflows silently.
+check("terminal rows: one cell per track", await page.evaluate(() =>
+  [...document.querySelectorAll(".board.term .row")].every((r) =>
+    getComputedStyle(r).gridTemplateColumns.split(" ").length === r.children.length)));
 check("pulse heat cells", (await page.locator(".heat-cell").count()) === 3);
 check("fear&greed gauge", await page.locator(".fg-num").isVisible());
 check("wire items", (await page.locator(".wire-item").count()) >= 1);
@@ -59,44 +74,59 @@ check("boards keep computed overflow-x:auto", await page.evaluate(() => {
   await m.waitForSelector(".board .row:not(.head)");
   check("phone: score chips fit their track, clear of the txns column", await m.evaluate(() => {
     const row = document.querySelector(".sec-block .board .row:not(.head)");
-    const tx = row.querySelector(".c-txns").getBoundingClientRect();
-    const info = row.querySelector(".c-info");
+    const tx = row.querySelector(".t-tx").getBoundingClientRect();
+    const info = row.querySelector(".t-dxs");
     const ds = info.querySelector(".dscore").getBoundingClientRect();
     const chips = [...info.children].reduce((s, c) => s + c.getBoundingClientRect().width, 0);
     return ds.left >= tx.right && chips <= info.getBoundingClientRect().width + 1;
   }));
+  check("phone: the rail is gone and the thumb bar is there", !(await m.locator(".rail").isVisible()) && (await m.locator(".bnav").isVisible()));
+  check("phone: the market line is on the page", await m.locator(".home-stats").isVisible());
+  check("phone: no horizontal page scroll", await m.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 2));
+  // the phone's chain row and the desktop rail are ONE control: the URL
+  const allRows = await m.locator(".board .row:not(.head)").count();
+  await m.click('.chain-row .chain-chip:has-text("Solana")');
+  await m.waitForURL(/[?&]chain=solana/);
+  await m.waitForTimeout(300);
+  const solRows = await m.locator(".board .row:not(.head)").count();
+  check("phone: the chain row filters through the URL", solRows > 0 && solRows < allRows, `${allRows} → ${solRows}`);
   await m.close();
 }
 await page.screenshot({ path: SHOT("01-home"), fullPage: false });
 
 // period tab changes column header
+// The terminal head carries all four moves; the tab moves the SORT to its one.
 await page.click('.trend-frames .ttab:has-text("1h")');
-const chgHead = await page.locator(".row.head .sortable").nth(1).innerText();
-check("period tab changes header to 1h %", chgHead.toLowerCase().includes("1h %"), chgHead.replace(/\n/g, " "));
+const chgHead = await page.locator(".board.term .row.head .sortable.on").innerText();
+check("period tab sorts the board by its own column", chgHead.toLowerCase().includes("1h"), chgHead.replace(/\n/g, " "));
+await page.click('.trend-frames .ttab:has-text("24h")');
 
 // chain filter — ONE control for the whole market area (movers + board + Top
 // Coins), and it offers only chains that have listings, so there is no filter
-// that can only ever empty the board.
-await page.click('.chain-row .chain-chip:has-text("Solana")');
+// that can only ever empty the board. At desktop widths it lives in the RAIL,
+// as links to /?chain= — the same parameter the phone's chain row writes.
+await page.click('.rail-chains a:has-text("Solana")');
+await page.waitForURL(/[?&]chain=solana/);
 await page.waitForTimeout(300);
 const chainRows = await page.locator(".board .row:not(.head)").count();
 check("solana filter reduces rows", chainRows > 0 && chainRows < 20, `rows=${chainRows}`);
 check("…and the movers with it", (await page.locator(".mv-card").first().locator(".mv-row").count()) <= chainRows);
 check("…and Top Coins with it", (await page.locator(".tc-row:not(.tc-head)").count()) <= chainRows);
-check("every offered chain carries its count", (await page.locator(".chain-chip .chain-n").count()) >= 2);
+check("…and the spotlight with it", (await page.locator(".spot-card").count()) <= chainRows);
+check("every offered chain carries its count", (await page.locator(".rail-chains a em").count()) >= 2);
 // "+N more" must DELIVER the N it promises. It once promised "+18 more" and
 // rendered four — the label counted the hidden list while the render ignored
 // it, and only clicking the button could tell.
-const morePromise = Number(((await page.locator(".chain-more").innerText()).match(/\d+/) ?? [0])[0]);
-const beforeMore = await page.locator(".chain-chip:not(.chain-more)").count();
-await page.click(".chain-more");
+const morePromise = Number(((await page.locator(".rail-more-chains").innerText()).match(/\d+/) ?? [0])[0]);
+const beforeMore = await page.locator(".rail-chains a").count();
+await page.click(".rail-more-chains");
 await page.waitForTimeout(250);
-const afterMore = await page.locator(".chain-chip:not(.chain-more)").count();
+const afterMore = await page.locator(".rail-chains a").count();
 check("+N more delivers exactly N", afterMore - beforeMore === morePromise, `${beforeMore} → ${afterMore}, promised +${morePromise}`);
-check("…including the registry's empty chains, dimmed", (await page.locator(".chain-zero").count()) > 0);
-await page.click(".chain-more");
+check("…including the registry's empty chains, dimmed", (await page.locator(".rail-zero").count()) > 0);
+await page.click(".rail-more-chains");
 await page.waitForTimeout(200);
-await page.click('.chain-row .chain-chip:has-text("All chains")');
+await page.click('.rail-chains a:has-text("All chains")');
 await page.waitForTimeout(300);
 
 // ---------- HOME MARKET AREA ----------
@@ -186,7 +216,7 @@ await page.goto(BASE, { waitUntil: "networkidle" });
 await page.waitForSelector(".board .row:not(.head)");
 
 // ---------- WATCHLIST ----------
-await page.click('.nav a[href="/watchlist"]');
+await page.click('.rail-nav a[href="/watchlist"]');
 await page.waitForSelector(".view");
 await page.waitForTimeout(600);
 check("watchlist has starred token", (await page.locator(".board .row:not(.head)").count()) === 1);
@@ -195,6 +225,22 @@ await page.screenshot({ path: SHOT("03-watchlist") });
 await page.locator(".board .row:not(.head) .star").click();
 await page.waitForTimeout(400);
 check("watchlist empty state", await page.locator(".big-empty").isVisible());
+
+// ---------- THE RAIL FILTERS THE PAGE YOU ARE ON ----------
+// On Gainers & Losers the rail's "Solana" filters Gainers & Losers — it used
+// to throw you back to the home board, beside the page's own second design of
+// the chain row.
+await page.click('.rail-nav a[href="/trending"]');
+await page.waitForSelector(".board .row:not(.head)");
+const trendAll = await page.locator(".board .row:not(.head)").count();
+await page.click('.rail-chains a:has-text("Solana")');
+await page.waitForURL(/\/trending\?chain=solana/);
+await page.waitForTimeout(300);
+const trendSol = await page.locator(".board .row:not(.head)").count();
+check("the rail filters Gainers & Losers in place", trendSol > 0 && trendSol < trendAll, `${trendAll} → ${trendSol}`);
+check("…and every board is the one table design", (await page.locator(".board.term").count()) === 1);
+await page.click('.rail-chains a:has-text("All chains")');
+await page.waitForTimeout(200);
 
 // ---------- NEW PAIRS ----------
 await page.click('.nav a[href="/new-pairs"]');
@@ -275,7 +321,7 @@ check("alert created", (await page.locator(".alert-item").count()) === 1);
 // ---------- TOPBAR SEARCH + "/" KEY ----------
 await page.keyboard.press("/");
 const focused = await page.evaluate(() => document.activeElement?.getAttribute("placeholder"));
-check("'/' focuses topbar search", focused === "Search token, pair, or paste CA…", focused ?? "none");
+check("'/' focuses topbar search", focused === "Search or paste CA…", focused ?? "none");
 await page.keyboard.type("warchest");
 await page.waitForURL(BASE + "/");
 await page.waitForTimeout(400);

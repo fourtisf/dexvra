@@ -14,6 +14,7 @@
 // the home lists are a doorway to them, which is why every cap carries its
 // total and every section carries a way through.
 import { CHAIN_IDS } from "../config/chains.ts";
+import { tierRank } from "./packages.ts";
 import type { BoardToken, PeriodKey } from "./types.ts";
 
 /**
@@ -430,4 +431,74 @@ export function byChange(tokens: readonly BoardToken[], frame: PeriodKey, dir: 1
     if (ua || ub) return ua && ub ? 0 : ua ? 1 : -1;
     return (vb - va) * -dir;
   });
+}
+
+
+// ── the spotlight ───────────────────────────────────────────────────────────
+//
+// "harus ada trending listing yang spotlight, masa cuma 3 — minimal 9 atau 10".
+// The home opens on a spotlight of TEN, and what fills it is the business, not
+// a second copy of the board under it:
+//
+//   1. the BOOKED Trending slots (a non-null `trendingRank`), in the order the
+//      /trending rail already uses — the package bought, Diamond first, Xpress
+//      and Free after every ranked tier — because that is what a project paid
+//      for and what the Telegram board pins;
+//   2. then, only to fill what is left, the board's own 24h ranking — through
+//      `changeRank`, so a row with no readable change or no trading behind it
+//      can NEVER be chosen by us (the rule the bot's promoter and its market
+//      filler already keep: a row the BOT chose carries a reading).
+//
+// A short market renders a short spotlight. Padding it with unrankable rows to
+// reach ten would be the fabricated board this repo refuses everywhere else.
+
+/** How many listings the home spotlight carries. */
+export const SPOTLIGHT_SIZE = 10;
+
+/** Booked-slot priority: Diamond (1) … Bronze (5), then the unranked
+ *  packages. The /trending rail and the spotlight read this ONE comparator —
+ *  two orders for the same paid inventory is how the two surfaces come to
+ *  disagree about who leads. */
+const slotPriority = (tier: string): number => {
+  const r = tierRank(tier);
+  return r === 0 ? 90 : r;
+};
+
+/** Every booked Trending slot, in priority order. The tie-break is the token
+ *  key, never the order a poll happened to return — a card that swaps places
+ *  every 30s under the cursor is indistinguishable from a misclick. */
+export function featuredSlots(tokens: readonly BoardToken[]): BoardToken[] {
+  return tokens
+    .filter((t) => t.trendingRank != null)
+    .sort(
+      (a, b) =>
+        slotPriority(a.tier) - slotPriority(b.tier) ||
+        (a.trendingRank ?? 99) - (b.trendingRank ?? 99) ||
+        a.key.localeCompare(b.key),
+    );
+}
+
+/** The spotlight: booked slots first, topped up from the 24h ranking. */
+export function spotlight(tokens: readonly BoardToken[], n = SPOTLIGHT_SIZE): BoardToken[] {
+  const booked = featuredSlots(tokens).slice(0, n);
+  if (booked.length >= n) return booked;
+  const taken = new Set(booked.map((t) => t.key));
+  const fill = byChange(
+    tokens.filter((t) => !taken.has(t.key) && Number.isFinite(changeRank(t, "24h"))),
+    "24h",
+    -1,
+  );
+  return [...booked, ...fill.slice(0, n - booked.length)];
+}
+
+/** The header's market line. Every figure goes through `figureReading`, and a
+ *  total with nothing readable in it is null — a "0 txns" over a board nobody
+ *  priced is a claim nobody measured. */
+export function marketTotals(tokens: readonly BoardToken[]): { txns24h: number | null; listed: number } {
+  let txns: number | null = null;
+  for (const t of tokens) {
+    const v = figureReading(t, t.txns["24h"].buys + t.txns["24h"].sells);
+    if (v != null) txns = (txns ?? 0) + v;
+  }
+  return { txns24h: txns, listed: tokens.length };
 }

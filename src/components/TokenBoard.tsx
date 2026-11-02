@@ -38,7 +38,7 @@ export function SkeletonRows({ n = 8 }: { n?: number }) {
   );
 }
 
-type SortKey = "price" | "chg" | "mcap" | "liq" | "vol" | "tx";
+export type SortKey = "price" | "chg" | "mcap" | "liq" | "vol" | "tx" | "age" | "score";
 
 const SORT_VAL: Record<SortKey, (t: BoardToken, p: PeriodKey) => number> = {
   price: (t) => t.priceUsd,
@@ -54,7 +54,12 @@ const SORT_VAL: Record<SortKey, (t: BoardToken, p: PeriodKey) => number> = {
   liq: (t) => t.liq ?? 0,
   vol: (t, p) => t.vol[p],
   tx: (t, p) => t.txns[p].buys + t.txns[p].sells,
+  // newest listing first on the descending sort — the "New" preset
+  age: (t) => -t.listedMinutesAgo,
+  score: (t) => t.score,
 };
+
+const PERIODS: PeriodKey[] = ["5m", "1h", "6h", "24h"];
 
 function StarButton({ token }: { token: BoardToken }) {
   const { watchlist, toggleWatch } = useApp();
@@ -223,10 +228,189 @@ function StdRow({
           {t.score}
         </span>
         {t.taxPct != null && (
-          <span className={`ichip ${t.taxPct === 0 ? "good" : ""}`}>🛡 {t.taxPct}%</span>
+          <span className={`ichip ${t.taxPct === 0 ? "good" : ""}`}>
+            {/* drawn, not the OS shield — the medals' rule */}
+            <svg viewBox="0 0 24 24" width={11} height={11} fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinejoin="round" aria-hidden>
+              <path d="M12 3 5 6v5c0 4.5 3 7.9 7 9.5 4-1.6 7-5 7-9.5V6l-7-3z" />
+            </svg>
+            {t.taxPct}%
+          </span>
         )}
       </div>
       <StarButton token={t} />
+    </div>
+  );
+}
+
+
+/**
+ * The terminal row — mockup A ("yang ini bagus"). Every number the reference
+ * table carries, on one line: listed age, the period's trades and volume, the
+ * buy/sell split as a bar, ALL FOUR moves side by side (the selected one
+ * marked), liquidity, cap and the Dexvra Score.
+ *
+ * The same reading rules as StdRow, cell for cell — figureReading on every
+ * money figure, changeReading on every move — because a wider table is more
+ * places to print a number nobody measured, not fewer.
+ */
+function TermRow({
+  t,
+  i,
+  period,
+  flashDir,
+  override,
+}: {
+  t: BoardToken;
+  i: number;
+  period: PeriodKey;
+  flashDir?: "up" | "dn";
+  override?: { price: number; chgDelta: number };
+}) {
+  const { openDetail } = useApp();
+  const price = override?.price ?? figureReading(t, t.priceUsd);
+  const mcap = figureReading(t, t.mcap);
+  const liq = figureReading(t, t.liq);
+  const vol = figureReading(t, t.vol[period]);
+  const { buys, sells } = t.txns[period];
+  const tx = figureReading(t, buys + sells);
+  // the bar is a share of trades somebody MEASURED — with none it stays empty
+  // rather than drawing a 50/50 market that did not trade
+  const buyShare = tx != null && tx > 0 ? (buys / tx) * 100 : null;
+  const rank = i < 3 ? <Medal n={i + 1} /> : i + 1;
+
+  return (
+    <div
+      className={`row ${flashDir === "up" ? "flash-up" : ""} ${flashDir === "dn" ? "flash-dn" : ""}`}
+      onClick={() => openDetail(t)}
+    >
+      <div className="rank">{rank}</div>
+      <div className="tok">
+        <Coin token={t} />
+        <div className="ts">
+          <div className="sym">
+            <span className="sym-txt">{t.symbol}</span>
+            <TierTag tier={t.tier} showRank={false} ageMinutes={t.listedMinutesAgo} />
+          </div>
+          <div className="nm">{t.name}</div>
+        </div>
+      </div>
+      <div className="c-num price">{fmtPrice(price)}</div>
+      <div className="c-num t-age mono-dim">{fmtAge(t.listedMinutesAgo)}</div>
+      {/* one line — the split is the bar beside it, and its exact counts are
+          the bar's title, so the row stays a single line like the reference */}
+      <div className="c-num t-tx tx-main">{fmtNum(tx)}</div>
+      <div className="c-num t-vol mono-dim">{fmtCap(vol)}</div>
+      <div
+        className="t-bs"
+        title={buyShare == null ? "No trades measured" : `${fmtNum(buys)} buys / ${fmtNum(Math.max(sells, 0))} sells`}
+      >
+        <span className={`bsbar ${buyShare == null ? "none" : ""}`}>
+          {buyShare != null && <i style={{ width: `${buyShare}%` }} />}
+        </span>
+      </div>
+      {PERIODS.map((p) => {
+        const reading = changeReading(t, p);
+        // the demo flicker nudges the SELECTED move only — it is the one the
+        // board is sorted by, and the one a reader is watching
+        const delta = p === period ? override?.chgDelta : undefined;
+        const has = reading != null || delta != null;
+        const v = (reading ?? 0) + (delta ?? 0);
+        const dec = p === "5m" ? 2 : 1;
+        return (
+          <div key={p} className={`c-num t-chg ${p === period ? "sel" : ""}`}>
+            {has ? (
+              <span className={`chg ${v >= 0 ? "up" : "dn"}`}>
+                {v >= 0 ? "+" : ""}
+                {v.toFixed(dec)}%
+              </span>
+            ) : (
+              <span className="chg none" title="No reading on this timeframe">
+                —
+              </span>
+            )}
+          </div>
+        );
+      })}
+      <div className="c-num t-liq mono-dim">{fmtCap(liq)}</div>
+      <div className="c-num t-mc mono-dim">{fmtCap(mcap)}</div>
+      <div className="t-dxs info-cell">
+        <span className="dscore" style={{ color: scoreTier(t.score).color }} title="Dexvra Score">
+          {t.score}
+        </span>
+      </div>
+      <StarButton token={t} />
+    </div>
+  );
+}
+
+function TermHead({
+  period,
+  sortable,
+  sortKey,
+  sortDir,
+  onSort,
+  onPeriod,
+}: {
+  period: PeriodKey;
+  /** false where the PAGE owns the order (Leaderboard by score, Gainers &
+   *  Losers by move): the head is plain labels then — a lit column claiming a
+   *  sort the rows do not follow is the worse lie. */
+  sortable: boolean;
+  sortKey: SortKey;
+  sortDir: 1 | -1;
+  onSort: (k: SortKey) => void;
+  onPeriod?: (p: PeriodKey) => void;
+}) {
+  const col = (key: SortKey, label: string, cls = "", on = sortKey === key) =>
+    sortable ? (
+      <div className={`sortable c-num ${cls} ${on ? "on" : ""}`} onClick={() => onSort(key)}>
+        {label}
+        <span className="sarrow">{on && sortDir === 1 ? "▲" : "▼"}</span>
+      </div>
+    ) : (
+      <div className={`c-num ${cls}`}>{label}</div>
+    );
+  return (
+    <div className="row head">
+      <div>#</div>
+      <div>Token</div>
+      {col("price", "Price")}
+      {col("age", "Listed", "t-age")}
+      {col("tx", "Txns", "t-tx")}
+      {col("vol", "Volume", "t-vol")}
+      <div className="t-bs" title="Share of the timeframe's trades that were buys (green) vs sells (red)">Buys/Sells</div>
+      {PERIODS.map((p) => {
+        // a move column sorts by THAT timeframe: it selects the period (the
+        // toolbar follows) and ranks by change — one tap, not two
+        const on = sortKey === "chg" && p === period;
+        if (!sortable)
+          return (
+            <div key={p} className={`c-num t-chg ${p === period ? "sel" : ""}`}>
+              {p}
+            </div>
+          );
+        return (
+          <div
+            key={p}
+            className={`sortable c-num t-chg ${on ? "on" : ""} ${p === period ? "sel" : ""}`}
+            onClick={() => {
+              // another timeframe: select it and rank by change, keeping the
+              // direction already chosen; the selected one: the usual toggle
+              if (p !== period) {
+                onPeriod?.(p);
+                if (sortKey !== "chg") onSort("chg");
+              } else onSort("chg");
+            }}
+          >
+            {p}
+            <span className="sarrow">{on && sortDir === 1 ? "▲" : "▼"}</span>
+          </div>
+        );
+      })}
+      {col("liq", "Liquidity", "t-liq")}
+      {col("mcap", "MCap", "t-mc")}
+      {col("score", "DXS", "t-dxs")}
+      <div></div>
     </div>
   );
 }
@@ -336,6 +520,10 @@ export function StdBoard({
   expandTo = 0,
   expandNoun = "rows",
   viewAllHref,
+  variant = "terminal",
+  sort,
+  onSortChange,
+  onPeriod,
 }: {
   tokens: BoardToken[];
   period?: PeriodKey;
@@ -352,10 +540,30 @@ export function StdBoard({
   /** What the button calls the rows — "Show all 15 trending". */
   expandNoun?: string;
   viewAllHref?: string;
+  /** "terminal" is the dense table every board draws (mockup A) — one table
+   *  design across Home, Gainers & Losers, Leaderboard, Watchlist and Search.
+   *  "std" is the older row, kept selectable. */
+  variant?: "std" | "terminal";
+  /** CONTROLLED sort, when the page owns it — the home's "Rank by" presets and
+   *  the column headers must be one state, or a preset stays lit over a sort a
+   *  header tap has already replaced. Omitted, the board keeps its own. */
+  sort?: { key: SortKey; dir: 1 | -1 };
+  onSortChange?: (s: { key: SortKey; dir: 1 | -1 }) => void;
+  /** A move column in the terminal head selects its timeframe. */
+  onPeriod?: (p: PeriodKey) => void;
 }) {
   const { reducedMotion } = useApp();
-  const [sortKey, setSortKey] = useState<SortKey>("chg");
-  const [sortDir, setSortDir] = useState<1 | -1>(-1);
+  const [ownKey, setOwnKey] = useState<SortKey>("chg");
+  const [ownDir, setOwnDir] = useState<1 | -1>(-1);
+  const sortKey = sort?.key ?? ownKey;
+  const sortDir = sort?.dir ?? ownDir;
+  const setSort = (key: SortKey, dir: 1 | -1) => {
+    if (onSortChange) onSortChange({ key, dir });
+    else {
+      setOwnKey(key);
+      setOwnDir(dir);
+    }
+  };
   const [open, setOpen] = useState(false);
 
   const sorted = useMemo(() => {
@@ -396,29 +604,32 @@ export function StdBoard({
   const { flash, override } = useFlicker(shown.rows, reducedMotion);
 
   const onSort = (k: SortKey) => {
-    if (sortKey === k) setSortDir((d) => (d === 1 ? -1 : 1));
-    else {
-      setSortKey(k);
-      setSortDir(-1);
-    }
+    if (sortKey === k) setSort(k, sortDir === 1 ? -1 : 1);
+    else setSort(k, -1);
   };
+  const term = variant === "terminal";
+  const Row = term ? TermRow : StdRow;
 
   return (
-    <div className="board">
-      <StdBoardHead
-        period={period}
-        sortable={sortable}
-        sortKey={sortKey}
-        sortDir={sortDir}
-        onSort={onSort}
-      />
+    <div className={`board ${term ? "term" : ""}`}>
+      {term ? (
+        <TermHead period={period} sortable={sortable} sortKey={sortKey} sortDir={sortDir} onSort={onSort} onPeriod={onPeriod} />
+      ) : (
+        <StdBoardHead
+          period={period}
+          sortable={sortable}
+          sortKey={sortKey}
+          sortDir={sortDir}
+          onSort={onSort}
+        />
+      )}
       {loading ? (
         <SkeletonRows n={8} />
       ) : shown.rows.length === 0 ? (
         <div className="empty">{emptyText}</div>
       ) : (
         shown.rows.map((t, i) => (
-          <StdRow
+          <Row
             key={t.key}
             t={t}
             i={i}
