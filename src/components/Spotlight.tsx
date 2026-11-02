@@ -41,7 +41,6 @@ export function Spotlight({ tokens, loading = false }: { tokens: BoardToken[]; l
           </div>
           <h2>Trending Spotlight</h2>
         </div>
-        <span className="spot-sub">Paid packages first — Diamond, Gold, Platinum — then the biggest 24h movers</span>
       </div>
 
       <div className="spot-grid" aria-busy={loading || undefined}>

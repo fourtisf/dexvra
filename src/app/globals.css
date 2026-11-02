@@ -2463,7 +2463,6 @@ body{background:var(--x-bg)}
 /* ── the spotlight ───────────────────────────────────────────────────────── */
 .spot{display:flex;flex-direction:column;gap:12px}
 .spot-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-.spot-sub{font-size:12px;color:var(--faint)}
 .spot-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}
 .spot-card{display:flex;flex-direction:column;gap:10px;min-width:0;padding:12px 13px 13px;text-align:left;
   background:var(--x-panel);border:1px solid var(--x-line);border-radius:12px;color:var(--text);
