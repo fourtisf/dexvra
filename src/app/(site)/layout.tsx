@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { BOT_URL, BRAND_NAME, SUPPORT_EMAIL, SUPPORT_MAILTO, TELEGRAM_TRENDING_URL, TELEGRAM_URL, X_LISTING_URL, X_URL, YOUTUBE_URL } from "@/config/brand";
+import { BOT_URL, BRAND_NAME, SUPPORT_EMAIL, SUPPORT_MAILTO, TELEGRAM_TRENDING_URL, TELEGRAM_URL, X_LISTING_URL, X_URL, YOUTUBE_URL, INSTAGRAM_URL } from "@/config/brand";
 import { within } from "@/lib/cache";
 import { getFearGreed, getTokensPayload } from "@/lib/providers";
 import { AppProvider } from "@/components/AppState";
@@ -85,6 +85,7 @@ export default async function SiteLayout({ children }: { children: ReactNode }) 
                 <a href={TELEGRAM_URL} target="_blank" rel="noopener noreferrer">Telegram</a>
                 <a href={TELEGRAM_TRENDING_URL} target="_blank" rel="noopener noreferrer">Trending</a>
                 <a href={YOUTUBE_URL} target="_blank" rel="noopener noreferrer">YouTube</a>
+                <a href={INSTAGRAM_URL} target="_blank" rel="noopener noreferrer">Instagram</a>
                 {/* "All channels" (→ /community) was removed at the operator's
                     request — the socials above are the real destinations. */}
                 <a href={BOT_URL} target="_blank" rel="noopener noreferrer">Bot</a>

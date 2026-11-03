@@ -5,12 +5,12 @@ import test from "node:test";
 import assert from "node:assert";
 import fs from "node:fs";
 import path from "node:path";
-import { BOT_URL, TELEGRAM_URL, TELEGRAM_LISTING_URL, TELEGRAM_TRENDING_URL, X_LISTING_URL, X_URL, YOUTUBE_URL } from "./socials.ts";
+import { BOT_URL, TELEGRAM_URL, TELEGRAM_LISTING_URL, TELEGRAM_TRENDING_URL, X_LISTING_URL, X_URL, YOUTUBE_URL, INSTAGRAM_URL } from "./socials.ts";
 
 const read = (p: string) => fs.readFileSync(path.join(process.cwd(), p), "utf8");
 
 test("every social constant is an absolute https URL", () => {
-  for (const [name, url] of Object.entries({ BOT_URL, TELEGRAM_URL, TELEGRAM_LISTING_URL, TELEGRAM_TRENDING_URL, X_LISTING_URL, X_URL, YOUTUBE_URL })) {
+  for (const [name, url] of Object.entries({ BOT_URL, TELEGRAM_URL, TELEGRAM_LISTING_URL, TELEGRAM_TRENDING_URL, X_LISTING_URL, X_URL, YOUTUBE_URL, INSTAGRAM_URL })) {
     assert.match(url, /^https:\/\//, `${name} must be absolute — a relative one resolves against dexvra.io`);
     assert.doesNotMatch(url, /\s|@$/, `${name} looks malformed: ${url}`);
   }
@@ -91,7 +91,7 @@ test("the bot tweets from the same account the site links to", () => {
 
 test("the footer's social links have a real href and open safely", () => {
   const src = read("src/app/(site)/layout.tsx");
-  for (const v of ["TELEGRAM_URL", "X_URL", "X_LISTING_URL", "BOT_URL", "TELEGRAM_TRENDING_URL", "YOUTUBE_URL"]) {
+  for (const v of ["TELEGRAM_URL", "X_URL", "X_LISTING_URL", "BOT_URL", "TELEGRAM_TRENDING_URL", "YOUTUBE_URL", "INSTAGRAM_URL"]) {
     assert.ok(src.includes(`href={${v}}`), `the footer must link ${v}`);
   }
   // target=_blank without noopener hands the opened tab a window.opener handle.
@@ -159,7 +159,7 @@ test("/community lists every channel, from the one shared list", () => {
   const src = read("src/app/(site)/community/page.tsx");
   assert.match(src, /from "@\/config\/socials"/);
   assert.match(src, /SOCIALS\.map/);
-  assert.ok(!/t\.me\/|x\.com\/|youtube\.com/.test(src), "no URL is hardcoded on the page itself");
+  assert.ok(!/t\.me\/|x\.com\/|youtube\.com|instagram\.com/.test(src), "no URL is hardcoded on the page itself");
 });
 
 test("every channel entry is complete and reachable", async () => {
@@ -168,10 +168,10 @@ test("every channel entry is complete and reachable", async () => {
   for (const s of SOCIALS) {
     assert.ok(!keys.has(s.key), `duplicate key ${s.key}`);
     keys.add(s.key);
-    assert.match(s.url, /^https:\/\/(t\.me|x\.com|www\.youtube\.com\/@)/, `${s.key}: ${s.url}`);
+    assert.match(s.url, /^https:\/\/(t\.me|x\.com|www\.youtube\.com\/@|www\.instagram\.com)\/?/, `${s.key}: ${s.url}`);
     assert.match(s.handle, /^@\w+$/, `${s.key} handle looks wrong: ${s.handle}`);
     assert.ok(s.blurb.length > 20, `${s.key} needs a reason to tap, not just a name`);
-    assert.ok(["telegram", "group", "x", "bot", "youtube"].includes(s.kind), `${s.key}: unknown kind ${s.kind}`);
+    assert.ok(["telegram", "group", "x", "bot", "youtube", "instagram"].includes(s.kind), `${s.key}: unknown kind ${s.kind}`);
     // The handle and the URL must name the SAME account, or the card lies.
     assert.ok(s.url.toLowerCase().endsWith(s.handle.slice(1).toLowerCase()), `${s.key}: ${s.handle} vs ${s.url}`);
   }
@@ -347,4 +347,25 @@ test("/community and the rail draw from one set of account marks", () => {
   assert.match(read("src/app/(site)/community/page.tsx"), /from "@\/components\/SocialIcon"/);
   assert.match(read("src/components/Rail.tsx"), /from "\.\/SocialIcon"/);
   assert.ok(!/function Icon\(/.test(read("src/app/(site)/community/page.tsx")), "no private copy of the marks on the page");
+});
+
+test("the Instagram account is linked from the same places as YouTube", async () => {
+  // "tambahkan instagram juga" (2026-11-03)
+  const { INSTAGRAM_URL, INSTAGRAM_HANDLE, SOCIALS } = await import("./socials.ts");
+  assert.strictEqual(INSTAGRAM_URL, "https://www.instagram.com/dexvraio");
+  assert.strictEqual(INSTAGRAM_HANDLE, "@dexvraio");
+  const ig = SOCIALS.find((s) => s.key === "instagram");
+  assert.ok(ig && ig.kind === "instagram" && ig.url === INSTAGRAM_URL, "the account is in SOCIALS");
+  for (const f of ["src/app/(site)/layout.tsx", "src/app/(site)/community/page.tsx", "src/components/Rail.tsx", "src/lib/seo.ts"]) {
+    assert.ok(!read(f).includes("instagram.com"), `${f} hardcodes the Instagram URL instead of reading INSTAGRAM_URL`);
+  }
+  assert.match(read("src/app/(site)/layout.tsx"), /<a href=\{INSTAGRAM_URL\} target="_blank" rel="noopener noreferrer">Instagram<\/a>/);
+  assert.match(read("src/components/Rail.tsx"), /kind: "instagram", href: INSTAGRAM_URL/);
+  assert.match(read("src/components/SocialIcon.tsx"), /kind === "instagram"/);
+  const css = read("src/app/globals.css");
+  assert.match(css, /\.soc-card\.instagram \.soc-ic\{/);
+  // the mark is an OUTLINE, so the rail's stroke:none for filled marks must not erase it
+  assert.match(css, /\.rail-soc a\.rail-soc-instagram svg\{stroke:currentColor/);
+  const { organizationLd } = await import("../lib/seo.ts");
+  assert.ok(((organizationLd() as Record<string, unknown>).sameAs as string[]).includes(INSTAGRAM_URL));
 });

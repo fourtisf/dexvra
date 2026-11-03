@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
-import { BOT_URL, BRAND_NAME, TELEGRAM_HANDLE, TELEGRAM_URL, X_HANDLE, X_URL, YOUTUBE_HANDLE, YOUTUBE_URL } from "@/config/brand";
+import { BOT_URL, BRAND_NAME, TELEGRAM_HANDLE, TELEGRAM_URL, X_HANDLE, X_URL, YOUTUBE_HANDLE, YOUTUBE_URL, INSTAGRAM_HANDLE, INSTAGRAM_URL } from "@/config/brand";
 import { chainOf } from "@/config/chains";
 import { chainCounts, splitChains } from "@/lib/home";
 import { ChainLogo } from "./ChainLogo";
@@ -53,6 +53,7 @@ const FOLLOW = [
   { kind: "telegram", href: TELEGRAM_URL, label: `Telegram ${TELEGRAM_HANDLE}` },
   { kind: "x", href: X_URL, label: `X ${X_HANDLE}` },
   { kind: "youtube", href: YOUTUBE_URL, label: `YouTube ${YOUTUBE_HANDLE}` },
+  { kind: "instagram", href: INSTAGRAM_URL, label: `Instagram ${INSTAGRAM_HANDLE}` },
 ] as const;
 
 const ALL_ITEMS: NavItem[] = NAV_GROUPS.flatMap((g) => g.items);

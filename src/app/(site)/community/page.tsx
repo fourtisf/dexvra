@@ -10,7 +10,7 @@ import { pageMetadata } from "@/lib/seo";
 // every other page now gets — it had a title and description and nothing else.
 export const metadata: Metadata = pageMetadata({
   title: "Community",
-  description: `Every official ${BRAND_NAME} account: listing and trending alerts, announcements, the community group, the listing bot, the trading bot, X and YouTube.`,
+  description: `Every official ${BRAND_NAME} account: listing and trending alerts, announcements, the community group, the listing bot, the trading bot, X, YouTube and Instagram.`,
   path: "/community",
 });
 

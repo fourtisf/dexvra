@@ -15452,11 +15452,13 @@ is the `DEXVRA TERMINAL` layer, appended last in `globals.css`, over DEXVRA DATA
 - **The YouTube channel is an account like the others** ("tambahkan link
   yotube di website"): `YOUTUBE_URL` in `config/socials.ts` and a `youtube`
   entry in `SOCIALS`, so /community lists it and the Organization record's
-  `sameAs` carries it with no extra wiring. The footer links it, and the rail
-  has a Telegram · X · YouTube row above "List your token". The marks are ONE
-  component (`SocialIcon`), shared by /community and the rail. ⚠️ `.rail svg`
+  `sameAs` carries it with no extra wiring. Instagram (`INSTAGRAM_URL`) is
+  wired the same way. The footer links both, and the rail has a
+  Telegram · X · YouTube · Instagram row above "List your token". The marks are
+  ONE component (`SocialIcon`), shared by /community and the rail. ⚠️ `.rail svg`
   strokes every icon, so `.rail-soc svg` sets `stroke:none`, or the filled
-  marks render as outlines.
+  marks render as outlines — and the Instagram mark, the one OUTLINE in the
+  row, takes its stroke back with its own rule.
 - **Form pages are a centred column** (`.view.narrow`: Alerts, Scanner,
   Account, Signals, Install) instead of hugging the rail. **No emoji on
   actions** — the drawn-icon rule the medals state. **Phones:** the header's

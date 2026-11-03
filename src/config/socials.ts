@@ -32,13 +32,16 @@ export const TRADEBOT_URL = "https://t.me/dexvratradebot";
 // handle is spelled as YouTube shows it; the URL is the canonical @-handle form.
 export const YOUTUBE_URL = "https://www.youtube.com/@Dexvraio";
 export const YOUTUBE_HANDLE = "@Dexvraio";
+// Instagram ("tambahkan instagram juga", 2026-11-03): where the Reels go.
+export const INSTAGRAM_URL = "https://www.instagram.com/dexvraio";
+export const INSTAGRAM_HANDLE = "@dexvraio";
 
 // The support inbox. Defined HERE beside the accounts for the same reason they
 // are: the footer, /community and the Organization record all print it, and
 // three copies of one address is how a mailbox change leaves a dead one on
 // the page that matters most. It is deliberately NOT an entry in SOCIALS —
 // that list is the set of accounts a reader can FOLLOW (every entry is a
-// t.me, x.com or youtube.com link with an @handle, and a test says so); an inbox is somewhere
+// t.me, x.com, youtube.com or instagram.com link with an @handle, and a test says so); an inbox is somewhere
 // to write, not somewhere to subscribe.
 export const SUPPORT_EMAIL = "supported@dexvra.io";
 export const SUPPORT_MAILTO = `mailto:${SUPPORT_EMAIL}`;
@@ -46,7 +49,7 @@ export const SUPPORT_MAILTO = `mailto:${SUPPORT_EMAIL}`;
 // "group" is deliberately its own kind, not a flavour of telegram: a two-way
 // chat and a broadcast channel are different things to join, and a reader who
 // confuses them posts a question into a channel that cannot reply.
-export type SocialKind = "telegram" | "group" | "x" | "bot" | "youtube";
+export type SocialKind = "telegram" | "group" | "x" | "bot" | "youtube" | "instagram";
 
 export interface Social {
   key: string;
@@ -145,5 +148,13 @@ export const SOCIALS: Social[] = [
     handle: YOUTUBE_HANDLE,
     url: YOUTUBE_URL,
     blurb: "Video walkthroughs of the site, the charts, the scanner and the Telegram bots.",
+  },
+  {
+    key: "instagram",
+    kind: "instagram",
+    name: "Instagram",
+    handle: INSTAGRAM_HANDLE,
+    url: INSTAGRAM_URL,
+    blurb: "Short videos of new features and how to use Dexvra, made for your phone.",
   },
 ];

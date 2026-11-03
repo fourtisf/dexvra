@@ -530,6 +530,7 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
 .soc-card.bot .soc-ic{background:rgba(160,140,255,.16);color:#a08cff}
 .soc-card.email .soc-ic{background:rgba(255,196,80,.14);color:#ffc450}
 .soc-card.youtube .soc-ic{background:rgba(255,48,64,.14);color:#ff3040}
+.soc-card.instagram .soc-ic{background:rgba(225,48,108,.14);color:#f0457f}
 .soc-ic svg{width:19px;height:19px}
 .soc-body{display:flex;flex-direction:column;gap:3px;min-width:0}
 .soc-name{display:flex;align-items:center;gap:8px;font-weight:700;font-size:14px;color:var(--txt)}
@@ -2418,8 +2419,10 @@ body{background:var(--x-bg)}
   border:1px solid var(--line2);color:var(--muted);transition:color .15s,border-color .15s,background-color .15s}
 .rail-soc a:hover{color:var(--text);border-color:rgba(255,255,255,.22);background:var(--x-hover)}
 .rail-soc a.rail-soc-youtube:hover{color:#ff3040}
+.rail-soc a.rail-soc-instagram:hover{color:#f0457f}
 .rail-soc a:focus-visible{outline:2px solid var(--cyan);outline-offset:1px}
 .rail-soc svg{width:15px;height:15px;stroke:none} /* filled marks: .rail svg strokes every icon */
+.rail-soc a.rail-soc-instagram svg{stroke:currentColor;stroke-width:1.9} /* …except the one drawn as an outline */
 .rail-cta .cta-ic{width:15px;height:15px;fill:currentColor;stroke:none}
 
 @media (min-width:1101px){
