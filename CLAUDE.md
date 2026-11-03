@@ -15406,6 +15406,11 @@ is the `DEXVRA TERMINAL` layer, appended last in `globals.css`, over DEXVRA DATA
   inline marks share the page's ONE id space, the first copy wins, and a hidden
   first copy (the rail below 1100px) once painted every Solana mark blank. A
   test fails if a registry chain has no file, or if a mark is drawn inline again.
+- **Every Top Movers chip opens its token** ("top mover pas di klik harus ke
+  tokenya"). A real `<Link>` to `tokenHref`, not a click handler on a span, so
+  it opens in a new tab and reads as a link; the marquee already pauses under
+  the pointer. The track is drawn twice for the loop, so the second copy is
+  `aria-hidden` and out of the tab order — one stop per token, not two.
 - **Form pages are a centred column** (`.view.narrow`: Alerts, Scanner,
   Account, Signals, Install) instead of hugging the rail. **No emoji on
   actions** — the drawn-icon rule the medals state. **Phones:** the header's

@@ -117,6 +117,19 @@ test("every chain draws its own official mark, as an image", () => {
   assert.match(strip(read("src/components/Rail.tsx")), /<Logo[^>]*gid="dxvRailMark"/, "the rail's brand mark has its own gradient id");
 });
 
+test("every Top Movers chip opens its token, once per token in the tab order", () => {
+  // "top mover pas di klik harus ke tokenya": the chips were plain spans.
+  const t = strip(read("src/components/Ticker.tsx"));
+  assert.match(t, /<Link\s[^>]*className="tick-item"[\s\S]*?href=\{tokenHref\(t\)\}/, "each chip is a link to the token page");
+  assert.ok(!/<span className="tick-item"/.test(t), "no chip is left as a dead span");
+  // the marquee draws the track twice; the copy must not be a second tab stop
+  assert.match(t, /aria-hidden=\{copy \|\| undefined\}/, "the looping copy is hidden from assistive tech");
+  assert.match(t, /tabIndex=\{copy \? -1 : undefined\}/, "…and from the tab order");
+  assert.match(t, /renderItems\("a", false\)[\s\S]*renderItems\("b", true\)/, "only the second copy is the hidden one");
+  assert.match(CSS, /a\.tick-item\{[^}]*text-decoration:none/, "the link keeps the chip's look");
+  assert.match(CSS, /\.ticker:hover \.ticker-track\{animation-play-state:paused\}/, "the marquee holds still under the pointer, so a chip can be hit");
+});
+
 test("the tidy pass: one table design, centred form pages, drawn icons on actions", () => {
   const board = strip(read("src/components/TokenBoard.tsx"));
   assert.match(board, /variant = "terminal"/, "every board draws the terminal table unless a page opts out");

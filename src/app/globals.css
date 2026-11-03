@@ -2453,6 +2453,10 @@ body{background:var(--x-bg)}
 .tick-item .pct.up{color:var(--up)}
 .tick-item .pct.dn{color:var(--dn)}
 .tick-coin{width:18px;height:18px;border:0}
+/* each chip is a link to its token — it says so under the pointer */
+a.tick-item{text-decoration:none;cursor:pointer;transition:border-color .15s,background-color .15s}
+a.tick-item:hover{border-color:rgba(255,255,255,.22);background:rgba(255,255,255,.06)}
+a.tick-item:focus-visible{outline:2px solid var(--cyan);outline-offset:1px}
 
 /* ── chosen controls are solid brand blue (the mockup's segments) ────────── */
 .ttab.active{background:#26C6F5;color:#04141B;box-shadow:none}

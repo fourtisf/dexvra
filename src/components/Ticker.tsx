@@ -3,7 +3,8 @@
 import { changeReading, tradedEnough } from "@/lib/home";
 import { coinBg, monogram } from "@/lib/visual";
 import { logoSrc } from "@/lib/logo";
-import { useApp } from "./AppState";
+import { tokenHref, useApp } from "./AppState";
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import type { BoardToken } from "@/lib/types";
 
@@ -61,11 +62,26 @@ export function Ticker() {
     : [];
   if (!top.length) return <div className="ticker" />;
 
-  const renderItems = (prefix: string) =>
+  // Each chip OPENS ITS TOKEN ("top mover pas di klik harus ke tokenya"). A real
+  // link, not a click handler on a span: it opens in a new tab, reads as a link
+  // to a screen reader, and the marquee already pauses under the pointer. The
+  // track is drawn twice for the seamless loop, so the second copy is hidden
+  // from assistive tech and the tab order — one stop per token, not two.
+  // `prefetch={false}`: twenty token pages fetched behind a marquee nobody
+  // tapped is load the site does not need.
+  const renderItems = (prefix: string, copy: boolean) =>
     top.map(({ t, r }, i) => {
       const up = r >= 0;
       return (
-        <span className="tick-item" key={prefix + t.key + i}>
+        <Link
+          className="tick-item"
+          key={prefix + t.key + i}
+          href={tokenHref(t)}
+          prefetch={false}
+          title={`${t.symbol} — ${t.name}`}
+          aria-hidden={copy || undefined}
+          tabIndex={copy ? -1 : undefined}
+        >
           <span className="rnk">#{i + 1}</span>
           <TickCoin token={t} />
           <span className="sym">{t.symbol}</span>
@@ -73,7 +89,7 @@ export function Ticker() {
             {up ? "+" : ""}
             {r.toFixed(1)}%
           </span>
-        </span>
+        </Link>
       );
     });
 
@@ -88,8 +104,8 @@ export function Ticker() {
       </span>
       <div className="ticker-view">
         <div className="ticker-track">
-          {renderItems("a")}
-          {renderItems("b")}
+          {renderItems("a", false)}
+          {renderItems("b", true)}
         </div>
       </div>
     </div>
