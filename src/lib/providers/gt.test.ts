@@ -9,7 +9,7 @@ process.env.GT_MIN_GAP_MS = "0"; // the pacing gap is not what these pin
 // Short enough to assert on, long enough that "it waited" is measurable. Read
 // at module load, which is why it is set before the import.
 process.env.GT_BUDGET_WAIT_MS = "150";
-const { _gtReset, gtArmCooldown, gtBaseFor, gtBudgetRpm, gtGet, gtHeadersFor, gtInCooldown, gtSpentThisMinute } = await import("./gt.ts");
+const { _gtReset, gtArmCooldown, gtBackgroundCap, gtBaseFor, gtBudgetRpm, gtGet, gtHeadersFor, gtInCooldown, gtSpentThisMinute } = await import("./gt.ts");
 const { readFileSync } = await import("node:fs");
 /** Read the module's SOURCE. The env knobs are read at load, so the shape of
  *  the knob is what a test can pin without a second module instance. */
@@ -221,7 +221,7 @@ test("the board asks for the no-queue slot on covered chains ONLY, off the same 
   const src = readFileSync("src/lib/providers/geckoterminal.ts", "utf8").replace(/^\s*(?:\/\/|\*|\/\*).*$/gm, "");
   assert.match(src, /const waitMs = dsCovers\(chainId\) \? 0 : undefined;/,
     "the board either queues for everything or for nothing");
-  assert.match(src, /waitMs === undefined \? undefined : \{ waitMs \}/, "…and it reaches the request");
+  assert.match(src, /waitMs === undefined \? \{ lane: "background" \} : \{ waitMs, lane: "background" \}/, "…and it reaches the request, in the background lane");
   // A second list of "which chains DexScreener covers" is how two of them end
   // up disagreeing; dsCovers is the one owner and partitionByFallback reads it.
   assert.doesNotMatch(src, /dexscreener:\s*(?:null|")/, "geckoterminal.ts is keeping its own coverage list");
@@ -240,7 +240,8 @@ test("GT_MAX_RPM is READ from the env and 0 turns it off — the escape hatch a 
   const src = readGt();
   assert.match(src, /num\(process\.env\.GT_MAX_RPM, Math\.max\(1, Math\.floor\(FREE_CEILING_RPM \/ 2\)\), 0\)/,
     "the default is DERIVED from the ceiling, never a second copy of the number");
-  assert.match(src, /if \(MAX_RPM <= 0\) return true;/);
+  // 0 means no budget check at all: a full window may only refuse while MAX_RPM > 0
+  assert.match(src, /if \(MAX_RPM > 0 && gtSpentThisMinute\(at\) >= cap\) return false;/);
 });
 
 test("⚠️ this process takes HALF the IP's allowance, because the bot suite takes the other", () => {
@@ -257,4 +258,45 @@ test("the boot line PRINTS the budget — a split nobody can read is how this on
   const src = readGt();
   const banner = src.slice(src.indexOf("export function gtBanner"));
   assert.match(banner, /budget \$\{MAX_RPM/, "the banner must state the budget in force");
+});
+
+test("⚠️ the board cannot spend the slots a token page is waiting on", async () => {
+  // "mengapa buy and sale not works": the trade list has ONE free source, and
+  // the board's background refresh took every slot of the minute first, so the
+  // visitor's request queued behind it and gave up.
+  const budget = gtBudgetRpm(), bg = gtBackgroundCap();
+  assert.ok(bg >= 1 && bg < budget, `the background lane has a smaller cap (${bg} of ${budget})`);
+  let hits = 0;
+  await withFetch(async () => { hits++; return reply(200, { ok: 1 }); }, async () => {
+    for (let i = 0; i < bg; i++) assert.equal((await gtGet(`/bg${i}`, undefined, { waitMs: 0, lane: "background" })).ok, true);
+    const starved = await gtGet("/bg-over", undefined, { waitMs: 0, lane: "background" });
+    assert.equal(starved.ok, false, "background stops at its cap");
+    assert.equal(starved.status, 0);
+    for (let i = bg; i < budget; i++) assert.equal((await gtGet(`/page${i}`)).ok, true, "a page request still finds a reserved slot");
+  });
+  assert.equal(hits, budget, "the whole budget is used, and no more");
+});
+
+test("⚠️ a background caller WAITING for its cap does not hold up a page request", async () => {
+  // The wait used to happen inside the one serialised queue, so a caller
+  // waiting for a slot held every caller behind it for the whole wait.
+  const bg = gtBackgroundCap();
+  await withFetch(async () => reply(200, { ok: 1 }), async () => {
+    for (let i = 0; i < bg; i++) await gtGet(`/bg${i}`, undefined, { waitMs: 0, lane: "background" });
+    const waiting = gtGet("/bg-wait", undefined, { waitMs: 140, lane: "background" }); // will wait, then give up
+    await new Promise((r) => setTimeout(r, 5));
+    const t0 = Date.now();
+    const page = await gtGet("/page");
+    assert.equal(page.ok, true);
+    assert.ok(Date.now() - t0 < 60, `the page request waited ${Date.now() - t0}ms behind a background waiter`);
+    assert.equal((await waiting).ok, false, "the background waiter still gives up at its own deadline");
+  });
+});
+
+test("only callers nobody is waiting on are in the background lane", () => {
+  const strip = (p: string) => readFileSync(p, "utf8").replace(/^\s*(?:\/\/|\*|\/\*).*$/gm, "");
+  for (const p of ["src/lib/providers/geckoterminal.ts", "src/lib/providers/tokenLogo.ts", "src/lib/providers/holders.ts"])
+    assert.match(strip(p), /lane: "background"/, `${p} is background work`);
+  for (const p of ["src/app/api/trades/route.ts", "src/app/api/ohlcv/route.ts", "src/lib/providers/gtPool.ts", "src/app/api/token-preview/route.ts"])
+    assert.doesNotMatch(strip(p), /lane: "background"/, `${p} serves a visitor who is waiting`);
 });

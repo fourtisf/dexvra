@@ -149,6 +149,32 @@ export const gtFreeCeilingRpm = (): number => FREE_CEILING_RPM;
 const BUDGET_WAIT_MS = num(process.env.GT_BUDGET_WAIT_MS, 3000, 0);
 /** This process's budget, and how long a caller may wait for a slot in it. */
 export const gtBudgetWaitMs = (): number => BUDGET_WAIT_MS;
+
+/**
+ * ⚠️ A TOKEN PAGE'S REQUESTS MAY NOT BE STARVED BY THE BOARD'S.
+ *
+ * "mengapa buy and sale not works": a token page read "Couldn't read recent
+ * trades just now — live data is busy" over a token doing 22k trades a day,
+ * while the DexScreener counts underneath were fine. The trade list has ONE free
+ * source and it is GeckoTerminal, and every minute the board's background
+ * refresh (~19 chunks), the logo sweep and the holder fallback took every free
+ * slot of this process's budget first — so the request a visitor was actually
+ * waiting on queued behind them and gave up. From the page that is a feature
+ * that never works.
+ *
+ * So the budget has two lanes. `interactive` (the default — a trade list, a
+ * chart, a pool lookup for one, an unlisted preview) may use all of it.
+ * `background` (anything no visitor is waiting on) may only use what is left
+ * after `GT_INTERACTIVE_RESERVE` slots, so a page opened mid-refresh still finds
+ * a slot. Background never drops below one a minute, or a GT-only chain would
+ * never price at all.
+ *
+ * `GT_INTERACTIVE_RESERVE` defaults to the larger half of the budget.
+ */
+const INTERACTIVE_RESERVE = num(process.env.GT_INTERACTIVE_RESERVE, Math.ceil(MAX_RPM / 2), 0);
+export type GtLane = "interactive" | "background";
+/** How many slots a minute the background lane may take. */
+export const gtBackgroundCap = (): number => Math.max(1, MAX_RPM - INTERACTIVE_RESERVE);
 const TIMEOUT_MS = 9000;
 
 // Next can hold more than one instance of a module; a per-instance cooldown
@@ -205,43 +231,57 @@ export function gtBanner(): void {
       GT_KEYED
         ? `API key set · ${PINNED_TIER ? `${PINNED_TIER.toUpperCase()} tier (pinned)` : `trying the ${tier.toUpperCase()} tier first, the other on a 401/403`} — the allowance is counted PER KEY, not per IP`
         : `PUBLIC free tier (~${FREE_CEILING_RPM} req/min per IP, shared with the bot suite on this box) — set GECKOTERMINAL_API_KEY to raise it (a free CoinGecko Demo key works)`
-    } · budget ${MAX_RPM > 0 ? `${MAX_RPM}/min from THIS process` : "OFF (GT_MAX_RPM=0)"} · base ${baseNow()}`,
+    } · budget ${MAX_RPM > 0 ? `${MAX_RPM}/min from THIS process, ${MAX_RPM - gtBackgroundCap()} of them kept for token pages` : "OFF (GT_MAX_RPM=0)"} · base ${baseNow()}`,
   );
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** Serialise the gap so concurrent callers space out instead of all firing at
- *  once (the same shape as the CoinGecko pacer in tokenLogo). */
-function slot(waitMs: number): Promise<boolean> {
-  const wait = state.chain.then(async () => {
+/** One serialised attempt at a slot: the pacing gap, then a check against the
+ *  lane's cap. Serialised so concurrent callers space out instead of all firing
+ *  at once (the same shape as the CoinGecko pacer in tokenLogo). */
+function trySlot(cap: number): Promise<boolean> {
+  const step = state.chain.then(async () => {
     const now = Date.now();
     const delay = Math.max(0, state.nextAt - now);
     if (delay) await sleep(delay);
-    state.nextAt = Math.max(now, state.nextAt) + MIN_GAP_MS;
-    if (MAX_RPM <= 0) return true;
+    const at = Date.now();
     // A ROLLING window, not a per-minute bucket: a bucket lets 15 requests go
     // at :59 and 15 more at :00, which is the burst the ceiling actually
     // punishes.
-    const giveUpAt = Date.now() + waitMs;
-    for (;;) {
-      const at = Date.now();
-      if (gtSpentThisMinute(at) < MAX_RPM) {
-        // Counted when the slot is TAKEN, not when the response lands: a
-        // request that is then skipped by the cooldown re-check below has still
-        // reserved its place. Over-counting spends a little less than the
-        // allowance; under-counting spends more than it, and that is the 429.
-        state.sent.push(at);
-        return true;
-      }
-      if (at >= giveUpAt) return false;
-      // Sleep until the oldest request falls out of the window — never a fixed
-      // poll, which would spin for a whole minute on a saturated budget.
-      await sleep(Math.min(giveUpAt - at, Math.max(25, state.sent[0] + 60_000 - at)));
-    }
+    if (MAX_RPM > 0 && gtSpentThisMinute(at) >= cap) return false;
+    // Counted when the slot is TAKEN, not when the response lands: a request
+    // that is then skipped by the cooldown re-check has still reserved its
+    // place. Over-counting spends a little less than the allowance;
+    // under-counting spends more than it, and that is the 429.
+    if (MAX_RPM > 0) state.sent.push(at);
+    state.nextAt = at + MIN_GAP_MS;
+    return true;
   });
-  state.chain = wait.then(() => {}).catch(() => {});
-  return wait;
+  state.chain = step.then(() => {}).catch(() => {});
+  return step;
+}
+
+/**
+ * Take a slot in `lane`, waiting up to `waitMs` for one.
+ *
+ * ⚠️ THE WAITING HAPPENS OUTSIDE THE SHARED QUEUE. It used to happen inside it,
+ * so one caller waiting three seconds for a slot held every caller behind it for
+ * those three seconds — and with a reserved lane that would be worse than
+ * before: a background request waiting for ITS cap would block a page request
+ * that has a reserved slot free right now. Only the check is serialised.
+ */
+async function slot(waitMs: number, lane: GtLane = "interactive"): Promise<boolean> {
+  const cap = lane === "background" ? gtBackgroundCap() : MAX_RPM;
+  const giveUpAt = Date.now() + waitMs;
+  for (;;) {
+    if (await trySlot(cap)) return true;
+    const at = Date.now();
+    if (at >= giveUpAt) return false;
+    // Sleep until the oldest request falls out of the window — never a fixed
+    // poll, which would spin for a whole minute on a saturated budget.
+    await sleep(Math.min(giveUpAt - at, Math.max(25, (state.sent[0] ?? at) + 60_000 - at)));
+  }
 }
 
 export interface GtResult<T = unknown> {
@@ -290,6 +330,8 @@ export interface GtOpts {
    * because for it the wait is the difference between data and none.
    */
   waitMs?: number;
+  /** `background` for anything no visitor is waiting on — see GT_INTERACTIVE_RESERVE. */
+  lane?: GtLane;
 }
 
 export async function gtGet<T = unknown>(path: string, params?: Record<string, string | number>, opts?: GtOpts): Promise<GtResult<T>> {
@@ -299,7 +341,7 @@ export async function gtGet<T = unknown>(path: string, params?: Record<string, s
   const qs = params ? new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)])).toString() : "";
   const url = `${baseNow()}${path}${qs ? `?${qs}` : ""}`;
   const waitMs = Number.isFinite(opts?.waitMs) ? Math.max(0, opts!.waitMs!) : BUDGET_WAIT_MS;
-  if (!(await slot(waitMs)))
+  if (!(await slot(waitMs, opts?.lane)))
     return {
       ok: false,
       status: 0,

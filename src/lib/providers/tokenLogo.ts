@@ -222,6 +222,9 @@ async function gtLogo(chain: string, address: string): Promise<string | null> {
   // written permanently into the listing store.
   const res = await gtGet<{ data?: { attributes?: { image_url?: string | null } } }>(
     `/networks/${net}/tokens/${encodeURIComponent(address)}`,
+    undefined,
+    // the logo sweep runs behind the board; a visitor's trade list comes first
+    { lane: "background" },
   );
   if (res.status === 404) return null; // GT does not index it — an answer
   if (!res.ok) throw new Error(res.reason ?? "GeckoTerminal failed");

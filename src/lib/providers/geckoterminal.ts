@@ -165,7 +165,9 @@ async function fetchChunk(
   const res = await gtGet<{ data?: GtToken[]; included?: GtPool[] }>(
     `/networks/${network}/tokens/multi/${chunk.join(",")}`,
     { include: "top_pools" },
-    waitMs === undefined ? undefined : { waitMs },
+    // ⚠️ BACKGROUND: nobody is waiting on a board refresh, and a token page is
+    // (see GT_INTERACTIVE_RESERVE in gt.ts).
+    waitMs === undefined ? { lane: "background" } : { waitMs, lane: "background" },
   );
   if (!res.ok) throw new Error(`${res.reason ?? "GeckoTerminal failed"} (${chainId})`);
   const json = res.body ?? {};
@@ -265,6 +267,8 @@ export async function fetchListedMarket(
 export async function fetchTokenPriceUsd(network: string, address: string): Promise<number> {
   const res = await gtGet<{ data?: { attributes?: { token_prices?: Record<string, string> } } }>(
     `/simple/networks/${network}/token_price/${address}`,
+    undefined,
+    { lane: "background" },
   );
   if (!res.ok || !res.body) throw new Error(`GeckoTerminal reference price failed — ${res.reason ?? res.status}`);
   const prices = res.body.data?.attributes?.token_prices ?? {};

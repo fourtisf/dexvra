@@ -4,8 +4,12 @@
 // price and rendered +0.0% forever, with nothing anywhere saying why.
 import test from "node:test";
 import assert from "node:assert";
-import { GT_MULTI_MAX, fetchListedMarket } from "./geckoterminal.ts";
-import { _gtReset } from "./gt.ts";
+// These pin the CHUNKING, not the budget split: with the shipped reserve the
+// board's lane holds 2 slots a minute and the third chunk would be refused by
+// design (gt.test.ts pins that). Read at module load, so set before the import.
+process.env.GT_INTERACTIVE_RESERVE = "0";
+const { GT_MULTI_MAX, fetchListedMarket } = await import("./geckoterminal.ts");
+const { _gtReset } = await import("./gt.ts");
 
 // ⚠️ The 429 cooldown is PROCESS-WIDE by design (providers/gt.ts), so a test
 // that earns one silences every test after it — which showed up as two

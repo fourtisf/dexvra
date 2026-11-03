@@ -62,7 +62,7 @@ export interface HolderCount {
 
 export interface HolderDeps {
   fetch?: typeof fetch;
-  gtGet?: (path: string, params?: Record<string, string | number>, opts?: { waitMs?: number }) => Promise<GtResult<unknown>>;
+  gtGet?: (path: string, params?: Record<string, string | number>, opts?: { waitMs?: number; lane?: "interactive" | "background" }) => Promise<GtResult<unknown>>;
   dsPair?: (chain: string, address: string) => Promise<{ ok: boolean; pair: DsPair | null; why: string | null }>;
   timeoutMs?: number;
 }
@@ -384,7 +384,7 @@ async function fromDexScreener(chain: string, address: string, deps: HolderDeps)
 
 async function fromGeckoTerminal(network: string, address: string, deps: HolderDeps): Promise<Got> {
   const g = deps.gtGet ?? realGtGet;
-  const res = await g(`/networks/${network}/tokens/${address}/info`, undefined, { waitMs: 0 });
+  const res = await g(`/networks/${network}/tokens/${address}/info`, undefined, { waitMs: 0, lane: "background" });
   if (!res.ok) return { count: null, why: `geckoterminal: ${res.reason ?? res.status}` };
   const attrs = (res.body as { data?: { attributes?: { holders?: { count?: unknown } } } } | null)?.data?.attributes;
   const c = countOf(attrs?.holders?.count);

@@ -13254,6 +13254,44 @@ dividing it**, and the trade list is the one thing on this page with no second
 source at all. This makes the minute go further; it does not add a source that
 does not exist.
 
+#### "mengapa buy and sale not works" — the board was spending the page's slots
+
+`$WASTED` (pump.fun, 22.3K trades a day): the panel read *"Couldn't read
+recent trades just now — live data is busy"* under DexScreener counts that
+were fine. The trade list's one source is GeckoTerminal, this process gets 5
+requests a minute, and every minute the board's background refresh (~19
+chunks), the logo sweep and the holder fallback took every free slot first —
+so the request a visitor was waiting on queued behind them and gave up.
+
+- **The budget has two lanes** (`lane` on `gtGet`). `interactive`, the
+  default, may use all of it: the trade list, the chart, a pool lookup for
+  either, the unlisted preview. `background` (the board cycle, the reference
+  price, the logo sweep, the holder fallback) stops `GT_INTERACTIVE_RESERVE`
+  slots short — the larger half by default, so 3 of 5 are kept for token
+  pages. Background never drops below one a minute, or a GT-only chain would
+  never price. Covered chains lose nothing: what the board cannot get from GT
+  it already gets from DexScreener.
+- ⚠️ **The waiting moved OUT of the shared queue.** `slot()` used to wait
+  inside the one serialised chain, so one caller waiting three seconds held
+  every caller behind it; with a reserved lane that would have been worse than
+  before — a background request waiting for its cap blocking a page request
+  with a reserved slot free. Only the check is serialised now.
+- The boot line says how many slots are kept for token pages.
+
+Mutation-tested: ignoring the lane fails both lane tests.
+
+```bash
+node --test --experimental-strip-types src/lib/providers/gt.test.ts   # 21 tests, no network
+pm2 logs dexvra --lines 300 --nostream | grep -F '[trades]'           # why a trade list failed, per pool
+```
+
+**Config a fix depends on:** nothing. ⚠️ It makes the free tier go further for
+the people actually on a token page; it cannot make 5 requests a minute serve a
+busy site. Many visitors on different tokens at once still run it out, and then
+the panel falls back to DexScreener's 24h buy/sell counts as before. Only a
+paid GeckoTerminal key (with `GT_MAX_RPM` raised to match) or an on-chain trade
+reader raises the ceiling.
+
 ### "bagaimana agar masalah ini tidak terjadi lgi" — all three were found in a screenshot
 
 Asked over a clean deploy (`✓ serving 17a95ee`, four processes online), so the
