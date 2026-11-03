@@ -80,7 +80,7 @@ export function Rail() {
       <Link href="/" className="rail-brand" aria-label={`${BRAND_NAME} home`}>
         {/* its own gradient id: the header's copy (default id) is hidden at these
             widths and comes later — two marks sharing one id resolve to the
-            first, and a hidden first one paints nothing (see ChainLogoDefs) */}
+            first, and a hidden first one paints nothing */}
         <Logo size={30} gid="dxvRailMark" />
         <span>{BRAND_NAME}</span>
       </Link>
@@ -117,7 +117,11 @@ export function Rail() {
             <div className="rail-lbl">Chains</div>
             <nav className="rail-nav rail-chains" aria-label="Filter by chain">
               <Link href={base} scroll={false} className={activeChain === "all" ? "on2" : ""}>
-                <span className="rail-all" aria-hidden />
+                {/* the chain row's own "all" glyph, so the two filters draw it alike */}
+                <svg className="rail-all" viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
+                  <circle cx="12" cy="12" r="9" />
+                  <path d="M3 12h18M12 3c2.5 2.7 2.5 15.3 0 18M12 3c-2.5 2.7-2.5 15.3 0 18" />
+                </svg>
                 <span>All chains</span>
                 <em>{tokens.length}</em>
               </Link>

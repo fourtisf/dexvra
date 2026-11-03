@@ -95,13 +95,25 @@ test("every terminal template declares the row's fifteen cells", () => {
   assert.strictEqual(counted, cells, "the head renders exactly as many cells as the templates declare");
 });
 
-test("a gradient is defined once, where nothing can hide it", () => {
-  // Dozens of Solana marks each defining id="sol" resolved to the FIRST copy —
-  // the hidden rail's below 1100px — and painted nothing on tablets and phones.
+test("every chain draws its own official mark, as an image", () => {
+  // The marks used to be hand-drawn guesses (a quill, a bear face, a letter on
+  // a disc) — "logonya benerin logo chainnya". Every chain in the registry has
+  // the brand's own file, and the component draws THAT file.
+  const chains = strip(read("src/config/chains.ts"));
+  const ids = [...chains.slice(chains.indexOf("CHAINS")).matchAll(/^\s{2}([a-z0-9]+): \{$/gm)].map((m) => m[1]);
+  assert.ok(ids.length >= 20, `the registry scan found the chains (${ids.length})`);
   const logo = strip(read("src/components/ChainLogo.tsx"));
-  const solana = logo.slice(logo.indexOf("function Solana"), logo.indexOf("function Ethereum"));
-  assert.ok(!/<linearGradient/.test(solana), "the Solana mark carries no gradient of its own");
-  assert.match(strip(read("src/app/layout.tsx")), /<ChainLogoDefs \/>/, "the one definition is rendered at the root of every page");
+  for (const id of ids) {
+    const svg = readFileSync(join(process.cwd(), "public/chains", `${id}.svg`), "utf8");
+    assert.match(svg, /^<svg[^>]*viewBox="0 0 24 24"/, `${id} ships a 24-unit mark`);
+    assert.ok(!/<script|<image|href=|on[a-z]+=/i.test(svg), `${id}'s file carries nothing but paths`);
+    assert.match(logo, new RegExp(`"${id}"`), `${id} is in the component's list of marks`);
+  }
+  // ⚠️ inline marks share ONE id space per page and the first copy wins — a
+  // hidden first copy painted every Solana mark blank. An <img> has its own.
+  assert.ok(!/<svg|<path|linearGradient|url\(#/.test(logo), "no mark is drawn inline");
+  assert.match(logo, /<img src=\{src\}/, "the mark is an image of the chain's own file");
+  assert.ok(!/ChainLogoDefs/.test(strip(read("src/app/layout.tsx"))), "no shared paint server is left at the root");
   assert.match(strip(read("src/components/Rail.tsx")), /<Logo[^>]*gid="dxvRailMark"/, "the rail's brand mark has its own gradient id");
 });
 

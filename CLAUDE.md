@@ -15397,6 +15397,15 @@ is the `DEXVRA TERMINAL` layer, appended last in `globals.css`, over DEXVRA DATA
   rail's below 1100px — and every Solana icon and the brand logo painted blank
   on tablets and phones. `ChainLogoDefs` renders the one definition at the root
   of every page; the rail's logo has its own `gid`.
+- **Every chain mark is the chain's OWN logo** ("logonya benerin logo
+  chainnya"): `public/chains/<chain>.svg`, the brands' vector marks from the
+  web3icons set (MIT), drawn by `ChainLogo` as an `<img>`. They replaced
+  hand-drawn guesses (a quill, a bear face, a letter on a disc). Marks drawn in
+  black (Aptos, Plasma, Sonic, and Abstract's dark green) ship in their on-dark
+  colour, because the site has no light surface. ⚠️ An image, never inline SVG:
+  inline marks share the page's ONE id space, the first copy wins, and a hidden
+  first copy (the rail below 1100px) once painted every Solana mark blank. A
+  test fails if a registry chain has no file, or if a mark is drawn inline again.
 - **Form pages are a centred column** (`.view.narrow`: Alerts, Scanner,
   Account, Signals, Install) instead of hugging the rail. **No emoji on
   actions** — the drawn-icon rule the medals state. **Phones:** the header's

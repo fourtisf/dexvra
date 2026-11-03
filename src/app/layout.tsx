@@ -4,7 +4,6 @@ import { BRAND_NAME, BRAND_TAGLINE } from "@/config/brand";
 import { SITE_ORIGIN, OG_IMAGE } from "@/config/site";
 import { SITE_DESCRIPTION, siteJsonLd, jsonLdText } from "@/lib/seo";
 import "./globals.css";
-import { ChainLogoDefs } from "@/components/ChainLogo";
 
 export const metadata: Metadata = {
   // Without this, every relative image in openGraph/twitter resolves against
@@ -129,7 +128,6 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           // it can close this element early.
           dangerouslySetInnerHTML={{ __html: jsonLdText(siteJsonLd()) }}
         />
-        <ChainLogoDefs />
         {children}
       </body>
     </html>
