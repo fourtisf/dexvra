@@ -15449,6 +15449,14 @@ is the `DEXVRA TERMINAL` layer, appended last in `globals.css`, over DEXVRA DATA
   it opens in a new tab and reads as a link; the marquee already pauses under
   the pointer. The track is drawn twice for the loop, so the second copy is
   `aria-hidden` and out of the tab order — one stop per token, not two.
+- **The YouTube channel is an account like the others** ("tambahkan link
+  yotube di website"): `YOUTUBE_URL` in `config/socials.ts` and a `youtube`
+  entry in `SOCIALS`, so /community lists it and the Organization record's
+  `sameAs` carries it with no extra wiring. The footer links it, and the rail
+  has a Telegram · X · YouTube row above "List your token". The marks are ONE
+  component (`SocialIcon`), shared by /community and the rail. ⚠️ `.rail svg`
+  strokes every icon, so `.rail-soc svg` sets `stroke:none`, or the filled
+  marks render as outlines.
 - **Form pages are a centred column** (`.view.narrow`: Alerts, Scanner,
   Account, Signals, Install) instead of hugging the rail. **No emoji on
   actions** — the drawn-icon rule the medals state. **Phones:** the header's

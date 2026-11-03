@@ -3,11 +3,12 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
-import { BOT_URL, BRAND_NAME } from "@/config/brand";
+import { BOT_URL, BRAND_NAME, TELEGRAM_HANDLE, TELEGRAM_URL, X_HANDLE, X_URL, YOUTUBE_HANDLE, YOUTUBE_URL } from "@/config/brand";
 import { chainOf } from "@/config/chains";
 import { chainCounts, splitChains } from "@/lib/home";
 import { ChainLogo } from "./ChainLogo";
 import { Logo } from "./Logo";
+import { SocialIcon } from "./SocialIcon";
 import { NAV_GROUPS, type NavItem } from "./Sidebar";
 import { useApp } from "./AppState";
 import { CHAIN_PAGES } from "./useChainParam";
@@ -45,6 +46,14 @@ const PRIMARY: { href: string; label: string }[] = [
   { href: "/leaderboard", label: "Leaderboard" },
   { href: "/advertise", label: "Advertise" },
 ];
+
+// The accounts worth one click from every page. The full list — listing,
+// trending, the group, both bots — is /community, under More.
+const FOLLOW = [
+  { kind: "telegram", href: TELEGRAM_URL, label: `Telegram ${TELEGRAM_HANDLE}` },
+  { kind: "x", href: X_URL, label: `X ${X_HANDLE}` },
+  { kind: "youtube", href: YOUTUBE_URL, label: `YouTube ${YOUTUBE_HANDLE}` },
+] as const;
 
 const ALL_ITEMS: NavItem[] = NAV_GROUPS.flatMap((g) => g.items);
 const iconFor = (href: string) => ALL_ITEMS.find((it) => it.href === href)?.icon ?? null;
@@ -145,6 +154,14 @@ export function Rail() {
             </nav>
           </>
         )}
+      </div>
+
+      <div className="rail-soc" aria-label="Follow Dexvra">
+        {FOLLOW.map((f) => (
+          <a key={f.kind} className={`rail-soc-${f.kind}`} href={f.href} target="_blank" rel="noopener noreferrer" title={f.label} aria-label={f.label}>
+            <SocialIcon kind={f.kind} />
+          </a>
+        ))}
       </div>
 
       <a className="rail-cta" href={BOT_URL} target="_blank" rel="noopener noreferrer">

@@ -14,6 +14,7 @@ export const TELEGRAM_LISTING_HANDLE = "@dexvralisting";
 export const TELEGRAM_TRENDING_URL = "https://t.me/dexvratrending";
 export const TELEGRAM_TRENDING_HANDLE = "@dexvratrending";
 export const X_URL = "https://x.com/dexvraio";
+export const X_HANDLE = "@dexvraio";
 // Listing alerts are tweeted from their OWN account, not from @dexvraio: the
 // bot's twitter.js posts every listing, trending and pump alert through the
 // `listing` credential set. Nothing linked it before, so readers who do not use
@@ -27,13 +28,17 @@ export const X_LISTING_HANDLE = "@listingdexvra";
 export const BOT_URL = "https://t.me/dexvrabot";
 export const TELEGRAM_GROUP_URL = "https://t.me/dexvragroup"; // open two-way chat
 export const TRADEBOT_URL = "https://t.me/dexvratradebot";
+// The video channel ("tambahkan link yotube di website", 2026-11-03). The
+// handle is spelled as YouTube shows it; the URL is the canonical @-handle form.
+export const YOUTUBE_URL = "https://www.youtube.com/@Dexvraio";
+export const YOUTUBE_HANDLE = "@Dexvraio";
 
 // The support inbox. Defined HERE beside the accounts for the same reason they
 // are: the footer, /community and the Organization record all print it, and
 // three copies of one address is how a mailbox change leaves a dead one on
 // the page that matters most. It is deliberately NOT an entry in SOCIALS —
 // that list is the set of accounts a reader can FOLLOW (every entry is a
-// t.me/x.com link with an @handle, and a test says so); an inbox is somewhere
+// t.me, x.com or youtube.com link with an @handle, and a test says so); an inbox is somewhere
 // to write, not somewhere to subscribe.
 export const SUPPORT_EMAIL = "supported@dexvra.io";
 export const SUPPORT_MAILTO = `mailto:${SUPPORT_EMAIL}`;
@@ -41,7 +46,7 @@ export const SUPPORT_MAILTO = `mailto:${SUPPORT_EMAIL}`;
 // "group" is deliberately its own kind, not a flavour of telegram: a two-way
 // chat and a broadcast channel are different things to join, and a reader who
 // confuses them posts a question into a channel that cannot reply.
-export type SocialKind = "telegram" | "group" | "x" | "bot";
+export type SocialKind = "telegram" | "group" | "x" | "bot" | "youtube";
 
 export interface Social {
   key: string;
@@ -127,10 +132,18 @@ export const SOCIALS: Social[] = [
     key: "x",
     kind: "x",
     name: "X",
-    handle: "@dexvraio",
+    handle: X_HANDLE,
     // Split from the listing feed above: two X accounts saying "everything goes
     // here" would make neither worth following.
     blurb: "Product news and campaign announcements, the same posts as the Telegram announcements channel.",
     url: X_URL,
+  },
+  {
+    key: "youtube",
+    kind: "youtube",
+    name: "YouTube",
+    handle: YOUTUBE_HANDLE,
+    url: YOUTUBE_URL,
+    blurb: "Video walkthroughs of the site, the charts, the scanner and the Telegram bots.",
   },
 ];

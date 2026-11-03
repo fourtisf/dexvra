@@ -5,12 +5,12 @@ import test from "node:test";
 import assert from "node:assert";
 import fs from "node:fs";
 import path from "node:path";
-import { BOT_URL, TELEGRAM_URL, TELEGRAM_LISTING_URL, TELEGRAM_TRENDING_URL, X_LISTING_URL, X_URL } from "./socials.ts";
+import { BOT_URL, TELEGRAM_URL, TELEGRAM_LISTING_URL, TELEGRAM_TRENDING_URL, X_LISTING_URL, X_URL, YOUTUBE_URL } from "./socials.ts";
 
 const read = (p: string) => fs.readFileSync(path.join(process.cwd(), p), "utf8");
 
 test("every social constant is an absolute https URL", () => {
-  for (const [name, url] of Object.entries({ BOT_URL, TELEGRAM_URL, TELEGRAM_LISTING_URL, TELEGRAM_TRENDING_URL, X_LISTING_URL, X_URL })) {
+  for (const [name, url] of Object.entries({ BOT_URL, TELEGRAM_URL, TELEGRAM_LISTING_URL, TELEGRAM_TRENDING_URL, X_LISTING_URL, X_URL, YOUTUBE_URL })) {
     assert.match(url, /^https:\/\//, `${name} must be absolute — a relative one resolves against dexvra.io`);
     assert.doesNotMatch(url, /\s|@$/, `${name} looks malformed: ${url}`);
   }
@@ -91,7 +91,7 @@ test("the bot tweets from the same account the site links to", () => {
 
 test("the footer's social links have a real href and open safely", () => {
   const src = read("src/app/(site)/layout.tsx");
-  for (const v of ["TELEGRAM_URL", "X_URL", "X_LISTING_URL", "BOT_URL", "TELEGRAM_TRENDING_URL"]) {
+  for (const v of ["TELEGRAM_URL", "X_URL", "X_LISTING_URL", "BOT_URL", "TELEGRAM_TRENDING_URL", "YOUTUBE_URL"]) {
     assert.ok(src.includes(`href={${v}}`), `the footer must link ${v}`);
   }
   // target=_blank without noopener hands the opened tab a window.opener handle.
@@ -159,7 +159,7 @@ test("/community lists every channel, from the one shared list", () => {
   const src = read("src/app/(site)/community/page.tsx");
   assert.match(src, /from "@\/config\/socials"/);
   assert.match(src, /SOCIALS\.map/);
-  assert.ok(!/t\.me\/|x\.com\//.test(src), "no URL is hardcoded on the page itself");
+  assert.ok(!/t\.me\/|x\.com\/|youtube\.com/.test(src), "no URL is hardcoded on the page itself");
 });
 
 test("every channel entry is complete and reachable", async () => {
@@ -168,10 +168,10 @@ test("every channel entry is complete and reachable", async () => {
   for (const s of SOCIALS) {
     assert.ok(!keys.has(s.key), `duplicate key ${s.key}`);
     keys.add(s.key);
-    assert.match(s.url, /^https:\/\/(t\.me|x\.com)\//, `${s.key}: ${s.url}`);
+    assert.match(s.url, /^https:\/\/(t\.me|x\.com|www\.youtube\.com\/@)/, `${s.key}: ${s.url}`);
     assert.match(s.handle, /^@\w+$/, `${s.key} handle looks wrong: ${s.handle}`);
     assert.ok(s.blurb.length > 20, `${s.key} needs a reason to tap, not just a name`);
-    assert.ok(["telegram", "group", "x", "bot"].includes(s.kind), `${s.key}: unknown kind ${s.kind}`);
+    assert.ok(["telegram", "group", "x", "bot", "youtube"].includes(s.kind), `${s.key}: unknown kind ${s.kind}`);
     // The handle and the URL must name the SAME account, or the card lies.
     assert.ok(s.url.toLowerCase().endsWith(s.handle.slice(1).toLowerCase()), `${s.key}: ${s.handle} vs ${s.url}`);
   }
@@ -308,4 +308,43 @@ test("the Organization record carries the support address", async () => {
   assert.strictEqual(cp["@type"], "ContactPoint");
   assert.strictEqual(cp.email, SUPPORT_EMAIL);
   assert.strictEqual(cp.contactType, "customer support");
+});
+
+// ── The YouTube channel ─────────────────────────────────────────────────────
+//
+// "tambahkan link yotube di website" (2026-11-03), with the channel's URL.
+
+test("the YouTube channel is one account, linked from every place a reader looks", async () => {
+  const { YOUTUBE_URL, YOUTUBE_HANDLE, SOCIALS } = await import("./socials.ts");
+  assert.strictEqual(YOUTUBE_URL, "https://www.youtube.com/@Dexvraio");
+  assert.strictEqual(YOUTUBE_HANDLE, "@Dexvraio");
+  const yt = SOCIALS.find((s) => s.key === "youtube");
+  assert.ok(yt, "the channel is in SOCIALS, so /community lists it and sameAs carries it");
+  assert.strictEqual(yt!.kind, "youtube");
+  assert.strictEqual(yt!.url, YOUTUBE_URL);
+  // one definition: no surface spells the URL itself
+  for (const f of ["src/app/(site)/layout.tsx", "src/app/(site)/community/page.tsx", "src/components/Rail.tsx", "src/lib/seo.ts"]) {
+    assert.ok(!read(f).includes("youtube.com"), `${f} hardcodes the YouTube URL instead of reading YOUTUBE_URL`);
+  }
+  assert.match(read("src/app/(site)/layout.tsx"), /<a href=\{YOUTUBE_URL\} target="_blank" rel="noopener noreferrer">YouTube<\/a>/, "the footer links the channel");
+  const rail = read("src/components/Rail.tsx");
+  assert.match(rail, /kind: "youtube", href: YOUTUBE_URL/, "the desktop rail links the channel");
+  assert.match(rail, /target="_blank" rel="noopener noreferrer"/);
+  // the filled marks would be drawn in outline by `.rail svg` without this
+  assert.match(read("src/app/globals.css"), /\.rail-soc svg\{[^}]*stroke:none/);
+  assert.match(read("src/app/globals.css"), /\.soc-card\.youtube \.soc-ic\{/, "the card has its own icon colour");
+  assert.match(read("src/components/SocialIcon.tsx"), /kind === "youtube"/, "…and its own mark, not the Telegram plane");
+});
+
+test("the Organization record names the YouTube channel among its accounts", async () => {
+  const { organizationLd } = await import("../lib/seo.ts");
+  const { YOUTUBE_URL } = await import("./socials.ts");
+  const org = organizationLd() as Record<string, unknown>;
+  assert.ok((org.sameAs as string[]).includes(YOUTUBE_URL), "sameAs is how search engines tie the channel to the brand");
+});
+
+test("/community and the rail draw from one set of account marks", () => {
+  assert.match(read("src/app/(site)/community/page.tsx"), /from "@\/components\/SocialIcon"/);
+  assert.match(read("src/components/Rail.tsx"), /from "\.\/SocialIcon"/);
+  assert.ok(!/function Icon\(/.test(read("src/app/(site)/community/page.tsx")), "no private copy of the marks on the page");
 });
