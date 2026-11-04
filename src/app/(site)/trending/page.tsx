@@ -11,7 +11,7 @@ import { ChainFilter } from "@/components/ChainFilter";
 import { useChainParam } from "@/components/useChainParam";
 import { byChange, chainCounts, changeReading, featuredSlots, figureReading, resolveChain } from "@/lib/home";
 import { fmtPrice } from "@/lib/format";
-import { tierColor } from "@/lib/packages";
+import { publicTier, tierColor } from "@/lib/packages";
 import type { PeriodKey } from "@/lib/types";
 
 const FRAMES: PeriodKey[] = ["1h", "6h", "24h"];
@@ -68,12 +68,12 @@ export default function TrendingPage() {
                   className="feat-card"
                   key={t.key}
                   onClick={() => openDetail(t)}
-                  style={{ "--tc": tierColor(t.tier) } as CSSProperties}
+                  style={{ "--tc": tierColor(publicTier(t.tier)) } as CSSProperties}
                 >
                   <Coin token={t} size={38} fontSize={17} />
                   <div className="feat-id">
                     <div className="feat-sym">{t.symbol}</div>
-                    <TierTag tier={t.tier} showRank={false} ageMinutes={t.listedMinutesAgo} />
+                    <TierTag tier={t.tier} showRank={false} />
                   </div>
                   <div className="feat-px">
                     <div>{fmtPrice(figureReading(t, t.priceUsd))}</div>

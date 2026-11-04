@@ -117,10 +117,25 @@ const TIER_MAP: Record<string, ListingTierMeta> = Object.fromEntries(
  *  FREE is the bot's own auto-listing and is not one. */
 export const isPackage = (key: string): boolean => LISTING_TIERS.some((t) => t.key === key);
 
-/** Tier tags are a LAUNCH perk: a row shows its package for its first 48h,
- *  then blends into the board. One number for every surface that draws the
- *  tag — the board's TierTag and the home spotlight read it from here. */
-export const TIER_TAG_MAX_MIN = 48 * 60;
+/**
+ * The package the PUBLIC site names for a listing — every row, always.
+ *
+ * "yang free listing juga harus ada … misal FREE ya itu Xpress atau Gold Bronze
+ * Platinum, ya tulis aja sesuai dengan packagenya" (2026-11-04). Two rules used
+ * to leave rows with no tag at all: the tag was a 48h launch perk (so every
+ * listing older than two days lost it — the whole New Listings page at "3d"),
+ * and FREE was never drawn. The operator's call is that every listing names
+ * its package, and that the bot's FREE auto-listing reads as Xpress — the
+ * package an instant, unranked listing is sold as. Diamond, Gold, Platinum,
+ * Silver, Bronze and Xpress are shown as they are.
+ *
+ * DISPLAY ONLY. The stored tier is untouched: the admin console still shows
+ * FREE, the paid-slot order (`featuredSlots`) still puts a bot-booked slot
+ * after every package somebody bought, and the verified badge reads the real
+ * tier (FREE and XPRESS both carry none, so nothing is claimed by this).
+ */
+export const publicTier = (key: string): ListingTier =>
+  (String(key).toUpperCase() === FREE_TIER.key ? "XPRESS" : key) as ListingTier;
 
 export const tierMeta = (key: string): ListingTierMeta | undefined => TIER_MAP[key];
 export const tierLabel = (key: string): string => TIER_MAP[key]?.label ?? key;

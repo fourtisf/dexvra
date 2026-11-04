@@ -186,7 +186,7 @@ function StdRow({
         <div className="ts">
           <div className="sym">
             <span className="sym-txt">{t.symbol}</span>
-            <TierTag tier={t.tier} showRank={false} ageMinutes={t.listedMinutesAgo} />
+            <TierTag tier={t.tier} showRank={false} />
           </div>
           <div className="nm">{t.name}</div>
           {/* phones: the hidden table columns condense into this line */}
@@ -289,7 +289,7 @@ function TermRow({
         <div className="ts">
           <div className="sym">
             <span className="sym-txt">{t.symbol}</span>
-            <TierTag tier={t.tier} showRank={false} ageMinutes={t.listedMinutesAgo} />
+            <TierTag tier={t.tier} showRank={false} />
           </div>
           <div className="nm">{t.name}</div>
         </div>

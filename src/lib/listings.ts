@@ -167,8 +167,9 @@ export function rowToBoardToken(r: ListingRow): BoardToken {
     tier: r.tier,
     trendingRank: r.trendingRank ?? null,
     // Seed/demo tokens are long-standing coins, not fresh paid listings — age
-    // them past the 48h tier-tag window (+3 days) so they carry NO tier badge
-    // (only genuinely recent real listings do). Real rows use their real time.
+    // them three days so they do not lead "New Listings" or read as just
+    // listed. (The tier tag no longer expires, so this no longer hides it.)
+    // Real rows use their real time.
     listedMinutesAgo: r.listedAt ? Math.max(0, Math.floor((Date.now() - r.listedAt) / 60000)) : r.listedMin + 4320,
     score,
     poolAddress: null,

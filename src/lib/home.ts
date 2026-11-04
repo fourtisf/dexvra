@@ -14,7 +14,7 @@
 // the home lists are a doorway to them, which is why every cap carries its
 // total and every section carries a way through.
 import { CHAIN_IDS } from "../config/chains.ts";
-import { TIER_TAG_MAX_MIN, isPackage, tierRank } from "./packages.ts";
+import { isPackage, publicTier, tierRank } from "./packages.ts";
 import type { BoardToken, ListingTier, PeriodKey } from "./types.ts";
 
 /**
@@ -514,17 +514,13 @@ export function featuredSlots(tokens: readonly BoardToken[]): BoardToken[] {
  *  in place of the bare "Featured" pill, so the order the cards are in can be
  *  READ off them ("feature ini diganti … yang express ya tulis express").
  *
- *  - A BOOKED slot always names its package: that purchase is why the card is
- *    where it is, and hiding it after 48h would leave the lead cards unexplained.
- *  - A card that is there on its 24h move follows the board's own rule — the
- *    tag is a launch perk, shown for 48h — or the spotlight and the row beneath
- *    it would disagree about the same token.
- *  - FREE is never named: it is the bot's own stock, and TierTag refuses it for
- *    the reason written there. */
-export function spotlightTier(t: BoardToken): ListingTier | null {
-  if (!isPackage(t.tier)) return null;
-  if (t.trendingRank != null) return t.tier;
-  return t.listedMinutesAgo < TIER_TAG_MAX_MIN ? t.tier : null;
+ *  Every card names one, always, through `publicTier` — the same name the row
+ *  beneath it carries, so the two can never disagree about a token. The bot's
+ *  FREE auto-listing reads as Xpress ("misal FREE ya itu Xpress … tulis aja
+ *  sesuai dengan packagenya"); the 48h window that used to hide the tag is
+ *  gone everywhere. */
+export function spotlightTier(t: BoardToken): ListingTier {
+  return publicTier(t.tier);
 }
 
 /** The spotlight: booked slots first, topped up from the 24h ranking. */

@@ -15410,12 +15410,18 @@ is the `DEXVRA TERMINAL` layer, appended last in `globals.css`, over DEXVRA DATA
   rail also printed the RAW fields (`$0`, `+0.0%`); it reads `figureReading` /
   `changeReading` now.
 - **Each card names its PACKAGE, not "Featured"** ("feature ini diganti …
-  diamond gold platinum … yang express ya tulis express"). `spotlightTier` is
-  the one rule: a booked slot always shows its package (Diamond, Gold,
-  Platinum, Silver, Bronze, Xpress) because that purchase is why it leads; a
-  card there on its 24h move follows the board's 48h launch-tag rule, or the
-  card and its row would disagree; FREE is never named. The chip is the
-  board's own `TierTag`. Booked slots order Diamond → Bronze → **Xpress → the
+  diamond gold platinum … yang express ya tulis express"). The chip is the
+  board's own `TierTag`, and its name comes from `publicTier`.
+- **Every listing names its package, always** ("yang free listing juga harus
+  ada … misal FREE ya itu Xpress atau Gold Bronze Platinum, ya tulis aja sesuai
+  dengan packagenya"). Two rules used to leave rows tagless: the tag was a 48h
+  launch perk (the whole New Listings page at "3d" carried none) and FREE was
+  never drawn. Both are gone. `packages.ts` `publicTier` is the one owner of
+  the public name: Diamond, Gold, Platinum, Silver, Bronze and Xpress as they
+  are, and the bot's FREE auto-listing as **Xpress** (the operator's call).
+  It is DISPLAY ONLY — the admin console still shows FREE, the verified badge
+  reads the real tier (FREE and Xpress carry none), and booked slots order
+  Diamond → Bronze → **Xpress → the
   bot's free slots**: Xpress used to tie with Free at the back, so a slot the
   bot booked for itself could sit ahead of one a project paid for. The label is
   the package's own, "Xpress", as everywhere else on the site and in the bot.

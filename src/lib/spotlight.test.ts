@@ -129,13 +129,46 @@ test("each card names the package it bought, where it used to say Featured", () 
   assert.strictEqual(spotlightTier(tok({ sym: "D", tier: "DIAMOND", slot: 1, listed: old })), "DIAMOND", "a booked slot names its package for as long as it holds the slot");
   assert.strictEqual(spotlightTier(tok({ sym: "P", tier: "PLATINUM", slot: 2, listed: old })), "PLATINUM");
   assert.strictEqual(spotlightTier(tok({ sym: "X", tier: "XPRESS", slot: 3, listed: old })), "XPRESS", "…Xpress included");
-  assert.strictEqual(spotlightTier(tok({ sym: "F", tier: "FREE", slot: 4 })), null, "the bot's own stock is never labelled");
+  assert.strictEqual(spotlightTier(tok({ sym: "F", tier: "FREE", slot: 4 })), "XPRESS", "the bot's FREE listing reads as Xpress");
 });
 
-test("a card that is there on its move follows the board's 48h tag rule", () => {
+test("every card names its package, at any age — no 48h window, no blank FREE", () => {
+  // "yang free listing juga harus ada … misal FREE ya itu Xpress atau Gold
+  // Bronze Platinum, ya tulis aja sesuai dengan packagenya"
   assert.strictEqual(spotlightTier(tok({ sym: "G", tier: "GOLD", listed: 10 })), "GOLD");
-  assert.strictEqual(spotlightTier(tok({ sym: "G", tier: "GOLD", listed: 3 * 24 * 60 })), null, "or the card and its row would disagree");
-  assert.strictEqual(spotlightTier(tok({ sym: "F", tier: "FREE", listed: 10 })), null);
+  assert.strictEqual(spotlightTier(tok({ sym: "G", tier: "GOLD", listed: 3 * 24 * 60 })), "GOLD", "three days old still names Gold");
+  assert.strictEqual(spotlightTier(tok({ sym: "B", tier: "BRONZE", listed: 90 * 24 * 60 })), "BRONZE");
+  assert.strictEqual(spotlightTier(tok({ sym: "F", tier: "FREE", listed: 10 })), "XPRESS");
+  assert.strictEqual(spotlightTier(tok({ sym: "F", tier: "FREE", listed: 30 * 24 * 60 })), "XPRESS");
+});
+
+test("publicTier is display only: FREE shows as Xpress, the paid order still knows it is free", async () => {
+  const { publicTier } = await import("./packages.ts");
+  for (const k of ["DIAMOND", "GOLD", "PLATINUM", "SILVER", "BRONZE", "XPRESS"]) assert.strictEqual(publicTier(k), k);
+  assert.strictEqual(publicTier("FREE"), "XPRESS");
+  // A bot-booked FREE slot still sits after a slot somebody bought as Xpress.
+  const list = [tok({ sym: "AAA", tier: "FREE", slot: 1 }), tok({ sym: "ZZZ", tier: "XPRESS", slot: 9 })];
+  assert.deepStrictEqual(syms(featuredSlots(list)), ["ZZZ", "AAA"]);
+});
+
+test("the tag draws through publicTier and nothing hides it any more", () => {
+  const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+  const tag = strip(readFileSync(join(process.cwd(), "src/components/TierTag.tsx"), "utf8"));
+  assert.match(tag, /publicTier\(tier\)/, "the chip names the public package");
+  assert.ok(!/return null/.test(tag), "no tier and no age makes the chip disappear");
+  const pkgs = strip(readFileSync(join(process.cwd(), "src/lib/packages.ts"), "utf8"));
+  assert.ok(!/TIER_TAG_MAX_MIN/.test(pkgs), "the 48h window is gone, not just unused");
+  for (const f of [
+    "src/components/TokenBoard.tsx",
+    "src/components/TopCoins.tsx",
+    "src/app/(site)/new-listings/page.tsx",
+    "src/app/(site)/trending/page.tsx",
+    "src/app/(site)/token/[chain]/[address]/page.tsx",
+  ]) {
+    const src = strip(readFileSync(join(process.cwd(), f), "utf8"));
+    assert.match(src, /<TierTag /, `${f} still draws the tag`);
+    assert.ok(!/ageMinutes=/.test(src), `${f} passes no age to hide it`);
+  }
 });
 
 test("the spotlight draws the package through the board's own TierTag, and no Featured pill", () => {

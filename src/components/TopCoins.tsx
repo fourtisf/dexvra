@@ -107,7 +107,7 @@ export function TopCoinsBoard({
                   <div className="tc-id">
                     <div className="tc-sym">
                       <span className="tc-sym-txt">{t.symbol}</span>
-                      <TierTag tier={t.tier} showRank={false} ageMinutes={t.listedMinutesAgo} />
+                      <TierTag tier={t.tier} showRank={false} />
                     </div>
                     <div className="tc-nm">{t.name}</div>
                   </div>

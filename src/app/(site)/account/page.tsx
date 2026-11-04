@@ -5,7 +5,7 @@ import { PageHead } from "@/components/PageHead";
 import { CHAINS } from "@/config/chains";
 import { BOT_URL } from "@/config/brand";
 import { shortAddr } from "@/lib/walletConnect";
-import { tierLabel } from "@/lib/packages";
+import { publicTier, tierLabel } from "@/lib/packages";
 
 export default function AccountPage() {
   const { wallet, openWalletModal, disconnectWallet, watchlist, myListings } = useApp();
@@ -69,7 +69,7 @@ export default function AccountPage() {
                 <div>
                   <div style={{ fontFamily: "var(--fd)", fontWeight: 700, fontSize: 14 }}>{m.symbol}</div>
                   <div style={{ fontSize: 11.5, color: "var(--muted)" }}>
-                    {m.name} · <span style={{ color: c?.color }}>{c?.label ?? m.chain}</span> · {tierLabel(m.tier)}
+                    {m.name} · <span style={{ color: c?.color }}>{c?.label ?? m.chain}</span> · {tierLabel(publicTier(m.tier))}
                   </div>
                 </div>
                 <span className="status-chip">{m.status}</span>
