@@ -131,12 +131,50 @@ test('⚠️ "could not ask" is ok:false — never read as safe, never as a scam
   });
 });
 
-test('a chain no safety source covers PASSES — refusing would end free listing there', async () => {
+// ⚠️ THIS USED TO READ "a chain no safety source covers PASSES", and that rule
+// is how a Robinhood honeypot ($NASDUCK) was free-listed with no contract check
+// at all. An uncovered EVM chain is now asked of the chain (sellSim.js) — see
+// sellSim.test.js. What still passes is a chain where NO check can be run.
+const uncovered = (chain) => ({ tokenSecurityX: async () => ({ sec: null, ok: true, unsupported: true, why: `GoPlus does not cover ${chain}` }) });
+const simSays = (r) => ({ enabled: () => true, sellCheckX: async () => r });
+
+test('an uncovered EVM chain is asked of the CHAIN: a sell that reverts is refused', async () => {
   await withEnv('1', async () => {
     const r = await safety.checkX('robinhood', EVM, {
-      sources: { goplus: { tokenSecurityX: async () => ({ sec: null, ok: true, unsupported: true, why: 'GoPlus does not cover robinhood' }) } },
+      sources: { goplus: uncovered('robinhood'), sellSim: simSays({ ok: true, sells: false, why: 'a sell back into the pool reverts for 3 of 3 recent buyers' }) },
     });
-    assert.deepEqual([r.ok, r.refusal], [true, null]);
+    assert.equal(r.ok, true);
+    assert.match(String(r.refusal), /^potential scam \(honeypot/);
+  });
+});
+
+test('…a sell that goes through passes, and "could not decide" is UNCHECKED, never safe', async () => {
+  await withEnv('1', async () => {
+    const pass = await safety.checkX('robinhood', EVM, { sources: { goplus: uncovered('robinhood'), sellSim: simSays({ ok: true, sells: true }) } });
+    assert.deepEqual([pass.ok, pass.refusal], [true, null]);
+    const unsure = await safety.checkX('robinhood', EVM, { sources: { goplus: uncovered('robinhood'), sellSim: simSays({ ok: false, why: 'no recent buyer found in 10 log windows' }) } });
+    assert.equal(unsure.ok, false, 'an unchecked token is not a safe one');
+    assert.match(unsure.why, /^safety check: on-chain sell check inconclusive \(/);
+  });
+});
+
+test('a chain where NO check can run (non-EVM, or the sim switched off) still passes', async () => {
+  await withEnv('1', async () => {
+    let asked = 0;
+    const sim = { enabled: () => true, sellCheckX: async () => (asked++, { ok: true, sells: false }) };
+    const tron = await safety.checkX('tron', 'T' + 'a'.repeat(33), { sources: { goplus: uncovered('tron'), sellSim: { ...sim, sellCheckX: async () => ({ ok: true, unsupported: true, why: 'not an EVM token address' }) } } });
+    assert.deepEqual([tron.ok, tron.refusal], [true, null]);
+    const off = await safety.checkX('robinhood', EVM, { sources: { goplus: uncovered('robinhood'), sellSim: { ...sim, enabled: () => false } } });
+    assert.deepEqual([off.ok, off.refusal], [true, null]);
+    assert.equal(asked, 0, 'FREE_LISTING_SELL_SIM=0 asks nothing');
+  });
+});
+
+test('a GoPlus-covered chain never pays for the simulation', async () => {
+  await withEnv('1', async () => {
+    let asked = 0;
+    await safety.checkX('base', EVM, { sources: { ...src(cleanEvm()), sellSim: { enabled: () => true, sellCheckX: async () => (asked++, {}) } } });
+    assert.equal(asked, 0);
   });
 });
 

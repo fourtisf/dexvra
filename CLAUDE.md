@@ -15490,6 +15490,146 @@ that run.
 script), so `npm run deploy` rebuilds the web app and restarts `dexvra`; the
 bots are untouched.
 
+## "TOKEN HONEYPOT SAYA SUDAH DELETE … TPI PUMP ALERT MASIH SPAMM" — a deleted honeypot kept pumping
+
+Reported with four screenshots: **$NASDUCK on Robinhood Chain**, free-listed by
+the bot, then announced as "+1200%" and "+1900% since listing" in
+@dexvralisting. The operator had deleted it from the site (the token page read
+"Token Not Yet Listed") and the alerts kept coming. GMGN's page for it read
+`Unsafe · Possible honeypot! Buying is allowed · Liq $507.66` against a $684M
+cap. Two defects, and the operator's two asks: a deleted token must never be
+announced, and the free listing must check the LP, not only the cap and the
+volume.
+
+### A deleted token is silent — `pumpChecker.js`, `helpers/stillListed.js`
+
+Three things let a deleted row go on posting:
+
+1. **The list was read once per sweep.** A sweep prices every approved listing
+   one at a time (~680 rows, a request and a 300ms pause each, and on
+   GeckoTerminal-primary chains a queue behind the site's charts), so a sweep
+   runs for many minutes. A row deleted after the read was still priced and
+   announced from that stale copy.
+2. **Sweeps overlapped.** `setInterval(run, PUMP_CHECK_MS)` fires whether or
+   not the last sweep finished. Several ran at once, each with its own stale
+   list, and two crossing the same token could both decide "post" before either
+   latched: the same step twice.
+3. **Nothing was forgotten.** The baseline and the step latch outlived the row,
+   so a token deleted and re-added inherited the OLD baseline.
+
+The fixes:
+
+- **One sweep at a time.** A tick that lands during a sweep is skipped and
+  never stacked. A sweep that outruns `PUMP_CHECK_MS` says so at info.
+- **The site is asked again, FRESH, immediately before anything is sent**,
+  ahead of the media, the tweet and the channel post
+  (`stillListed.confirmListed`). The token must be present and `approved`, and
+  must have the same `listedAt` its baseline was taken under. ⚠️ **A re-read
+  that fails posts nothing.** Silence is the safe way to be wrong about a
+  deletion, and nothing is latched, so a real step goes out on a later sweep.
+- **A token gone from the site has its baseline and every latch key dropped**,
+  so a re-listing starts a new ladder from its own price. A row with a new
+  `listedAt` is re-baselined in place. ⚠️ An empty list prunes nothing, and a
+  list missing over half of a ledger of 20+ is refused as an outage-shaped read
+  (a site that lost its store serves its seed rows), not taken as deletions.
+- **A token the listing audit flagged as a scam is never announced** (and not
+  even priced). A row flagged only for its logo still is.
+- **A price a pool cannot back is not a pump.** Liquidity under
+  `PUMP_MIN_LIQ_PCT` (default 0.5%) of the cap is skipped with an info line,
+  once per step, and not latched. An unpublished liquidity makes no claim.
+- **Rank-up asks the same question** before its banner, tweet and post. One
+  owner (`helpers/stillListed.js`), so the next alert type cannot forget it.
+
+### The free listing checks the LP — `listingQuality.js` §5–6, `dexscreener.js`
+
+Every gate asked how BIG a token was. `liq` is both sides of the pool at the
+pool's own price, so a pool stuffed with the token itself reads deep while
+holding almost no WETH/SOL/USDC. The DexScreener record now carries the pool's
+**other side in USD** (`liqQuoteUsd`, from `liquidity.quote × priceUsd /
+priceNative`, or the base side when our token is the quote) and the **24h
+buys/sells** (`txns24`). Both are null when unpublished, never 0. Refused, at
+the one door (`createFromInfo`) and in the scan:
+
+| check | reason prefix |
+| --- | --- |
+| ≥ 20 buys in 24h and sells under 10% of them | `one-way market` |
+| the other side is under 5% of the reported liquidity | `one-sided pool` |
+| REAL liquidity, min(liq, 2 × other side), under a floor of the cap: 2% to $10M, sliding on a log scale to 0.5% at $1B+, unless it is at least $1M | `liquidity too thin for its cap` |
+
+The scan's `minLiq` floor is measured on REAL liquidity too: `thin liquidity
+($20,000 real, of $400,000 reported)`.
+
+- ⚠️ **The $1M deep-pool escape is not optional.** Genuine majors keep their
+  volume on exchanges. SHIB's Ethereum pool is a fraction of a percent of its
+  cap, and the board filler lists it. A ratio alone refused the `noStables`
+  fixture ($5B on $10M) the first time it ran. What separates SHIB from the
+  honeypot is millions against $507, and a fake cap cannot buy a million of
+  real money.
+- The new reasons cool 12h, and each is ONE bucket on the scan line. The audit
+  reads the same owners, so listed FREE rows are re-checked and flagged, and a
+  flag silences their pump alerts.
+
+### A chain GoPlus does not cover is asked of the CHAIN — `sellSim.js`
+
+`listingSafety` let "a chain no safety source covers" PASS, and GoPlus does not
+cover Robinhood. Nor does it cover Polygon, Optimism, Avalanche, Blast, Sonic or
+the rest of the tracked EVM chains. A honeypot there met no contract check at
+all. Now an uncovered EVM chain gets an on-chain **sell simulation**:
+
+1. Read the token's recent `Transfer` logs, newest first, in windows that grow
+   backwards and halve on a node that refuses the range.
+2. Keep the transfers that came OUT of a contract (the pair, or with the pool
+   known, ONLY that pool; on v4 the PoolManager) INTO a plain wallet.
+3. `eth_call` `transfer(venue, 1% of balance)` FROM up to 3 such buyers who
+   still hold it. That is the first leg of selling it back where it came from.
+
+One buyer whose sell goes through is enough. At least 2 tried, all reverting
+(or the token answering `false`), is `potential scam (honeypot — …)`. Anything
+less, including no buyer found, a dead RPC, or a rate limit on the call (the
+node, not the contract), is **inconclusive**. That is `ok:false`, the scan's
+"could not be safety-checked", never safe and never a scam. A non-EVM chain no
+source covers (Tron, TON, Sui) still passes, because no check can run there.
+
+- ⚠️ **It does not see a sell TAX or a block keyed on the router.** GoPlus
+  simulates those where it exists. Here the market checks above are the second
+  line. A reverting sell (GMGN's "Buying is allowed") is what it catches.
+- `jsonRpc` THROWS only on transport, so `rpcRead` walks endpoints. A JSON-RPC
+  error is RETURNED, because it is the same answer everywhere.
+- `FREE_LISTING_SELL_SIM=0` restores the old pass. Blank is ON.
+
+```bash
+cd bot && node scripts/run-tests.js test/pumpDeleted.test.js test/listingLiquidity.test.js test/sellSim.test.js test/listingSafety.test.js
+cd bot && npm run token:verdict      # prints a complete line for a listed token; then run it for any chain + contract
+```
+
+`token:verdict` asks, from THIS box, what the scan would read and decide:
+reported vs real liquidity, the pool's other side, buys/sells, the quality
+verdict and the safety verdict (GoPlus, RugCheck or the sell simulation).
+Whether DexScreener and the Robinhood RPC answer the server is a property of
+its egress. The sandbox this was built in could reach neither, so the first
+live run of it is the measurement.
+
+Mutation-tested (each fails at least one test): the fresh re-check removed, the
+single-flight guard removed, pruning removed, the outage guard removed, the
+re-list reset removed, the thin-pool rule removed, the audit skip removed; each
+of the three LP checks off, the deep-pool escape dropped, the floor not scaled,
+real liquidity ignoring the other side, `Number(null)` read as 0, base58
+case-folded, txns not carried, `minLiq` back on reported liquidity; the
+uncovered chain passing again, inconclusive read as safe, the switch ignored,
+one revert taken as a verdict, the first success not enough, `false` read as
+success, a rate limit read as a revert, the pool filter dropped,
+wallet-to-wallet counted as a buy, a contract recipient tried, a zero balance
+tried, no range halving, the sell sent to the wrong venue, and the door
+forgetting the pool. ⚠️ Three survived the first run (overlap, wallet-to-wallet,
+rate limit). All three were test gaps: an overlap test that hung instead of
+failing, and two fixtures the walk never reached.
+
+**Config a fix depends on:** nothing. It all ships ON. `PUMP_MIN_LIQ_PCT`,
+`FREE_LISTING_SELL_SIM` and `PUMP_POLITE_MS` are overrides, not prerequisites.
+`bot/` only, so an ecosystem restart. ⚠️ It CHANGES what the free feed accepts
+on deploy, deliberately: free listing on uncovered EVM chains now needs that
+chain's RPC to answer `eth_getLogs`, and the scan line says so when it does not.
+
 ## Conventions
 
 - Tests live beside the code they cover, in `bot/test/`, `tradebot/*.test.js`

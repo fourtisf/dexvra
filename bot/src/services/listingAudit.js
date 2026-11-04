@@ -101,7 +101,7 @@ async function judge(row, deps) {
     const bad = qualityRefusal(row.chain, row.address, merged);
     if (bad) return { ok: true, why: bad };
   }
-  const safe = await deps.safetyX(row.chain, row.address).catch((e) => ({ ok: false, why: e.message }));
+  const safe = await deps.safetyX(row.chain, row.address, info).catch((e) => ({ ok: false, why: e.message }));
   if (!safe || !safe.ok) return { ok: false, why: (safe && safe.why) || 'safety check: no answer' };
   return { ok: true, why: safe.refusal || null };
 }
@@ -112,7 +112,7 @@ function realDeps() {
   return {
     getListings: () => api.getListings(),
     priceX: (c, a) => discovery.fetchTokenInfoX(c, a),
-    safetyX: (c, a) => listingSafety.checkX(c, a),
+    safetyX: (c, a, info) => listingSafety.checkX(c, a, { pool: info && info.poolAddress }),
     autoKeys: () => require('./autoLister').autoListedKeys(),
     healLogo: (row) => listingLogo.healRow(row),
     alert: (html) => log.alert(html),

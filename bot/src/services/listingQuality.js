@@ -182,6 +182,114 @@ function isFlat(info) {
   return FLAT_WINDOWS.every((w) => typeof pc[w] === 'number' && pc[w] === 0);
 }
 
+// ── 5. THE POOL'S REAL DEPTH — "CEK LP BUKAN HANYA MC DAN VOLUME" ───────────
+//
+// A honeypot ($NASDUCK, Robinhood) was free-listed at a $27M cap and then
+// announced "+1900%" while GMGN measured its pool at $507 against a $684M cap.
+// Every gate had asked how BIG it was; none asked how much of that size a
+// seller could actually be paid from. Three readings answer that:
+//
+//  a. REAL LIQUIDITY. `liq` is both sides of the pool at the pool's own price,
+//     and a pool stuffed with the token itself reads deep while holding almost
+//     no WETH/SOL/USDC. The other side (`liqQuoteUsd`, from the pair's own
+//     reserves) is what a sell is paid from; in a balanced pool it is half of
+//     `liq`, so the real figure is min(liq, 2 × other side).
+//  b. A ONE-SIDED POOL. Under QUOTE_SHARE_MIN of the reported liquidity on the
+//     other side means the "liquidity" is the token pricing itself.
+//  c. REAL LIQUIDITY AGAINST THE CAP. A cap a pool cannot back is a number,
+//     not a market. The floor SCALES with the cap, because a $1B token
+//     legitimately runs a thinner pool relative to its cap than a $2M one — the
+//     board filler lists those, and a flat 2% would refuse PEPE. 2% up to $10M,
+//     sliding on a log scale to 0.5% at $1B and beyond. $27M on $30k is 0.1%.
+//     ⚠️ AND A DEEP POOL IS A MARKET AT ANY CAP. Genuine majors keep most of
+//     their volume on exchanges: SHIB's Ethereum pool is a fraction of a
+//     percent of its cap and it is still the real SHIB. What separates it from
+//     the honeypot is the ABSOLUTE depth — millions against $507 — so real
+//     liquidity of LIQ_DEEP_USD or more passes (c) whatever the ratio. A fake
+//     cap cannot buy that: it would mean parking a million of real money.
+//
+// ⚠️ An unpublished reading makes no claim (the rule for 3 and 4): a source
+// with no `liqQuoteUsd` is judged on `liq`, and no `liq` at all on nothing.
+const QUOTE_SHARE_MIN = 0.05;
+const LIQ_SHARE_SMALL = 0.02; // at or below LIQ_SHARE_SMALL_CAP
+const LIQ_SHARE_LARGE = 0.005; // at or above LIQ_SHARE_LARGE_CAP
+const LIQ_SHARE_SMALL_CAP = 10_000_000;
+const LIQ_SHARE_LARGE_CAP = 1_000_000_000;
+const LIQ_DEEP_USD = 1_000_000;
+
+const finiteOrNull = (v) => {
+  if (v == null || String(v).trim() === '') return null; // Number(null) is 0 — not a reading
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+};
+
+/** The least share of its cap a token's REAL liquidity must be. */
+function minLiqShare(mcap) {
+  const m = Number(mcap) || 0;
+  if (m <= LIQ_SHARE_SMALL_CAP) return LIQ_SHARE_SMALL;
+  if (m >= LIQ_SHARE_LARGE_CAP) return LIQ_SHARE_LARGE;
+  const t = (Math.log10(m) - Math.log10(LIQ_SHARE_SMALL_CAP)) / (Math.log10(LIQ_SHARE_LARGE_CAP) - Math.log10(LIQ_SHARE_SMALL_CAP));
+  return LIQ_SHARE_SMALL - (LIQ_SHARE_SMALL - LIQ_SHARE_LARGE) * t;
+}
+
+/** What a seller could actually be paid from, in USD, or null when nothing was published. */
+function realLiquidity(info) {
+  if (!info) return null;
+  const liq = Number(info.liq) || 0;
+  const other = finiteOrNull(info.liqQuoteUsd);
+  if (other != null && other >= 0) return liq > 0 ? Math.min(liq, 2 * other) : 2 * other;
+  return liq > 0 ? liq : null;
+}
+
+// ── 6. A MARKET NOBODY CAN SELL INTO ────────────────────────────────────────
+// A honeypot's chart is all buys: anybody can buy, the contract refuses the
+// sell. GMGN's own words on $NASDUCK: "Possible honeypot! Buying is allowed".
+// At least ONE_WAY_MIN_BUYS buys in 24h with sells under ONE_WAY_SELL_SHARE of
+// them is not a strong day — a real market at its most euphoric still sees a
+// third as many sells as buys. Unpublished counts make no claim.
+const ONE_WAY_MIN_BUYS = 20;
+const ONE_WAY_SELL_SHARE = 0.1;
+
+function oneWay(info) {
+  const t = info && info.txns24;
+  if (!t || typeof t !== 'object') return null;
+  const buys = finiteOrNull(t.buys);
+  const sells = finiteOrNull(t.sells);
+  if (buys == null || sells == null) return null;
+  if (buys < ONE_WAY_MIN_BUYS || sells >= buys * ONE_WAY_SELL_SHARE) return null;
+  return { buys, sells };
+}
+
+const usd = (n) => `$${Math.round(Number(n) || 0).toLocaleString('en-US')}`;
+const pctStr = (x) => {
+  const p = x * 100;
+  if (p >= 10) return `${Math.round(p)}%`;
+  if (p >= 1) return `${Math.round(p * 10) / 10}%`;
+  return p >= 0.01 ? `${p.toFixed(2)}%` : `${p.toExponential(1)}%`;
+};
+
+/** The LP reasons, honeypot signature first, or null. */
+function liquidityRefusal(info) {
+  if (!info) return null;
+  const ow = oneWay(info);
+  if (ow) return `one-way market (${ow.buys} buys, ${ow.sells} sells in 24h — selling looks blocked)`;
+  const liq = Number(info.liq) || 0;
+  const other = finiteOrNull(info.liqQuoteUsd);
+  if (other != null && other >= 0 && liq > 0 && other / liq < QUOTE_SHARE_MIN) {
+    const q = info.quoteSymbol ? String(info.quoteSymbol).replace(/[()]/g, '') : 'the paired asset';
+    return `one-sided pool (only ${usd(other)} of its ${usd(liq)} liquidity is ${q} — the rest is its own token)`;
+  }
+  const mcap = Number(info.mcap) || 0;
+  const real = realLiquidity(info);
+  if (mcap > 0 && real != null && real < LIQ_DEEP_USD) {
+    const floor = minLiqShare(mcap);
+    if (real / mcap < floor) {
+      return `liquidity too thin for its cap (${usd(real)} real liquidity is ${pctStr(real / mcap)} of a ${usd(mcap)} cap, needs ${pctStr(floor)})`;
+    }
+  }
+  return null;
+}
+
 const HTTP_LOGO = /^https?:\/\/\S+$/i;
 
 /**
@@ -218,7 +326,25 @@ function qualityRefusal(chain, address, info, { artPending = false } = {}) {
     );
   }
   if (isFlat(info)) return 'flat price (0.00% over 1h, 6h and 24h despite trades)';
-  return null;
+  // Asked LAST: a copy, a missing logo and a parked pool keep their own
+  // reasons, which `listings:nostables` and the audit page already speak.
+  return liquidityRefusal(info);
 }
 
-module.exports = { qualityRefusal, impersonates, isFlat, MAJORS, LIQ_MCAP_MAX, LIQ_IDLE_TURNOVER, _foldSym: foldSym };
+module.exports = {
+  qualityRefusal,
+  liquidityRefusal,
+  realLiquidity,
+  minLiqShare,
+  oneWay,
+  impersonates,
+  isFlat,
+  MAJORS,
+  LIQ_MCAP_MAX,
+  LIQ_IDLE_TURNOVER,
+  QUOTE_SHARE_MIN,
+  LIQ_DEEP_USD,
+  ONE_WAY_MIN_BUYS,
+  ONE_WAY_SELL_SHARE,
+  _foldSym: foldSym,
+};

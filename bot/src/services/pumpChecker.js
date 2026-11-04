@@ -15,7 +15,7 @@ const api = require("../api/dexvra");
 // shared with the website's candlestick charts on the same box. DexScreener
 // publishes both numbers and costs us none of that budget; GT is still asked
 // for the chains and the tokens DexScreener cannot answer. See marketdata.js.
-const { fetchPrice } = require("../marketdata");
+const market = require("../marketdata"); // called as market.fetchPrice — a seam the tests can stub
 const postids = require("../channels/postids");
 const fmt = require("../channels/format");
 const post = require("../channels/post");
@@ -35,6 +35,87 @@ let baseline = loadJSONSync(BASE_FILE, {});
 const latch = new DedupSet("pumplatch.json");
 const keyOf = (r) => `${r.chain}:${String(r.address).toLowerCase()}`;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// The pause between two tokens' price reads. A test sets it to 0.
+const POLITE_MS = Math.max(0, Number(process.env.PUMP_POLITE_MS ?? 300) || 0);
+
+// ---------------------------------------------------------------- a deleted token is SILENT
+//
+// "SAYA SUDAH DELETE TOKEN FROM DATABASE TPI PUMP ALERT MASIH SPAMM" — a
+// honeypot ($NASDUCK, Robinhood) deleted from the site went on posting
+// "+1200%", "+1900% since listing" into @dexvralisting. Three things let it:
+//
+//  1. THE LIST WAS READ ONCE PER SWEEP. A sweep prices every approved listing
+//     one at a time — ~680 rows, a request and a 300ms pause each, and on the
+//     GeckoTerminal-primary chains a queue behind the site's charts — so one
+//     sweep runs for many minutes, and a row deleted after the read was still
+//     priced and still announced from that stale copy.
+//  2. SWEEPS OVERLAPPED. `setInterval` fires every PUMP_CHECK_MS whether or
+//     not the last sweep finished, so several ran at once, each holding its own
+//     stale list — and two of them crossing the same token in the same minute
+//     could both decide "post" before either latched: the same step twice.
+//  3. NOTHING WAS EVER FORGOTTEN. The baseline and the step latch outlived the
+//     row, so a token deleted and later re-added picked up the OLD baseline and
+//     announced "+1900% since listing" about a listing that was minutes old.
+//
+// So: one sweep at a time; the SITE is asked again, fresh, immediately before
+// anything is sent (a read that fails sends nothing — silence is the safe way
+// to be wrong about a deletion); and a token gone from the site has its pump
+// state dropped, so a re-listing starts a new ladder from its own price.
+
+const { liveMap, confirmListed, auditScam } = require("../helpers/stillListed");
+
+// Past this share of the market cap missing from the pool, the price is not a
+// market — it is a number a thin pool prints. $NASDUCK announced "+1900%" on a
+// pool GMGN measured at $507 against a $684M cap (0.00007%). `PUMP_MIN_LIQ_PCT`
+// (percent; 0 turns it off). An unpublished liquidity makes no claim.
+const PUMP_MIN_LIQ_PCT = (() => {
+  const raw = process.env.PUMP_MIN_LIQ_PCT;
+  if (raw == null || String(raw).trim() === "") return 0.5; // blank is ABSENT, never 0
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : 0.5;
+})();
+
+/** Why this reading may not be announced as a pump, or null. */
+function unbackedPrice(m, minPct = PUMP_MIN_LIQ_PCT) {
+  if (!(minPct > 0) || !m) return null;
+  const liq = Number(m.liq);
+  const mcap = Number(m.mcap);
+  if (!(liq > 0) || !(mcap > 0)) return null;
+  const pct = (liq / mcap) * 100;
+  if (pct >= minPct) return null;
+  return `liquidity $${formatNumber(liq)} is ${pct < 0.01 ? pct.toExponential(1) : pct.toFixed(2)}% of its $${formatNumber(mcap)} cap — the price is not backed by a pool`;
+}
+
+/**
+ * Drop the pump state of every token no longer approved on the site.
+ *
+ * ⚠️ A LIST THAT LOOKS LIKE AN OUTAGE IS NOT A WAVE OF DELETIONS. A site that
+ * lost its store answers with its seed rows; read literally that "deletes"
+ * every real listing at once and re-baselines them all. So an empty read
+ * prunes nothing, and one that would drop more than half of a sizeable ledger
+ * in one sweep is refused and said — an operator deleting tokens does it a few
+ * at a time.
+ */
+async function forgetGone(live, { base = baseline, latchSet = latch } = {}) {
+  const known = Object.keys(base);
+  if (!live.size) return { dropped: 0, refused: false };
+  const gone = known.filter((k) => !live.has(k));
+  if (!gone.length) return { dropped: 0, refused: false };
+  if (known.length >= 20 && gone.length > known.length / 2) {
+    log.warn(
+      `[pump] ${gone.length} of ${known.length} tracked tokens are missing from the site's list at once — ` +
+        "that reads as a site outage, not deletions; their pump state is kept",
+    );
+    return { dropped: 0, refused: true };
+  }
+  const goneSet = new Set(gone);
+  for (const k of gone) delete base[k];
+  await saveJSON(BASE_FILE, base).catch(() => {});
+  // Latch keys are `${key}` (legacy) or `${key}@${step}`.
+  await latchSet.deleteWhere((lk) => goneSet.has(String(lk).replace(/@\d+$/, "")));
+  log.info(`[pump] forgot ${gone.length} token(s) no longer on the site: ${gone.slice(0, 5).join(", ")}${gone.length > 5 ? " …" : ""}`);
+  return { dropped: gone.length, refused: false };
+}
 
 // ---------------------------------------------------------------- milestones
 //
@@ -189,113 +270,182 @@ function pumpTargets(ids = {}) {
   return out;
 }
 
-function start(tg) {
-  const run = async () => {
-    let listings;
+// ONE SWEEP AT A TIME — see the header block above `liveMap`.
+let sweeping = false;
+// What was last said about a token whose price is not backed by its pool, so
+// the line is written once per step rather than every three minutes.
+const unbackedSaid = new Map();
+
+/** One pass over every approved listing. Returns null when a sweep was already
+ *  running (this tick is skipped, never queued), else `{ priced, posted }`. */
+async function sweep({ now = Date.now() } = {}) {
+  if (sweeping) {
+    log.debug("[pump] previous sweep still running — this tick skipped");
+    return null;
+  }
+  sweeping = true;
+  const startedAt = Date.now();
+  try {
+    return await sweepOnce(now);
+  } finally {
+    sweeping = false;
+    const took = Date.now() - startedAt;
+    if (took > PUMP_CHECK_MS) {
+      log.info(`[pump] sweep took ${Math.round(took / 1000)}s — longer than PUMP_CHECK_MS (${Math.round(PUMP_CHECK_MS / 1000)}s); overlapping ticks were skipped`);
+    }
+  }
+}
+
+async function sweepOnce(now) {
+  const out = { priced: 0, posted: 0, skipped: [] };
+  let listings;
+  try {
+    listings = await api.getListings();
+  } catch {
+    return out;
+  }
+  const live = liveMap(listings);
+  await forgetGone(live);
+  for (const r of listings) {
+    if (r.status !== "approved") continue;
+    const key = keyOf(r);
+    // A token our own audit has flagged as a scam is never announced as a pump.
+    if (auditScam(key)) continue;
+    const m = await market.fetchPrice(r.chain, r.address).catch(() => null);
+    if (POLITE_MS) await sleep(POLITE_MS); // be polite to the indexers — mostly DexScreener now
+    if (!m || !m.priceUsd) continue;
+    out.priced++;
+
+    // A baseline belongs to ONE listing. A token deleted and re-added (a new
+    // listedAt) is a new listing, and "since listing" must mean since that one.
+    if (baseline[key] && r.listedAt && baseline[key].listedAt && Number(baseline[key].listedAt) !== Number(r.listedAt)) {
+      delete baseline[key];
+      await latch.deleteWhere((lk) => String(lk).replace(/@\d+$/, "") === key);
+    } else if (baseline[key] && !baseline[key].listedAt && r.listedAt) {
+      // A baseline recorded before this field existed adopts the listing it is
+      // standing on, so the NEXT re-listing is told apart.
+      baseline[key].listedAt = r.listedAt;
+      await saveJSON(BASE_FILE, baseline).catch(() => {});
+    }
+    if (!baseline[key]) {
+      baseline[key] = { price: m.priceUsd, mcap: m.mcap || null, at: now, listedAt: r.listedAt || null };
+      await saveJSON(BASE_FILE, baseline).catch(() => {});
+      continue; // no alert on first observation
+    }
+    const base = baseline[key];
+    if (!base.price || m.priceUsd < base.price) continue;
+    const pct = ((m.priceUsd - base.price) / base.price) * 100;
+    const { minPct, maxPct } = pumpConfig.get(); // admin-set window (default 100%–2000%)
+    if (pct < minPct || pct > maxPct) continue;
+
+    // Announce the STEP reached, not the raw gain this poll happened to catch.
+    const milestone = milestoneFor(pct, minPct, maxPct);
+    if (milestone == null) continue;
+    // retire / skip / post — see decide(). MIGRATION off the old once-per-token
+    // latch happens first: before the ladder a token latched under its BARE key,
+    // and every one of those already stands above steps it never announced, so
+    // announcing them would dump an alert for every previously-pumped listing
+    // into a channel with twelve thousand subscribers the moment this deploys.
+    const action = decide(latch, key, milestone);
+    if (action === "skip") continue; // this step already went out
+    if (action === "retire") {
+      await absorbLegacy(latch, key, milestone, minPct, maxPct);
+      log.event(
+        `📈 Pump: ${r.sym || r.address} pre-ladder — steps ≤ ${milestone}% absorbed, next alert at +${milestone + MILESTONE_STEP}%`,
+      );
+      continue;
+    }
+
+    const ids = postids.get(r.chain, r.address);
+    const targets = pumpTargets(ids);
+    if (!targets.length) {
+      // Nothing to reply to — usually a token listed before post ids were
+      // recorded, or one whose listing post failed. No latch: if the id shows
+      // up later the pump can still be announced.
+      log.debug(`[pump] ${r.sym || r.address}: no listing post to reply to — skipped`);
+      continue;
+    }
+    // A price a thin pool printed is not a pump. No latch: if the pool fills
+    // in, the step can still be announced.
+    const unbacked = unbackedPrice(m);
+    if (unbacked) {
+      if (unbackedSaid.get(key) !== milestone) {
+        unbackedSaid.set(key, milestone);
+        log.info(`[pump] ${r.sym || r.address} +${milestone}% NOT announced — ${unbacked}`);
+      }
+      out.skipped.push({ key, why: unbacked });
+      continue;
+    }
+    // ⚠️ ASK THE SITE AGAIN, NOW. The list this sweep is walking was read at
+    // its start, possibly many minutes ago; an operator may have deleted the
+    // token since. Nothing — not the tweet, not the channel post — goes out
+    // until a fresh read says it is still listed. No latch on a refusal.
+    const still = await confirmListed(r, base);
+    if (!still.ok) {
+      log.info(`[pump] ${r.sym || r.address} +${milestone}% NOT announced — ${still.why}`);
+      out.skipped.push({ key, why: still.why });
+      continue;
+    }
+    const coin = coinOf(r, m.priceUsd, m.mcap);
+    const media = await pumpMedia(r, base, m, milestone); // admin pump clip + overlay (null → text reply)
+    // A pump tweet MUST quote the token's own listing tweet — the same rule
+    // pumpTargets enforces on Telegram, for the same reason: standing alone on
+    // the listing feed, "+240% since listing" is indistinguishable from a shill
+    // post for a token that account never announced. The quoted listing card is
+    // what makes it a follow-up. No known listing tweet → no tweet at all
+    // (the Telegram alert still goes out, and the card's X line drops itself).
+    //
+    // Fired BEFORE the card is BUILT, not after it is sent: the card carries an
+    // "Announce On X" line, and a tweet made afterwards can never reach it.
+    // Timeboxed and best-effort — the alert still posts if X is slow or off.
+    let pumpTweetId = null;
+    if (ids.listingTweetId) {
+      pumpTweetId = await Promise.race([
+        x.postPump(coin, milestone, base.mcap || 0, m.mcap || 0, ids.listingTweetId, media).catch(() => null),
+        new Promise((res) => setTimeout(res, X_POST_TIMEOUT_MS, null)),
+      ]);
+    } else if (x.enabled()) {
+      log.debug(`[pump] ${r.sym || r.address}: no listing tweet to quote — Telegram only`);
+    }
+    if (pumpTweetId) coin.xUrl = `https://x.com/i/status/${pumpTweetId}`;
+    const card = fmt.pumpPost(coin, milestone, base.mcap || 0, m.mcap || 0);
+    // "Did the alert post?" means ANY target took it, not specifically the
+    // listing channel. Counting only CHANNELS.listing left a token that has an
+    // @dexvraio announcement but no listing-channel post (the listing post
+    // failed, or an admin force-posted only the announcement) posting to
+    // @dexvraio successfully, never latching, and re-firing on EVERY poll —
+    // duplicate announcements forever, and now a duplicate tweet with them.
+    let posted = null;
     try {
-      listings = await api.getListings();
-    } catch {
-      return;
+      for (const t of targets) {
+        const msg = await post.sendMedia(t.channel, media, card, { replyTo: t.replyTo });
+        if (msg) posted = posted || msg;
+      }
+    } catch (e) {
+      log.warn(`[pump] post: ${e.message}`);
     }
-    const now = Date.now();
-    for (const r of listings) {
-      if (r.status !== "approved") continue;
-      const key = keyOf(r);
-      const m = await fetchPrice(r.chain, r.address).catch(() => null);
-      await sleep(300); // be polite to the indexers — mostly DexScreener now
-      if (!m || !m.priceUsd) continue;
-
-      if (!baseline[key]) {
-        baseline[key] = { price: m.priceUsd, mcap: m.mcap || null, at: now };
-        await saveJSON(BASE_FILE, baseline).catch(() => {});
-        continue; // no alert on first observation
-      }
-      const base = baseline[key];
-      if (!base.price || m.priceUsd < base.price) continue;
-      const pct = ((m.priceUsd - base.price) / base.price) * 100;
-      const { minPct, maxPct } = pumpConfig.get(); // admin-set window (default 100%–2000%)
-      if (pct < minPct || pct > maxPct) continue;
-
-      // Announce the STEP reached, not the raw gain this poll happened to catch.
-      const milestone = milestoneFor(pct, minPct, maxPct);
-      if (milestone == null) continue;
-      // retire / skip / post — see decide(). MIGRATION off the old once-per-token
-      // latch happens first: before the ladder a token latched under its BARE key,
-      // and every one of those already stands above steps it never announced, so
-      // announcing them would dump an alert for every previously-pumped listing
-      // into a channel with twelve thousand subscribers the moment this deploys.
-      const action = decide(latch, key, milestone);
-      if (action === "skip") continue; // this step already went out
-      if (action === "retire") {
-        await absorbLegacy(latch, key, milestone, minPct, maxPct);
-        log.event(
-          `📈 Pump: ${r.sym || r.address} pre-ladder — steps ≤ ${milestone}% absorbed, next alert at +${milestone + MILESTONE_STEP}%`,
-        );
-        continue;
-      }
-
-      const ids = postids.get(r.chain, r.address);
-      const targets = pumpTargets(ids);
-      if (!targets.length) {
-        // Nothing to reply to — usually a token listed before post ids were
-        // recorded, or one whose listing post failed. No latch: if the id shows
-        // up later the pump can still be announced.
-        log.debug(`[pump] ${r.sym || r.address}: no listing post to reply to — skipped`);
-        continue;
-      }
-      const coin = coinOf(r, m.priceUsd, m.mcap);
-      const media = await pumpMedia(r, base, m, milestone); // admin pump clip + overlay (null → text reply)
-      // A pump tweet MUST quote the token's own listing tweet — the same rule
-      // pumpTargets enforces on Telegram, for the same reason: standing alone on
-      // the listing feed, "+240% since listing" is indistinguishable from a shill
-      // post for a token that account never announced. The quoted listing card is
-      // what makes it a follow-up. No known listing tweet → no tweet at all
-      // (the Telegram alert still goes out, and the card's X line drops itself).
-      //
-      // Fired BEFORE the card is BUILT, not after it is sent: the card carries an
-      // "Announce On X" line, and a tweet made afterwards can never reach it.
-      // Timeboxed and best-effort — the alert still posts if X is slow or off.
-      let pumpTweetId = null;
-      if (ids.listingTweetId) {
-        pumpTweetId = await Promise.race([
-          x.postPump(coin, milestone, base.mcap || 0, m.mcap || 0, ids.listingTweetId, media).catch(() => null),
-          new Promise((res) => setTimeout(res, X_POST_TIMEOUT_MS, null)),
-        ]);
-      } else if (x.enabled()) {
-        log.debug(`[pump] ${r.sym || r.address}: no listing tweet to quote — Telegram only`);
-      }
-      if (pumpTweetId) coin.xUrl = `https://x.com/i/status/${pumpTweetId}`;
-      const card = fmt.pumpPost(coin, milestone, base.mcap || 0, m.mcap || 0);
-      // "Did the alert post?" means ANY target took it, not specifically the
-      // listing channel. Counting only CHANNELS.listing left a token that has an
-      // @dexvraio announcement but no listing-channel post (the listing post
-      // failed, or an admin force-posted only the announcement) posting to
-      // @dexvraio successfully, never latching, and re-firing on EVERY poll —
-      // duplicate announcements forever, and now a duplicate tweet with them.
-      let posted = null;
-      try {
-        for (const t of targets) {
-          const msg = await post.sendMedia(t.channel, media, card, { replyTo: t.replyTo });
-          if (msg) posted = posted || msg;
-        }
-      } catch (e) {
-        log.warn(`[pump] post: ${e.message}`);
-      }
-      // Latch only AFTER the alert really posted. Spending the once-per-token
-      // budget at DETECTION time meant a failed post burned it forever and the
-      // token could never alert again.
-      if (!posted) {
-        log.warn(`[pump] ${r.sym || r.address}: +${milestone}% alert did not post — not latching, will retry next cycle`);
-        continue;
-      }
-      // Consume the step just announced AND every step below it, so a jump that
-      // cleared several at once cannot backfill them as separate alerts later.
-      await latch.addAll(stepKeys(key, milestone, minPct, maxPct));
-      log.event(`📈 Pump: ${r.sym} +${milestone}% since listing (${r.chain}, actual +${Math.round(pct)}%)`);
+    // Latch only AFTER the alert really posted. Spending the once-per-token
+    // budget at DETECTION time meant a failed post burned it forever and the
+    // token could never alert again.
+    if (!posted) {
+      log.warn(`[pump] ${r.sym || r.address}: +${milestone}% alert did not post — not latching, will retry next cycle`);
+      continue;
     }
-  };
-  const iv = setInterval(run, PUMP_CHECK_MS);
-  const kick = setTimeout(run, 15000);
+    // Consume the step just announced AND every step below it, so a jump that
+    // cleared several at once cannot backfill them as separate alerts later.
+    await latch.addAll(stepKeys(key, milestone, minPct, maxPct));
+    out.posted++;
+    log.event(`📈 Pump: ${r.sym} +${milestone}% since listing (${r.chain}, actual +${Math.round(pct)}%)`);
+  }
+  return out;
+}
+
+function start(tg) {
+  // A tick that lands while a sweep is still running is SKIPPED (see sweep()),
+  // never stacked — overlapping sweeps were how a deleted token kept posting.
+  const tick = () => sweep().catch((e) => log.warn(`[pump] sweep: ${e.message}`));
+  const iv = setInterval(tick, PUMP_CHECK_MS);
+  const kick = setTimeout(tick, 15000);
   return {
     stop: () => {
       clearInterval(iv);
@@ -304,4 +454,20 @@ function start(tg) {
   };
 }
 
-module.exports = { start, pumpTargets, milestoneFor, stepKeys, absorbLegacy, decide, MILESTONE_STEP };
+module.exports = {
+  start,
+  sweep,
+  pumpTargets,
+  milestoneFor,
+  stepKeys,
+  absorbLegacy,
+  decide,
+  confirmListed,
+  forgetGone,
+  unbackedPrice,
+  liveMap,
+  MILESTONE_STEP,
+  PUMP_MIN_LIQ_PCT,
+  // Test seams: the in-memory state the sweep reads and writes.
+  _state: () => ({ baseline, latch }),
+};

@@ -280,6 +280,15 @@ class DedupSet {
     if (!this.set.delete(k)) return;
     await saveJSON(this.name, [...this.set]).catch(() => {});
   }
+  /** Drop every key `pred` accepts, in ONE write. Returns how many went.
+   *  The pump checker forgets a deleted token's whole ladder at once — one
+   *  rewrite of the file per step would be twenty writes for one fact. */
+  async deleteWhere(pred) {
+    let n = 0;
+    for (const k of [...this.set]) if (pred(k)) { this.set.delete(k); n++; }
+    if (n) await saveJSON(this.name, [...this.set]).catch(() => {});
+    return n;
+  }
 }
 
 module.exports = {

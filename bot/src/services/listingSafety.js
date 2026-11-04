@@ -25,9 +25,15 @@
  * the next scan asks again) instead of listing an unchecked token or benching a
  * good one for twelve hours over somebody else's outage.
  *
- * ⚠️ A CHAIN NO SAFETY SOURCE COVERS PASSES — Robinhood, Tron, Polygon…
- * Refusing there would switch free listing off for whole chains over a check
- * nobody can run. The market checks in listingQuality still bind them.
+ * ⚠️ A CHAIN NO SAFETY API COVERS IS ASKED OF THE CHAIN ITSELF, if it is EVM.
+ * This used to read "passes": Robinhood, Polygon, Optimism, Blast… had no
+ * contract check at all, and a honeypot ($NASDUCK, Robinhood) was free-listed
+ * and pump-announced with GMGN printing "Possible honeypot! Buying is
+ * allowed". `sellSim.js` simulates a recent buyer selling back into the pool
+ * with `eth_call`; a revert is the refusal, and an inconclusive answer is
+ * "could not ask" — never safe. A non-EVM chain no source covers (Tron, TON,
+ * Sui…) still passes on the market checks in listingQuality alone, because no
+ * check can be run there.
  *
  * `FREE_LISTING_SAFETY=0` turns this off (the test runner does, because every
  * test stubs the network; the tests for this module turn it back on). Blank is
@@ -35,6 +41,7 @@
  */
 const goplus = require('../../../shared/security/goplus');
 const rugcheck = require('../../../shared/security/rugcheck');
+const sellSim = require('./sellSim');
 
 const enabled = () => {
   const v = String(process.env.FREE_LISTING_SAFETY == null ? '' : process.env.FREE_LISTING_SAFETY).trim().toLowerCase();
@@ -76,17 +83,18 @@ function solFlags(s) {
  *   { ok:true,  refusal:"potential scam (…)" }
  *   { ok:false, why }                 — the safety source could not be asked
  */
-async function checkX(chain, address, { sources = { goplus, rugcheck } } = {}) {
+async function checkX(chain, address, { sources = {}, pool = null } = {}) {
   if (!enabled()) return { ok: true, refusal: null, why: 'safety check switched off' };
+  const src0 = { goplus, rugcheck, sellSim, ...sources };
   const svm = String(chain) === 'solana';
-  const src = svm ? sources.rugcheck : sources.goplus;
+  const src = svm ? src0.rugcheck : src0.goplus;
   let ans;
   try {
     ans = await src.tokenSecurityX(chain, address);
   } catch (e) {
     ans = { sec: null, ok: false, why: e.message };
   }
-  if (ans && ans.unsupported) return { ok: true, refusal: null, why: ans.why };
+  if (ans && ans.unsupported) return askTheChain(chain, address, ans.why, svm, src0.sellSim, pool);
   if (!ans || !ans.ok || !ans.sec) return { ok: false, refusal: null, why: `safety check: ${(ans && ans.why) || 'no answer'}` };
   const flags = svm ? solFlags(ans.sec) : evmFlags(ans.sec);
   if (!flags.length) return { ok: true, refusal: null, why: null };
@@ -97,6 +105,32 @@ async function checkX(chain, address, { sources = { goplus, rugcheck } } = {}) {
   // bucket strip and every refusal becomes its own reason. Flattened.
   const shown = [...new Set(flags.map((f) => String(f).replace(/[()]/g, '').replace(/\s+/g, ' ').trim()))];
   return { ok: true, refusal: `potential scam (${shown.slice(0, 3).join(', ')})`, why: null };
+}
+
+/**
+ * The contract check for a chain no safety API covers: ask the chain whether a
+ * holder can sell (sellSim.js). Figures go in parentheses so the scan tallies
+ * every refusal as ONE "potential scam" bucket and every inconclusive answer as
+ * ONE "could not be safety-checked" bucket.
+ */
+async function askTheChain(chain, address, apiWhy, svm, sim, pool) {
+  if (svm || !sim || !sim.enabled()) return { ok: true, refusal: null, why: apiWhy };
+  let r;
+  try {
+    r = await sim.sellCheckX(chain, address, { pool });
+  } catch (e) {
+    r = { ok: false, why: e.message };
+  }
+  if (r && r.unsupported) return { ok: true, refusal: null, why: `${apiWhy}; ${r.why}` };
+  if (!r || !r.ok) {
+    const why = String((r && r.why) || 'no answer').replace(/[()]/g, '');
+    return { ok: false, refusal: null, why: `safety check: on-chain sell check inconclusive (${chain}: ${why})` };
+  }
+  if (!r.sells) {
+    const why = String(r.why || 'the sell reverts').replace(/[()]/g, '');
+    return { ok: true, refusal: `potential scam (honeypot — ${why})`, why: null };
+  }
+  return { ok: true, refusal: null, why: `${apiWhy}; an on-chain sell simulation passed` };
 }
 
 module.exports = { checkX, evmFlags, solFlags, enabled, MIN_HOLDERS, MAX_TAX_PCT, MAX_TOP10_PCT };

@@ -30,7 +30,8 @@
     "listing:check": "node scripts/listing-check.js",
     "post:check": "node scripts/post-check.js",
     "x:retarget": "node scripts/retarget-x-handle.js",
-    "ca:check": "node scripts/ca-check.js"
+    "ca:check": "node scripts/ca-check.js",
+    "token:verdict": "node scripts/token-verdict.js"
   },
   "engines": {
     "node": ">=18"

@@ -110,6 +110,59 @@ const rawChanges = (pc) => {
   return out;
 };
 
+// ── The pool's REAL depth ("CEK LP BUKAN HANYA MC DAN VOLUME") ─────────────
+//
+// `liquidity.usd` is BOTH sides of the pool valued at the pool's own price, so
+// a pool stuffed with the token itself — a single-sided v3 position above the
+// price, or a price the deployer walked up through a thin pool — reads as deep
+// liquidity while holding almost nothing a seller can take out. $NASDUCK
+// (Robinhood) was free-listed on numbers like that, and GMGN later measured
+// its pool at $507 against a $684M cap. The OTHER side of the pool — the
+// WETH/SOL/USDC — is what a sell is paid from, so it travels on its own.
+// `null` when DexScreener did not publish it: an absent reading makes no claim.
+const sameAddr = (a, b) => {
+  const x = String(a || "").trim();
+  const y = String(b || "").trim();
+  if (!x || !y) return false;
+  return /^0x/i.test(x) ? x.toLowerCase() === y.toLowerCase() : x === y;
+};
+const finiteOrNull = (v) => {
+  if (v == null || String(v).trim() === "") return null; // Number(null) is 0 — not a reading
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+};
+
+/** USD value of the pool side that is NOT this token, or null. */
+function otherSideUsd(p, address) {
+  const liq = p && p.liquidity;
+  if (!liq) return null;
+  const priceUsd = finiteOrNull(p.priceUsd);
+  if (p.baseToken && sameAddr(p.baseToken.address, address)) {
+    // Our token is the base: the other side is `liquidity.quote`, in quote
+    // units, and one quote unit is worth priceUsd / priceNative.
+    const q = finiteOrNull(liq.quote);
+    const native = finiteOrNull(p.priceNative);
+    if (q == null || q < 0 || !(priceUsd > 0) || !(native > 0)) return null;
+    return q * (priceUsd / native);
+  }
+  if (p.quoteToken && sameAddr(p.quoteToken.address, address)) {
+    // Our token is the quote (rare): the other side is the base, priced at priceUsd.
+    const b = finiteOrNull(liq.base);
+    if (b == null || b < 0 || !(priceUsd > 0)) return null;
+    return b * priceUsd;
+  }
+  return null;
+}
+
+/** `{ buys, sells }` for a window, or null when either count is unpublished. */
+function txnsOf(p, w) {
+  const t = p && p.txns && p.txns[w];
+  if (!t) return null;
+  const buys = finiteOrNull(t.buys);
+  const sells = finiteOrNull(t.sells);
+  return buys == null || sells == null ? null : { buys, sells };
+}
+
 async function fetchTokenInfoX(chain, address, { now = Date.now() } = {}) {
   const dsChain = DS_CHAIN[chain];
   // A chain DexScreener does not carry is an ANSWER, not a failure: the caller
@@ -158,6 +211,13 @@ async function fetchTokenInfoX(chain, address, { now = Date.now() } = {}) {
       priceChange: rawChanges(p.priceChange),
       pairCreatedAt: Number(p.pairCreatedAt) || 0,
       pairCount: pairs.length,
+      // The pool's real depth and whether anybody is SELLING — see the block
+      // above `otherSideUsd`. listingQuality judges them; null makes no claim.
+      liqQuoteUsd: otherSideUsd(p, address),
+      quoteSymbol: (p.baseToken && sameAddr(p.baseToken.address, address) ? p.quoteToken?.symbol : p.baseToken?.symbol) || null,
+      txns24: txnsOf(p, "h24"),
+      poolAddress: p.pairAddress || null,
+      dexId: p.dexId || null,
     };
     return { info: out, ok: true, why: null };
   } catch (e) {
@@ -334,4 +394,4 @@ async function fetchDiscovery(feeds = DISCOVERY_FEEDS) {
 // DS_CHAIN is exported because the token-logo CDN path is keyed on DexScreener's
 // chain slug (dd.dexscreener.com/ds-data/tokens/<slug>/<addr>.png) — gainers.js
 // builds that URL as a logo fallback and must not keep a second copy of the map.
-module.exports = { fetchTokenInfo, fetchTokenInfoX, fetchPairX, chainOfSlug, fetchDiscovery, fetchDiscoveryX, DISCOVERY_FEEDS, DS_CHAIN, benched, resetBench };
+module.exports = { otherSideUsd, txnsOf, fetchTokenInfo, fetchTokenInfoX, fetchPairX, chainOfSlug, fetchDiscovery, fetchDiscoveryX, DISCOVERY_FEEDS, DS_CHAIN, benched, resetBench };

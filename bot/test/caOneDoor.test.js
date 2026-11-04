@@ -51,6 +51,7 @@ const EXEMPT = {
   "twitter.js": "strips addresses from OUTGOING tweet text; reads nothing a person typed",
   "services/tokenLogo.js": "an address the bot already holds (a listing row), never typed",
   "poolstrade.js": "addresses in pools.trade API responses, never typed",
+  "services/sellSim.js": "shape-checks a token the scan or a listing row already holds, and addresses decoded from Transfer logs — never typed",
 };
 
 /** The doors the fix wired, by file. If the scan stops seeing any of them it

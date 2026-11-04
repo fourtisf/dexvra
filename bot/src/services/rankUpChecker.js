@@ -18,6 +18,7 @@ const {
   X_POST_TIMEOUT_MS,
 } = require("../config/constants");
 const api = require("../api/dexvra");
+const { confirmListed } = require("../helpers/stillListed");
 const { fetchMarket } = require("../marketdata");
 const fmt = require("../channels/format");
 const post = require("../channels/post");
@@ -102,6 +103,14 @@ async function scanOnce(tg) {
 
   for (const a of alerts) {
     try {
+      // The featured list above was read before every token was priced. A
+      // token deleted or unlisted since is not announced — asked fresh, here,
+      // before the banner, the tweet and the channel post. See stillListed.js.
+      const still = await confirmListed(a.r, null);
+      if (!still.ok) {
+        log.info(`[rankup] ${a.r.sym || a.r.address} #${a.rank} NOT announced — ${still.why}`);
+        continue;
+      }
       const coin = coinOf(a.r, a.m);
       // Dedicated "trending up" banner: rank medallion (#1 gold / #2 silver /
       // #3 bronze) + big % gain, rendered per alert. Degrades to text if the

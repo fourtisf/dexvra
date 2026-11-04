@@ -58,7 +58,7 @@ const movers = require("./marketMovers");
 // The one owner of "is this the money rather than the project" — the same set
 // the market filler ranks against and the site ranks against.
 const { notAProject } = require("./bigCoins");
-const { qualityRefusal } = require("./listingQuality");
+const { qualityRefusal, realLiquidity } = require("./listingQuality");
 const listingSafety = require("./listingSafety");
 const listingLogo = require("./listingLogo");
 const logoRepair = require("./logoRepair");
@@ -1162,7 +1162,16 @@ function rejectReason(info, cfg, trigger, now = Date.now(), chain = '', address 
   if (!mcap) return "no market cap";
   if (mcap < trigger) return `below its trigger ($${Math.round(mcap).toLocaleString("en-US")} < $${trigger.toLocaleString("en-US")})`;
   if (mcap > cfg.maxMcapHard) return `above the ceiling ($${Math.round(mcap).toLocaleString("en-US")})`;
-  if ((Number(info.liq) || 0) < cfg.minLiq) return `thin liquidity ($${Math.round(info.liq || 0).toLocaleString("en-US")})`;
+  // REAL liquidity — what a seller could be paid from, not both sides at the
+  // pool's own price (listingQuality §5). A pool stuffed with the token itself
+  // read as deep here, and that is how a honeypot cleared this floor.
+  const realLiq = realLiquidity(info) || 0;
+  if (realLiq < cfg.minLiq) {
+    const reported = Number(info.liq) || 0;
+    return realLiq < reported
+      ? `thin liquidity ($${Math.round(realLiq).toLocaleString("en-US")} real, of $${Math.round(reported).toLocaleString("en-US")} reported)`
+      : `thin liquidity ($${Math.round(realLiq).toLocaleString("en-US")})`;
+  }
   if ((Number(info.vol24) || 0) < cfg.minVol24) return `low 24h volume ($${Math.round(info.vol24 || 0).toLocaleString("en-US")})`;
   if (info.pairCreatedAt && now - info.pairCreatedAt < cfg.minAgeHours * 3_600_000) {
     return `too new (${Math.round((now - info.pairCreatedAt) / 3_600_000)}h old)`;
@@ -1285,7 +1294,7 @@ async function createFromInfo(chain, address, info, { cfg = get(), now = Date.no
   // nowhere else. The scan runs it BEFORE this (so it can count the answer) and
   // hands the verdict in rather than asking twice; every other door asks here.
   // "Could not ask" refuses too: an unchecked token is not a safe one.
-  const safe = safetyChecked || (await listingSafety.checkX(chain, address).catch((e) => ({ ok: false, why: e.message })));
+  const safe = safetyChecked || (await listingSafety.checkX(chain, address, { pool: info.poolAddress }).catch((e) => ({ ok: false, why: e.message })));
   if (!safe.ok || safe.refusal) {
     log.info(`[autolist] refused ${info.symbol} on ${chain}/${address} — ${safe.refusal || safe.why}`);
     return null;
@@ -1342,7 +1351,9 @@ function seams(deps = {}) {
       : ds.fetchTokenInfoX);
   // The contract check (honeypot, tax, mint authority…) — see listingSafety.js.
   // A seam like the other two: tests pass their own, production asks GoPlus/RugCheck.
-  const safetyX = deps.safetyX || ((c, a) => listingSafety.checkX(c, a));
+  // The pool travels with it: on a chain no safety API covers, the contract
+  // check simulates a sell INTO that pool (sellSim.js).
+  const safetyX = deps.safetyX || ((c, a, info) => listingSafety.checkX(c, a, { pool: info && info.poolAddress }));
   // The artwork — found across every source and checked the way the renderer
   // draws it, then kept on our own disk. See listingLogo.js.
   const logoX = deps.logoX || ((c, a, info, o) => listingLogo.resolveX(c, a, info, o));
@@ -1639,7 +1650,7 @@ async function scanOnce({ tg, now = Date.now(), deps = {}, rng = Math.random, fo
     }
     // Asked only of a token that cleared every market gate — a safety read per
     // candidate would spend the source on tokens that were never going to list.
-    const safe = await safetyX(c.chain, c.address).catch((e) => ({ ok: false, why: e.message }));
+    const safe = await safetyX(c.chain, c.address, info).catch((e) => ({ ok: false, why: e.message }));
     if (!safe.ok) {
       // WE COULD NOT ASK: the upstream half of the report, with the pricing
       // failures, and no cool-off — the next scan asks again. Never listed
@@ -2036,7 +2047,7 @@ async function dryRun({ now = Date.now(), deps = {} } = {}) {
     }
     // The same contract check the real scan makes, or 🔎 Test scan promises a
     // listing the scan will refuse as a honeypot.
-    const safe = await safetyX(c.chain, c.address).catch((e) => ({ ok: false, why: e.message }));
+    const safe = await safetyX(c.chain, c.address, info).catch((e) => ({ ok: false, why: e.message }));
     if (!safe.ok) {
       report.unchecked++;
       const b = reasonBucket(safe.why || "safety check: no answer");
