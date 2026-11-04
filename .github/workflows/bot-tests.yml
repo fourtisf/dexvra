@@ -35,6 +35,16 @@ jobs:
       - name: Install
         working-directory: bot
         run: npm ci --no-audit --no-fund
+      # The TAP output is ~18k lines and a failure sits wherever its file
+      # finished — a red run whose reason is in a line nobody can find is
+      # "a fact that lives only in a log line is not retrievable", in CI. So
+      # the output is kept and the NEXT step prints only the failures.
       - name: Test
         working-directory: bot
-        run: npm test
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee test-output.txt
+      - name: Failures
+        if: failure()
+        working-directory: bot
+        run: grep -n -A45 '^not ok' test-output.txt || echo "no 'not ok' line — the run failed outside a test (see the Test step)"
