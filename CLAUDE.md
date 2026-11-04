@@ -15725,6 +15725,57 @@ cd bot && node scripts/run-tests.js test/offlineGuard.test.js test/trendFill.tes
 cd bot && npm test 2>&1 | tail -20      # the leak list, if any file still reaches out
 ```
 
+## "perbaiki admin panel agar lebih clean dan mudah d akses" — the console is tabs now
+
+Reported with a screenshot of the web admin console (dexvra.fun, behind
+`ADMIN_PATH`). It was ONE scroll: the homepage showcase, the homepage banners
+and the channel banners first, then pending submissions, then the Pons queue,
+then EVERY listing (~700 rows, nine controls each: a tier picker, a Featured
+box, an hours box, Set, Edit, Approve/Unlist, Delete), then the add form at the
+very bottom. Work waiting on a human sat under three editors nobody opens daily.
+
+| tab | what |
+| --- | --- |
+| **Review** (default) | the counts, and pending submissions with their links (spam is judged by them) — Approve · Reject · Reject all |
+| **Listings** | search + chain + tier + status chips (All · Live · Pending · Unlisted · Trending · Free (bot)), newest first, 50 a page, ONE Manage button a row |
+| **Pons** | the launch queue — loaded only when opened (it reads the chain), listed launches hidden by default |
+| **Add listing** | the form |
+| **Site content** | showcase, homepage banners, channel banners — mounted only when opened |
+
+- **`src/lib/adminView.ts` is the one owner** of the view rules (tab from hash,
+  filter, order, pages, counts) and is PURE, so it is tested by being called.
+  The tab badges, the stat cards and the chips all read `countListings`.
+- **Manage** holds everything that changes one listing: tier, trending window
+  (Run for N h / Stop), Approve/Unlist, Open ↗, Delete, and the profile fields.
+- ⚠️ **A FREE row read "Diamond".** The tier `<select>` iterated `LISTING_TIERS`,
+  which leaves FREE out (nobody can buy it), and a select whose value matches
+  no option shows its FIRST one — so every bot listing showed as Diamond, one
+  careless tap from an upgrade. `FREE_TIER` is an option in the console.
+- ⚠️ **A refused action vanished.** `patch`/`setStatus`/`remove` reloaded on
+  success and did nothing on failure — a button that does nothing. Every write
+  now says what happened, success or the site's own reason.
+- ⚠️ **"Trending" counted expired slots.** It counted `trendingRank` alone; the
+  site stops featuring at `trendExp` and the sweeper clears the rank later.
+  `isTrending` checks the end.
+- **The open tab is the URL hash** (`#listings`), so a reload, the back button
+  and a bookmark land on it. Each stat card opens Listings already filtered.
+- A phone gets a card per listing rather than a table to scroll sideways.
+
+```bash
+node --test --experimental-strip-types src/lib/adminView.test.ts   # 13 tests, no network
+```
+
+Ten guarantees are MUTATION-TESTED: the pager bypassed, FREE dropped from the
+picker, an expired slot counted as trending, a page past the end not clamped,
+the newest-first order dropped, search case-sensitive, a typed `$` not
+stripped, the Listings tab rendered on every tab, and the table's clock not
+re-read on reload (a 5h slot read "6h left" — found by driving the console,
+then pinned). ⚠️ Two survived their first run, both test gaps: a source match
+on a NAME, and a search test with only lowercase queries.
+
+**Config a fix depends on:** nothing. `src/` only, so `npm run deploy` rebuilds
+the web app and restarts `dexvra`; the bots are untouched.
+
 ## Conventions
 
 - Tests live beside the code they cover, in `bot/test/`, `tradebot/*.test.js`

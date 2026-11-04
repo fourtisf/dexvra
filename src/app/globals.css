@@ -1144,6 +1144,90 @@ body{
 .upload-btn.busy{opacity:.6;pointer-events:none}
 @media(max-width:600px){.asec-search{min-width:0;width:100%;margin:8px 0 0}.asec-h{flex-wrap:wrap}}
 
+/* ── Admin console: one tab at a time ───────────────────────────────────
+   "terlalu banyak spam" — the console was one long scroll of every editor and
+   ~700 listings with nine controls each. Tabs in the header, the listings
+   filtered and paged, one Manage button per row. */
+.admin-top{flex-wrap:wrap;row-gap:10px;padding:12px 24px}
+.admin-tabs{display:flex;gap:4px;flex:1;min-width:0;overflow-x:auto;scrollbar-width:none;padding:2px}
+.admin-tabs::-webkit-scrollbar{display:none}
+.atab{display:inline-flex;align-items:center;gap:7px;white-space:nowrap;font-family:var(--fd);font-weight:600;font-size:13px;color:var(--muted);background:none;border:1px solid transparent;border-radius:9px;padding:7px 12px;cursor:pointer}
+.atab:hover{color:var(--text);background:rgba(255,255,255,.04)}
+.atab.on{color:var(--text);background:rgba(255,255,255,.07);border-color:var(--line2)}
+.atab-n{font-family:var(--fm);font-size:10px;font-weight:800;color:var(--faint);background:rgba(255,255,255,.06);border-radius:999px;padding:1px 7px}
+.atab-n.warn{color:#1a1200;background:var(--amber)}
+.admin-wrap{gap:16px}
+button.astat{font:inherit;color:inherit;text-align:left;cursor:pointer;transition:border-color .12s,background .12s}
+button.astat:hover{border-color:var(--line2);background:rgba(255,255,255,.04)}
+.asec-h-tools{margin-left:auto;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.a-narrow{width:auto;min-width:130px}
+.a-toolbar{display:flex;gap:8px;padding:12px 18px 0;flex-wrap:wrap}
+.a-toolbar .a-search{flex:1;min-width:200px}
+.a-chips{display:flex;gap:6px;padding:10px 18px 12px;flex-wrap:wrap;border-bottom:1px solid var(--line)}
+.a-chip{font-family:var(--fd);font-weight:600;font-size:12px;color:var(--muted);background:rgba(255,255,255,.03);border:1px solid var(--line);border-radius:999px;padding:5px 11px;cursor:pointer}
+.a-chip span{font-family:var(--fm);font-size:10.5px;color:var(--faint);margin-left:3px}
+.a-chip:hover{color:var(--text);border-color:var(--line2)}
+.a-chip.on{color:var(--text);border-color:rgba(61,245,159,.45);background:rgba(61,245,159,.08)}
+.a-chip.on span{color:var(--mint)}
+.atable.compact{min-width:640px}
+.atable.compact td{padding:9px 12px}
+.atable tr.is-open td{background:rgba(34,211,238,.05)}
+.a-sym-t{font-family:var(--fd);font-weight:700}
+.a-right{text-align:right}
+.a-tier{font-family:var(--fm);font-size:10px;font-weight:800;letter-spacing:.06em;text-transform:uppercase}
+.a-trend{font-family:var(--fm);font-size:10.5px;font-weight:700;color:var(--mint);white-space:nowrap}
+.a-pager{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 18px;flex-wrap:wrap}
+.a-pager-btns{display:flex;align-items:center;gap:10px}
+.a-note{display:flex;align-items:center;gap:10px;border-radius:11px;padding:10px 14px;font-size:13px;border:1px solid}
+.a-note.ok{color:#3DDC97;border-color:rgba(61,220,151,.35);background:rgba(61,220,151,.07)}
+.a-note.err{color:var(--red);border-color:rgba(247,106,133,.4);background:rgba(247,106,133,.07)}
+.a-note-x{margin-left:auto;background:none;border:none;color:inherit;font-size:18px;line-height:1;cursor:pointer;opacity:.7}
+.a-note-err{text-align:left;margin-bottom:10px}
+.a-empty{color:var(--muted);font-size:13px;padding:6px 0}
+.a-ok{color:#3DDC97}
+.a-list{display:flex;flex-direction:column}
+.a-item{display:flex;align-items:center;gap:14px;padding:11px 0;border-bottom:1px solid var(--line)}
+.a-item:first-child{padding-top:0}
+.a-item:last-child{border-bottom:none;padding-bottom:0}
+.a-item-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.a-item-main .a-ca{word-break:break-all}
+.a-item-main a{color:var(--cyan)}
+.a-item-act{display:flex;gap:8px;flex-shrink:0}
+.m-quick{display:grid;grid-template-columns:150px minmax(260px,1fr) auto auto;gap:14px;align-items:end;padding-bottom:12px;border-bottom:1px solid var(--line)}
+.m-block{display:flex;flex-direction:column;gap:5px;min-width:0}
+.m-lbl{font-family:var(--fm);font-size:9.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--faint)}
+.m-row{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.m-hrs{width:70px}
+.m-danger{align-items:flex-end}
+.m-contract{font-size:12px;color:var(--muted);word-break:break-all}
+.m-contract code{font-family:var(--fm);font-size:11.5px;color:var(--text)}
+.edit-panel textarea.a-input{resize:vertical;min-height:52px;font-family:var(--fb)}
+@media(max-width:820px){.m-quick{grid-template-columns:1fr 1fr}.m-danger{align-items:flex-start}}
+@media(max-width:600px){
+  .admin-top{padding:10px 14px}
+  .admin-tabs{order:3;flex-basis:100%}
+  .a-item{flex-direction:column;align-items:stretch}
+  .a-item-act{justify-content:flex-start}
+  .m-quick{grid-template-columns:1fr}
+  .a-toolbar,.a-chips,.a-pager{padding-left:14px;padding-right:14px}
+  .admin-stats{grid-template-columns:repeat(2,1fr);gap:8px}
+  .astat{padding:12px 14px}
+  .astat .v{font-size:22px;margin-top:4px}
+  /* A phone gets a CARD per listing, not a table to scroll sideways — the
+     Manage button sat off screen at the end of a 640px row. */
+  .atable.compact{min-width:0}
+  .atable.compact thead{display:none}
+  .atable.compact tr{display:flex;flex-wrap:wrap;align-items:center;border-bottom:1px solid var(--line);padding:10px 14px;gap:4px 12px}
+  .atable.compact td{border:none;padding:0}
+  .atable.compact td:nth-child(1){flex:1 1 0;min-width:0;order:1}
+  .atable.compact td:nth-child(6){order:2}
+  .atable.compact td:nth-child(n+2):nth-child(-n+5){order:3}
+  .atable.compact tr:not(.edit-row)::after{content:"";order:2;flex-basis:100%;height:0}
+  .atable.compact tr.edit-row{padding:0}
+  .atable.compact tr.edit-row td{flex:1 1 100%}
+  .atable.compact tr:hover td{background:none}
+}
+
 /* ── Token Scanner (Fourtis-style) ────────────────────────────────────── */
 .scan-loading{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:13px}
 .scan-report{display:flex;flex-direction:column;gap:14px}
