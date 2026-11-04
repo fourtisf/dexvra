@@ -106,6 +106,15 @@ const SURFACES = [
       dateText: '',
     }),
   },
+  {
+    // The premium listing clip draws every frame in code — ticker, name, stat
+    // panel, badge — so it is its own surface. One frame is the whole question:
+    // frame 0 is the full card, every text element in place.
+    key: 'listing-motion',
+    what: 'animated listing clip (premium MP4)',
+    module: 'listingMotion.js',
+    run: (coin) => require('./listingMotion').frames(coin, null, { count: 1, badge: 'Xpress Listing' }),
+  },
 ];
 
 /*

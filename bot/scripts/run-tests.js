@@ -66,6 +66,11 @@ const res = spawnSync(process.execPath, ["--test", ...files], {
     // Solana RPC and an IPFS gateway — neither exists here. solanaMeta.test.js
     // turns it back on with stubbed reads, and pins that blank means ON.
     SOLANA_META: process.env.SOLANA_META || "0",
+    // The premium listing clip renders 150 frames through ffmpeg — seconds of
+    // CPU per listing post, and every fulfilment test posts one. Off by default
+    // in the suite so those tests keep exercising the ladder they were written
+    // for; listingMotion.test.js turns it back on and drives it.
+    LISTING_MOTION: process.env.LISTING_MOTION || "0",
   },
 });
 // A test that reached for the internet was refused, and passed or failed on

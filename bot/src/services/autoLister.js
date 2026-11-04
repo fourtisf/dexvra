@@ -2098,6 +2098,7 @@ function bannerCoinFor(c, info, input) {
     chain: String(chainOf(c.chain) ? chainOf(c.chain).label : c.chain).toUpperCase(),
     price: info.priceUsd ? `$${Number(info.priceUsd).toPrecision(4)}` : "TBA",
     mcap: info.mcap ? `$${Math.round(info.mcap).toLocaleString("en-US")}` : null,
+    liq: info.liq > 0 ? `$${Math.round(info.liq).toLocaleString("en-US")}` : null,
     links: { website: input.website, twitter: input.twitter, telegram: input.telegram },
   };
 }

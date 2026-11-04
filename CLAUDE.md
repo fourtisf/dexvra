@@ -4075,6 +4075,118 @@ Eight more guarantees are MUTATION-TESTED rather than argued:
 - the check faulting on any `artUnread`;
 - the row's own reason dropped.
 
+## The listing post is a motion piece now — `listingMotion.js`
+
+The listing post used to be the admin's uploaded clip with a STILL overlay
+pasted on every frame (`bannerTemplate.composeOntoClip`): the background moved
+and the token did not. `bot/src/listingMotion.js` draws the whole clip in code,
+150 frames piped into ffmpeg, so the token is part of the motion. It took four
+rounds, and each "no" is worth keeping:
+
+| ask | what it rejected |
+| --- | --- |
+| "gif listing lebih bagus premium dari gif sebelumnya" | the admin clip with a pasted still |
+| "gif video looks bad … ada animasi visualnya" | a still card with a little drift |
+| "ini jelek banget, saya ingin sesuai brand kita biru" | a gold motion piece |
+| "rubah tampilannya?? berbeda lebih bagus dan premium" | the same layout recoloured blue |
+
+What shipped is a **centred cinematic poster in the brand palette** (the gem's
+mint → cyan, royal blue, indigo):
+
+- an animated mesh-gradient field, a stage spotlight with swaying shafts, and a
+  perspective floor rolling toward the viewer;
+- the token's logo at centre stage, on a 3D coin inside rotating rings of light;
+- a big centred ticker that rises in letter by letter;
+- frosted-glass stat chips whose numbers decode.
+
+White and ice type, no foil.
+
+| seconds | what happens |
+| --- | --- |
+| 0.0–3.2 | **hold**: the field drifts, the shafts sway, the floor rolls, the rings turn, one full 3D coin spin (the reverse carries the Dexvra mark), shines across the ticker, chips and badge |
+| 3.2–3.8 | **outro**: the coin spins away, the type fades, a light sweep crosses |
+| 3.8–6.0 | **intro**: the coin flies in spinning and LANDS (flash, shockwaves, sparks), the rings open, the ticker rises letter by letter, the chips rise and decode |
+
+- **Frame 0 is the FULL poster.** Telegram makes the thumbnail and the
+  notification preview from the first frame, so the loop starts in the hold and
+  the build plays mid-loop. A test pins every scheduled element in place at
+  t=0.
+- **The loop is EXACT, and a test says so pixel for pixel.** `drawFrames`
+  takes unwrapped `times`, and t=6.0 must draw what t=0 draws (0 bytes differ
+  by more than 12). That needs three things:
+  - every ambient motion completes whole periods per loop;
+  - every element the intro builds has settled before the wrap;
+  - the landing's afterglow decays to EXACTLY 0 at the loop's end (a bare
+    exponential was still a few percent up).
+
+  ⚠️ An average-difference seam test could not catch a faint element that was
+  off by part of a period. A floor row, the thin light ring and the dust all
+  SURVIVED it. Counting the bytes that differ kills all of them. The previous
+  layout also taught this one: an alternating pattern (wide/narrow rays) repeats
+  every TWO steps, not one.
+- **The landing fires when the coin ARRIVES** (≥98% of its size, 72% into its
+  flight), not when the last 2% of the easing runs out.
+- **A missing figure is LEFT OUT of the chips**, never drawn as a dash, a zero
+  or TBA. `bannerCoinOf` carries `liq` now (and the auto-lister's
+  `bannerCoinFor`); a missing depth is null. Chip widths are sized on the
+  widest digit (8), so a decoding frame never overflows its glass.
+- **It is a font-check surface** (`bannerSurfaces.js` `listing-motion`), so
+  `fonts:check` measures it like every other renderer. Measured: all five
+  coverage scripts reach the chain.
+- ⚠️ **`canvas.data()` IS A LIVE VIEW of the pixels, not a copy.** Measured: a
+  view taken before a fill reads the fill's colour after it. The first cut said
+  "a copy" in a comment, so `frames()` returned views that all read whichever
+  frame happened to be current, and the preview stills lied. The encoder awaits
+  the pipe's WRITE CALLBACK before the next frame is drawn into the same memory;
+  `frames()` copies. `getImageData` would copy, and peaked at 1.1 GB over one
+  clip.
+
+**Where it sits.** `postMedia("listing")`, inside `postingEnabled()`, ahead of
+the admin clip. Every listing post goes through it: a purchase, an auto
+listing, the logo repair's rebuild. Trending posts never ask for it.
+
+- **Bounded by `CLIP_BUDGET_MS`**, like every clip on this path (it sits between
+  a buyer's payment and their post). On a timeout the render is CANCELLED (a
+  `{cancelled}` flag checked between frames), not left burning CPU for nobody,
+  and a half-written file is deleted.
+- **A failure continues down the ladder exactly as before**: the admin clip
+  with its overlay, then the still artwork, then the dynamic banner.
+- **The module reclaims its own temp files** (`bt-out-lm-*`, older than 10 min):
+  bannerTemplate's sweep only runs when an admin clip is composited, which a
+  listing no longer does.
+- **Measured**: ~6s per clip here, ~1.7 MB, yuv420p, no audio, so Telegram
+  autoplays it as an animation.
+
+```bash
+cd bot && node scripts/run-tests.js test/listingMotion.test.js   # 19 tests, no network
+cd bot && node scripts/listing-motion-preview.js                 # the clip, stills at key moments, a contact sheet
+pm2 logs dexvra-bot --lines 300 --nostream | grep -F '[listingMotion]'
+```
+
+Eighteen guarantees are MUTATION-TESTED rather than argued. Each mutant fails a
+test:
+
+- **loop:**
+  - motion off by part of a period: the floor, the comet ring, the outer ring,
+    the light shafts, the colour field, the dust;
+  - the bare-exponential afterglow;
+  - the chips not settled before the wrap;
+- **buffers:** `frames()` not copying;
+- **switch:** blank read as off, the switch ignored, the motion on every kind;
+- **cancel and cleanup:** the cancel ignored, the timeout not cancelling, a
+  half-written file kept, the temp sweep reaching another module's files;
+- **figures:** a zero liquidity printed.
+
+The suite runs with `LISTING_MOTION=0` (`scripts/run-tests.js`), so every other
+fulfilment test keeps the ladder it was written for. `listingMotion.test.js`
+turns it back on.
+
+**Config a fix depends on:** nothing. It ships ON. `LISTING_MOTION=0` in
+`bot/.env` restores the old ladder exactly; blank is ON. ⚠️ It needs
+`@napi-rs/canvas` and `@ffmpeg-installer/ffmpeg`, both already in `bot/`;
+without either it falls back silently to the admin clip. `bot/` only, so the
+deploy is the ecosystem restart.
+
 ## A Top 3 that was not the top of the Top 5
 
 Two banners, one minute apart, from the same admin panel:

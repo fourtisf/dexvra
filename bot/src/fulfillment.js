@@ -27,6 +27,7 @@ const { chainOf } = require("./config/chains");
 const assets = require("./assets");
 const bannerRender = require("./bannerRender");
 const bannerTemplate = require("./bannerTemplate");
+const listingMotion = require("./listingMotion");
 const { bounded } = require("./helpers/bounded");
 const { mediaPath } = require("./helpers/mediaUrl");
 // The MODULE, not a destructured fetchImage: tests replace it to keep the
@@ -711,6 +712,9 @@ function bannerCoinOf(row, live) {
     chain: String(chainOf(row.chain) ? chainOf(row.chain).label : row.chain).toUpperCase(),
     price: live && live.priceUsd ? fmtPrice(live.priceUsd) : "TBA",
     mcap: live && live.mcap ? "$" + formatNumber(live.mcap) : null,
+    // the premium listing clip prints it; a missing depth is LEFT OUT there,
+    // never drawn as $0 (the still artwork never read this field)
+    liq: live && live.liq > 0 ? "$" + formatNumber(live.liq) : null,
     links: { website: row.website, twitter: row.twitter, telegram: row.telegram },
   };
 }
@@ -724,6 +728,30 @@ async function postMedia(kind, bannerCoin, logoBuffer, logoFileId, logoUrl, badg
   if (!logoBuffer && logoUrl) logoBuffer = await fetchLogoUrl(logoUrl).catch(() => null);
   // Admin-bot toggle (persisted) with POST_BANNERS env as the default.
   if (bannerTemplate.postingEnabled()) {
+    // A LISTING gets the premium motion piece first ("gif listing lebih bagus
+    // premium dari gif sebelumnya"): drawn in code, with the token's own logo
+    // on a 3D coin, so the token is PART of the motion rather than a still
+    // pasted over the admin's clip. ⚠️ Bounded like every clip here — it sits
+    // between a buyer's payment and their post — and a render that fails or
+    // runs out of time continues down the ladder exactly as before (the admin
+    // clip, then the still). LISTING_MOTION=0 switches it off.
+    if (kind === "listing" && listingMotion.enabled()) {
+      const cancel = { cancelled: false };
+      const motion = await bounded(
+        listingMotion.render(bannerCoin, logoBuffer, { badge, cancel }).catch(() => null),
+        CLIP_BUDGET_MS,
+        () => {
+          cancel.cancelled = true;
+          log.warn(`[fulfil] listing media: premium motion passed ${CLIP_BUDGET_MS}ms — falling back to the admin clip / still`);
+          return null;
+        },
+      );
+      if (motion) {
+        log.info("[fulfil] listing media: premium motion ✔");
+        return motion;
+      }
+      log.warn("[fulfil] listing media: premium motion unavailable — falling back to the admin clip / still");
+    }
     // Admin-uploaded GIF/video wins over the composited still.
     const media = bannerTemplate.mediaOverride(kind);
     if (media) {
@@ -1561,6 +1589,7 @@ module.exports = {
   fulfillBanner,
   fulfillMassDm,
   postMedia,
+  _bannerCoinOf: bannerCoinOf,
   _successBanner: successBanner, // buyer copy — tested directly (see banner.test.js)
   // The artwork path. Exported because "the banner drew the Dexvra mark over a
   // token whose logo we had" is invisible to a source scan: both the broken and
