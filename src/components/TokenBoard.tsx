@@ -184,11 +184,17 @@ function StdRow({
       <div className="tok">
         <Coin token={t} />
         <div className="ts">
+          {/* The ticker gets the whole line; the package tag rides the NAME
+              line. With a tag on every row (no 48h window any more) a tag
+              beside the ticker cut it to "$AN…" — the identity, lost to a
+              label ("tag nya nutupin nama token"). */}
           <div className="sym">
             <span className="sym-txt">{t.symbol}</span>
+          </div>
+          <div className="nm">
+            <span className="nm-txt">{t.name}</span>
             <TierTag tier={t.tier} showRank={false} />
           </div>
-          <div className="nm">{t.name}</div>
           {/* phones: the hidden table columns condense into this line */}
           <div className="m-stats">
             <b>MC</b> {fmtCap(mcap)} · <b>V</b> {fmtCap(vol)} · <b>TX</b> {fmtNum(tx)} ·{" "}
@@ -287,11 +293,17 @@ function TermRow({
       <div className="tok">
         <Coin token={t} />
         <div className="ts">
+          {/* The ticker gets the whole line; the package tag rides the NAME
+              line. With a tag on every row (no 48h window any more) a tag
+              beside the ticker cut it to "$AN…" — the identity, lost to a
+              label ("tag nya nutupin nama token"). */}
           <div className="sym">
             <span className="sym-txt">{t.symbol}</span>
+          </div>
+          <div className="nm">
+            <span className="nm-txt">{t.name}</span>
             <TierTag tier={t.tier} showRank={false} />
           </div>
-          <div className="nm">{t.name}</div>
         </div>
       </div>
       <div className="c-num price">{fmtPrice(price)}</div>
@@ -432,7 +444,7 @@ function NpRow({ t, i, flashDir }: { t: BoardToken; i: number; flashDir?: "up" |
         <Coin token={t} />
         <div className="ts">
           <div className="sym">{t.symbol}</div>
-          <div className="nm">{t.name}</div>
+          <div className="nm"><span className="nm-txt">{t.name}</span></div>
         </div>
       </div>
       <div>

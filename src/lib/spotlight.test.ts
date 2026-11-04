@@ -211,3 +211,19 @@ test("the /trending rail prints readings, never the raw fields", () => {
   assert.match(page, /figureReading\(t, t\.priceUsd\)/);
   assert.match(page, /changeReading\(t, "24h"\)/);
 });
+
+test("the tag rides the NAME line, so it can never cut the ticker", () => {
+  // "tag nya nutupin nama token": with a tag on every row, a tag beside the
+  // ticker squeezed it to "$AN…" on the terminal board.
+  const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1").replace(/\{\s*\}/g, "");
+  for (const [f, sym, nm] of [
+    ["src/components/TokenBoard.tsx", "sym", "nm"],
+    ["src/components/TopCoins.tsx", "tc-sym", "tc-nm"],
+  ] as const) {
+    const src = strip(readFileSync(join(process.cwd(), f), "utf8"));
+    const symLines = src.match(new RegExp(`className="${sym}">[\\s\\S]*?</div>`, "g")) || [];
+    assert.ok(symLines.length > 0, `${f}: found the ticker line`);
+    for (const l of symLines) assert.ok(!/<TierTag/.test(l), `${f}: no tag on the ticker line`);
+    assert.match(src, new RegExp(`className="${nm}">\\s*<span className="${nm}-txt">[^<]*</span>\\s*<TierTag `), `${f}: the tag sits after the name`);
+  }
+});

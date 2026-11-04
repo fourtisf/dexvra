@@ -15419,7 +15419,11 @@ is the `DEXVRA TERMINAL` layer, appended last in `globals.css`, over DEXVRA DATA
   never drawn. Both are gone. `packages.ts` `publicTier` is the one owner of
   the public name: Diamond, Gold, Platinum, Silver, Bronze and Xpress as they
   are, and the bot's FREE auto-listing as **Xpress** (the operator's call).
-  It is DISPLAY ONLY — the admin console still shows FREE, the verified badge
+  The tag rides the NAME line, never the ticker's ("tag nya nutupin nama
+  token"): with a tag on every row it cut tickers to "$AN…"; the ticker owns
+  its line and the NAME ellipsises instead (the phone token track is 158px so
+  an 11-character ticker fits). It is DISPLAY ONLY — the admin console still
+  shows FREE, the verified badge
   reads the real tier (FREE and Xpress carry none), and booked slots order
   Diamond → Bronze → **Xpress → the
   bot's free slots**: Xpress used to tie with Free at the back, so a slot the

@@ -105,11 +105,14 @@ export function TopCoinsBoard({
                 <div className="tc-tok">
                   <Coin token={t} size={30} fontSize={14} />
                   <div className="tc-id">
+                    {/* ticker on its own line, the tag beside the name — see TokenBoard */}
                     <div className="tc-sym">
                       <span className="tc-sym-txt">{t.symbol}</span>
+                    </div>
+                    <div className="tc-nm">
+                      <span className="tc-nm-txt">{t.name}</span>
                       <TierTag tier={t.tier} showRank={false} />
                     </div>
-                    <div className="tc-nm">{t.name}</div>
                   </div>
                 </div>
                 <div className="c-num tc-px">{fmtPrice(t.priceUsd)}</div>

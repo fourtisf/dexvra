@@ -358,11 +358,13 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
 .tok .ts{min-width:0}
 .tok .sym{font-family:var(--fd);font-weight:700;font-size:15px;display:flex;align-items:center;gap:7px;min-width:0}
 .tok .sym>span:first-child,.tok .sym-txt{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-/* the tier tag ALWAYS renders whole (no "◆ Di…"); an over-long ticker yields
-   the leftover space and ellipsises instead */
-.tok .sym-txt{flex:0 1 auto;min-width:0;max-width:16ch}
-.tok .sym .tier-chip{flex:0 0 auto}
-.tok .nm{font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* The ticker owns its line and the package tag rides the NAME line: with a tag
+   on every row, a tag beside the ticker cut it to "$AN…". The tag ALWAYS
+   renders whole; the NAME yields the space and ellipsises instead. */
+.tok .sym-txt{flex:0 1 auto;min-width:0}
+.tok .nm{font-size:11.5px;color:var(--muted);display:flex;align-items:center;gap:6px;min-width:0;white-space:nowrap}
+.tok .nm-txt{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.tok .nm .tier-chip{flex:0 0 auto}
 /* compact stats line — the columns hidden on small screens live here instead */
 .tok .m-stats{display:none;font-family:var(--fm);font-size:10px;font-weight:700;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
 .tok .m-stats b{color:var(--muted);font-weight:800}
@@ -573,8 +575,8 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
   /* feature parity on phones: MC / Vol / Txns / Score move into the token cell */
   .tok{gap:9px}
   .tok .m-stats{display:block}
-  /* same priority as desktop: the tier tag always renders whole; an over-long
-     ticker ellipsises (base .sym-txt/.tier-chip flex rules are inherited here). */
+  /* same priority as desktop: the ticker owns its line, the tier tag always
+     renders whole beside the name, and the NAME ellipsises (base rules). */
   .tok .sym{font-size:14px;gap:5px}
   .tier-chip{font-size:8px;padding:2px 5px}
   /* chain chips: one swipeable row instead of a tall wrap */
@@ -1428,9 +1430,10 @@ button.astat:hover{border-color:var(--line2);background:rgba(255,255,255,.04)}
 .tc-tok{display:flex;align-items:center;gap:10px;min-width:0}
 .tc-id{min-width:0}
 .tc-sym{font-family:var(--fd);font-weight:700;font-size:13.5px;display:flex;align-items:center;gap:6px;min-width:0}
-.tc-sym-txt{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:14ch;flex:0 1 auto}
-.tc-sym .tier-chip{flex:0 0 auto}
-.tc-nm{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tc-sym-txt{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:0 1 auto;min-width:0}
+.tc-nm{font-size:11px;color:var(--muted);display:flex;align-items:center;gap:6px;min-width:0;white-space:nowrap}
+.tc-nm-txt{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.tc-nm .tier-chip{flex:0 0 auto}
 .tc-px{font-family:var(--fm);font-weight:800;font-size:12.5px}
 /* Plain coloured text, not a pill: this is the calm surface and a wall of
    filled pills is what the board above it already does. */
@@ -2660,7 +2663,9 @@ a.tick-item:focus-visible{outline:2px solid var(--cyan);outline-offset:1px}
 .board.term>.board-expand,.board.term>.board-foot,.board.term>.empty,.board.term>[aria-busy]{position:sticky;left:0}
 
 @media (max-width:600px){
-  .board.term .row{grid-template-columns:26px 140px 84px 44px 60px 68px 60px 54px 54px 54px 56px 68px 68px 40px 30px;
+  /* 158px token track: the ticker owns its line now (the tag moved to the name
+     line), and 140px still cut an 11-character ticker like $ANONVOYAGE. */
+  .board.term .row{grid-template-columns:26px 158px 84px 44px 60px 68px 60px 54px 54px 54px 56px 68px 68px 40px 30px;
     width:max-content;min-width:100%;padding:10px 12px}
   .board.term .row>.tok{left:44px;box-shadow:-6px 0 0 0 var(--x-panel),10px 0 14px -10px rgba(0,0,0,.7)}
   .board.term .row.head>:nth-child(2){left:44px;box-shadow:-6px 0 0 0 var(--x-head),10px 0 14px -10px rgba(0,0,0,.7)}
