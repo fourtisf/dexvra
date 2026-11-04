@@ -710,12 +710,23 @@ function bannerCoinOf(row, live) {
     symbol: row.sym || row.symbol,
     name: row.name,
     chain: String(chainOf(row.chain) ? chainOf(row.chain).label : row.chain).toUpperCase(),
-    price: live && live.priceUsd ? fmtPrice(live.priceUsd) : "TBA",
-    mcap: live && live.mcap ? "$" + formatNumber(live.mcap) : null,
-    // the premium listing clip prints it; a missing depth is LEFT OUT there,
-    // never drawn as $0 (the still artwork never read this field)
-    liq: live && live.liq > 0 ? "$" + formatNumber(live.liq) : null,
+    ...bannerFigures(live),
     links: { website: row.website, twitter: row.twitter, telegram: row.telegram },
+  };
+}
+
+/** The three figures the listing artwork prints, from a market record — the
+ *  ONE spelling of them. The auto-lister's free listings went through a copy
+ *  that used toPrecision(4), which prints "$4.751e-7" for a pump.fun curve
+ *  price and "$1.235e+4" for a token over $10k, and full-digit caps
+ *  ("$2,410,000,000") where a paid listing prints "$2.4B": the same token
+ *  reading two ways on two posts. A missing depth is LEFT OUT (null), never
+ *  drawn as $0; a missing price is "TBA", which the clip drops. */
+function bannerFigures(live) {
+  return {
+    price: live && live.priceUsd > 0 ? fmtPrice(live.priceUsd) : "TBA",
+    mcap: live && live.mcap > 0 ? "$" + formatNumber(live.mcap) : null,
+    liq: live && live.liq > 0 ? "$" + formatNumber(live.liq) : null,
   };
 }
 
@@ -1590,6 +1601,7 @@ module.exports = {
   fulfillMassDm,
   postMedia,
   _bannerCoinOf: bannerCoinOf,
+  bannerFigures,
   _successBanner: successBanner, // buyer copy — tested directly (see banner.test.js)
   // The artwork path. Exported because "the banner drew the Dexvra mark over a
   // token whose logo we had" is invisible to a source scan: both the broken and

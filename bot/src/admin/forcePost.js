@@ -20,7 +20,7 @@ const { listingBadge } = require("../config/packages");
 const fmt = require("../channels/format");
 const post = require("../channels/post");
 const tokenEmoji = require("../tokenEmoji");
-const { postMedia, readPostMarket } = require("../fulfillment");
+const { postMedia, readPostMarket, bannerFigures } = require("../fulfillment");
 const log = require("../helpers/logger");
 
 const tmeLink = (channel, msgId) => `https://t.me/${String(channel).replace(/^@/, "")}/${msgId}`;
@@ -82,8 +82,10 @@ function bannerCoinOf(coin) {
     symbol: coin.symbol,
     name: coin.name,
     chain: String(chainOf(coin.chain) ? chainOf(coin.chain).label : coin.chain).toUpperCase(),
-    price: coin.price ? `$${Number(coin.price).toPrecision(4)}` : "TBA",
-    mcap: coin.mcap ? `$${Math.round(coin.mcap).toLocaleString("en-US")}` : null,
+    // fulfillment's own spelling, liquidity included — a forced post exists to
+    // show the operator what a real one looks like, and this copy printed
+    // "$4.751e-7", full-digit caps, and no liquidity column at all.
+    ...bannerFigures({ priceUsd: coin.price, mcap: coin.mcap, liq: coin.liq }),
     links: coin.links,
   };
 }
@@ -292,4 +294,4 @@ async function forcePost(kind, { by = "admin" } = {}) {
   return results;
 }
 
-module.exports = { forcePost, kindIds, labelOf, channelsOf, KINDS, _sampleRow: sampleRow, _coinOf: coinOf };
+module.exports = { forcePost, kindIds, labelOf, channelsOf, KINDS, _sampleRow: sampleRow, _coinOf: coinOf, _bannerCoinOf: bannerCoinOf };

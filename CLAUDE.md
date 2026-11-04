@@ -4148,6 +4148,21 @@ blue, with the bundled listing artwork's furniture.
   zero or TBA. `bannerCoinOf` carries `liq` now (and the auto-lister's
   `bannerCoinFor`); a missing depth is null. Column widths are sized on the
   widest digit (8), so a decoding frame never overflows the panel.
+- ⚠️ **`fulfillment.bannerFigures` is the ONE spelling of the three figures**
+  ("pastikan … mc dll"), read by every banner builder: the paid listing and
+  trending posts, the auto-lister's free listings, auto-trend's banner and the
+  admin force-post. Three of those four had their own `toPrecision(4)` copy, so
+  a pump.fun curve price printed **`$4.751e-7`**, a token over $10k
+  **`$1.235e+4`**, and a cap **`$2,410,000,000`** where a paid post of the same
+  token printed `$2.4B`. The force-post (whose job is showing what a real post
+  looks like) also dropped the liquidity column entirely. `bannerFigures.test.js`
+  sweeps 10⁻¹³ to 10⁸ for any exponent, pins all three callable builders equal,
+  and scans the builder bodies (only those: operator log lines spell caps in
+  full on purpose). Measured end to end through the real `postMedia` → MP4 path
+  for five orders (PNG/JPEG/WEBP/SVG logos, corrupt bytes → monogram, no market
+  read → the panel holds only the network) and the widest values the panel can
+  get (`$0.0000000000042` · `$999B` · `$999M`, a 16-letter ticker, a 55-letter
+  name): everything fits left of the coin.
 - **The badge, the figures and the artwork are the ORDER's.** The pill reads
   the tier the buyer paid for (`XPRESS LISTING`, `BRONZE TIER` … `DIAMOND
   TIER`), the ticker and name come off the order
@@ -4193,7 +4208,7 @@ listing, the logo repair's rebuild. Trending posts never ask for it.
   autoplays it as an animation.
 
 ```bash
-cd bot && node scripts/run-tests.js test/listingMotion.test.js   # 20 tests, no network
+cd bot && node scripts/run-tests.js test/listingMotion.test.js test/bannerFigures.test.js   # 20 + 5 tests, no network
 cd bot && node scripts/listing-motion-preview.js                 # the clip, stills at key moments, a contact sheet
 pm2 logs dexvra-bot --lines 300 --nostream | grep -F '[listingMotion]'
 ```

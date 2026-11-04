@@ -341,7 +341,7 @@ async function announceOne(row, hours) {
   const post = require("../channels/post");
   const fmt = require("../channels/format");
   const { CHANNELS, SITE_URL } = require("../config/constants");
-  const { postMedia } = require("../fulfillment");
+  const { postMedia, bannerFigures } = require("../fulfillment");
   const { chainOf } = require("../config/chains");
   const market = require("../marketdata");
   const tokenEmoji = require("../tokenEmoji");
@@ -369,8 +369,9 @@ async function announceOne(row, hours) {
       symbol: coin.symbol,
       name: coin.name,
       chain: String(chainOf(row.chain) ? chainOf(row.chain).label : row.chain).toUpperCase(),
-      price: live && live.priceUsd ? `$${Number(live.priceUsd).toPrecision(4)}` : "TBA",
-      mcap: live && live.mcap ? `$${Math.round(live.mcap).toLocaleString("en-US")}` : null,
+      // fulfillment's own spelling (the paid trending post reads the same) —
+      // toPrecision(4) printed "$4.751e-7" and "$1.235e+4" here.
+      ...bannerFigures(live),
       links: coin.links,
     },
     null,

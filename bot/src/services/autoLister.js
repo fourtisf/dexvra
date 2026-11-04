@@ -2096,9 +2096,10 @@ function bannerCoinFor(c, info, input) {
     symbol: input.sym,
     name: input.name,
     chain: String(chainOf(c.chain) ? chainOf(c.chain).label : c.chain).toUpperCase(),
-    price: info.priceUsd ? `$${Number(info.priceUsd).toPrecision(4)}` : "TBA",
-    mcap: info.mcap ? `$${Math.round(info.mcap).toLocaleString("en-US")}` : null,
-    liq: info.liq > 0 ? `$${Math.round(info.liq).toLocaleString("en-US")}` : null,
+    // fulfillment's own spelling (bannerFigures), so a free listing and a paid
+    // one print the same token's figures the same way — toPrecision(4) here
+    // printed "$4.751e-7" for a curve price and "$1.235e+4" over $10k.
+    ...require("../fulfillment").bannerFigures(info),
     links: { website: input.website, twitter: input.twitter, telegram: input.telegram },
   };
 }
@@ -2416,6 +2417,7 @@ module.exports = {
   trendTier,
   tierFor,
   badgeFor,
+  bannerCoinFor,
   PKG_KEYS,
   TREND_TIERS,
   reset,
