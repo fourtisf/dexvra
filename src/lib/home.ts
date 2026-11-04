@@ -471,12 +471,37 @@ const slotPriority = (tier: string): number => {
   return isPackage(tier) ? 50 : 90;
 };
 
-/** Every booked Trending slot, in priority order. The tie-break is the token
- *  key, never the order a poll happened to return — a card that swaps places
- *  every 30s under the cursor is indistinguishable from a misclick. */
+/**
+ * Has this token got anything to put on a card? A price above zero: no market
+ * prices at zero, live or captured, so a zero is the store's never-priced
+ * default and the card would print "—" for it (`fmtPrice` / `figureReading`).
+ *
+ * "mengapa jovi masih ada di trending spotlight — no logo no vol no token":
+ * $JOVI (Tron) held a booked Diamond slot, so it led the spotlight as card #4
+ * reading `—` · MC `—` · Vol `—` — a token no source has ever priced, on the
+ * strip every visitor reads first. The site cannot tell a slot somebody PAID
+ * for from one the bot booked (both go through `/api/internal/trending`), so
+ * the rule is about the CARD, not the purchase: a showcase card whose headline
+ * figure would be a dash is a broken-looking card, not a spotlight.
+ *
+ * ⚠️ IT GATES THE SHOWCASE, NEVER THE LISTING. The row stays on the board
+ * beneath, and the bot's Telegram board still publishes the slot; the moment
+ * any source prices the token it is back on the card in its paid position. A
+ * captured-at-listing price above zero still counts — the card prints it — so
+ * the demo board keeps its spotlight.
+ */
+export function hasCardPrice(t: BoardToken): boolean {
+  return Number.isFinite(t.priceUsd) && t.priceUsd > 0;
+}
+
+/** Every booked Trending slot that has a card to show (`hasCardPrice`), in
+ *  priority order. The tie-break is the token key, never the order a poll
+ *  happened to return — a card that swaps places every 30s under the cursor is
+ *  indistinguishable from a misclick. Both showcases read this: the home
+ *  spotlight and the /trending rail. */
 export function featuredSlots(tokens: readonly BoardToken[]): BoardToken[] {
   return tokens
-    .filter((t) => t.trendingRank != null)
+    .filter((t) => t.trendingRank != null && hasCardPrice(t))
     .sort(
       (a, b) =>
         slotPriority(a.tier) - slotPriority(b.tier) ||
@@ -508,7 +533,7 @@ export function spotlight(tokens: readonly BoardToken[], n = SPOTLIGHT_SIZE): Bo
   if (booked.length >= n) return booked;
   const taken = new Set(booked.map((t) => t.key));
   const fill = byChange(
-    tokens.filter((t) => !taken.has(t.key) && Number.isFinite(changeRank(t, "24h"))),
+    tokens.filter((t) => !taken.has(t.key) && hasCardPrice(t) && Number.isFinite(changeRank(t, "24h"))),
     "24h",
     -1,
   );

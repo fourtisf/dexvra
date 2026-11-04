@@ -9,7 +9,7 @@ import { Coin } from "@/components/Coin";
 import { TierTag } from "@/components/TierTag";
 import { ChainFilter } from "@/components/ChainFilter";
 import { useChainParam } from "@/components/useChainParam";
-import { byChange, chainCounts, featuredSlots, resolveChain } from "@/lib/home";
+import { byChange, chainCounts, changeReading, featuredSlots, figureReading, resolveChain } from "@/lib/home";
 import { fmtPrice } from "@/lib/format";
 import { tierColor } from "@/lib/packages";
 import type { PeriodKey } from "@/lib/types";
@@ -58,7 +58,11 @@ export default function TrendingPage() {
           <div className="feat-head">Trending Now <span className="feat-sub">Paid featured slots</span></div>
           <div className="feat-rail">
             {featured.map((t) => {
-              const up = t.chg["24h"] >= 0;
+              // Through the readers every board cell uses: the raw fields
+              // printed "$0" and "+0.0%" for a token nobody had priced — a
+              // measured-looking zero over a market nobody measured.
+              const chg = changeReading(t, "24h");
+              const up = chg != null && chg >= 0;
               return (
                 <button
                   className="feat-card"
@@ -72,8 +76,12 @@ export default function TrendingPage() {
                     <TierTag tier={t.tier} showRank={false} ageMinutes={t.listedMinutesAgo} />
                   </div>
                   <div className="feat-px">
-                    <div>{fmtPrice(t.priceUsd)}</div>
-                    <div className={up ? "feat-up" : "feat-dn"}>{up ? "+" : ""}{t.chg["24h"].toFixed(1)}%</div>
+                    <div>{fmtPrice(figureReading(t, t.priceUsd))}</div>
+                    {chg != null ? (
+                      <div className={up ? "feat-up" : "feat-dn"}>{up ? "+" : ""}{chg.toFixed(1)}%</div>
+                    ) : (
+                      <div className="feat-none" title="No 24h reading yet">—</div>
+                    )}
                   </div>
                 </button>
               );

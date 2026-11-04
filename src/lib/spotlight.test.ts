@@ -6,7 +6,7 @@ import test from "node:test";
 import assert from "node:assert";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { SPOTLIGHT_SIZE, featuredSlots, marketTotals, spotlight, spotlightTier } from "./home.ts";
+import { SPOTLIGHT_SIZE, featuredSlots, hasCardPrice, marketTotals, spotlight, spotlightTier } from "./home.ts";
 import type { BoardToken, ListingTier, PeriodKey } from "./types.ts";
 
 const PERIODS: PeriodKey[] = ["5m", "1h", "6h", "24h"];
@@ -20,6 +20,7 @@ function tok(p: {
   source?: "live" | "seed";
   tx?: number;
   listed?: number;
+  price?: number;
 }): BoardToken {
   const per = <T,>(v: T) => Object.fromEntries(PERIODS.map((k) => [k, v])) as Record<PeriodKey, T>;
   const tx = p.tx ?? 2;
@@ -32,7 +33,7 @@ function tok(p: {
     logoUrl: null,
     emoji: "🪙",
     gradient: ["#000", "#111", "#222"],
-    priceUsd: 1,
+    priceUsd: p.price ?? 1,
     mcap: 1_000_000,
     liq: 50_000,
     chg: per(p.chg ?? 1),
@@ -143,4 +144,37 @@ test("the spotlight draws the package through the board's own TierTag, and no Fe
   assert.match(src, /spotlightTier\(t\)/, "the rule has one owner, in lib/home");
   assert.match(src, /<TierTag tier=\{pkg\}/, "one chip design for a package, here and on the board");
   assert.ok(!/>\s*Featured\s*</.test(src) && !/spot-feat/.test(src), "the bare Featured pill is gone");
+});
+
+test("a booked slot nobody has priced gets no card — it would read — · MC — · Vol —", () => {
+  // "mengapa jovi masih ada di trending spotlight — no logo no vol no token":
+  // $JOVI held a Diamond slot and led as card #4 with a dash in every figure.
+  const list = [
+    tok({ sym: "JOVI", tier: "DIAMOND", slot: 1, source: "seed", price: 0, chg: 0, tx: 0 }),
+    tok({ sym: "GLD", tier: "GOLD", slot: 1 }),
+    tok({ sym: "UP", chg: 40 }),
+  ];
+  assert.deepStrictEqual(syms(spotlight(list)), ["GLD", "UP"]);
+  assert.deepStrictEqual(syms(featuredSlots(list)), ["GLD"], "the /trending rail reads the same rule");
+});
+
+test("a captured-at-listing price still counts, so the demo board keeps its spotlight", () => {
+  assert.strictEqual(hasCardPrice(tok({ sym: "D", source: "seed", price: 0.0042 })), true);
+  assert.strictEqual(hasCardPrice(tok({ sym: "Z", source: "seed", price: 0 })), false, "a captured zero is not a price");
+  assert.strictEqual(hasCardPrice(tok({ sym: "L", source: "live", price: 0 })), false, "no market prices at zero");
+  assert.strictEqual(hasCardPrice(tok({ sym: "N", price: Number.NaN })), false);
+});
+
+test("the top-up keeps the same rule — no card whose price is a dash", () => {
+  const list = [tok({ sym: "NOPX", chg: 80, price: 0, source: "seed" }), tok({ sym: "UP", chg: 20 })];
+  assert.deepStrictEqual(syms(spotlight(list)), ["UP"]);
+});
+
+test("the /trending rail prints readings, never the raw fields", () => {
+  const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+  const page = strip(readFileSync(join(process.cwd(), "src/app/(site)/trending/page.tsx"), "utf8"));
+  assert.ok(!/fmtPrice\(t\.priceUsd\)/.test(page), "the price goes through figureReading");
+  assert.ok(!/t\.chg\[/.test(page), "the change goes through changeReading");
+  assert.match(page, /figureReading\(t, t\.priceUsd\)/);
+  assert.match(page, /changeReading\(t, "24h"\)/);
 });

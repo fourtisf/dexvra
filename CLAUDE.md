@@ -15398,6 +15398,17 @@ is the `DEXVRA TERMINAL` layer, appended last in `globals.css`, over DEXVRA DATA
   rank is never chosen. A short market renders a short spotlight; it is never
   padded. No sparkline: `trend` is synthesised (`syntheticTrend`), and at card
   size that is a price history nobody measured. The bar is real: share of buys.
+- ⚠️ **A card needs a PRICE** ("mengapa jovi masih ada di trending spotlight
+  — no logo no vol no token"). $JOVI (Tron) held a booked Diamond slot and led
+  as card #4 reading `—` · MC `—` · Vol `—`: no source has ever priced it. The
+  site cannot tell a PAID slot from one the bot booked (both go through
+  `/api/internal/trending`), so the rule is about the card: `hasCardPrice`
+  (a price above zero) gates `featuredSlots` — the spotlight AND the /trending
+  "Paid featured slots" rail — and the top-up. It gates the SHOWCASE, never
+  the listing: the row stays on the board and the Telegram board, and the
+  card comes back in its paid position the moment any source prices it. The
+  rail also printed the RAW fields (`$0`, `+0.0%`); it reads `figureReading` /
+  `changeReading` now.
 - **Each card names its PACKAGE, not "Featured"** ("feature ini diganti …
   diamond gold platinum … yang express ya tulis express"). `spotlightTier` is
   the one rule: a booked slot always shows its package (Diamond, Gold,
