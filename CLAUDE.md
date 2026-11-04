@@ -15686,6 +15686,45 @@ judging a purchase.
 enabled for the repository (Settings → Actions) for the workflow to run. If the
 first push shows no "bot tests" check on the commit, that is where to look.
 
+#### ⚠️ …and its first run proved the suite had only ever been offline by ACCIDENT
+
+CI went red on 1 of 2694 tests that passed here twice:
+`trendFill.test.js` "what it could NOT do is reported, never returned as a
+quiet zero". Its `deps()` helper predates the DexScreener fallback
+(`topByMcapAlt`) and never stubbed it. In the dev sandbox, which has no egress,
+the real request failed fast and the test passed. In CI the real DexScreener
+answered, and a test about an UNREADABLE market "listed" two real Base tokens
+(MORPHO, VVV).
+
+A network spy over the whole suite then found **thirteen** test files reaching
+real hosts, all pre-dating this work: `autoTrend.test.js` alone made 2,121
+DexScreener/GeckoTerminal calls, and `confirmDetached.test.js` 70 to the real
+Robinhood RPC. Whether those pass is a property of where they run, which is not
+a test.
+
+- **`bot/scripts/offline-guard.js` is preloaded into every test process** by
+  `scripts/run-tests.js` (`NODE_OPTIONS --require`). A request to a non-local
+  host fails the way a dead network fails — fast, `fetch failed` with an
+  `ECONNREFUSED` cause, or a refused socket for http/https — on every machine.
+  Local servers still answer (several tests stand one up on purpose).
+  `TEST_NETWORK=1` turns it off for a deliberate live run.
+- **The run ends by NAMING every test file that tried**, with the hosts. It
+  does not turn the exit code: the leak is now deterministic, and the list is
+  the backlog of stubs to write. The goal is an empty list.
+- **The trendFill test stubs the fallback**, and a new assertion that both
+  sources' reasons are kept pins it.
+- **The CI workflow prints only the `not ok` blocks** in a "Failures" step. The
+  TAP output is ~18k lines and GitHub's API serves only its tail, so the first
+  red run's reason was in a line nobody could reach.
+
+Mutation-tested: the fetch guard removed, the http guard removed, local hosts
+refused too, and the runner not preloading the guard each fail a test.
+
+```bash
+cd bot && node scripts/run-tests.js test/offlineGuard.test.js test/trendFill.test.js
+cd bot && npm test 2>&1 | tail -20      # the leak list, if any file still reaches out
+```
+
 ## Conventions
 
 - Tests live beside the code they cover, in `bot/test/`, `tradebot/*.test.js`

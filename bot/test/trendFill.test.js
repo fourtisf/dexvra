@@ -124,6 +124,12 @@ const deps = (over = {}) => ({
       { chain: "base", address: "0xdegen", symbol: "DEGEN", name: "Degen", mcap: 300_000_000, liq: 1e6, vol24: 1e6, change24h: 3 },
     ],
   }),
+  // The DexScreener fallback is a SEAM like every other source here. It was
+  // added after these tests were written and never stubbed, so on a machine
+  // with internet the "could not read the market" test asked the REAL
+  // DexScreener, got MORPHO and VVV, and listed them — green only where the
+  // network was dead. Unreachable by default; a test that wants it answers it.
+  topByMcapAlt: async () => ({ ok: false, why: "DexScreener HTTP 503", items: [] }),
   getListings: async () => [],
   wasEverListed: () => false,
   fetchTokenInfo: async () => null,
@@ -169,6 +175,7 @@ test("what it could NOT do is reported, never returned as a quiet zero", async (
   });
   assert.deepStrictEqual(unreadable.listed, []);
   assert.match(unreadable.why, /could not read the market/, "a rate limit must not read as an empty chain");
+  assert.match(unreadable.why, /GeckoTerminal: rate limited · DexScreener: DexScreener HTTP 503/, "both sources' reasons are kept");
 
   const allKnown = await trendFill.fillChain("base", 2, {
     deps: deps({ getListings: async () => [{ chain: "base", address: "0xbrett" }, { chain: "base", address: "0xtoshi" }, { chain: "base", address: "0xdegen" }] }),

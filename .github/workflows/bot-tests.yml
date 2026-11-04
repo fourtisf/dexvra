@@ -5,8 +5,14 @@
 # the bot's (scripts/deploy.sh step 4), and nothing else ran them either. The
 # guarantees that keep a deleted honeypot from being pump-announced live in
 # bot/test/ and were enforced only by whoever remembered to type `npm test`.
-# Offline by construction (scripts/run-tests.js stubs every remote), so no
-# secret and no network is needed here.
+#
+# ⚠️ OFFLINE BY CONSTRUCTION — and the first run here is what proved it had
+# not been. The suite was offline only by accident of the dev sandbox (no
+# egress), so a test that forgot a stub passed there and failed HERE, where
+# the real DexScreener answered. scripts/run-tests.js now preloads
+# scripts/offline-guard.js into every test process: a request to a non-local
+# host fails like a dead network on every machine, and the run ends by naming
+# any test file that tried. No secret and no network is needed.
 name: bot tests
 
 on:

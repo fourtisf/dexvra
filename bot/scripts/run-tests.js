@@ -29,10 +29,17 @@ const files = args.length
       .filter((f) => f.endsWith(".test.js"))
       .sort()
       .map((f) => path.join("test", f));
+// Every test process is OFFLINE BY CONSTRUCTION — see scripts/offline-guard.js
+// for the CI run that proved the suite had only ever been offline by accident.
+// Quoted, because NODE_OPTIONS splits on spaces and a checkout path may have one.
+const netLog = path.join(dir, "net.log");
+const guard = path.join(__dirname, "offline-guard.js");
 const res = spawnSync(process.execPath, ["--test", ...files], {
   stdio: "inherit",
   env: {
     ...process.env,
+    NODE_OPTIONS: [process.env.NODE_OPTIONS, `--require ${JSON.stringify(guard)}`].filter(Boolean).join(" "),
+    TEST_NET_LOG: netLog,
     BOT_DATA_DIR: dir,
     // The GeckoTerminal limiter paces against a REMOTE quota, and there is no
     // remote here — every test stubs global.fetch. Left at the production
@@ -61,6 +68,25 @@ const res = spawnSync(process.execPath, ["--test", ...files], {
     SOLANA_META: process.env.SOLANA_META || "0",
   },
 });
+// A test that reached for the internet was refused, and passed or failed on
+// that refusal — the same everywhere now, but still a test leaning on a stub it
+// never wrote. Said once, after the run, so a leak is visible rather than
+// silent; it does not turn the exit code.
+try {
+  const lines = fs.existsSync(netLog) ? fs.readFileSync(netLog, "utf8").split("\n").filter(Boolean) : [];
+  if (lines.length) {
+    const byFile = new Map();
+    for (const l of lines) {
+      const [file, host] = l.split("\t");
+      if (!byFile.has(file)) byFile.set(file, new Set());
+      byFile.get(file).add(host);
+    }
+    console.error(`\n⚠ ${byFile.size} test file(s) reached for the internet and were refused (the suite is offline — stub the request):`);
+    for (const [file, hosts] of [...byFile].sort()) console.error(`  ${file} → ${[...hosts].sort().join(", ")}`);
+  }
+} catch {
+  /* the report is informational; it must never change the result */
+}
 try {
   fs.rmSync(dir, { recursive: true, force: true });
 } catch {
