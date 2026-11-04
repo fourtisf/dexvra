@@ -4080,56 +4080,74 @@ Eight more guarantees are MUTATION-TESTED rather than argued:
 The listing post used to be the admin's uploaded clip with a STILL overlay
 pasted on every frame (`bannerTemplate.composeOntoClip`): the background moved
 and the token did not. `bot/src/listingMotion.js` draws the whole clip in code,
-150 frames piped into ffmpeg, so the token is part of the motion. It took four
-rounds, and each "no" is worth keeping:
+150 frames piped into ffmpeg, so the token is part of the motion. It took five
+rounds, and each answer is worth keeping:
 
-| ask | what it rejected |
+| ask | verdict on |
 | --- | --- |
 | "gif listing lebih bagus premium dari gif sebelumnya" | the admin clip with a pasted still |
 | "gif video looks bad … ada animasi visualnya" | a still card with a little drift |
 | "ini jelek banget, saya ingin sesuai brand kita biru" | a gold motion piece |
-| "rubah tampilannya?? berbeda lebih bagus dan premium" | the same layout recoloured blue |
+| "rubah tampilannya?? berbeda lebih bagus dan premium" | the blue version — so a centred cinematic poster was built |
+| "lol malah lebih jelek, mending sebelumnya" | **the poster — the blue version is what shipped** |
 
-What shipped is a **centred cinematic poster in the brand palette** (the gem's
-mint → cyan, royal blue, indigo):
+⚠️ **"Different" was not "better".** The centred poster (mesh-gradient field,
+stage spotlight, perspective floor, ticker at centre) was a complete redesign
+and was rejected harder than what it replaced. It lives in git at `a89ebdf` if
+anyone is ever tempted to try it again; the operator has seen it and said no.
 
-- an animated mesh-gradient field, a stage spotlight with swaying shafts, and a
-  perspective floor rolling toward the viewer;
-- the token's logo at centre stage, on a 3D coin inside rotating rings of light;
-- a big centred ticker that rises in letter by letter;
-- frosted-glass stat chips whose numbers decode.
+What shipped is the **gem-blue card**: the gem's own mint → cyan on deep ocean
+blue, with the bundled listing artwork's furniture.
 
-White and ice type, no foil.
+- The copy stands in a column on the left: the NEW LISTING pill, the ticker, the
+  name, a rule, the stat panel.
+- The coin stands on the right, floating on a lit pedestal. Around it are two
+  tilted orbits with comet lights, the artwork's dashed ring, and four gem
+  bubbles.
+- Behind everything: aurora ribbons, soft light rays from behind the coin, and
+  bokeh.
 
 | seconds | what happens |
 | --- | --- |
-| 0.0–3.2 | **hold**: the field drifts, the shafts sway, the floor rolls, the rings turn, one full 3D coin spin (the reverse carries the Dexvra mark), shines across the ticker, chips and badge |
-| 3.2–3.8 | **outro**: the coin spins away, the type fades, a light sweep crosses |
-| 3.8–6.0 | **intro**: the coin flies in spinning and LANDS (flash, shockwaves, sparks), the rings open, the ticker rises letter by letter, the chips rise and decode |
+| 0.0–3.2 | **hold**: the ribbons flow, the rays turn, the orbits and the dashed ring run, motes rise off the pedestal, one full 3D coin spin (the reverse carries the Dexvra mark), shimmers across the ticker |
+| 3.2–3.8 | **outro**: the coin spins away, the copy fades, a light sweep crosses |
+| 3.8–6.0 | **intro**: the coin flies in spinning and LANDS on the pedestal (flash, shockwave, sparks), the ticker wipes in, the name rises, the stat panel opens and its numbers decode |
 
-- **Frame 0 is the FULL poster.** Telegram makes the thumbnail and the
+- **Frame 0 is the FULL card.** Telegram makes the thumbnail and the
   notification preview from the first frame, so the loop starts in the hold and
   the build plays mid-loop. A test pins every scheduled element in place at
   t=0.
 - **The loop is EXACT, and a test says so pixel for pixel.** `drawFrames`
-  takes unwrapped `times`, and t=6.0 must draw what t=0 draws (0 bytes differ
-  by more than 12). That needs three things:
+  takes unwrapped `times`, and t=6.0 must draw what t=0 draws (fewer than 40
+  bytes may differ by more than 12). That needs three things:
   - every ambient motion completes whole periods per loop;
   - every element the intro builds has settled before the wrap;
   - the landing's afterglow decays to EXACTLY 0 at the loop's end (a bare
     exponential was still a few percent up).
 
-  ⚠️ An average-difference seam test could not catch a faint element that was
-  off by part of a period. A floor row, the thin light ring and the dust all
-  SURVIVED it. Counting the bytes that differ kills all of them. The previous
-  layout also taught this one: an alternating pattern (wide/narrow rays) repeats
-  every TWO steps, not one.
+  ⚠️ **The version the operator approved jumped at its seam every 6 seconds,
+  and the average-difference test passed it.** The exact test found two
+  causes:
+  - The dashed ring turned a quarter turn per loop, which on its radius is
+    17.87 dash periods; the leftover 0.13 of a dash jumped. It slides exactly
+    18 dash periods now, the same speed to the eye.
+  - The orbit heads sit EXACTLY on the behind/in-front crossing at t=0, where
+    `sin(a)` is `+1e-16` and one loop later `-1e-16`. So a head flipped depth
+    (0.45 ↔ 1) and drew on the other side of the front-half stroke: a blink.
+    "Behind" is decided on the angle wrapped to [0, 2π) now.
+
+  The frames still match the approved video to codec noise. The test also
+  carries a vacuity guard: if `times` were wrapped, the seam assertion would
+  compare frame 0 with itself and pass on anything.
+- ⚠️ The rays alternate wide/narrow, so their pattern repeats every TWO beams.
+  They turn two beam-steps per loop; one step put a wide beam where a narrow one
+  was at the seam.
 - **The landing fires when the coin ARRIVES** (≥98% of its size, 72% into its
   flight), not when the last 2% of the easing runs out.
-- **A missing figure is LEFT OUT of the chips**, never drawn as a dash, a zero
-  or TBA. `bannerCoinOf` carries `liq` now (and the auto-lister's
-  `bannerCoinFor`); a missing depth is null. Chip widths are sized on the
-  widest digit (8), so a decoding frame never overflows its glass.
+- **A missing figure is LEFT OUT of the stat panel**, never drawn as a dash, a
+  zero or TBA. `bannerCoinOf` carries `liq` now (and the auto-lister's
+  `bannerCoinFor`); a missing depth is null. Column widths are sized on the
+  widest digit (8), so a decoding frame never overflows the panel.
 - **It is a font-check surface** (`bannerSurfaces.js` `listing-motion`), so
   `fonts:check` measures it like every other renderer. Measured: all five
   coverage scripts reach the chain.
@@ -4163,14 +4181,17 @@ cd bot && node scripts/listing-motion-preview.js                 # the clip, sti
 pm2 logs dexvra-bot --lines 300 --nostream | grep -F '[listingMotion]'
 ```
 
-Eighteen guarantees are MUTATION-TESTED rather than argued. Each mutant fails a
+These guarantees are MUTATION-TESTED rather than argued. Each mutant fails a
 test:
 
 - **loop:**
-  - motion off by part of a period: the floor, the comet ring, the outer ring,
-    the light shafts, the colour field, the dust;
+  - motion off by part of a period: the rays (one step), the ribbons, the bokeh,
+    the motes, the gem bubbles, the pedestal light, the dashed ring (back to a
+    quarter turn, or 17.5 periods);
+  - the orbit heads' depth decided on raw `sin(a)` again;
+  - `times` wrapped, or dropped (the vacuity guard);
   - the bare-exponential afterglow;
-  - the chips not settled before the wrap;
+  - the stats not settled before the wrap;
 - **buffers:** `frames()` not copying;
 - **switch:** blank read as off, the switch ignored, the motion on every kind;
 - **cancel and cleanup:** the cancel ignored, the timeout not cancelling, a

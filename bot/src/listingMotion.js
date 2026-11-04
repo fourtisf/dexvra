@@ -1,33 +1,31 @@
 "use strict";
 // The PREMIUM animated listing banner — a looping MP4 drawn frame by frame.
 //
-// How it got here, because each step was a "no" worth remembering:
-//   1. "bisakah anda buatkan gif premium gif listing lebih bagus premium dari
-//      gif sebelumnya" — a still card with a little drift. Too static.
-//   2. "gif video looks bad buat lebih premium ada animasi visualnya" — a gold
-//      motion piece. Real motion, wrong colours.
-//   3. "ini jelek banget, saya ingin sesuai brand kita biru" — the same piece
-//      in the brand blue. Right colours, same layout.
-//   4. "bisakah anda rubah tampilannya?? berbeda lebih bagus dan premium" —
-//      THIS: a different composition. A centred, cinematic poster: an animated
-//      mesh-gradient field under a stage spotlight and a perspective floor, the
-//      token's logo at centre stage inside rotating rings of light, a big
-//      centred ticker that rises in letter by letter, and frosted-glass stat
-//      chips. Brand palette throughout (the gem's mint → cyan, royal blue,
-//      indigo); restraint over ornament — white type, no foil.
+// "bisakah anda buatkan gif premium gif listing lebih bagus premium dari gif
+// sebelumnya" (2026-11-04), then, over the first cut: "gif video looks bad buat
+// lebih premium ada animasi visualnya", then "ini jelek banget, saya ingin
+// sesuai brand kita biru". The first cut was a still card with a little drift;
+// the second a gold motion piece; this one is that motion in the BRAND — the
+// gem's mint → cyan on deep ocean blue, with the bundled listing artwork's own
+// furniture (the mint → cyan coin ring, the dashed ring, the gem bubbles).
 //
+// ⚠️ THIS IS THE LAYOUT THE OPERATOR CHOSE OVER A REDESIGN. Asked for something
+// "berbeda lebih bagus dan premium", a centred cinematic poster was built
+// (git a89ebdf) and rejected harder: "lol malah lebih jelek, mending
+// sebelumnya". Different was not better — change THIS one, don't replace it.
 // Each loop:
-//   0.0–3.2s  HOLD    the full poster, alive: drifting colour field, swaying
-//                     light shafts, a floor rolling toward the viewer, rings of
-//                     light turning, one full 3D spin of the coin (its reverse
-//                     carries the Dexvra mark), a shine across the ticker/chips
-//   3.2–3.8s  OUTRO   the coin spins away, the type fades, a light sweep crosses
-//   3.8–6.0s  INTRO   the coin flies in spinning and LANDS — flash, shockwaves,
-//                     sparks — the rings open, the ticker rises letter by
-//                     letter, the chips rise and their numbers decode
 //
-// FRAME 0 IS THE FULL POSTER, deliberately: Telegram makes the thumbnail and
-// the notification preview from the first frame, and a loop that opened on an
+//   0.0–3.2s  HOLD    the full card, alive: aurora ribbons, soft light rays,
+//                     orbiting lights, floating gem bubbles, rising motes, the
+//                     coin floating on its pedestal, one full 3D coin spin
+//                     (its reverse carries the Dexvra mark), ticker shimmers
+//   3.2–3.8s  OUTRO   the coin spins away, the copy fades, a light sweep crosses
+//   3.8–6.0s  INTRO   the coin flies in spinning and LANDS — flash, shockwave,
+//                     a burst of sparks — then the ticker wipes in, the name
+//                     rises, the stat panel opens and its numbers decode
+//
+// FRAME 0 IS THE FULL CARD, deliberately: Telegram makes the thumbnail and the
+// notification preview from the first frame, and a loop that opened on an
 // empty stage would preview as a blank. So the loop starts in the HOLD and the
 // build plays mid-loop.
 //
@@ -57,24 +55,20 @@ const SECONDS = 6;
 const FRAMES = FPS * SECONDS;
 const TAU = Math.PI * 2;
 
-// THE DEXVRA BRAND: the gem's mint → cyan (canvasKit drawBrandMark, the bundled
-// banner artwork), with royal blue and indigo for depth. Every accent reads
-// from here.
+// THE DEXVRA BRAND, not gold: "ini jelek banget, saya ingin sesuai brand kita
+// biru". The gem's own mint → cyan (canvasKit drawBrandMark, the bundled
+// banner artwork) on deep ocean blue. Every accent below reads from here.
 const C = {
-  light: "#D8FAFF", // ice
+  light: "#D8FAFF", // ice — highlights, foil tops
   mid: "#22D3EE", // the brand cyan
-  dark: "#0A6E9C",
+  dark: "#0A6E9C", // deep cyan — shadows on metal
   glow: "#22D3EE",
-  blue: "#2F86FF",
-  royal: "#1A4FD6",
-  indigo: "#4A3BFF",
-  mint: "#3DF59F",
+  blue: "#2F86FF", // electric blue — depth
+  mint: "#3DF59F", // the gem's mint
 };
-
-const COIN = { cx: 640, cy: 222, r: 90 };
-const BEZEL = 7;
-const HORIZON = 318;
-const CX = W / 2;
+const COIN = { cx: 958, cy: 286, r: 138 };
+const BEZEL = 13; // the gold rim beyond the face, in px at scale 1
+const PEDESTAL = { cx: 958, cy: 500, rx: 182, ry: 30 };
 
 // ── the timeline (seconds) ───────────────────────────────────────────────────
 const HOLD_END = 3.2;
@@ -84,13 +78,14 @@ const IN0 = OUT_END;
 // (and identical to frame 0) when the loop wraps.
 const SCHED = {
   coin: [0, 0.9],
-  ring: [0.62, 0.55],
-  eyebrow: [0.7, 0.5],
-  ticker: [0.76, 0.75],
-  name: [1.18, 0.45],
-  stats: [1.3, 0.45], // + STAT_STAGGER per chip
+  pill: [0.66, 0.4],
+  ticker: [0.76, 0.6],
+  name: [1.12, 0.45],
+  rule: [1.22, 0.45],
+  stats: [1.3, 0.45], // + STAT_STAGGER per block
+  bubbles: [0.72, 0.5],
 };
-const STAT_STAGGER = 0.1;
+const STAT_STAGGER = 0.12;
 // the coin ARRIVES (≥98% of its size) about three quarters into its flight;
 // the landing fires then, not when the last 2% of the easing runs out
 const IMPACT = IN0 + SCHED.coin[0] + SCHED.coin[1] * 0.72;
@@ -124,7 +119,7 @@ function reveal(t, key, i = 0) {
 
 /** Where the coin is: scale, Y-axis angle, opacity and its float. */
 function coinState(t) {
-  const bob = 5 * Math.sin((TAU * t) / SECONDS);
+  const bob = 6 * Math.sin((TAU * t) / SECONDS);
   let s = 1;
   let theta = 0;
   let alpha = 1;
@@ -148,7 +143,7 @@ function coinState(t) {
 
 /** How hard the landing still rings: 1 at impact, decaying to EXACTLY 0 at the
  *  end of the loop — a bare exponential would still be a few percent up when
- *  the loop wraps, and the light would visibly step at the seam. */
+ *  the loop wraps, and the rays would visibly step at the seam. */
 function impactBoost(t, rate = 3) {
   const v = t - IMPACT;
   if (v < 0) return 0;
@@ -177,42 +172,62 @@ function hash3(a, b, c) {
 
 const FIELD = (() => {
   const r = rng(20261104);
-  const dust = Array.from({ length: 70 }, () => ({
-    x: r() * W,
-    y: r() * H,
-    size: 0.8 + r() * 2.2,
-    phase: r(),
-    sway: 6 + r() * 18,
-    a: 0.25 + r() * 0.6,
-    cyan: r() < 0.6,
-  }));
-  const sparkles = Array.from({ length: 16 }, () => ({
-    x: 60 + r() * (W - 120),
-    y: 40 + r() * (H - 120),
-    size: 5 + r() * 8,
+  const sparkles = Array.from({ length: 26 }, () => ({
+    x: 40 + r() * (W - 80),
+    y: 40 + r() * (H - 80),
+    size: 5 + r() * 9,
     phase: r(),
     cycles: 1 + Math.floor(r() * 2),
+    gold: r() < 0.75,
   }));
-  const sparks = Array.from({ length: 64 }, () => ({
+  const bokeh = Array.from({ length: 16 }, () => ({
+    x: r() * W,
+    y: r() * H,
+    size: 26 + r() * 70,
+    phase: r(),
+    drift: 14 + r() * 26,
+    a: 0.05 + r() * 0.07,
+    cyan: r() < 0.35,
+  }));
+  const motes = Array.from({ length: 34 }, () => ({
+    ox: (r() * 2 - 1) * 0.85,
+    phase: r(),
+    cycles: 1 + Math.floor(r() * 2),
+    rise: 170 + r() * 150,
+    size: 1.2 + r() * 2.2,
+    sway: 4 + r() * 10,
+  }));
+  const sparks = Array.from({ length: 72 }, () => ({
     a: r() * TAU,
-    speed: 360 + r() * 720,
+    speed: 380 + r() * 760,
     life: 0.55 + r() * 0.6,
-    w: 1.1 + r() * 1.8,
-    white: r() < 0.35,
+    w: 1.2 + r() * 1.9,
+    white: r() < 0.3,
   }));
-  return { dust, sparkles, sparks };
+  return { sparkles, bokeh, motes, sparks };
 })();
 
-// the colour field: big soft blobs on closed paths, one lap per loop
-const BLOBS = [
-  { x: 240, y: 520, ax: 90, ay: 50, r: 560, color: "#1A4FD6", a: 0.55, k: 1, ph: 0.0 },
-  { x: 1080, y: 110, ax: 80, ay: 60, r: 520, color: "#4A3BFF", a: 0.42, k: 1, ph: 0.3 },
-  { x: 1120, y: 560, ax: 70, ay: 40, r: 480, color: "#0A6E9C", a: 0.5, k: -1, ph: 0.55 },
-  { x: 150, y: 90, ax: 60, ay: 40, r: 340, color: "#3DF59F", a: 0.14, k: -1, ph: 0.8 },
-  { x: 640, y: 230, ax: 30, ay: 18, r: 380, color: "#22D3EE", a: 0.22, k: 1, ph: 0.15 },
+const RIBBONS = [
+  { y: 486, amp: 44, f1: 0.0049, f2: 0.0107, k1: 1, k2: -1, color: C.mid, a: 0.9 },
+  { y: 540, amp: 34, f1: 0.0058, f2: 0.0091, k1: -1, k2: 2, color: C.blue, a: 0.8 },
+  { y: 128, amp: 28, f1: 0.0042, f2: 0.0099, k1: 1, k2: 1, color: C.mint, a: 0.4 },
+];
+
+const ORBITS = [
+  { rx: 236, ry: 56, tilt: -0.3, color: "gold", dots: 3, speed: 1 },
+  { rx: 212, ry: 70, tilt: 0.4, color: "cyan", dots: 2, speed: -1 },
 ];
 
 // ── small drawing helpers ────────────────────────────────────────────────────
+
+function foil(ctx, y0, y1) {
+  const g = ctx.createLinearGradient(0, y0, 0, y1);
+  g.addColorStop(0, "#FFFFFF");
+  g.addColorStop(0.45, C.light);
+  g.addColorStop(0.78, C.mid);
+  g.addColorStop(1, "#1E8FD8");
+  return g;
+}
 
 function softGlow(ctx, cx, cy, r, color, a) {
   if (a <= 0 || r <= 0) return;
@@ -245,7 +260,7 @@ const pxOf = (font, dflt) => {
 const tickerOf = (symbol) => `$${String(symbol || "").replace(/^\$+/, "").toUpperCase()}`;
 const hostOf = (url) => String(url || "").replace(/^https?:\/\//, "").replace(/\/.*$/, "");
 
-/** The stat chips the poster carries — a missing figure is LEFT OUT, never
+/** The stat blocks the panel carries — a missing figure is LEFT OUT, never
  *  printed as a dash or a zero (the post's caption already says TBA). */
 function statsOf(coin) {
   const out = [];
@@ -287,243 +302,98 @@ function blit(ctx, sprite, x, y, size, alpha) {
   ctx.drawImage(sprite, x - size / 2, y - size / 2, size, size);
 }
 
-/** Ice type: white at the top, the brand cyan at the foot. */
-function ice(ctx, y0, y1) {
-  const g = ctx.createLinearGradient(0, y0, 0, y1);
-  g.addColorStop(0, "#FFFFFF");
-  g.addColorStop(0.55, "#E6FBFF");
-  g.addColorStop(1, "#7FE7FA");
-  return g;
-}
+// ── static layers (drawn once per render) ────────────────────────────────────
 
-// ── the background (per frame: it moves) ────────────────────────────────────
-
-/** Film grain — the difference between a gradient and a photograph. Static, so
- *  it costs the encoder nothing. */
-function grainCanvas(cv) {
-  const c = cv.createCanvas(W, H);
-  const x = c.getContext("2d");
-  const id = x.createImageData(W, H);
-  const r = rng(77);
-  for (let i = 0; i < id.data.length; i += 4) {
-    const v = r() < 0.5 ? 0 : 255;
-    id.data[i] = v;
-    id.data[i + 1] = v;
-    id.data[i + 2] = v;
-    id.data[i + 3] = Math.floor(r() * 14);
-  }
-  x.putImageData(id, 0, 0);
-  return c;
-}
-
-function drawField(ctx, p) {
-  ctx.fillStyle = "#020814";
-  ctx.fillRect(0, 0, W, H);
-  for (const b of BLOBS) {
-    const a = TAU * (p * b.k + b.ph);
-    softGlow(ctx, b.x + Math.cos(a) * b.ax, b.y + Math.sin(a) * b.ay, b.r, b.color, b.a);
-  }
-}
-
-/** A perspective floor receding to the horizon behind the coin, rolling toward
- *  the viewer — clear in the centre column, where the type sits. */
-function drawFloor(ctx, p) {
-  const fade = (a) => {
-    const g = ctx.createLinearGradient(0, 0, W, 0);
-    g.addColorStop(0, hexA(C.mid, a));
-    g.addColorStop(0.3, hexA(C.mid, a * 0.18));
-    g.addColorStop(0.5, hexA(C.mid, 0));
-    g.addColorStop(0.7, hexA(C.mid, a * 0.18));
-    g.addColorStop(1, hexA(C.mid, a));
-    return g;
-  };
-  ctx.save();
-  ctx.lineWidth = 1;
-  const N = 9;
-  for (let j = 0; j < N + 1; j++) {
-    const s = (j + ((p * 2) % 1)) / N; // two rows per loop
-    if (s > 1) continue;
-    const y = HORIZON + (H + 30 - HORIZON) * s * s;
-    ctx.strokeStyle = fade(0.32 * s);
-    ctx.beginPath();
-    ctx.moveTo(0, y);
-    ctx.lineTo(W, y);
-    ctx.stroke();
-  }
-  for (let i = -10; i <= 10; i++) {
-    const xb = CX + i * 150;
-    const a = 0.22 * Math.min(1, Math.abs(i) / 3.5);
-    if (a <= 0) continue;
-    const g = ctx.createLinearGradient(0, HORIZON, 0, H);
-    g.addColorStop(0, hexA(C.mid, 0));
-    g.addColorStop(1, hexA(C.mid, a));
-    ctx.strokeStyle = g;
-    ctx.beginPath();
-    ctx.moveTo(CX + i * 6, HORIZON);
-    ctx.lineTo(xb, H + 30);
-    ctx.stroke();
-  }
-  // the horizon itself: a thin line of light, brightest behind the coin
-  const hz = ctx.createLinearGradient(0, 0, W, 0);
-  hz.addColorStop(0, hexA(C.mid, 0));
-  hz.addColorStop(0.5, hexA(C.light, 0.75));
-  hz.addColorStop(1, hexA(C.mid, 0));
-  ctx.fillStyle = hz;
-  ctx.fillRect(0, HORIZON - 0.75, W, 1.5);
-  ctx.restore();
-  ctx.save();
-  ctx.translate(CX, HORIZON);
-  ctx.scale(1, 0.12);
-  softGlow(ctx, 0, 0, 520, C.mid, 0.28);
-  ctx.restore();
-}
-
-/** The stage light: a cone from above onto the coin, with three shafts swaying
- *  inside it. */
-function drawSpotlight(ctx, t, p) {
-  const boost = impactBoost(t, 2.4);
-  ctx.save();
-  ctx.globalCompositeOperation = "lighter";
-  const g = ctx.createLinearGradient(0, 0, 0, HORIZON + 20);
-  g.addColorStop(0, hexA(C.light, 0.13 + 0.12 * boost));
-  g.addColorStop(1, hexA(C.mid, 0.015));
+function drawBase(ctx) {
+  const g = ctx.createRadialGradient(W * 0.72, H * 0.42, 30, W * 0.55, H * 0.5, W * 0.85);
+  g.addColorStop(0, "#0C3047");
+  g.addColorStop(0.5, "#06192A");
+  g.addColorStop(1, "#01060B");
   ctx.fillStyle = g;
-  ctx.beginPath();
-  ctx.moveTo(CX - 60, -10);
-  ctx.lineTo(CX + 60, -10);
-  ctx.lineTo(CX + 300, HORIZON + 20);
-  ctx.lineTo(CX - 300, HORIZON + 20);
-  ctx.closePath();
-  ctx.fill();
-  for (const [ph, w, a] of [[0, 34, 0.09], [0.33, 20, 0.07], [0.66, 26, 0.08]]) {
-    const ang = 0.16 * Math.sin(TAU * (p + ph));
-    ctx.save();
-    ctx.translate(CX, -10);
-    ctx.rotate(ang);
-    const s = ctx.createLinearGradient(0, 0, 0, HORIZON);
-    s.addColorStop(0, hexA("#FFFFFF", a * (1 + boost)));
-    s.addColorStop(1, hexA(C.mid, 0));
-    ctx.fillStyle = s;
-    ctx.beginPath();
-    ctx.moveTo(-w * 0.2, 0);
-    ctx.lineTo(w * 0.2, 0);
-    ctx.lineTo(w, HORIZON);
-    ctx.lineTo(-w, HORIZON);
-    ctx.closePath();
-    ctx.fill();
-    ctx.restore();
-  }
-  ctx.restore();
+  ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = "rgba(255,255,255,0.028)";
+  for (let y = 14; y < H; y += 26) for (let x = 14; x < W; x += 26) ctx.fillRect(x, y, 1.2, 1.2);
 }
-
-function drawDust(ctx, p, sprites) {
-  ctx.save();
-  ctx.globalCompositeOperation = "lighter";
-  for (const d of FIELD.dust) {
-    const y = ((((d.y - p * (H + 40)) % (H + 40)) + H + 40) % (H + 40)) - 20; // one rise per loop
-    const x = d.x + Math.sin(TAU * (p + d.phase)) * d.sway;
-    const tw = 0.6 + 0.4 * Math.sin(TAU * (p * 2 + d.phase));
-    blit(ctx, d.cyan ? sprites.cyan : sprites.white, x, y, d.size * 6, d.a * tw * 0.7);
-  }
-  ctx.restore();
-}
-
-/** Four-point star glints that flare and vanish. */
-function drawSparkles(ctx, p) {
-  ctx.save();
-  ctx.globalCompositeOperation = "lighter";
-  for (const s of FIELD.sparkles) {
-    const tw = Math.max(0, Math.sin(TAU * (p * s.cycles + s.phase)));
-    const a = tw ** 6;
-    if (a < 0.02) continue;
-    const L = s.size * (0.6 + 0.8 * a);
-    for (const [dx, dy] of [[1, 0], [0, 1]]) {
-      const g = ctx.createLinearGradient(s.x - dx * L, s.y - dy * L, s.x + dx * L, s.y + dy * L);
-      g.addColorStop(0, hexA(C.light, 0));
-      g.addColorStop(0.5, hexA(C.light, a));
-      g.addColorStop(1, hexA(C.light, 0));
-      ctx.strokeStyle = g;
-      ctx.lineWidth = 1.3;
-      ctx.beginPath();
-      ctx.moveTo(s.x - dx * L, s.y - dy * L);
-      ctx.lineTo(s.x + dx * L, s.y + dy * L);
-      ctx.stroke();
-    }
-  }
-  ctx.restore();
-}
-
-// ── the static chrome ────────────────────────────────────────────────────────
 
 function drawVignette(ctx) {
-  const v = ctx.createRadialGradient(CX, H * 0.45, H * 0.35, CX, H * 0.5, W * 0.72);
+  const v = ctx.createRadialGradient(W / 2, H / 2, H * 0.36, W / 2, H / 2, W * 0.74);
   v.addColorStop(0, "rgba(0,0,0,0)");
-  v.addColorStop(1, "rgba(0,0,0,0.6)");
+  v.addColorStop(1, "rgba(0,0,0,0.66)");
   ctx.fillStyle = v;
   ctx.fillRect(0, 0, W, H);
-  // a soft pool of shade under the type, so it always reads over the floor
-  ctx.save();
-  ctx.translate(CX, 470);
-  ctx.scale(1, 0.32);
-  const g = ctx.createRadialGradient(0, 0, 0, 0, 0, 560);
-  g.addColorStop(0, "rgba(2,8,20,0.6)");
-  g.addColorStop(1, "rgba(2,8,20,0)");
-  ctx.fillStyle = g;
-  ctx.fillRect(-560, -560, 1120, 1120);
-  ctx.restore();
+  // a soft left shade so the copy column always reads over the ribbons
+  const l = ctx.createLinearGradient(0, 0, 700, 0);
+  l.addColorStop(0, "rgba(2,4,9,0.55)");
+  l.addColorStop(1, "rgba(2,4,9,0)");
+  ctx.fillStyle = l;
+  ctx.fillRect(0, 0, 700, H);
 }
 
-const FRAME_INSET = 14;
-const FRAME_RADIUS = 20;
+const FRAME_INSET = 16;
+const FRAME_RADIUS = 22;
 
-function drawBorder(ctx) {
+function drawFrameLines(ctx) {
   roundRect(ctx, FRAME_INSET, FRAME_INSET, W - FRAME_INSET * 2, H - FRAME_INSET * 2, FRAME_RADIUS);
-  ctx.lineWidth = 1;
-  ctx.strokeStyle = "rgba(216,250,255,0.10)";
+  ctx.lineWidth = 1.4;
+  ctx.strokeStyle = hexA(C.mid, 0.26);
   ctx.stroke();
+  roundRect(ctx, FRAME_INSET + 6, FRAME_INSET + 6, W - (FRAME_INSET + 6) * 2, H - (FRAME_INSET + 6) * 2, 18);
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = hexA(C.mid, 0.1);
+  ctx.stroke();
+  const L = 30;
+  const o = FRAME_INSET + 2;
+  ctx.strokeStyle = hexA(C.light, 0.8);
+  ctx.lineWidth = 2;
+  ctx.lineCap = "round";
+  for (const [x, y, sx, sy] of [[o, o, 1, 1], [W - o, o, -1, 1], [o, H - o, 1, -1], [W - o, H - o, -1, -1]]) {
+    ctx.beginPath();
+    ctx.moveTo(x, y + sy * L);
+    ctx.lineTo(x, y);
+    ctx.lineTo(x + sx * L, y);
+    ctx.stroke();
+  }
+  ctx.lineCap = "butt";
 }
 
 /** Brand at top-left, the package badge at top-right. Returns the badge box. */
 function drawBrand(ctx, badge) {
-  drawBrandMark(ctx, 46, 40, 46);
+  drawBrandMark(ctx, 54, 46, 52);
   ctx.textBaseline = "alphabetic";
   ctx.fillStyle = SITE.text;
-  ctx.font = `800 25px ${F.x}`;
-  ctx.fillText("Dexvra", 102, 64);
-  ctx.fillStyle = hexA(C.light, 0.6);
-  ctx.font = `700 9.5px ${F.m7}`;
-  tracked(ctx, "TOKEN VISIBILITY", 103, 81, 2.4);
+  ctx.font = `800 28px ${F.x}`;
+  ctx.fillText("Dexvra", 118, 72);
+  ctx.fillStyle = hexA(C.light, 0.8);
+  ctx.font = `700 10.5px ${F.m7}`;
+  tracked(ctx, "TOKEN VISIBILITY", 119, 91, 2.6);
   if (!badge) return null;
   const text = String(badge).toUpperCase().slice(0, 28);
-  ctx.font = `700 11.5px ${F.m7}`;
+  ctx.font = `700 12px ${F.m7}`;
   const tw = trackedWidth(ctx, text, 2.2);
-  const h = 30;
-  const w = tw + 36;
-  const x = W - 48 - w;
-  const y = 44;
+  const h = 32;
+  const w = tw + 38;
+  const x = W - 58 - w;
+  const y = 50;
   roundRect(ctx, x, y, w, h, h / 2);
-  const bg = ctx.createLinearGradient(x, y, x + w, y + h);
-  bg.addColorStop(0, "rgba(61,245,159,0.16)");
-  bg.addColorStop(1, "rgba(34,211,238,0.16)");
+  const bg = ctx.createLinearGradient(x, y, x, y + h);
+  bg.addColorStop(0, hexA(C.mid, 0.2));
+  bg.addColorStop(1, hexA(C.dark, 0.08));
   ctx.fillStyle = bg;
   ctx.fill();
-  ctx.lineWidth = 1.2;
-  const bd = ctx.createLinearGradient(x, y, x + w, y);
-  bd.addColorStop(0, hexA(C.mint, 0.8));
-  bd.addColorStop(1, hexA(C.mid, 0.8));
-  ctx.strokeStyle = bd;
+  ctx.lineWidth = 1.3;
+  ctx.strokeStyle = hexA(C.mid, 0.65);
   ctx.stroke();
-  ctx.fillStyle = "#EFFFFB";
+  ctx.fillStyle = foil(ctx, y + 8, y + 24);
   ctx.textBaseline = "middle";
-  tracked(ctx, text, x + 18, y + h / 2 + 1, 2.2);
+  tracked(ctx, text, x + 19, y + h / 2 + 1, 2.2);
   ctx.textBaseline = "alphabetic";
   return { x, y, w, h };
 }
 
 function icon(ctx, kind, x, y, s) {
   ctx.save();
-  ctx.strokeStyle = hexA(C.light, 0.7);
-  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = hexA(C.light, 0.75);
+  ctx.lineWidth = 1.6;
   ctx.lineJoin = "round";
   if (kind === "web") {
     ctx.beginPath();
@@ -545,7 +415,7 @@ function icon(ctx, kind, x, y, s) {
     ctx.closePath();
     ctx.stroke();
   } else {
-    ctx.lineWidth = 1.9;
+    ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.moveTo(x - s * 0.8, y - s * 0.85);
     ctx.lineTo(x + s * 0.8, y + s * 0.85);
@@ -556,55 +426,66 @@ function icon(ctx, kind, x, y, s) {
   ctx.restore();
 }
 
-/** The handles, centred along the foot. */
 function drawFooter(ctx) {
   const items = [
     ["web", hostOf(SITE_URL) || "dexvra.io"],
     ["tg", String(CHANNELS.listing || "").startsWith("@") ? CHANNELS.listing : `@${CHANNELS.listing || "dexvralisting"}`],
     ["x", `@${X_LISTING_HANDLE}`],
   ];
-  const y = 603;
-  ctx.font = `600 14px ${F.d6}`;
+  let x = 70;
+  const y = 588;
+  ctx.font = `600 15px ${F.d6}`;
   ctx.textBaseline = "middle";
-  const widths = items.map(([, t]) => 22 + ctx.measureText(t).width);
-  const gap = 38;
-  let x = CX - (widths.reduce((a, b) => a + b, 0) + gap * (items.length - 1)) / 2;
-  items.forEach(([k, text], i) => {
-    icon(ctx, k, x + 7, y, 7);
-    ctx.fillStyle = "#A9B8CC";
-    ctx.fillText(text, x + 22, y + 1);
-    x += widths[i] + gap;
-    if (i < items.length - 1) {
-      ctx.fillStyle = hexA(C.light, 0.25);
-      ctx.beginPath();
-      ctx.arc(x - gap / 2, y, 1.6, 0, TAU);
-      ctx.fill();
-    }
-  });
+  for (const [k, text] of items) {
+    icon(ctx, k, x + 9, y, 8);
+    ctx.fillStyle = "#AEB8CA";
+    ctx.fillText(text, x + 26, y + 1);
+    x += 26 + ctx.measureText(text).width + 34;
+  }
+  ctx.font = `700 10.5px ${F.m7}`;
+  ctx.fillStyle = hexA(C.light, 0.55);
+  const t = "LISTED ON DEXVRA";
+  tracked(ctx, t, W - 66 - trackedWidth(ctx, t, 2.6), y + 1, 2.6);
 }
 
-// ── type sprites (each element its own canvas, so the intro can move it) ────
+// ── copy sprites (each element is its own canvas, so the intro can move it) ──
 
-/** The ticker, centred: a glow pass, a crisp pass and a mask, plus where each
- *  letter starts — the intro raises the letters one by one. */
+const COPY_X = 66;
+const COPY_W = 600;
+
+function pillSprite(cv) {
+  const label = "NEW LISTING";
+  const m = cv.createCanvas(10, 10).getContext("2d");
+  m.font = `700 14px ${F.m7}`;
+  const lw = trackedWidth(m, label, 3);
+  const w = Math.ceil(lw + 56);
+  const c = cv.createCanvas(w + 4, 38);
+  const x = c.getContext("2d");
+  roundRect(x, 2, 2, w, 34, 17);
+  x.fillStyle = "rgba(61,245,159,0.10)";
+  x.fill();
+  x.lineWidth = 1.3;
+  x.strokeStyle = "rgba(61,245,159,0.5)";
+  x.stroke();
+  x.font = `700 14px ${F.m7}`;
+  x.fillStyle = "#E9FFF4";
+  x.textBaseline = "middle";
+  tracked(x, label, 40, 20, 3);
+  return { canvas: c, x: COPY_X - 2, y: 176, dot: { x: COPY_X + 20, y: 196 } };
+}
+
+/** The ticker in gold foil: a glow pass and a crisp pass, so the shimmer can be
+ *  masked to the glyphs alone. */
 function tickerSprites(cv, symbol) {
   const m = cv.createCanvas(10, 10).getContext("2d");
-  const text = fitText(m, tickerOf(symbol), 980, { weight: 800, size: 104, min: 48, family: F.x });
+  const text = fitText(m, tickerOf(symbol), COPY_W, { weight: 800, size: 116, min: 54, family: F.x });
   const font = m.font;
-  const size = pxOf(font, 104);
-  const chars = [...text];
+  const size = pxOf(font, 116);
   const tw = m.measureText(text).width;
-  const pad = 46;
+  const pad = 44;
   const cw = Math.ceil(tw + pad * 2);
   const ch = Math.ceil(size * 1.5 + pad);
   const mid = ch / 2;
-  const bounds = [];
-  let acc = "";
-  for (const c of chars) {
-    const x0 = m.measureText(acc).width;
-    acc += c;
-    bounds.push([pad + x0, pad + m.measureText(acc).width]);
-  }
   const mk = () => {
     const c = cv.createCanvas(cw, ch);
     const x = c.getContext("2d");
@@ -613,88 +494,102 @@ function tickerSprites(cv, symbol) {
     return [c, x];
   };
   const [glow, gx] = mk();
-  gx.shadowColor = hexA(C.mid, 0.6);
-  gx.shadowBlur = 34;
-  gx.fillStyle = hexA(C.mid, 0.55);
+  gx.shadowColor = hexA(C.glow, 0.5);
+  gx.shadowBlur = 30;
+  gx.fillStyle = foil(gx, mid - size * 0.5, mid + size * 0.62);
   gx.fillText(text, pad, mid);
   const [crisp, cx] = mk();
-  cx.shadowColor = "rgba(0,0,0,0.5)";
-  cx.shadowBlur = 10;
-  cx.shadowOffsetY = 4;
-  cx.fillStyle = ice(cx, mid - size * 0.5, mid + size * 0.55);
+  cx.shadowColor = "rgba(0,0,0,0.6)";
+  cx.shadowBlur = 8;
+  cx.shadowOffsetY = 3;
+  cx.fillStyle = foil(cx, mid - size * 0.5, mid + size * 0.62);
   cx.fillText(text, pad, mid);
+  cx.shadowColor = "rgba(0,0,0,0)";
+  cx.lineWidth = 1;
+  cx.strokeStyle = "rgba(230,252,255,0.3)";
+  cx.strokeText(text, pad, mid);
   const [mask, mx] = mk();
   mx.fillStyle = "#FFFFFF";
   mx.fillText(text, pad, mid);
-  return { glow, crisp, mask, x: CX - cw / 2, y: 384 - mid, w: cw, h: ch, size, bounds, textX: pad, textW: tw };
+  return { glow, crisp, mask, x: COPY_X - 4 - pad, y: 296 - mid, w: cw, h: ch, textX: pad, textW: tw, size };
 }
 
 function nameSprite(cv, name) {
   if (!name) return null;
-  const c = cv.createCanvas(900, 46);
+  const c = cv.createCanvas(COPY_W + 20, 54);
   const x = c.getContext("2d");
-  const nm = fitText(x, String(name), 860, { weight: 500, size: 26, min: 16, family: F.m });
-  x.fillStyle = "#C3D2E6";
+  const nm = fitText(x, String(name), COPY_W, { weight: 500, size: 34, min: 18, family: F.m });
+  x.fillStyle = "#D6DEEA";
   x.textBaseline = "middle";
-  x.textAlign = "center";
-  x.fillText(nm, 450, 23);
-  return { canvas: c, x: CX - 450, y: 446 - 23 };
+  x.fillText(nm, 4, 27);
+  return { canvas: c, x: COPY_X - 4, y: 372 - 27 };
 }
 
-/** The glass chips (static) and where each value goes. */
-function chipsLayout(cv, coin) {
+/** The stat panel's glass and labels (static) plus where each value goes. */
+function statsLayout(cv, coin) {
   const stats = statsOf(coin);
   if (!stats.length) return null;
   const m = cv.createCanvas(10, 10).getContext("2d");
-  let vSize = 21;
-  const gap = 14;
   const padX = 22;
+  const gap = 26;
+  const vals = stats.map(([, v]) => v);
+  // a value can decode wider than it ends (8s are wide): size the column on
+  // the widest digit so the panel never clips a scrambled frame
   const widest = (v, sz) => {
     m.font = `700 ${sz}px ${F.d7}`;
-    return m.measureText(v.replace(/[0-9]/g, "8")).width; // 8 is the widest digit a decode can show
+    return m.measureText(v.replace(/[0-9]/g, "8")).width;
   };
+  let vSize = 23;
   let widths;
   let total;
   const measure = () => {
-    widths = stats.map(([k, v]) => {
-      m.font = `700 9.5px ${F.m7}`;
-      return Math.ceil(Math.max(trackedWidth(m, k, 2), widest(v, vSize)) + padX * 2);
+    widths = stats.map(([k], i) => {
+      m.font = `700 10px ${F.m7}`;
+      return Math.max(trackedWidth(m, k, 2), widest(vals[i], vSize));
     });
-    total = widths.reduce((a, b) => a + b, 0) + gap * (stats.length - 1);
+    total = padX * 2 + widths.reduce((a, b) => a + b, 0) + gap * (stats.length - 1);
   };
   measure();
-  while (total > 1000 && vSize > 14) {
+  while (total > 640 && vSize > 15) {
     vSize -= 1;
     measure();
   }
-  const h = 64;
-  const y = 488;
-  let x = CX - total / 2;
-  const chips = stats.map(([k, v], i) => {
-    const w = widths[i];
-    const c = cv.createCanvas(w + 4, h + 4);
-    const g = c.getContext("2d");
-    roundRect(g, 2, 2, w, h, 16);
-    const bg = g.createLinearGradient(0, 2, 0, h);
-    bg.addColorStop(0, "rgba(220,245,255,0.10)");
-    bg.addColorStop(1, "rgba(120,190,255,0.035)");
-    g.fillStyle = bg;
-    g.fill();
-    g.lineWidth = 1.2;
-    const bd = g.createLinearGradient(0, 2, 0, h);
-    bd.addColorStop(0, "rgba(230,250,255,0.42)");
-    bd.addColorStop(1, hexA(C.mid, 0.16));
-    g.strokeStyle = bd;
-    g.stroke();
-    g.font = `700 9.5px ${F.m7}`;
-    g.fillStyle = hexA(C.light, 0.62);
-    g.textBaseline = "alphabetic";
-    tracked(g, k, 2 + (w - trackedWidth(g, k, 2)) / 2, 2 + 24, 2);
-    const chip = { canvas: c, x: x - 2, y: y - 2, w, h, value: v, cx: x + w / 2 };
-    x += w + gap;
-    return chip;
-  });
-  return { chips, font: `700 ${vSize}px ${F.d7}`, valueY: y + 50, box: { x: CX - total / 2, y, w: total, h } };
+  const ph = 82;
+  const c = cv.createCanvas(Math.ceil(total) + 4, ph + 4);
+  const x = c.getContext("2d");
+  roundRect(x, 2, 2, total, ph, 16);
+  const bg = x.createLinearGradient(0, 2, 0, ph);
+  bg.addColorStop(0, "rgba(16,22,36,0.82)");
+  bg.addColorStop(1, "rgba(6,9,16,0.82)");
+  x.fillStyle = bg;
+  x.fill();
+  x.lineWidth = 1.2;
+  x.strokeStyle = hexA(C.mid, 0.32);
+  x.stroke();
+  // top hairline highlight — the glass edge
+  const hl = x.createLinearGradient(2, 0, total, 0);
+  hl.addColorStop(0, hexA(C.light, 0));
+  hl.addColorStop(0.5, hexA(C.light, 0.4));
+  hl.addColorStop(1, hexA(C.light, 0));
+  x.fillStyle = hl;
+  x.fillRect(18, 3, total - 32, 1);
+  const cells = [];
+  let cx = 2 + padX;
+  for (let i = 0; i < stats.length; i++) {
+    const [k, v] = stats[i];
+    x.textBaseline = "alphabetic";
+    x.font = `700 10px ${F.m7}`;
+    x.fillStyle = hexA(C.light, 0.75);
+    tracked(x, k, cx, 2 + 30, 2);
+    cells.push({ x: COPY_X - 2 + cx, value: v });
+    cx += widths[i];
+    if (i < stats.length - 1) {
+      x.fillStyle = hexA(C.mid, 0.24);
+      x.fillRect(cx + gap / 2, 2 + 18, 1, ph - 36);
+    }
+    cx += gap;
+  }
+  return { canvas: c, x: COPY_X - 2, y: 436, w: total, h: ph, cells, font: `700 ${vSize}px ${F.d7}`, valueY: 436 + 2 + 62 };
 }
 
 // ── the coin ─────────────────────────────────────────────────────────────────
@@ -704,34 +599,38 @@ function coinInitials(symbol) {
   return [...s].slice(0, 2).join("") || "?";
 }
 
-/** A thin chrome edge — the light rings outside it carry the colour. */
 function bezelRing(x, c, r) {
   const g = x.createLinearGradient(c - r, c - r, c + r, c + r);
-  g.addColorStop(0, "#FFFFFF");
-  g.addColorStop(0.35, "#9EEBFA");
-  g.addColorStop(0.6, "#1E6E99");
-  g.addColorStop(0.85, "#7FE7FA");
-  g.addColorStop(1, "#F2FDFF");
+  g.addColorStop(0, "#E9FFF6");
+  g.addColorStop(0.22, C.mint);
+  g.addColorStop(0.55, C.mid);
+  g.addColorStop(0.82, "#1E8FD8");
+  g.addColorStop(1, "#BFF6FF");
   x.beginPath();
   x.arc(c, c, r + BEZEL / 2, 0, TAU);
   x.lineWidth = BEZEL;
   x.strokeStyle = g;
   x.stroke();
   x.beginPath();
-  x.arc(c, c, r + 0.5, 0, TAU);
+  x.arc(c, c, r + BEZEL - 0.5, 0, TAU);
   x.lineWidth = 1;
-  x.strokeStyle = "rgba(0,0,0,0.5)";
+  x.strokeStyle = "rgba(0,0,0,0.55)";
+  x.stroke();
+  x.beginPath();
+  x.arc(c, c, r + 0.5, 0, TAU);
+  x.lineWidth = 1.2;
+  x.strokeStyle = "rgba(220,250,255,0.5)";
   x.stroke();
 }
 
 function edgeShade(x, c, r) {
   const edge = x.createRadialGradient(c, c, r * 0.7, c, c, r);
   edge.addColorStop(0, "rgba(0,0,0,0)");
-  edge.addColorStop(1, "rgba(0,0,0,0.4)");
+  edge.addColorStop(1, "rgba(0,0,0,0.42)");
   x.fillStyle = edge;
   x.fillRect(0, 0, c * 2, c * 2);
   const gloss = x.createLinearGradient(0, c - r, 0, c);
-  gloss.addColorStop(0, "rgba(255,255,255,0.18)");
+  gloss.addColorStop(0, "rgba(255,255,255,0.17)");
   gloss.addColorStop(1, "rgba(255,255,255,0)");
   x.fillStyle = gloss;
   x.beginPath();
@@ -739,8 +638,8 @@ function edgeShade(x, c, r) {
   x.fill();
 }
 
-/** The front face: the token's own logo, or a struck face when it has none —
- *  a real logo is never covered. */
+/** The front face: the token's own logo, or a struck metal face when it has
+ *  none — a real logo is never covered. */
 function faceTexture(cv, img, symbol) {
   const r = COIN.r;
   const c = r + BEZEL + 2;
@@ -759,21 +658,21 @@ function faceTexture(cv, img, symbol) {
     x.drawImage(img, c - w / 2, c - h / 2, w, h);
   } else {
     const g = x.createRadialGradient(c - r * 0.3, c - r * 0.35, r * 0.1, c, c, r);
-    g.addColorStop(0, "#173A57");
-    g.addColorStop(1, "#050F1A");
+    g.addColorStop(0, "#2A3142");
+    g.addColorStop(1, "#0B0E15");
     x.fillStyle = g;
     x.fillRect(0, 0, c * 2, c * 2);
     x.beginPath();
     x.arc(c, c, r * 0.8, 0, TAU);
-    x.lineWidth = 1.6;
+    x.lineWidth = 2;
     x.strokeStyle = hexA(C.mid, 0.35);
     x.stroke();
     const ini = coinInitials(symbol);
-    x.font = `800 ${ini.length > 1 ? 66 : 80}px ${F.x}`;
+    x.font = `800 ${ini.length > 1 ? 100 : 124}px ${F.x}`;
     x.textAlign = "center";
     x.textBaseline = "middle";
-    x.fillStyle = ice(x, c - 40, c + 40);
-    x.fillText(ini, c, c + 4);
+    x.fillStyle = foil(x, c - 58, c + 58);
+    x.fillText(ini, c, c + 6);
     x.textAlign = "left";
   }
   edgeShade(x, c, r);
@@ -782,7 +681,7 @@ function faceTexture(cv, img, symbol) {
   return can;
 }
 
-/** The reverse: deep ocean carrying the Dexvra mark — what a spin reveals. */
+/** The reverse: struck gold carrying the Dexvra mark — what a spin reveals. */
 function backTexture(cv) {
   const r = COIN.r;
   const c = r + BEZEL + 2;
@@ -801,16 +700,16 @@ function backTexture(cv) {
   for (const k of [0.92, 0.84]) {
     x.beginPath();
     x.arc(c, c, r * k, 0, TAU);
-    x.lineWidth = 1.3;
+    x.lineWidth = 1.5;
     x.strokeStyle = hexA(C.mid, 0.35);
     x.stroke();
   }
-  drawBrandMark(x, c - 40, c - 52, 80);
-  x.font = `800 15px ${F.x}`;
+  drawBrandMark(x, c - 62, c - 78, 124);
+  x.font = `800 22px ${F.x}`;
   x.textAlign = "center";
   x.textBaseline = "middle";
   x.fillStyle = hexA(C.light, 0.85);
-  x.fillText("DEXVRA", c, c + 50);
+  x.fillText("DEXVRA", c, c + 76);
   x.textAlign = "left";
   edgeShade(x, c, r);
   x.restore();
@@ -818,77 +717,233 @@ function backTexture(cv) {
   return can;
 }
 
-/** Rings of light round the coin: a comet ring turning once per loop, a fine
- *  counter-turning one outside it, and static hairlines. */
-function drawRings(ctx, t, p, st, sprites) {
-  const k = easeOut(reveal(t, "ring")) * st.alpha;
-  if (k <= 0.01) return;
-  const { cx, cy, r } = COIN;
-  const y = cy + st.bob;
-  const open = 0.7 + 0.3 * easeOutBack(Math.min(1, reveal(t, "ring")));
-  const R1 = (r + BEZEL + 15) * open;
-  const R2 = (r + BEZEL + 29) * open;
-  ctx.save();
-  for (const [R, a] of [[R1, 0.16], [R2 + 10, 0.08]]) {
-    ctx.beginPath();
-    ctx.arc(cx, y, R, 0, TAU);
-    ctx.lineWidth = 1;
-    ctx.strokeStyle = hexA(C.light, a * k);
-    ctx.stroke();
-  }
-  // the comet ring — a conic gradient whose bright head goes round once a loop
-  const a1 = TAU * p - Math.PI / 2;
-  const g1 = ctx.createConicGradient(a1, cx, y);
-  g1.addColorStop(0, hexA(C.mid, 0));
-  g1.addColorStop(0.55, hexA(C.blue, 0.25 * k));
-  g1.addColorStop(0.9, hexA(C.mid, 0.9 * k));
-  g1.addColorStop(0.985, hexA("#FFFFFF", k));
-  g1.addColorStop(1, hexA(C.mid, 0));
-  ctx.beginPath();
-  ctx.arc(cx, y, R1, 0, TAU);
-  ctx.lineWidth = 4;
-  ctx.strokeStyle = g1;
-  ctx.shadowColor = C.mid;
-  ctx.shadowBlur = 16;
-  ctx.stroke();
-  // the outer ring turns the other way, in mint
-  const a2 = -TAU * p + Math.PI / 3;
-  const g2 = ctx.createConicGradient(a2, cx, y);
-  g2.addColorStop(0, hexA(C.mint, 0));
-  g2.addColorStop(0.7, hexA(C.mint, 0.12 * k));
-  g2.addColorStop(0.97, hexA(C.mint, 0.85 * k));
-  g2.addColorStop(1, hexA(C.mint, 0));
-  ctx.beginPath();
-  ctx.arc(cx, y, R2, 0, TAU);
-  ctx.lineWidth = 1.6;
-  ctx.strokeStyle = g2;
-  ctx.shadowColor = C.mint;
-  ctx.shadowBlur = 10;
-  ctx.stroke();
-  ctx.restore();
-  // a spark riding each head
-  ctx.save();
-  ctx.globalCompositeOperation = "lighter";
-  const h1 = a1 + TAU * 0.985;
-  blit(ctx, sprites.cyan, cx + Math.cos(h1) * R1, y + Math.sin(h1) * R1, 30, k);
-  const h2 = a2 + TAU * 0.97;
-  blit(ctx, sprites.mint, cx + Math.cos(h2) * R2, y + Math.sin(h2) * R2, 20, k * 0.9);
-  ctx.restore();
-}
-
 function drawCoinGlow(ctx, st, t, p) {
   const { cx, cy, r } = COIN;
   const y = cy + st.bob;
   const k = st.alpha * Math.min(1, st.s);
   const boost = impactBoost(t, 2.5);
-  softGlow(ctx, cx, y, r * 2.8, C.mid, (0.2 + 0.05 * Math.sin(TAU * p * 2)) * k + 0.3 * boost);
-  softGlow(ctx, cx, y, r * 1.9, C.blue, 0.16 * k);
-  // the coin's light pooled on the floor
+  softGlow(ctx, cx, y, r * 2.4, C.glow, (0.15 + 0.05 * Math.sin(TAU * p * 2)) * k + 0.25 * boost);
+  softGlow(ctx, cx, y, r * 1.7, C.blue, 0.1 * k);
+}
+
+function drawPedestal(ctx, st, t, p) {
+  const { cx, cy, rx, ry } = PEDESTAL;
+  const boost = impactBoost(t, 2.2);
+  const k = 0.6 + 0.4 * Math.min(1, st.s) * st.alpha;
   ctx.save();
-  ctx.translate(cx, HORIZON + 6);
-  ctx.scale(1, 0.14);
-  softGlow(ctx, 0, 0, r * 2.2, C.light, 0.2 * k + 0.35 * boost);
+  // the pool of light under the coin
+  ctx.translate(cx, cy);
+  ctx.scale(1, 0.22);
+  softGlow(ctx, 0, 0, rx * 1.55, C.glow, 0.32 * k + 0.4 * boost);
+  softGlow(ctx, 0, 0, rx * 0.9, "#FFFFFF", 0.1 * k + 0.25 * boost);
   ctx.restore();
+  ctx.save();
+  // two rings — the stage
+  ctx.beginPath();
+  ctx.ellipse(cx, cy, rx, ry, 0, 0, TAU);
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = hexA(C.mid, 0.5 * k);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.ellipse(cx, cy, rx * 0.7, ry * 0.7, 0, 0, TAU);
+  ctx.lineWidth = 1.2;
+  ctx.strokeStyle = hexA(C.light, 0.28 * k);
+  ctx.stroke();
+  // a light running round the outer ring, twice per loop
+  const per = TAU * Math.sqrt((rx * rx + ry * ry) / 2);
+  ctx.setLineDash([per * 0.18, per * 0.32]);
+  ctx.lineDashOffset = -p * per * 2;
+  ctx.beginPath();
+  ctx.ellipse(cx, cy, rx, ry, 0, 0, TAU);
+  ctx.lineWidth = 2.4;
+  ctx.strokeStyle = hexA(C.light, 0.85 * k);
+  ctx.shadowColor = C.glow;
+  ctx.shadowBlur = 12;
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawMotes(ctx, st, p, sprite) {
+  const { cx, cy, rx } = PEDESTAL;
+  const k = 0.5 + 0.5 * st.alpha;
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  for (const m of FIELD.motes) {
+    const f = (p * m.cycles + m.phase) % 1;
+    const x = cx + m.ox * rx * 0.8 + Math.sin(TAU * (f + m.phase)) * m.sway;
+    const y = cy - f * m.rise;
+    const a = Math.sin(f * Math.PI) ** 1.5 * 0.85 * k;
+    blit(ctx, sprite, x, y, m.size * 7, a);
+  }
+  ctx.restore();
+}
+
+function orbitPoint(o, a, s) {
+  const x = o.rx * s * Math.cos(a);
+  const y = o.ry * s * Math.sin(a);
+  return [x * Math.cos(o.tilt) - y * Math.sin(o.tilt), x * Math.sin(o.tilt) + y * Math.cos(o.tilt)];
+}
+
+/** Two tilted orbits with comet trails; `half` is "back" (behind the coin) or
+ *  "front" — drawn on either side of the coin so it sits INSIDE them. */
+function drawOrbits(ctx, st, p, half, sprites) {
+  const { cx, cy } = COIN;
+  const y0 = cy + st.bob;
+  const s = Math.max(0.0001, st.s);
+  const k = st.alpha * Math.min(1, st.s);
+  if (k <= 0.01) return;
+  ctx.save();
+  for (const o of ORBITS) {
+    const col = o.color === "gold" ? C.mint : C.mid;
+    ctx.beginPath();
+    if (half === "back") ctx.ellipse(cx, y0, o.rx * s, o.ry * s, o.tilt, Math.PI, TAU);
+    else ctx.ellipse(cx, y0, o.rx * s, o.ry * s, o.tilt, 0, Math.PI);
+    ctx.lineWidth = 1.2;
+    ctx.strokeStyle = hexA(col, (half === "back" ? 0.16 : 0.3) * k);
+    ctx.stroke();
+  }
+  ctx.globalCompositeOperation = "lighter";
+  for (const o of ORBITS) {
+    const sprite = o.color === "gold" ? sprites.gold : sprites.cyan;
+    for (let d = 0; d < o.dots; d++) {
+      const a0 = TAU * (p * o.speed + d / o.dots);
+      for (let j = 14; j >= 0; j--) {
+        const a = a0 - Math.sign(o.speed) * j * 0.045;
+        // "behind" is decided on the angle WRAPPED to [0, TAU): a head sitting
+        // ON the crossing has sin(a) = +1e-16 at t = 0 and -1e-16 one loop
+        // later, so it flipped depth (0.45 ↔ 1) and side of the front-half
+        // stroke — a visible blink at the seam every 6s
+        const an = ((a % TAU) + TAU) % TAU;
+        const behind = an > Math.PI;
+        if ((half === "back") !== behind) continue;
+        const [dx, dy] = orbitPoint(o, a, s);
+        const fade = (1 - j / 15) ** 1.6;
+        const depth = behind ? 0.45 : 1;
+        blit(ctx, sprite, cx + dx, y0 + dy, (j === 0 ? 30 : 16 * (1 - j / 18)) * s, fade * depth * k);
+      }
+    }
+  }
+  ctx.restore();
+}
+
+/** The brand gem, alone (drawBrandMark carries its badge too). (x, y) is the
+ *  centre; `size` its width. */
+function gem(ctx, x, y, size, alpha = 1) {
+  const u = size / 30;
+  const P = (px, py) => [x + (px - 15) * u, y + (py - 13) * u];
+  const g = ctx.createLinearGradient(...P(0, 0), ...P(30, 26));
+  g.addColorStop(0, "#4BFCA6");
+  g.addColorStop(0.55, "#22D3EE");
+  g.addColorStop(1, "#12B9E0");
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.beginPath();
+  ctx.moveTo(...P(6, 0));
+  ctx.lineTo(...P(24, 0));
+  ctx.lineTo(...P(30, 8));
+  ctx.lineTo(...P(15, 26));
+  ctx.lineTo(...P(0, 8));
+  ctx.closePath();
+  ctx.fillStyle = g;
+  ctx.fill();
+  ctx.strokeStyle = "rgba(8,40,52,0.55)";
+  ctx.lineWidth = Math.max(0.8, 0.9 * u);
+  ctx.beginPath();
+  ctx.moveTo(...P(0, 8));
+  ctx.lineTo(...P(30, 8));
+  ctx.moveTo(...P(10, 8));
+  ctx.lineTo(...P(15, 26));
+  ctx.lineTo(...P(20, 8));
+  ctx.moveTo(...P(10, 8));
+  ctx.lineTo(...P(15, 0));
+  ctx.lineTo(...P(20, 8));
+  ctx.stroke();
+  ctx.fillStyle = "rgba(255,255,255,0.55)";
+  ctx.beginPath();
+  ctx.moveTo(...P(6, 0));
+  ctx.lineTo(...P(15, 0));
+  ctx.lineTo(...P(10, 8));
+  ctx.lineTo(...P(0, 8));
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+// four gem bubbles around the coin, as on the bundled listing artwork
+const BUBBLES = [
+  { x: 712, y: 182, r: 34, phase: 0.0 },
+  { x: 700, y: 418, r: 30, phase: 0.35 },
+  { x: 1212, y: 168, r: 30, phase: 0.6 },
+  { x: 1218, y: 408, r: 26, phase: 0.85 },
+];
+
+/** Floating gem bubbles. Present the whole loop except the outro/intro, when
+ *  they leave with the coin and pop back in after it lands. */
+function drawBubbles(ctx, t, p) {
+  const k = easeOut(reveal(t, "bubbles"));
+  if (k <= 0) return;
+  for (const b of BUBBLES) {
+    const y = b.y + 7 * Math.sin(TAU * (p + b.phase));
+    const r = b.r * (0.4 + 0.6 * easeOutBack(Math.min(1, k)));
+    ctx.save();
+    ctx.globalAlpha = k;
+    softGlow(ctx, b.x, y, r * 2.2, C.mid, 0.12);
+    ctx.beginPath();
+    ctx.arc(b.x, y, r, 0, TAU);
+    const fill = ctx.createRadialGradient(b.x - r * 0.3, y - r * 0.4, 1, b.x, y, r);
+    fill.addColorStop(0, "#0E3A50");
+    fill.addColorStop(1, "#04121C");
+    ctx.fillStyle = fill;
+    ctx.fill();
+    ctx.lineWidth = 1.4;
+    ctx.strokeStyle = hexA(C.mint, 0.45);
+    ctx.stroke();
+    ctx.restore();
+    gem(ctx, b.x, y + 1, r * 0.95, k);
+  }
+}
+
+/** The artwork's dashed ring round the coin, turning, with two lights riding it. */
+function drawDashRing(ctx, st, p, sprite) {
+  const { cx, cy, r } = COIN;
+  const k = st.alpha * Math.min(1, st.s);
+  if (k <= 0.01) return;
+  const y = cy + st.bob;
+  const R = (r + 44) * st.s;
+  ctx.save();
+  ctx.translate(cx, y);
+  // the dashes SLIDE a whole number of dash periods per loop (18 × 16px), never
+  // a fraction of a turn: a quarter turn is 17.87 periods on this radius, and
+  // that 0.13 of a dash was a visible jump at the seam every 6s
+  ctx.setLineDash([7, 9]);
+  ctx.lineDashOffset = -p * 16 * 18;
+  ctx.beginPath();
+  ctx.arc(0, 0, R, 0, TAU);
+  ctx.lineWidth = 1.4;
+  ctx.strokeStyle = hexA(C.mint, 0.42 * k);
+  ctx.stroke();
+  ctx.restore();
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  for (const off of [0.15, 0.62]) {
+    const a = TAU * (off - p);
+    blit(ctx, sprite, cx + Math.cos(a) * R, y + Math.sin(a) * R, 26 * st.s, 0.95 * k);
+  }
+  ctx.restore();
+}
+
+function drawRipples(ctx, st, p) {
+  const { cx, cy, r } = COIN;
+  const k = st.alpha * Math.min(1, st.s);
+  if (k <= 0.01) return;
+  for (let i = 0; i < 3; i++) {
+    const f = (p * 2 + i / 3) % 1;
+    ctx.beginPath();
+    ctx.arc(cx, cy + st.bob, r + 26 + f * 190, 0, TAU);
+    ctx.lineWidth = 1.4;
+    ctx.strokeStyle = hexA(C.light, (1 - f) ** 2 * 0.26 * k);
+    ctx.stroke();
+  }
 }
 
 /** The coin in 3D: turned `theta` about its vertical axis — the face narrows,
@@ -901,16 +956,17 @@ function drawCoin3D(ctx, st, front, back) {
   const sn = Math.sin(st.theta);
   const sx = Math.max(0.035, Math.abs(c));
   const R = (r + BEZEL) * st.s;
-  const thick = 13 * st.s;
+  const thick = 18 * st.s;
   const dx = sn * thick;
   ctx.save();
   ctx.globalAlpha = st.alpha;
+  // the rim — the coin's edge, stacked from the far face to the near one
   const steps = Math.max(1, Math.ceil(Math.abs(dx)));
   const rim = ctx.createLinearGradient(0, y - R, 0, y + R);
-  rim.addColorStop(0, "#C9F6FF");
-  rim.addColorStop(0.35, "#5FC9E6");
-  rim.addColorStop(0.7, "#0D4C6E");
-  rim.addColorStop(1, "#04202F");
+  rim.addColorStop(0, "#A8F3FF");
+  rim.addColorStop(0.35, C.mid);
+  rim.addColorStop(0.7, "#0A5F86");
+  rim.addColorStop(1, "#04263A");
   for (let i = 0; i <= steps; i++) {
     const k = i / steps;
     ctx.beginPath();
@@ -918,6 +974,26 @@ function drawCoin3D(ctx, st, front, back) {
     ctx.fillStyle = rim;
     ctx.fill();
   }
+  // reeding on the rim: fine darker lines across the visible band
+  if (Math.abs(dx) > 2) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(Math.min(cx - dx / 2, cx + dx / 2) - R * sx, y - R, Math.abs(dx) + R * sx * 2, R * 2);
+    ctx.clip();
+    ctx.strokeStyle = "rgba(2,22,36,0.4)";
+    ctx.lineWidth = 1;
+    for (let a = -Math.PI / 2; a <= Math.PI / 2; a += Math.PI / 40) {
+      const yy = y + Math.sin(a) * R;
+      const half = Math.cos(a) * R * sx;
+      const side = dx > 0 ? -1 : 1;
+      ctx.beginPath();
+      ctx.moveTo(cx + dx / 2 + side * half, yy);
+      ctx.lineTo(cx - dx / 2 + side * half, yy);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+  // the near face
   const tex = c >= 0 ? front : back;
   const fx = cx + dx / 2;
   ctx.save();
@@ -950,16 +1026,16 @@ function drawImpact(ctx, t) {
   const { cx, cy, r } = COIN;
   ctx.save();
   ctx.globalCompositeOperation = "lighter";
-  softGlow(ctx, cx, cy, 420, C.mid, 0.7 * Math.exp(-v * 6));
-  softGlow(ctx, cx, cy, r * 1.3, "#FFFFFF", 0.55 * Math.exp(-v * 9));
-  for (const [delay, w, a] of [[0, 6, 0.8], [0.12, 2.6, 0.55]]) {
+  softGlow(ctx, cx, cy, 460, C.glow, 0.7 * Math.exp(-v * 6));
+  softGlow(ctx, cx, cy, r * 1.25, "#FFFFFF", 0.55 * Math.exp(-v * 9));
+  for (const [delay, w, a] of [[0, 7, 0.8], [0.12, 3, 0.55]]) {
     const u = (v - delay) / 0.85;
     if (u <= 0 || u >= 1) continue;
     ctx.beginPath();
-    ctx.arc(cx, cy, r + 20 + 600 * easeOut(u), 0, TAU);
+    ctx.arc(cx, cy, r + 24 + 560 * easeOut(u), 0, TAU);
     ctx.lineWidth = w * (1 - u) + 0.8;
     ctx.strokeStyle = hexA(C.light, (1 - u) ** 2 * a);
-    ctx.shadowColor = C.mid;
+    ctx.shadowColor = C.glow;
     ctx.shadowBlur = 18;
     ctx.stroke();
   }
@@ -970,15 +1046,139 @@ function drawImpact(ctx, t) {
     const u = v / s.life;
     const dist = r + BEZEL + 6 + (s.speed * (1 - Math.exp(-v * 3.4))) / 3.4; // born at the rim, never over the face
     const x = cx + Math.cos(s.a) * dist;
-    const y = cy + Math.sin(s.a) * dist + 80 * v * v;
-    const len = 6 + s.speed * 0.026 * Math.exp(-v * 3);
+    const y = cy + Math.sin(s.a) * dist + 90 * v * v;
+    const len = 6 + s.speed * 0.028 * Math.exp(-v * 3);
     ctx.beginPath();
     ctx.moveTo(x, y);
     ctx.lineTo(x - Math.cos(s.a) * len, y - Math.sin(s.a) * len);
     ctx.lineWidth = s.w;
-    ctx.strokeStyle = s.white ? `rgba(255,255,255,${(1 - u) ** 1.4})` : hexA(C.mid, (1 - u) ** 1.4);
+    ctx.strokeStyle = s.white ? `rgba(255,255,255,${(1 - u) ** 1.4})` : hexA(C.light, (1 - u) ** 1.4);
     ctx.stroke();
   }
+  ctx.restore();
+}
+
+// ── ambient ──────────────────────────────────────────────────────────────────
+
+function ribbonY(rb, i, x, p) {
+  return (
+    rb.y +
+    rb.amp * Math.sin(x * rb.f1 + TAU * rb.k1 * p + i * 1.7) +
+    rb.amp * 0.45 * Math.sin(x * rb.f2 + TAU * rb.k2 * p + i * 2.9)
+  );
+}
+
+/** Flowing aurora ribbons: each a bright core with layered glow, fading out at
+ *  both ends; their phases advance a whole period per loop. */
+function drawRibbons(ctx, p) {
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  RIBBONS.forEach((rb, i) => {
+    for (const [w, a] of [[78, 0.03], [34, 0.05], [12, 0.1], [2.4, 0.55]]) {
+      const g = ctx.createLinearGradient(0, 0, W, 0);
+      g.addColorStop(0, hexA(rb.color, 0));
+      g.addColorStop(0.28, hexA(rb.color, a * rb.a));
+      g.addColorStop(0.72, hexA(rb.color, a * rb.a));
+      g.addColorStop(1, hexA(rb.color, 0));
+      ctx.beginPath();
+      for (let x = -20; x <= W + 20; x += 20) {
+        const y = ribbonY(rb, i, x, p);
+        if (x === -20) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.lineWidth = w;
+      ctx.strokeStyle = g;
+      ctx.stroke();
+    }
+  });
+  ctx.restore();
+}
+
+/** Light beams fanning from behind the coin. ⚠️ They alternate wide/narrow, so
+ *  the pattern repeats every TWO beams — turning one beam-step per loop put a
+ *  wide beam where a narrow one was at the seam, a visible jump every 6s. */
+function drawRays(ctx, t, p) {
+  const { cx, cy } = COIN;
+  const n = 12;
+  const step = TAU / n;
+  const boost = impactBoost(t, 2.6);
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  const g = ctx.createRadialGradient(cx, cy, 120, cx, cy, 760);
+  const a = 0.05 + 0.18 * boost;
+  g.addColorStop(0, hexA(C.glow, a));
+  g.addColorStop(0.45, hexA(C.glow, a * 0.35));
+  g.addColorStop(1, hexA(C.glow, 0));
+  ctx.fillStyle = g;
+  for (let i = 0; i < n; i++) {
+    const s = step * i + 2 * step * p;
+    const width = i % 2 ? step * 0.16 : step * 0.34;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.arc(cx, cy, 760, s, s + width);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawBokeh(ctx, p, sprites) {
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  for (const b of FIELD.bokeh) {
+    const ph = TAU * (p + b.phase);
+    blit(ctx, b.cyan ? sprites.cyanSoft : sprites.goldSoft, b.x + Math.sin(ph) * b.drift, b.y + Math.cos(ph) * b.drift * 0.6, b.size, b.a * (0.7 + 0.3 * Math.sin(ph * 2)));
+  }
+  ctx.restore();
+}
+
+/** Four-point star glints that flare and vanish. */
+function drawSparkles(ctx, p) {
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  for (const s of FIELD.sparkles) {
+    const tw = Math.max(0, Math.sin(TAU * (p * s.cycles + s.phase)));
+    const a = tw ** 6;
+    if (a < 0.02) continue;
+    const col = s.gold ? C.light : "#DDF6FF";
+    const L = s.size * (0.6 + 0.8 * a);
+    for (const [dx, dy] of [[1, 0], [0, 1]]) {
+      const g = ctx.createLinearGradient(s.x - dx * L, s.y - dy * L, s.x + dx * L, s.y + dy * L);
+      g.addColorStop(0, hexA(col, 0));
+      g.addColorStop(0.5, hexA(col, a));
+      g.addColorStop(1, hexA(col, 0));
+      ctx.strokeStyle = g;
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(s.x - dx * L, s.y - dy * L);
+      ctx.lineTo(s.x + dx * L, s.y + dy * L);
+      ctx.stroke();
+    }
+    ctx.fillStyle = `rgba(255,255,255,${a})`;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, 1.4, 0, TAU);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+/** Two lights running round the gold frame, once per loop. */
+function drawBorderRun(ctx, p) {
+  const w = W - FRAME_INSET * 2;
+  const h = H - FRAME_INSET * 2;
+  const per = 2 * (w + h) - (8 - TAU) * FRAME_RADIUS;
+  const seg = 190;
+  ctx.save();
+  roundRect(ctx, FRAME_INSET, FRAME_INSET, w, h, FRAME_RADIUS);
+  ctx.setLineDash([seg, per / 2 - seg]);
+  ctx.lineDashOffset = -p * per;
+  ctx.lineWidth = 2.2;
+  ctx.strokeStyle = hexA(C.light, 0.9);
+  ctx.shadowColor = C.glow;
+  ctx.shadowBlur = 14;
+  ctx.stroke();
   ctx.restore();
 }
 
@@ -989,7 +1189,7 @@ function shine(ctx, box, u, alpha, radius) {
   roundRect(ctx, box.x, box.y, box.w, box.h, radius);
   ctx.clip();
   const x = box.x - 80 + u * (box.w + 160);
-  const g = ctx.createLinearGradient(x - 60, 0, x + 60, 0);
+  const g = ctx.createLinearGradient(x - 50, 0, x + 50, 0);
   g.addColorStop(0, "rgba(255,255,255,0)");
   g.addColorStop(0.5, `rgba(225,250,255,${alpha})`);
   g.addColorStop(1, "rgba(255,255,255,0)");
@@ -999,83 +1199,84 @@ function shine(ctx, box, u, alpha, radius) {
   ctx.restore();
 }
 
-// ── the type, per frame ──────────────────────────────────────────────────────
+// ── the copy, per frame ──────────────────────────────────────────────────────
 
-/** "— NEW LISTING —" centred above the coin: the rules grow outward, the dot
- *  pulses. */
-function drawEyebrow(ctx, t, p) {
-  const k = reveal(t, "eyebrow");
+function drawPill(ctx, t, p, pill) {
+  const k = reveal(t, "pill");
   if (k <= 0) return;
-  const e = easeOut(k);
-  const y = 61; // on the brand row, clear of the rings
-  const label = "NEW LISTING";
+  const e = easeOutBack(k);
+  const { canvas, x, y, dot } = pill;
   ctx.save();
-  ctx.font = `700 12.5px ${F.m7}`;
-  const lw = trackedWidth(ctx, label, 4);
-  const total = lw + 22;
-  const x0 = CX - total / 2;
-  ctx.globalAlpha = e;
-  ctx.fillStyle = "#EFFFFB";
-  ctx.textBaseline = "middle";
-  tracked(ctx, label, x0 + 22, y + 1, 4);
+  ctx.globalAlpha = clamp01(k * 1.6);
+  ctx.translate(x, y + canvas.height / 2);
+  ctx.scale(0.6 + 0.4 * e, 0.6 + 0.4 * e);
+  ctx.drawImage(canvas, 0, -canvas.height / 2);
+  ctx.restore();
+  if (k < 1) return;
   const f = (p * 3) % 1;
   ctx.beginPath();
-  ctx.arc(x0 + 6, y, 4.5 + f * 9 * e, 0, TAU);
+  ctx.arc(dot.x, dot.y, 5 + f * 12, 0, TAU);
   ctx.fillStyle = `rgba(61,245,159,${(1 - f) * 0.4})`;
   ctx.fill();
   ctx.beginPath();
-  ctx.arc(x0 + 6, y, 4.5, 0, TAU);
-  ctx.fillStyle = C.mint;
+  ctx.arc(dot.x, dot.y, 5, 0, TAU);
+  ctx.fillStyle = SITE.mint;
   ctx.fill();
-  const L = 110 * e;
-  for (const dir of [-1, 1]) {
-    const xs = dir < 0 ? x0 - 18 : x0 + total + 18;
-    const g = ctx.createLinearGradient(xs, 0, xs + dir * L, 0);
-    g.addColorStop(0, hexA(C.mint, 0.8));
-    g.addColorStop(1, hexA(C.mid, 0));
-    ctx.fillStyle = g;
-    ctx.fillRect(Math.min(xs, xs + dir * L), y - 0.6, L, 1.2);
-  }
-  ctx.restore();
 }
 
-/** The ticker: letters rise in one by one, and shimmer twice through the hold. */
+/** The ticker: wiped in left→right behind a bright leading edge, and
+ *  shimmered twice through the hold. */
 function drawTicker(ctx, t, tk, scratch) {
   const k = reveal(t, "ticker");
   if (k <= 0) return;
-  const outro = t >= HOLD_END && t < OUT_END;
-  if (k >= 1 || outro) {
-    const e = easeOut(k);
+  const e = easeOut(k);
+  if (t >= HOLD_END && t < OUT_END) {
+    // the exit is a fade, not the wipe run backwards
     ctx.save();
     ctx.globalAlpha = e;
-    const dy = outro ? (1 - e) * -10 : 0;
-    ctx.drawImage(tk.glow, tk.x, tk.y + dy);
-    ctx.drawImage(tk.crisp, tk.x, tk.y + dy);
+    ctx.drawImage(tk.glow, tk.x - (1 - e) * 24, tk.y);
+    ctx.drawImage(tk.crisp, tk.x - (1 - e) * 24, tk.y);
     ctx.restore();
-  } else {
-    const n = tk.bounds.length;
-    for (let i = 0; i < n; i++) {
-      const ci = clamp01(k * 1.7 - (i / Math.max(1, n - 1)) * 0.7);
-      if (ci <= 0) continue;
-      const e = easeOut(ci);
-      const [a, b] = tk.bounds[i];
-      const x0 = i === 0 ? 0 : a;
-      const x1 = i === n - 1 ? tk.w : b;
-      const dy = (1 - e) * 46;
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(tk.x + x0, 0, x1 - x0, H);
-      ctx.clip();
-      ctx.globalAlpha = e;
-      ctx.drawImage(tk.glow, tk.x, tk.y + dy);
-      ctx.drawImage(tk.crisp, tk.x, tk.y + dy);
-      ctx.restore();
-    }
+    return;
+  }
+  const dy = (1 - e) * 14;
+  const x0 = tk.x + tk.textX - 20;
+  const span = tk.textW + 70;
+  const edge = x0 + span * e;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, 0, edge, H);
+  ctx.clip();
+  ctx.globalAlpha = clamp01(k * 2);
+  ctx.drawImage(tk.glow, tk.x, tk.y + dy);
+  ctx.drawImage(tk.crisp, tk.x, tk.y + dy);
+  ctx.restore();
+  if (k > 0 && k < 1) {
+    const cy = tk.y + tk.h / 2 + dy;
+    // a soft light riding the wipe — masked to the glyphs, so it reads as the
+    // letters catching it rather than a cursor block
+    const sx = scratch.getContext("2d");
+    sx.globalCompositeOperation = "source-over";
+    sx.clearRect(0, 0, scratch.width, scratch.height);
+    sx.drawImage(tk.mask, 0, 0);
+    sx.globalCompositeOperation = "source-in";
+    const ex = edge - tk.x;
+    const g = sx.createLinearGradient(ex - 70, 0, ex + 4, 0);
+    g.addColorStop(0, "rgba(150,235,255,0)");
+    g.addColorStop(0.85, `rgba(235,252,255,${0.95 * Math.sin(k * Math.PI)})`);
+    g.addColorStop(1, "rgba(235,252,255,0)");
+    sx.fillStyle = g;
+    sx.fillRect(0, 0, tk.w, tk.h);
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    ctx.drawImage(scratch, 0, 0, tk.w, tk.h, tk.x, tk.y + dy, tk.w, tk.h);
+    softGlow(ctx, edge, cy, tk.size * 0.55, C.glow, 0.35 * Math.sin(k * Math.PI));
+    ctx.restore();
   }
   // the hold shimmer, masked to the glyphs
   let u = -1;
-  if (t >= 0.3 && t <= 1.0) u = (t - 0.3) / 0.7;
-  else if (t >= 2.3 && t <= 3.0) u = (t - 2.3) / 0.7;
+  if (t >= 0.25 && t <= 0.95) u = (t - 0.25) / 0.7;
+  else if (t >= 2.25 && t <= 2.95) u = (t - 2.25) / 0.7;
   if (u < 0 || !scratch) return;
   const sx = scratch.getContext("2d");
   sx.globalCompositeOperation = "source-over";
@@ -1084,7 +1285,7 @@ function drawTicker(ctx, t, tk, scratch) {
   sx.globalCompositeOperation = "source-in";
   const bx = tk.textX - 120 + u * (tk.textW + 240);
   const g = sx.createLinearGradient(bx - 60, 0, bx + 60, tk.h);
-  const a = Math.sin(u * Math.PI) * 0.8;
+  const a = Math.sin(u * Math.PI) * 0.75;
   g.addColorStop(0, "rgba(255,255,255,0)");
   g.addColorStop(0.5, `rgba(235,252,255,${a})`);
   g.addColorStop(1, "rgba(255,255,255,0)");
@@ -1103,37 +1304,45 @@ function drawName(ctx, t, nm) {
   const e = easeOut(k);
   ctx.save();
   ctx.globalAlpha = e;
-  ctx.drawImage(nm.canvas, nm.x, nm.y + (1 - e) * 14);
+  ctx.drawImage(nm.canvas, nm.x, nm.y + (1 - e) * 16);
   ctx.restore();
 }
 
-/** The glass chips rise in turn; each value then decodes. */
-function drawChips(ctx, t, layout) {
-  if (!layout) return;
+function drawRule(ctx, t) {
+  const k = easeOut(reveal(t, "rule"));
+  if (k <= 0) return;
+  const w = 180 * k;
+  const g = ctx.createLinearGradient(COPY_X, 0, COPY_X + w, 0);
+  g.addColorStop(0, hexA(C.mid, 0.95));
+  g.addColorStop(1, hexA(C.mid, 0));
+  ctx.fillStyle = g;
+  ctx.fillRect(COPY_X, 410, w, 1.6);
+}
+
+/** The stat panel opens from the left; each value then decodes in turn. */
+function drawStats(ctx, t, st) {
+  if (!st) return;
+  const k0 = reveal(t, "stats");
+  if (k0 <= 0) return;
+  const open = easeOut(clamp01(k0 * 1.4));
   ctx.save();
-  ctx.font = layout.font;
+  ctx.beginPath();
+  ctx.rect(st.x, st.y - 4, (st.w + 8) * open, st.h + 12);
+  ctx.clip();
+  ctx.globalAlpha = clamp01(k0 * 2);
+  ctx.drawImage(st.canvas, st.x, st.y);
+  ctx.restore();
+  ctx.save();
+  ctx.font = st.font;
   ctx.textBaseline = "alphabetic";
-  ctx.textAlign = "center";
-  layout.chips.forEach((chip, i) => {
+  st.cells.forEach((cell, i) => {
     const k = reveal(t, "stats", i);
     if (k <= 0) return;
-    const e = easeOut(clamp01(k * 1.4));
-    const dy = (1 - e) * 22;
-    ctx.globalAlpha = e;
-    ctx.drawImage(chip.canvas, chip.x, chip.y + dy);
-    ctx.globalAlpha = clamp01(k * 2.5);
-    ctx.fillStyle = "#FFFFFF";
-    ctx.fillText(scramble(chip.value, k, t, 97 + i), chip.cx, layout.valueY + dy);
+    ctx.globalAlpha = clamp01(k * 3);
+    ctx.fillStyle = i === 0 ? SITE.text : "#F4F7FC";
+    ctx.fillText(scramble(cell.value, k, t, 97 + i), cell.x, st.valueY);
   });
   ctx.restore();
-  // a shine across the whole row once in the hold, chip after chip
-  if (t >= 1.6 && t <= 2.3) {
-    const u = (t - 1.6) / 0.7;
-    for (const chip of layout.chips) {
-      const lag = ((chip.x - layout.box.x) / Math.max(1, layout.box.w)) * 0.35;
-      shine(ctx, { x: chip.x + 2, y: chip.y + 2, w: chip.w, h: chip.h }, clamp01((u - lag) / 0.65), 0.45, 16);
-    }
-  }
 }
 
 /** The outro's light sweep — a bright diagonal band crossing the frame. */
@@ -1147,7 +1356,7 @@ function drawSweep(ctx, t) {
   ctx.translate(-260 + u * (W + 520), H / 2);
   ctx.rotate(0.32);
   const g = ctx.createLinearGradient(-150, 0, 150, 0);
-  const al = Math.sin(u * Math.PI) * 0.3;
+  const al = Math.sin(u * Math.PI) * 0.32;
   g.addColorStop(0, "rgba(120,220,255,0)");
   g.addColorStop(0.5, `rgba(220,248,255,${al})`);
   g.addColorStop(1, "rgba(120,220,255,0)");
@@ -1186,30 +1395,34 @@ async function drawFrames(coin, logoBuffer, { count = FRAMES, times = null, badg
     }
   }
 
-  const over = cv.createCanvas(W, H);
-  const octx = over.getContext("2d");
-  drawVignette(octx);
-  octx.drawImage(grainCanvas(cv), 0, 0);
-  drawBorder(octx);
-  const badgeBox = drawBrand(octx, badge);
-  drawFooter(octx);
+  const base = cv.createCanvas(W, H);
+  drawBase(base.getContext("2d"));
+  const vignette = cv.createCanvas(W, H);
+  drawVignette(vignette.getContext("2d"));
+  const chrome = cv.createCanvas(W, H);
+  const cctx = chrome.getContext("2d");
+  drawFrameLines(cctx);
+  const badgeBox = drawBrand(cctx, badge);
+  drawFooter(cctx);
 
   const front = faceTexture(cv, img, coin.symbol);
   const back = backTexture(cv);
   const sprites = {
+    gold: glowSprite(cv, C.mint, 0.18), // the mint orbit + the motes
     cyan: glowSprite(cv, C.mid, 0.18),
-    mint: glowSprite(cv, C.mint, 0.18),
-    white: glowSprite(cv, C.light, 0.25),
+    goldSoft: glowSprite(cv, C.mid, 0.02),
+    cyanSoft: glowSprite(cv, C.blue, 0.02),
   };
+  const pill = pillSprite(cv);
   const tk = tickerSprites(cv, coin.symbol);
   const scratch = cv.createCanvas(tk.w, tk.h);
   const nm = nameSprite(cv, coin.name);
-  const chips = chipsLayout(cv, coin);
+  const st = statsLayout(cv, coin);
 
   const out = cv.createCanvas(W, H);
   const ctx = out.getContext("2d");
-  // `times` (seconds, unwrapped) is the seam test's seam: t = SECONDS must draw
-  // exactly what t = 0 draws, which a wrapped frame index can never show
+  // `times` (seconds, UNWRAPPED) is the seam test's way in: t = SECONDS must
+  // draw what t = 0 draws, which a wrapped frame index can never ask
   const n = times ? times.length : count;
   for (let f = 0; f < n; f++) {
     // a caller that stopped waiting (postMedia's budget) stops the work too —
@@ -1220,23 +1433,34 @@ async function drawFrames(coin, logoBuffer, { count = FRAMES, times = null, badg
     const cs = coinState(t);
     ctx.globalCompositeOperation = "source-over";
     ctx.globalAlpha = 1;
-    drawField(ctx, p);
-    drawFloor(ctx, p);
-    drawSpotlight(ctx, t, p);
-    drawDust(ctx, p, sprites);
+    ctx.drawImage(base, 0, 0);
+    drawRibbons(ctx, p);
+    drawRays(ctx, t, p);
+    drawBokeh(ctx, p, sprites);
     drawSparkles(ctx, p);
     drawCoinGlow(ctx, cs, t, p);
-    drawRings(ctx, t, p, cs, sprites);
+    drawPedestal(ctx, cs, t, p);
+    drawMotes(ctx, cs, p, sprites.gold);
+    drawBubbles(ctx, t, p);
+    drawOrbits(ctx, cs, p, "back", sprites);
+    drawDashRing(ctx, cs, p, sprites.gold);
+    // both halves BEHIND the coin: a light crossing in front of the face
+    // reads as a scratch over the token's own logo, the one thing that post
+    // exists to show
+    drawOrbits(ctx, cs, p, "front", sprites);
     drawCoin3D(ctx, cs, front, back);
     drawImpact(ctx, t);
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = "source-over";
-    ctx.drawImage(over, 0, 0);
-    if (t >= 2.4 && t <= 3.0) shine(ctx, badgeBox, (t - 2.4) / 0.6, 0.55, badgeBox ? badgeBox.h / 2 : 0);
-    drawEyebrow(ctx, t, p);
+    ctx.drawImage(vignette, 0, 0);
+    ctx.drawImage(chrome, 0, 0);
+    drawBorderRun(ctx, p);
+    if (t >= 1.5 && t <= 2.1) shine(ctx, badgeBox, (t - 1.5) / 0.6, 0.6, badgeBox ? badgeBox.h / 2 : 0);
+    drawPill(ctx, t, p, pill);
     drawTicker(ctx, t, tk, scratch);
     drawName(ctx, t, nm);
-    drawChips(ctx, t, chips);
+    drawRule(ctx, t);
+    drawStats(ctx, t, st);
     drawSweep(ctx, t);
     drawFlash(ctx, t);
     // ⚠️ canvas.data() is a LIVE VIEW of the canvas's pixels, not a copy

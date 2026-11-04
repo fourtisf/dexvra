@@ -148,6 +148,16 @@ test("the loop is EXACT: t = SECONDS draws what frame 0 draws, pixel for pixel",
   let off = 0;
   for (let i = 0; i < got[0].length; i++) if (Math.abs(got[0][i] - got[1][i]) > 12) off++;
   assert.ok(off < 40, `${off} channel bytes differ by more than 12 between t=0 and t=${lm._timeline.SECONDS}s`);
+  // vacuity guard: `times` must be drawn UNWRAPPED, or the assertion above
+  // compares frame 0 with itself. At 1.5s the coin is mid-spin in the hold; one
+  // loop later the clock is past the intro, so an honest harness draws it flat.
+  const pair = [];
+  await lm._drawFrames(COIN, logo(), {
+    times: [1.5, lm._timeline.SECONDS + 1.5],
+    badge: "Xpress Listing",
+    onFrame: (b) => pair.push(Buffer.from(b)),
+  });
+  assert.ok(meanDiff(pair[0], pair[1]) > 1, "`times` was wrapped — the seam test above would be comparing a frame with itself");
 });
 
 test("frames() COPIES each frame — canvas.data() is a live view of the pixels", { skip: !haveCanvas }, async () => {
