@@ -710,6 +710,14 @@ function xMultiple(percent) {
   return (Number.isInteger(x) ? String(x) : x.toFixed(1)) + "×";
 }
 
+/** A pump post's market cap, spelt ONE way for the caption, the tweet and the
+ *  banner. ⚠️ A cap nobody read is "TBA", never "$0": the baseline can be
+ *  recorded without one, and "Market cap: $0 → $4.5M" is a figure nobody
+ *  measured on a post twelve thousand people read. */
+function pumpMc(v) {
+  return Number(v) > 0 ? "$" + formatNumber(v) : "TBA";
+}
+
 function pumpPost(coin, percent, firstMc, lastMc) {
   const val = stripForCoin("post_pump", coin);
   return autoSocials(tpl.renderValue(val, {
@@ -717,8 +725,8 @@ function pumpPost(coin, percent, firstMc, lastMc) {
     address: addressVar(val, coin.address),
     percent: Math.round(percent),
     multiple: xMultiple(percent),
-    firstMc: "$" + formatNumber(firstMc),
-    lastMc: "$" + formatNumber(lastMc),
+    firstMc: pumpMc(firstMc),
+    lastMc: pumpMc(lastMc),
   }), postUrls(coin));
 }
 
@@ -808,4 +816,4 @@ function rankupPost(coin, rank, change24h) {
 // row on /ca reads `social_emojis` the same way, and re-implementing the entity
 // arithmetic in a second file is how a premium emoji ends up sliding onto the
 // wrong character on one card and not the other.
-module.exports = { liqEmoji, tierBadge, tierBadgeChar, listingPost, trendingPost, pumpPost, bannerPost, rankupPost, coinUrl, sym, chainName, chainEmoji, emojiMapTemplate, channelLinks };
+module.exports = { liqEmoji, tierBadge, tierBadgeChar, listingPost, trendingPost, pumpPost, bannerPost, rankupPost, coinUrl, sym, chainName, chainEmoji, emojiMapTemplate, channelLinks, xMultiple, pumpMc };

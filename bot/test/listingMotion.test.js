@@ -233,18 +233,15 @@ test("the temp sweep reclaims only its own files, and only old ones", async () =
 
 function withMotion(value, fn) {
   return async () => {
-    const keys = ["LISTING_MOTION", "TRENDING_MOTION"];
-    const prev = keys.map((k) => process.env[k]);
-    for (const k of keys) process.env[k] = value;
+    const prev = process.env.LISTING_MOTION;
+    process.env.LISTING_MOTION = value;
     const real = lm.render;
     try {
       await fn();
     } finally {
       lm.render = real;
-      keys.forEach((k, i) => {
-        if (prev[i] === undefined) delete process.env[k];
-        else process.env[k] = prev[i];
-      });
+      if (prev === undefined) delete process.env.LISTING_MOTION;
+      else process.env.LISTING_MOTION = prev;
     }
   };
 }
@@ -270,27 +267,7 @@ test(
 );
 
 test(
-  "a TRENDING post gets the clip too, as the trending variant with its own badge",
-  withMotion("1", async () => {
-    // "buatkan vidio untuk pump alert serta trending jugaa" — this test used to
-    // pin the opposite ("the clip is a listing announcement"); the owner asked
-    // for the trending post to get it, so the RULE changed, not the test's aim
-    const { postMedia } = require("../src/fulfillment");
-    const calls = [];
-    lm.render = async (coin, logoBuf, opts) => {
-      calls.push(opts);
-      return { type: "animation", source: "/tmp/stub.mp4" };
-    };
-    const media = await postMedia("trending", { symbol: "T", name: "T", chain: "SOLANA", price: "$1", mcap: "$1M" }, null, null, null, "Trending 4H");
-    assert.deepStrictEqual(media, { type: "animation", source: "/tmp/stub.mp4" });
-    assert.strictEqual(calls.length, 1);
-    assert.strictEqual(calls[0].variant, "trending");
-    assert.strictEqual(calls[0].badge, "Trending 4H");
-  }),
-);
-
-test(
-  "a banner ad and a rank-up never ask for it — those are not token announcements",
+  "a TRENDING post never asks for it — the clip is a listing announcement",
   withMotion("1", async () => {
     const { postMedia } = require("../src/fulfillment");
     let called = 0;
@@ -298,25 +275,8 @@ test(
       called++;
       return { type: "animation", source: "/tmp/stub.mp4" };
     };
-    await postMedia("banner", { symbol: "", name: "Ad", chain: "" }, null, null, null, null);
-    await postMedia("rankup", { symbol: "T", name: "T", chain: "SOLANA" }, null, null, null, null, { rank: 3, change: 40 });
-    assert.strictEqual(called, 0);
-  }),
-);
-
-test(
-  "TRENDING_MOTION=0 takes the trending clip back on its own, and leaves the listing clip alone",
-  withMotion("1", async () => {
-    const { postMedia } = require("../src/fulfillment");
-    process.env.TRENDING_MOTION = "0";
-    const kinds = [];
-    lm.render = async (coin, logoBuf, opts) => {
-      kinds.push(opts.variant);
-      return { type: "animation", source: "/tmp/stub.mp4" };
-    };
     await postMedia("trending", { symbol: "T", name: "T", chain: "SOLANA", price: "$1", mcap: "$1M" }, null, null, null, "Trending 4H");
-    await postMedia("listing", { symbol: "T", name: "T", chain: "SOLANA", price: "$1", mcap: "$1M" }, null, null, null, "Gold Tier");
-    assert.deepStrictEqual(kinds, ["listing"]);
+    assert.strictEqual(called, 0);
   }),
 );
 

@@ -20,7 +20,10 @@ const postids = require("../channels/postids");
 const fmt = require("../channels/format");
 const post = require("../channels/post");
 const bannerTemplate = require("../bannerTemplate");
-const listingMotion = require("../listingMotion"); // called as listingMotion.render — a seam the tests can stub
+const pumpMotion = require("../pumpMotion"); // called as pumpMotion.render — a seam the tests can stub
+// the ONE logo fetch (proxy, IPFS failover, our own uploads read locally),
+// called as fulfillment.fetchLogoUrlX so a test can stub it
+const fulfillment = require("../fulfillment");
 const { bounded } = require("../helpers/bounded");
 const { chainOf } = require("../config/chains");
 const x = require("../twitter");
@@ -208,68 +211,69 @@ function coinOf(r, price, mcap) {
   };
 }
 
-/** Fetch a token logo into a Buffer (relative /api/media/… → public SITE_URL). */
-async function fetchLogoBuffer(logoUrl) {
-  if (!logoUrl) return null;
-  const url = logoUrl.startsWith("http") ? logoUrl : `${SITE_URL}${logoUrl}`;
-  try {
-    const r = await fetch(url, { signal: AbortSignal.timeout(12000) });
-    if (!r.ok) return null;
-    return Buffer.from(await r.arrayBuffer());
-  } catch {
-    return null;
-  }
-}
+// ⚠️ The logo used to come from a private fetch of its own — the RAW url, one
+// IPFS gateway, our own uploads over the PUBLIC origin — so a pump banner could
+// lose artwork the listing post had drawn. fulfillment.fetchLogoUrlX is the one
+// owner of that question (the proxy, gateway failover, local uploads).
 
-/** The pump clip: the listing's motion piece with PUMP ALERT, the gain
- *  counting up where the name goes, and LISTED AT → NOW in the panel. Null on
- *  any failure or past the budget — the caller's ladder continues. */
-async function pumpMotion(r, base, m, pct, logoBuffer) {
-  if (!bannerTemplate.postingEnabled() || !listingMotion.enabled("pump")) return null;
+/** The pump clip — the "Boost Gauge" (pumpMotion). Every figure on it is the
+ *  CAPTION's figure, spelt the caption's way, so the post can never say two
+ *  things at once:
+ *    +N%       the step announced (`milestone`), not the raw gain
+ *    N×        xMultiple(milestone), drawn by pumpMotion itself
+ *    MC        fmt.pumpMc(baseline cap) → fmt.pumpMc(live cap); an unread cap
+ *              is left OUT of the banner (the caption says TBA), never "$0"
+ *    ticker / name / network   the listing row's own
+ *  Null on any failure or past the budget — the caller's ladder continues. */
+async function pumpClip(r, base, m, milestone, logoBuffer) {
+  if (!bannerTemplate.postingEnabled() || !pumpMotion.enabled()) return null;
   const c = chainOf(r.chain);
   const coin = {
     symbol: r.sym,
     name: r.name,
-    chain: r.chain,
-    change: `+${Math.round(pct)}%`,
-    priceFrom: base.price > 0 ? fmtPrice(base.price) : null,
-    priceTo: m.priceUsd > 0 ? fmtPrice(m.priceUsd) : null,
-    mcap: m.mcap > 0 ? "$" + formatNumber(m.mcap) : null,
+    pct: Math.round(milestone),
+    firstMc: Number(base.mcap) > 0 ? fmt.pumpMc(base.mcap) : null,
+    lastMc: Number(m.mcap) > 0 ? fmt.pumpMc(m.mcap) : null,
   };
   const cancel = { cancelled: false };
   return bounded(
-    listingMotion
-      .render(coin, logoBuffer, { variant: "pump", badge: c ? c.label : String(r.chain || "").toUpperCase(), cancel })
+    pumpMotion
+      .render(coin, logoBuffer, { badge: c ? c.label : String(r.chain || "").toUpperCase(), cancel })
       .catch(() => null),
     CLIP_BUDGET_MS,
     () => {
       cancel.cancelled = true;
-      log.warn(`[pump] ${r.sym} media: premium motion passed ${CLIP_BUDGET_MS}ms — falling back`);
+      log.warn(`[pump] ${r.sym} media: the gauge clip passed ${CLIP_BUDGET_MS}ms — falling back`);
       return null;
     },
   );
 }
 
 /** Build the pump-alert media, best first:
- *   1. the premium motion clip ("buatkan vidio untuk pump alert"), drawn in
- *      code with the token's own logo — it needs no admin upload, so a pump
- *      alert is no longer a bare text reply on a box nobody gave a clip to;
- *   2. the admin's pump GIF/video with the token overlay (▲ +N% · old→new
- *      price · MCAP pill · logo ring · cyan $ticker) composited onto it, or the
- *      raw clip if that fails;
+ *   1. the Boost Gauge clip (pumpClip) — drawn in code with the token's own
+ *      logo, so it needs no admin upload: a pump alert is no longer a bare text
+ *      reply on a box nobody gave a clip to;
+ *   2. the admin's pump GIF/video with the token overlay composited onto it,
+ *      or the raw clip if that fails;
  *   3. null — the caller posts a plain text reply.
  *  PUMP_MOTION=0 restores 2 → 3 exactly. */
 async function pumpMedia(r, base, m, pct) {
   let logoBuffer = null;
   try {
-    logoBuffer = await fetchLogoBuffer(r.logoUrl);
-    const motion = await pumpMotion(r, base, m, pct, logoBuffer);
-    if (motion) {
-      log.info(`[pump] ${r.sym} media: premium motion ✔`);
-      return motion;
+    const got = await fulfillment.fetchLogoUrlX(r.logoUrl);
+    logoBuffer = got && got.bytes ? got.bytes : null;
+    if (r.logoUrl && !logoBuffer) log.info(`[pump] ${r.sym} logo did not load (${(got && got.why) || "no reason"}) — the gauge draws the ticker's monogram`);
+  } catch (e) {
+    log.warn(`[pump] ${r.sym} logo: ${e.message}`);
+  }
+  try {
+    const clip = await pumpClip(r, base, m, pct, logoBuffer);
+    if (clip) {
+      log.info(`[pump] ${r.sym} media: gauge clip ✔`);
+      return clip;
     }
   } catch (e) {
-    log.warn(`[pump] ${r.sym} motion: ${e.message}`);
+    log.warn(`[pump] ${r.sym} gauge clip: ${e.message}`);
   }
   const media = bannerTemplate.mediaOverride("pump"); // admin GIF/video (null → text reply)
   if (!media) return null;

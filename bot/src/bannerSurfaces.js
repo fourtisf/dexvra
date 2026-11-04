@@ -116,16 +116,15 @@ const SURFACES = [
     run: (coin) => require('./listingMotion').frames(coin, null, { count: 1, badge: 'Xpress Listing' }),
   },
   {
-    // The pump variant draws a line the listing does not — the gain, counted
-    // up where the name goes — so it is probed on its own. (Trending draws
-    // nothing the listing does not; its pill is the same sprite.)
+    // The pump alert's "Boost Gauge": its own renderer, with text the listing
+    // never draws (the gain, the dial's readout and ticks).
     key: 'pump-motion',
-    what: 'animated pump-alert clip (premium MP4)',
-    module: 'listingMotion.js',
-    run: (coin) => require('./listingMotion').frames(
-      { ...coin, change: '+250%', priceFrom: '$0.0001', priceTo: '$0.00035' },
+    what: 'animated pump-alert gauge clip (premium MP4)',
+    module: 'pumpMotion.js',
+    run: (coin) => require('./pumpMotion').frames(
+      { symbol: coin.symbol, name: coin.name, pct: 250, firstMc: '$1.2M', lastMc: '$4.2M' },
       null,
-      { count: 1, badge: 'Solana', variant: 'pump' },
+      { times: [0], badge: 'Solana' },
     ),
   },
 ];
