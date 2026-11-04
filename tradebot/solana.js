@@ -15,6 +15,7 @@
  *     @solana/web3.js + fetch, exercised against a real RPC in production.
  */
 const crypto = require('crypto');
+const tokenPairs = require('../shared/dexscreener/tokenPairs');
 const web3 = require('@solana/web3.js');
 const { Keypair, PublicKey, Connection, VersionedTransaction, Transaction, SystemProgram, LAMPORTS_PER_SOL } = web3;
 const _bs58 = require('bs58');
@@ -1411,10 +1412,13 @@ async function dexScreener(mint) {
     const r = await _fetch('https://api.dexscreener.com/latest/dex/tokens/' + mint, { signal: AbortSignal.timeout(8000) });
     if (!r.ok) return null;
     const j = await r.json();
-    const pairs = ((j && j.pairs) || []).filter((p) => p && p.chainId === 'solana' && Number(p.priceUsd) > 0);
-    if (!pairs.length) return null;
-    pairs.sort((a, b) => (Number(b.liquidity && b.liquidity.usd) || 0) - (Number(a.liquidity && a.liquidity.usd) || 0));
-    const p = pairs[0], base = p.baseToken || {};
+    // ⚠️ ITS OWN PAIRS ONLY (shared/dexscreener/tokenPairs.js). The deepest
+    // pair of a token's answer can be a stranger's pool with this mint as its
+    // QUOTE, and every field read below would then be the OTHER token's — the
+    // card would name and price somebody else's coin over a buy of this one.
+    const p = tokenPairs.bestOwnPair(j && j.pairs, mint, { chainId: 'solana', priced: true });
+    if (!p) return null;
+    const base = p.baseToken || {};
     return {
       priceUsd: Number(p.priceUsd) || 0,
       priceNative: Number(p.priceNative) || 0,               // price in the quote token (SOL for SOL-quoted pairs)

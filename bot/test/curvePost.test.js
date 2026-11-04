@@ -138,7 +138,7 @@ test("⚠️ an indexed token pays ONE chain request EVER, then none", async () 
         volume: { h24: 10 },
         priceChange: { h24: 1 },
         pairAddress: "0xpair",
-        baseToken: { name: "Graduated", symbol: "GRAD" },
+        baseToken: { address: "0xdead", name: "Graduated", symbol: "GRAD" },
       },
     ],
   };

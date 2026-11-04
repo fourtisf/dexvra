@@ -22,6 +22,7 @@
  * and v4-calldata work is built on.
  */
 const { ethers } = require('ethers');
+const tokenPairs = require('../../shared/dexscreener/tokenPairs');
 const { chainOf, enabledChains } = require('../chains.js');
 const { steppedLogs } = require('../curveIface.js');
 const build = require('../build.js');
@@ -95,10 +96,11 @@ async function dsPair(chainKey, ca) {
   catch (e) { return { ok: false, why: `could not reach DexScreener (${(e && e.message) || e})` }; }
   if (!r.ok) return { ok: false, why: `DexScreener answered HTTP ${r.status}` };
   const j = await r.json().catch(() => null);
-  const pairs = ((j && j.pairs) || []).filter((p) => String(p.chainId).toLowerCase() === slug);
-  if (!pairs.length) return { ok: true, pair: null, why: `DexScreener has no ${slug} pair for this token` };
-  // Deepest first — a token seen through a thin pool reads as a different asset.
-  pairs.sort((a, b) => Number((b.liquidity || {}).usd || 0) - Number((a.liquidity || {}).usd || 0));
+  // Its OWN pairs, deepest first — a token seen through a thin pool reads as a
+  // different asset, and one seen as the QUOTE of a stranger's pool IS one
+  // (shared/dexscreener/tokenPairs.js).
+  const pairs = tokenPairs.ownPairs(j && j.pairs, ca).filter((p) => String(p.chainId).toLowerCase() === slug);
+  if (!pairs.length) return { ok: true, pair: null, why: `DexScreener has no ${slug} pair of this token's own` };
   return { ok: true, pair: pairs[0], why: null };
 }
 

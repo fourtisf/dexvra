@@ -133,7 +133,7 @@ async function run() {
     if (String(u).includes('dexscreener')) {
       return { ok: true, status: 200, async json() {
         return { pairs: [{ chainId: 'robinhood', dexId: 'flapsh', pairAddress: PAIR,
-          baseToken: { symbol: 'MACROHARD' }, quoteToken: { symbol: 'MSFT' }, liquidity: { usd: 8039.69 } }] };
+          baseToken: { address: TOKEN, symbol: 'MACROHARD' }, quoteToken: { address: QUOTE, symbol: 'MSFT' }, liquidity: { usd: 8039.69 } }] };
       } };
     }
     return realFetch(u, o);

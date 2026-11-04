@@ -12,6 +12,7 @@
  * Everything is wrapped so this NEVER throws to the caller and never blocks a trade.
  */
 const { ethers } = require('ethers');
+const tokenPairs = require('../shared/dexscreener/tokenPairs');
 const core = require('./core');
 const goplus = require('./goplus');
 const safety = require('./safety');   // chain-aware token safety (GoPlus / RugCheck)
@@ -62,9 +63,10 @@ async function marketStats(ca, chainKey) {
       const r = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${ca}`, { signal: AbortSignal.timeout(6000), headers: { accept: 'application/json' } });
       if (!r.ok) return null;
       const j = await r.json();
-      const pairs = (j.pairs || []).filter((p) => p.chainId === DS_CHAIN[chainKey]);
-      if (!pairs.length) return null;
-      const p = pairs.sort((a, b) => ((b.liquidity && b.liquidity.usd) || 0) - ((a.liquidity && a.liquidity.usd) || 0))[0];
+      // its OWN deepest pair (shared/dexscreener/tokenPairs.js): every field
+      // below is a pair's BASE token's
+      const p = tokenPairs.bestOwnPair(j.pairs, ca, { chainId: DS_CHAIN[chainKey] });
+      if (!p) return null;
       return {
         volH24Usd: p.volume && p.volume.h24 != null ? Number(p.volume.h24) : null,
         chgH1: p.priceChange && p.priceChange.h1 != null ? Number(p.priceChange.h1) : null,
@@ -190,7 +192,9 @@ async function socials(ca, chainKey) {
       const r = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${ca}`, { signal: AbortSignal.timeout(6000), headers: { accept: 'application/json' } });
       if (r.ok) {
         const j = await r.json();
-        const pairs = (j.pairs || []).filter((p) => p.chainId === DS_SOCIAL_CHAIN[chainKey]);
+        // its OWN pairs only — a pair where it is the quote carries the OTHER
+        // token's socials, which would put a stranger's links on this card
+        const pairs = tokenPairs.ownPairs(j.pairs, ca, { chainId: DS_SOCIAL_CHAIN[chainKey] });
         for (const p of pairs) { v = _pickSocials(p.info); if (v) break; }
       }
     }

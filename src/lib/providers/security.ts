@@ -24,15 +24,21 @@ async function dexInfo(address: string): Promise<{ name: string | null; symbol: 
       cache: "no-store",
     });
     if (!res.ok) throw new Error(String(res.status));
-    const json = (await res.json()) as {
-      pairs?: { chainId?: string; baseToken?: { address?: string; name?: string; symbol?: string } }[];
-    };
-    const pair = (json.pairs ?? []).find(
-      (p) => p.baseToken?.address?.toLowerCase() === address.toLowerCase(),
-    ) ?? json.pairs?.[0];
-    if (!pair?.baseToken) return { name: null, symbol: null, chain: null };
+    type Tok = { address?: string; name?: string; symbol?: string };
+    const json = (await res.json()) as { pairs?: { chainId?: string; baseToken?: Tok; quoteToken?: Tok }[] };
+    const want = address.toLowerCase();
+    const pairs = json.pairs ?? [];
+    // ⚠️ The token's OWN side of a pair, never "the first pair": the answer
+    // includes pools where this token is the QUOTE, and that pool's baseToken
+    // is somebody else (C5xph…pump, $BTC, was named $LTC that way). A
+    // quote-side pair still knows who we are — from its quoteToken.
+    const own = pairs.find((p) => p.baseToken?.address?.toLowerCase() === want);
+    const asQuote = own ? null : pairs.find((p) => p.quoteToken?.address?.toLowerCase() === want);
+    const tok = own?.baseToken ?? asQuote?.quoteToken;
+    const pair = own ?? asQuote;
+    if (!tok || !pair) return { name: null, symbol: null, chain: null };
     const chain = pair.chainId && CHAINS[pair.chainId] ? pair.chainId : null;
-    return { name: pair.baseToken.name ?? null, symbol: pair.baseToken.symbol ?? null, chain };
+    return { name: tok.name ?? null, symbol: tok.symbol ?? null, chain };
   } catch {
     return { name: null, symbol: null, chain: null };
   }

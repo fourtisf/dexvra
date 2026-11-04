@@ -44,7 +44,7 @@ test("GT unindexed token → DexScreener fallback, chain-filtered", async () => 
         // same-address deploy on ANOTHER chain with a huge (wrong) price — must be ignored
         { chainId: "bsc", priceUsd: "99", marketCap: 9e9, liquidity: { usd: 5e6 }, pairAddress: "wrong" },
         { chainId: "solana", priceUsd: "0.001", fdv: 250000, liquidity: { usd: 20000 }, pairAddress: "poolA",
-          baseToken: { name: "Rise", symbol: "RISE" } },
+          baseToken: { address: "So1anaAddr111", name: "Rise", symbol: "RISE" } },
       ]);
     return null;
   });
@@ -81,7 +81,7 @@ test("GT price present but mcap missing → DS fills only the gap", async () => 
       return gtBody({ price_usd: "0.5", market_cap_usd: null, fdv_usd: null });
     if (url.includes("dexscreener"))
       return dsBody([
-        { chainId: "ethereum", priceUsd: "0.49", marketCap: 777777, liquidity: { usd: 1000 }, pairAddress: "p1" },
+        { chainId: "ethereum", priceUsd: "0.49", marketCap: 777777, liquidity: { usd: 1000 }, pairAddress: "p1", baseToken: { address: "0x" + "a".repeat(40) } },
       ]);
     return null;
   });
@@ -121,7 +121,7 @@ test("a GT answer with no 24h change still consults DexScreener", async () => {
       askedDs = true;
       return dsBody([
         { chainId: "ethereum", priceUsd: "1.5", marketCap: 9265672, liquidity: { usd: 800000 },
-          pairAddress: "p1", priceChange: { h24: "6.4" }, baseToken: { symbol: "MOON" } },
+          pairAddress: "p1", priceChange: { h24: "6.4" }, baseToken: { address: "0x" + "b".repeat(40), symbol: "MOON" } },
       ]);
     }
     return null;

@@ -4,6 +4,7 @@
 // (never crawl a chain). Robinhood has no GT coverage (geckoNetwork:null) →
 // DexScreener only; chains neither indexes → null (posts show TBA).
 const { chainOf } = require("./config/chains");
+const tokenPairs = require("../../shared/dexscreener/tokenPairs");
 const launchpads = require("./launchpads");
 const ponsChain = require("./ponsChain");
 const { bounded } = require("./helpers/bounded");
@@ -359,9 +360,17 @@ async function fetchDS(chain, address) {
     });
     if (!res.ok) return null;
     const j = await res.json();
-    const pairs = (j.pairs || []).filter((p) => p && p.chainId === dsChain);
-    if (!pairs.length) return null;
-    pairs.sort((a, b) => (num(b.liquidity?.usd) || 0) - (num(a.liquidity?.usd) || 0));
+    // ⚠️ ITS OWN PAIRS ONLY. A pair where this token is the QUOTE carries the
+    // OTHER token's price, cap, logo and name — the deepest pool decided whose
+    // token a paid post described, and $BTC went out as $LTC.
+    const pairs = tokenPairs.ownPairs(j.pairs, address, { chainId: dsChain });
+    if (!pairs.length) {
+      // Only ever the quote of other tokens' pools: who it is and its USD price
+      // survive; a cap, a depth and a logo would be somebody else's.
+      const q = tokenPairs.quoteView(j.pairs, address, { chainId: dsChain });
+      if (!q || !(q.priceUsd > 0)) return null;
+      return { priceUsd: q.priceUsd, mcap: null, liq: null, vol24h: null, poolAddress: null, change24h: null, name: q.name, symbol: q.symbol, logoUrl: null };
+    }
     const p = pairs[0];
     const base = p.baseToken || {};
     return {

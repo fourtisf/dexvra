@@ -30,7 +30,7 @@ const V4_PAIR = {
   marketCap: 4200000,
   liquidity: { usd: 310000 },
   volume: { h24: 88000 },
-  baseToken: { name: "Sample Token", symbol: "SMPL" },
+  baseToken: { address: CA, name: "Sample Token", symbol: "SMPL" },
 };
 
 test("a Uniswap v4 market is found, and named as v4", async () => {

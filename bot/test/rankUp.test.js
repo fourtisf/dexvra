@@ -48,7 +48,7 @@ test("fetchMarket 24h change falls back to DexScreener when GT lacks price/mcap"
     if (url.includes("dexscreener"))
       return JSON.stringify({
         pairs: [
-          { chainId: "solana", priceUsd: "0.02", marketCap: 900000, liquidity: { usd: 40000 }, pairAddress: "p", priceChange: { h24: -8.3 } },
+          { chainId: "solana", priceUsd: "0.02", marketCap: 900000, liquidity: { usd: 40000 }, pairAddress: "p", priceChange: { h24: -8.3 }, baseToken: { address: "AAA" } },
         ],
       });
     return null;

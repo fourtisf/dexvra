@@ -14,6 +14,7 @@
 // (fourtis published a "+100% pump" for a token that was down 62%, because a
 // same-address token on another chain supplied the price.)
 const { chainOf, DEXSCREENER_SLUG } = require("../config/chains");
+const tokenPairs = require("../../../shared/dexscreener/tokenPairs");
 const log = require("../helpers/logger");
 
 // GeckoTerminal's free endpoint, and the Pro one an API key unlocks. The free
@@ -147,7 +148,8 @@ async function fetchTokenInfo(chain, address) {
       });
       if (r.ok) {
         const j = await r.json();
-        const p = (j.pairs || []).find((x) => x && (sameToken(x.baseToken?.address, address) || sameToken(x.quoteToken?.address, address)));
+        const p = (j.pairs || []).find((x) => x && sameToken(x.baseToken?.address, address)) ||
+          (j.pairs || []).find((x) => x && sameToken(x.quoteToken?.address, address));
         const t = p && (sameToken(p.baseToken?.address, address) ? p.baseToken : p.quoteToken);
         if (t) return { name: String(t.name || ""), symbol: String(t.symbol || "") };
       }
@@ -520,10 +522,13 @@ async function dsResolveAcross(address, chains) {
   if (!want.size) return null;
   const pairs = await dsFetch(address).catch(() => null);
   if (!pairs || !pairs.length) return null;
-  const mine = pairs.filter((p) => p && want.has(p.chainId));
-  if (!mine.length) return null;
-  mine.sort(byDepth);
-  const best = mine[0];
+  const inScope = pairs.filter((p) => p && want.has(p.chainId));
+  if (!inScope.length) return null;
+  // ⚠️ ITS OWN PAIRS FIRST. A pool where this token is the QUOTE is somebody
+  // else's market (shared/dexscreener/tokenPairs.js) — it says which chain the
+  // token is on, but it is never the pool to watch while one of its own exists.
+  const own = tokenPairs.ownPairs(inScope, address);
+  const best = own[0] || inScope.slice().sort(byDepth)[0];
   return { chain: want.get(best.chainId), pool: dsPoolOf(best, address) };
 }
 
@@ -532,19 +537,25 @@ function dsPoolOf(p, address) {
   const quoteSide = sameToken(p.quoteToken && p.quoteToken.address, address);
   const ours = (quoteSide ? p.quoteToken : p.baseToken) || {};
   const other = (quoteSide ? p.baseToken : p.quoteToken) || {};
+  // ⚠️ priceUsd, marketCap, priceChange and the buy/sell counts are all the
+  // BASE token's. On a pool where we are the quote, our price is the base's USD
+  // price over the base's price in us, a "buy" there is somebody SELLING us,
+  // and the cap and the 24h change are the other token's — left out, never
+  // reported as ours.
+  const quoteUsd = num(p.priceUsd) > 0 && num(p.priceNative) > 0 ? num(p.priceUsd) / num(p.priceNative) : null;
   return {
     poolAddress: p.pairAddress || null,
     symbol: ours.symbol || "",
     name: ours.name || "",
     counterSymbol: other.symbol || "",
     counterAddress: other.address || "",
-    priceUsd: num(p.priceUsd),
-    mcap: num(p.marketCap) ?? num(p.fdv),
+    priceUsd: quoteSide ? quoteUsd : num(p.priceUsd),
+    mcap: quoteSide ? null : num(p.marketCap) ?? num(p.fdv),
     volume24h: (p.volume && num(p.volume.h24)) || 0,
     liquidity: num(p.liquidity?.usd) || 0,
-    buys24h: num(tx.buys) || 0,
-    sells24h: num(tx.sells) || 0,
-    change24h: num(p.priceChange && p.priceChange.h24),
+    buys24h: num(quoteSide ? tx.sells : tx.buys) || 0,
+    sells24h: num(quoteSide ? tx.buys : tx.sells) || 0,
+    change24h: quoteSide ? null : num(p.priceChange && p.priceChange.h24),
     source: "ds",
   };
 }
@@ -556,8 +567,9 @@ async function fetchDsPool(chain, address) {
   if (!pairs) return null;
   const mine = pairs.filter((p) => p && p.chainId === dsChain);
   if (!mine.length) return null;
-  mine.sort(byDepth);
-  return dsPoolOf(mine[0], address);
+  // Its own deepest pool; a pool where it is the quote only when it has none.
+  const own = tokenPairs.bestOwnPair(mine, address);
+  return dsPoolOf(own || mine.slice().sort(byDepth)[0], address);
 }
 
 /** Test seam — clear the shared cooldown and the metadata cache. */

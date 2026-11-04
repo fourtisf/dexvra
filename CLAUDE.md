@@ -8457,6 +8457,78 @@ resolver as `unverified` without a request, so the line was dead and is gone.
 **Config a fix depends on:** nothing. `bot/` only, so the deploy is the
 ecosystem restart. ⚠️ The earlier `--all` run's verdict is void — run it again.
 
+## "harusnya tokenya btc not ltc" — the deepest pair was a STRANGER's
+
+Reported 2026-11-05: `C5xph2yL6gMdxmuLGxJBkGpmuDFfyi5fqkBNhvL6pump` is Big
+Titty Coin ($BTC) on Solana, paired with WBTC ($486K). The bot listed it as
+**Little Titty Coin ($LTC)**: LTC's name, LTC's ticker, LTC's logo on the
+banner and LTC's price, cap and liquidity in the post, to 12,338 subscribers.
+
+**`latest/dex/tokens/{address}` returns every pair the token is in, ON EITHER
+SIDE.** Somebody had opened an LTC/BTC pool. That is a pool where OUR token is
+the QUOTE, and it was deeper ($1.1M) than BTC's own pool. Every reader took "the
+deepest pair on the chain" and read `baseToken`, `priceUsd`, `marketCap` and
+`info` off it. All of those fields describe a pair's BASE token. So the deepest
+pool decided whose token we described, and here it was a stranger's. The site
+had the right rule all along ("counts base-side pairs only"). The bot and the
+trade bot each had their own reader, ten in all, and none of them had it.
+
+- **`shared/dexscreener/tokenPairs.js` is the one owner.** `ownPairs` /
+  `bestOwnPair` keep only pairs whose BASE is the token, deepest first, and
+  match addresses exactly: base58 is case-sensitive.
+- **A quote-side pair still knows two things about us: who we are and our USD
+  price** (`quoteView`: `priceUsd / priceNative`). It is a fallback, used only
+  when the token has no pair of its own. Its cap, logo, socials, 24h change and
+  depth belong to the other token and come back null. With `liq: 0` every size
+  gate stays shut.
+- **On a quote-side pool, a "buy" is somebody SELLING us.** `gtPairs.dsPoolOf`
+  swaps the counts, inverts the price and drops the cap. The buy bot watches the
+  token's own pool whenever one exists.
+- Readers fixed:
+  - bot: `dexscreener.fetchTokenInfoX` (listing form, auto-lister, audit),
+    `marketdata.fetchDS` (post figures, pump checker, trending),
+    `gtPairs.dsResolveAcross` / `fetchDsPool` / `dsPoolOf` / name lookup;
+  - trade bot: `solana.dexScreener` (the card), `core.dsMarket`,
+    `tokenLogoUrl`, `_curvePoolOf`, `tokeninfo.marketStats` / `socials`,
+    `venue:check`;
+  - site: `security.ts`, whose fallback was `pairs[0]`.
+- ⚠️ **The rule is COUNTED, not trusted.** `bot/test/dsTokenSide.test.js` scans
+  `bot/src`, `bot/scripts` and `tradebot/` for every file that asks
+  `latest/dex/tokens/` and fails on any that does not require the owner. Two
+  files are exempt, each with its reason: `dsBigCoins` (candidates are keyed by
+  each pair's own base) and `ca-check` (already filters the base side). An
+  exemption that stops being a reader fails too.
+- ⚠️ **Eight existing tests failed on the fix, and every one was a FIXTURE.**
+  Their pairs carried no `baseToken.address`, which real DexScreener always
+  sends, so the strict match rightly refused them. One of them,
+  `postMarket`'s "an incomplete DexScreener answer must still reach GT", was
+  passing on a pair that never matched its token. Each fixture now names its
+  token.
+
+Thirteen guarantees are MUTATION-TESTED rather than argued:
+
+- each reader in either package going back to "deepest pair, any side";
+- the autofill's quote fallback carrying the stranger's logo;
+- the resolver picking any side;
+- a quote-side pool keeping the base's price or cap, or not swapping buys and
+  sells;
+- the shared rule ignoring the side, case-folding base58, or not inverting the
+  quote price.
+
+Each mutant fails between one and five tests.
+
+```bash
+cd bot && node scripts/run-tests.js test/dsTokenSide.test.js        # 7 tests, no network
+cd tradebot && SKIP_DOTENV=1 node --test dsTokenSide.test.js        # 3 tests, no network
+```
+
+**Config a fix depends on:** nothing. ⚠️ `shared/`, `bot/`, `tradebot/` AND
+`src/` changed, so `npm run deploy` restarts all three bot processes and
+rebuilds the site. ⚠️ **A row already listed under the wrong token stays
+wrong.** The admin edit cannot change a ticker (`sanitizePatch` has no `sym`).
+The remedy is to delete the row in the admin console and list the token again,
+and to delete the wrong channel post by hand.
+
 ## Two bot processes, one config
 
 `bot/` runs **two** PM2 processes: `dexvra-bot` (`main.js`) and

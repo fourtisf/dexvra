@@ -2032,7 +2032,9 @@ async function tokenLogoUrl(ca, chainKey) {
   try {
     const slug = DS_CHAIN_KEY[chainKey];   // the map this file already keeps — a second copy would drift
     if (slug) {
-      const pairs = (await dsPairsX(ca)).pairs.filter((p) => p && p.chainId === slug);
+      // its OWN pairs: `info.imageUrl` on a pair where it is the quote is the
+      // other token's artwork
+      const pairs = tokenPairs.ownPairs((await dsPairsX(ca)).pairs, ca, { chainId: slug });
       for (const p of pairs) {
         const u = p.info && p.info.imageUrl;
         if (u && /^https?:\/\//.test(u)) { url = u; break; }
@@ -2113,9 +2115,10 @@ const _dsLiq = (p) => Number((p && p.liquidity && p.liquidity.usd) || 0);
 async function dsMarket(ca, chainKey) {
   const slug = DS_CHAIN_KEY[chainKey];
   if (!slug) return null;   // a chain DexScreener does not index (Robinhood) — GeckoTerminal covers those elsewhere
-  const pairs = (await dsPairs(ca)).filter((p) => p && p.chainId === slug && Number(p.priceUsd) > 0);
-  if (!pairs.length) return null;
-  const p = pairs.sort((a, b) => _dsLiq(b) - _dsLiq(a))[0];
+  // ⚠️ ITS OWN PAIRS ONLY — a pool where this token is the QUOTE carries the
+  // other token's price, cap and name (shared/dexscreener/tokenPairs.js).
+  const p = tokenPairs.bestOwnPair(await dsPairs(ca), ca, { chainId: slug, priced: true });
+  if (!p) return null;
   return {
     priceUsd: Number(p.priceUsd),
     mcapUsd: Number(p.marketCap || p.fdv || 0) || 0,
@@ -2136,6 +2139,7 @@ async function dsMarket(ca, chainKey) {
 // fell to "I didn't recognise that", and the bare pair address was carded as
 // "couldn't price it", or worse as the pool's LP token, which IS an ERC-20.
 const dsPairRule = require('../shared/dexscreener/pair');
+const tokenPairs = require('../shared/dexscreener/tokenPairs');
 const _pairCache = new Map();   // `${slugs}|${address}` → { at, r }
 const PAIR_TTL_MS = 5 * 60 * 1000;
 
@@ -2421,8 +2425,8 @@ async function _curvePoolOf(chainKey, ca) {
     let pool = null;
     const slug = DS_CHAIN_KEY[chainKey];
     if (slug) {
-      const pairs = (await dsPairsX(ca)).pairs.filter((p) => p && p.chainId === slug && p.pairAddress);
-      const best = pairs.sort((a, b) => _dsLiq(b) - _dsLiq(a))[0];
+      // its OWN deepest pair: a pool where it is the quote is not its curve
+      const best = tokenPairs.ownPairs((await dsPairsX(ca)).pairs, ca, { chainId: slug }).find((p) => p.pairAddress);
       if (best) pool = best.pairAddress;
     }
     const net = GT_NET[chainKey];

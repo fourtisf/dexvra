@@ -134,7 +134,9 @@ function withStubs(chain, { indexed = true, gtTrades = null, dsChain = 'base' } 
         chainId: dsChain, priceUsd: '0.0000421', marketCap: 4209,
         liquidity: { usd: 4370 }, volume: { h24: 320 },
         dexId: 'pons', labels: ['v2'], pairAddress: CURVE,
-        baseToken: { name: 'Test', symbol: 'TEST' },
+        // DexScreener names the token on each side; only a pair whose BASE is
+        // the token asked about describes it (shared/dexscreener/tokenPairs.js)
+        baseToken: { address: decodeURIComponent(u.split('/tokens/')[1]).split(/[?#]/)[0], name: 'Test', symbol: 'TEST' },
       }] : [];
       return { ok: true, async json() { return { pairs }; } };
     }

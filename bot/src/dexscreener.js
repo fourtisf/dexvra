@@ -3,6 +3,10 @@
 // not. Always filtered by chain (never match a same-address token on another
 // chain). Used to prefill the listing form when a CA is dropped.
 const log = require("./helpers/logger");
+// ⚠️ Which pairs are ABOUT a token: its BASE-side pairs only. The deepest pair
+// of a token's answer can be a stranger's pool with this token as its QUOTE —
+// C5xph…pump ($BTC) was listed as $LTC that way. See the module's header.
+const tokenPairs = require("../../shared/dexscreener/tokenPairs");
 
 const BASE = "https://api.dexscreener.com/latest/dex/tokens/";
 
@@ -120,12 +124,7 @@ const rawChanges = (pc) => {
 // its pool at $507 against a $684M cap. The OTHER side of the pool — the
 // WETH/SOL/USDC — is what a sell is paid from, so it travels on its own.
 // `null` when DexScreener did not publish it: an absent reading makes no claim.
-const sameAddr = (a, b) => {
-  const x = String(a || "").trim();
-  const y = String(b || "").trim();
-  if (!x || !y) return false;
-  return /^0x/i.test(x) ? x.toLowerCase() === y.toLowerCase() : x === y;
-};
+const sameAddr = tokenPairs.sameAddr;
 const finiteOrNull = (v) => {
   if (v == null || String(v).trim() === "") return null; // Number(null) is 0 — not a reading
   const n = Number(v);
@@ -180,10 +179,27 @@ async function fetchTokenInfoX(chain, address, { now = Date.now() } = {}) {
       return { info: null, ok: false, why: `DexScreener HTTP ${res.status}` };
     }
     const j = await res.json();
-    const pairs = (j.pairs || []).filter((p) => p.chainId === dsChain);
-    if (!pairs.length) return { info: null, ok: true, why: `no ${dsChain} pair on DexScreener` };
-    // highest-liquidity pair wins
-    pairs.sort((a, b) => (b.liquidity?.usd || 0) - (a.liquidity?.usd || 0));
+    // ⚠️ ITS OWN PAIRS ONLY, deepest first — a pair where this token is the
+    // QUOTE describes the OTHER token in every field below (name, ticker,
+    // price, cap, logo, socials). That is how $BTC was listed as $LTC.
+    const pairs = tokenPairs.ownPairs(j.pairs, address, { chainId: dsChain });
+    if (!pairs.length) {
+      // Seen only as the quote of other tokens' pools: two facts survive — who
+      // it is and its USD price — and nothing else. No cap, no logo, no depth:
+      // those would be somebody else's numbers. liq 0 keeps every size gate shut.
+      const q = tokenPairs.quoteView(j.pairs, address, { chainId: dsChain });
+      if (!q) return { info: null, ok: true, why: `no ${dsChain} pair on DexScreener` };
+      return {
+        info: {
+          name: q.name, symbol: q.symbol, priceUsd: q.priceUsd, mcap: null, logoUrl: null,
+          website: null, twitter: null, telegram: null, liq: 0, vol24: 0, change24h: 0,
+          priceChange: rawChanges(null), pairCreatedAt: 0, pairCount: 0, liqQuoteUsd: null,
+          quoteSymbol: null, txns24: null, poolAddress: null, dexId: null, quoteOnly: true,
+        },
+        ok: true,
+        why: null,
+      };
+    }
     const p = pairs[0];
     const base = p.baseToken || {};
     const info = p.info || {};

@@ -149,7 +149,7 @@ test("discovery asks the launchpads even when DexScreener answered", async () =>
   // ("launchpads only when DexScreener has nothing") would never fire on the
   // exact tokens it exists for, and the socials would stay missing.
   serve({
-    "dexscreener": { pairs: [{ chainId: "solana", baseToken: { name: "Curve Kid", symbol: "CURVE" }, priceUsd: "0.000025", marketCap: 24000, liquidity: { usd: 9000 }, volume: { h24: 120 }, priceChange: { h24: 3 }, pairCreatedAt: 1755300000000, info: {} }] },
+    "dexscreener": { pairs: [{ chainId: "solana", baseToken: { address: MINT, name: "Curve Kid", symbol: "CURVE" }, priceUsd: "0.000025", marketCap: 24000, liquidity: { usd: 9000 }, volume: { h24: 120 }, priceChange: { h24: 3 }, pairCreatedAt: 1755300000000, info: {} }] },
     "pump.fun": PUMP,
     "jup.ag": JUP,
   });
@@ -161,7 +161,7 @@ test("discovery asks the launchpads even when DexScreener answered", async () =>
 
 test("a launchpad outage costs data, never the autofill", async () => {
   reset();
-  serve({ "dexscreener": { pairs: [{ chainId: "solana", baseToken: { name: "Migrated", symbol: "MIG" }, priceUsd: "1", liquidity: { usd: 50000 } }] } });
+  serve({ "dexscreener": { pairs: [{ chainId: "solana", baseToken: { address: MINT, name: "Migrated", symbol: "MIG" }, priceUsd: "1", liquidity: { usd: 50000 } }] } });
   const info = await discovery.fetchTokenInfo("solana", MINT);
   assert.equal(info.name, "Migrated", "a dead launchpad took the DexScreener answer down with it");
 });

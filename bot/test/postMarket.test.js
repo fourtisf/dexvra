@@ -26,7 +26,9 @@ const HACHIKO = {
   volume: { h24: 34200 },
   priceChange: { h24: -1.1 },
   pairAddress: "0xpair",
-  baseToken: { name: "Hachiko Inu", symbol: "HACHIKO" },
+  // DexScreener always names the token on each side — and only a pair whose
+  // BASE is the token asked about describes it (shared/dexscreener/tokenPairs).
+  baseToken: { address: "0xf1c599e9a5fbdea408a7409c0176a2fe42c64444", name: "Hachiko Inu", symbol: "HACHIKO" },
 };
 
 /** Records which hosts were asked, in order. */
@@ -91,7 +93,7 @@ test("⚠️ a DexScreener answer MISSING one of the post's fields is not enough
   const noLiq = { ...HACHIKO, liquidity: {} };
   const { asked, restore } = stubFetch((url) => (url.includes("dexscreener") ? dsBody([noLiq]) : null));
   try {
-    await market.fetchMarket("bsc", "0xabc", { cheap: true, need: POST_NEED });
+    await market.fetchMarket("bsc", HACHIKO.baseToken.address, { cheap: true, need: POST_NEED });
     assert.ok(asked.includes("gt"), "an incomplete DexScreener answer must still reach GT");
   } finally {
     restore();

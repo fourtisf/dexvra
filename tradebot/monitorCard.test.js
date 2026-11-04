@@ -489,7 +489,7 @@ test('a curve-chain token that never used the launchpad still gets its links', a
   global.fetch = async (u) => {
     if (/robinfun|\/api\/v1\/tokens/.test(String(u))) return { ok: false, json: async () => ({}) };
     hitDs = true;
-    return { ok: true, json: async () => ({ pairs: [{ chainId: 'robinhood', info: { websites: [{ url: 'https://loxi.example' }], socials: [{ type: 'telegram', url: 'https://t.me/loxi' }] } }] }) };
+    return { ok: true, json: async () => ({ pairs: [{ chainId: 'robinhood', baseToken: { address: '0x' + 'f1'.repeat(20) }, info: { websites: [{ url: 'https://loxi.example' }], socials: [{ type: 'telegram', url: 'https://t.me/loxi' }] } }] }) };
   };
   try {
     const v = await tokeninfo.socials('0x' + 'f1'.repeat(20), 'robinhood');
