@@ -180,6 +180,16 @@ async function runOnce({ now = Date.now(), deps = realDeps() } = {}) {
       }
     }
 
+    // ⚠️ A FLAG WRITTEN WHILE THIS SWEEP RAN IS KEPT. `flagNow` (the pump
+    // checker's last look before an announcement) writes this file too, and a
+    // sweep that saved its own snapshot over it would drop that flag — the
+    // token would be announced on its next step and paged about all over
+    // again. Merged unless this sweep itself cleared it or it left the site.
+    const during = load();
+    const clearedNow = new Set(out.cleared.map((f) => keyOf(f.chain, f.address)));
+    for (const [k, f] of Object.entries(during.flagged)) {
+      if (!state.flagged[k] && live.has(k) && !clearedNow.has(k)) state.flagged[k] = f;
+    }
     await saveJSON(FILE, state).catch((e) => log.error(`[listingAudit] could not persist ${FILE}: ${e.message}`));
 
     if (out.newlyBad.length) {
@@ -218,6 +228,53 @@ async function runOnce({ now = Date.now(), deps = realDeps() } = {}) {
 /** Flagged rows, for the cleanup script: `{ key → {why, sym, chain, address} }`. */
 const flagged = () => load().flagged;
 
+/**
+ * IS THIS ONE ROW A BOT-MADE LISTING THE AUDIT WOULD JUDGE, and what is its
+ * verdict right now? The same `judge` the sweep runs — one owner — for a caller
+ * that cannot wait for the rotation to come round: the pump checker asks it of
+ * a free listing in the moment before it would announce it.
+ *
+ * "bagaimana agar masalah ini tidak terjadi lgi": the sweep re-checks 15 rows
+ * every 30 minutes, so a token that turned into a honeypot after it was listed
+ * could pump — and be announced — hours before the rotation reached it. The
+ * announcement is the loudest thing Dexvra says about a token; it gets its own
+ * look.
+ *
+ * Returns `{ auditable:false }` for a purchase (never ours to judge), else the
+ * judge's `{ ok, why }`.
+ */
+async function checkRow(row, deps = realDeps()) {
+  if (!auditable([row], deps.autoKeys()).length) return { auditable: false, ok: true, why: null };
+  const v = await judge(row, deps).catch((e) => ({ ok: false, why: e.message }));
+  return { auditable: true, ...v };
+}
+
+/**
+ * Flag a row NOW, outside the sweep, with the sweep's own transition rule:
+ * a row newly flagged pages once; a row already flagged only has its reason
+ * updated. `listings:nostables` then removes it with the rest, and the pump
+ * checker skips it from the next sweep on. Returns true when this was new.
+ */
+async function flagNow(row, why, { now = Date.now(), alert = (html) => log.alert(html), source = 'pump alert held' } = {}) {
+  const state = load();
+  const k = keyOf(row.chain, row.address);
+  const isNew = !state.flagged[k];
+  state.flagged[k] = isNew
+    ? { since: now, why, sym: symOf(row), chain: row.chain, address: row.address, id: row.id, by: source }
+    : { ...state.flagged[k], why };
+  state.checked[k] = { at: now };
+  await saveJSON(FILE, state).catch((e) => log.error(`[listingAudit] could not persist ${FILE}: ${e.message}`));
+  if (isNew) {
+    alert(
+      `🚩 <b>Free listing audit — ${esc(source)}</b>\n` +
+        `• <b>$${esc(symOf(row))}</b> (${esc(row.chain)}) — ${esc(why)}\n\n` +
+        'It is no longer announced. Review, then remove it with:\n' +
+        '<code>cd /opt/dexvra/bot &amp;&amp; npm run listings:nostables</code>\n(dry run first — add <code>--apply</code> to delete)',
+    );
+  }
+  return isNew;
+}
+
 function start() {
   if (!enabled()) {
     log.info('[listingAudit] off (LISTING_AUDIT=0) — listed tokens are never re-checked');
@@ -232,4 +289,4 @@ function start() {
   return { stop: () => (clearTimeout(boot), clearInterval(iv)), runOnce };
 }
 
-module.exports = { start, runOnce, flagged, auditable, pick, judge, FILE, _reset: () => saveJSON(FILE, {}) };
+module.exports = { start, runOnce, flagged, checkRow, flagNow, auditable, pick, judge, FILE, _reset: () => saveJSON(FILE, {}) };

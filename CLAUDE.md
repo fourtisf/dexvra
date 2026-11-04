@@ -15630,6 +15630,62 @@ failing, and two fixtures the walk never reached.
 on deploy, deliberately: free listing on uncovered EVM chains now needs that
 chain's RPC to answer `eth_getLogs`, and the scan line says so when it does not.
 
+### "BAGAIMANA AGAR MASALAH INI TIDAK TERJADI LGI" — the announcement gets its own look, and the tests run themselves
+
+Asked over the fixes above. Each of those answers at one moment, at the door or
+at a fresh re-read of the list. Three gaps were left where the operator could
+still be the one to find the next one:
+
+1. **The audit is a slow rotation.** It re-checks 15 bot-made rows every 30
+   minutes, so a token that turns into a honeypot AFTER listing (an owner can
+   flip a sell block on; $NASDUCK was renamed three times) could pump and be
+   announced hours before the rotation reached it.
+2. **Nothing paged when a listed token turned out to be a scam.** The person
+   reading the channel was the detector.
+3. **The bot suite was a merge gate in name only.** `npm run deploy` runs the
+   WEB app's suites (`scripts/deploy.sh` step 4, by design), and nothing else
+   ran the bot's. Every guarantee above was enforced by whoever remembered to
+   type `npm test`.
+
+The fixes:
+
+- **A free listing gets one last look before it is announced.** After the
+  fresh re-read and before the media, the tweet and the post, `pumpChecker`
+  asks `listingAudit.checkRow`: the SAME `judge` the sweep runs (one owner),
+  for bot-made rows only. A purchase is never judged; that rule stands.
+  EVIDENCE (a one-way market, a pool that cannot back the cap, a sell that
+  reverts, a GoPlus/RugCheck red flag) holds the alert and calls
+  `listingAudit.flagNow`. "Could not ask" does NOT hold it. The token cleared
+  the door and the audit, and an upstream outage must not silence every free
+  listing's alerts. A logo-only reason never holds one.
+- **`flagNow` pages the ops channel once**, naming the cleanup command, with the
+  sweep's own transition rule. The row lands in `flagged()`, so
+  `listings:nostables` removes it with the rest and the pump checker skips it
+  from the next sweep on.
+- ⚠️ **The sweep no longer erases a flag written while it ran.** `flagNow` and
+  `runOnce` both write `listingAudit.json`, and the sweep saved the snapshot it
+  loaded at its start, which dropped the mid-sweep flag. It merges now, unless
+  it cleared that row itself or the row left the site.
+- **`.github/workflows/bot-tests.yml` runs the bot suite on every push and PR
+  that touches `bot/` or `shared/`.** It is offline by construction (no
+  secrets, no network). A red X on the branch is the merge gate made real.
+  ⚠️ `.github/` is "anything else" to the deploy scope, so the deploy that
+  first carries it rebuilds the web app once. That is harmless, and recorded so
+  it is not mistaken for a scope bug.
+
+```bash
+cd bot && node scripts/run-tests.js test/pumpDeleted.test.js test/listingAudit.test.js
+```
+
+Mutation-tested (each fails a test): the last look removed, an inconclusive
+look holding the alert, a logo reason holding it, a hold that does not flag,
+the mid-sweep flag overwritten, `flagNow` paging every time, and `checkRow`
+judging a purchase.
+
+**Config a fix depends on:** nothing on the server. GitHub Actions must be
+enabled for the repository (Settings → Actions) for the workflow to run. If the
+first push shows no "bot tests" check on the commit, that is where to look.
+
 ## Conventions
 
 - Tests live beside the code they cover, in `bot/test/`, `tradebot/*.test.js`

@@ -63,6 +63,8 @@ const POLITE_MS = Math.max(0, Number(process.env.PUMP_POLITE_MS ?? 300) || 0);
 // state dropped, so a re-listing starts a new ladder from its own price.
 
 const { liveMap, confirmListed, auditScam } = require("../helpers/stillListed");
+// Called through the module object (audit.checkRow), so a test can stand in for it.
+const audit = require("./listingAudit");
 
 // Past this share of the market cap missing from the pool, the price is not a
 // market — it is a number a thin pool prints. $NASDUCK announced "+1900%" on a
@@ -386,6 +388,21 @@ async function sweepOnce(now) {
       out.skipped.push({ key, why: still.why });
       continue;
     }
+    // ⚠️ AND A FREE LISTING GETS ONE LAST LOOK. The audit re-checks bot-made
+    // rows on a slow rotation, so a token that turned into a honeypot after
+    // listing could pump — and be announced to the channel — before the
+    // rotation reached it. Same judge, asked now (listingAudit.checkRow).
+    // EVIDENCE holds the alert, flags the row and pages ops once; "could not
+    // ask" does not hold it — the token cleared the door and the audit
+    // already, and an upstream outage must not silence every free listing.
+    const look = await audit.checkRow(r).catch((e) => ({ auditable: true, ok: false, why: e.message }));
+    if (look.auditable && look.ok && look.why && !/^no logo/i.test(look.why)) {
+      await audit.flagNow(r, look.why).catch(() => {});
+      log.info(`[pump] ${r.sym || r.address} +${milestone}% NOT announced — ${look.why}`);
+      out.skipped.push({ key, why: look.why });
+      continue;
+    }
+    if (look.auditable && !look.ok) log.debug(`[pump] ${r.sym || r.address}: last look could not decide (${look.why}) — announcing on the door's verdict`);
     const coin = coinOf(r, m.priceUsd, m.mcap);
     const media = await pumpMedia(r, base, m, milestone); // admin pump clip + overlay (null → text reply)
     // A pump tweet MUST quote the token's own listing tweet — the same rule

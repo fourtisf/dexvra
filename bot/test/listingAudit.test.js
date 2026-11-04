@@ -188,3 +188,41 @@ test('…but a heal that could not ASK is never a flag — an outage must not pa
   await audit.runOnce({ now: 1000, deps: d });
   assert.equal(audit.flagged()['solana:flaky'], undefined);
 });
+
+// ── the last look before a pump announcement ($NASDUCK) ─────────────────────
+
+test('checkRow: a FREE row gets the same verdict as the sweep — and a purchase is not judged', async () => {
+  const d = deps({ rows: [], info: { hp: { info: good({ txns24: { buys: 400, sells: 2 } }), ok: true } } });
+  const v = await audit.checkRow(row('hp'), d);
+  assert.equal(v.auditable, true);
+  assert.match(String(v.why), /^one-way market/);
+  const paid = await audit.checkRow(row('hp', { tier: 'GOLD' }), d);
+  assert.deepEqual([paid.auditable, paid.why], [false, null]);
+});
+
+test('flagNow pages ONCE, names the cleanup command, and the cleanup script reads the flag', async () => {
+  const alerts = [];
+  const r = row('hp');
+  assert.equal(await audit.flagNow(r, 'potential scam (honeypot)', { alert: (h) => alerts.push(h) }), true);
+  assert.equal(await audit.flagNow(r, 'potential scam (honeypot)', { alert: (h) => alerts.push(h) }), false);
+  assert.equal(alerts.length, 1, 'a second look at the same token is not a second page');
+  assert.match(alerts[0], /npm run listings:nostables/);
+  assert.ok(audit.flagged()['solana:hp'], 'listings:nostables reads flagged()');
+});
+
+test('a sweep does not erase a flag written WHILE it ran', async () => {
+  // flagNow and the sweep both write listingAudit.json; the sweep saving its
+  // own snapshot used to drop the flag, so the token was announced next step.
+  const rows = [row('aa'), row('hp')];
+  const d = deps({ rows });
+  const slow = d.priceX;
+  d.priceX = async (c, a) => {
+    if (a === 'aa') await audit.flagNow(row('hp'), 'potential scam (honeypot)', { alert: () => {} });
+    return slow(c, a);
+  };
+  d.healLogo = null;
+  // 'hp' is ALSO judged clean later in this sweep (its fixture is good()); the
+  // fresher evidence stands until a sweep that STARTS with the flag clears it.
+  await audit.runOnce({ deps: d });
+  assert.ok(audit.flagged()['solana:hp'], 'the flag written mid-sweep survives the save');
+});

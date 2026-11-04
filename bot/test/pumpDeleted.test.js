@@ -20,6 +20,8 @@ const postids = require("../src/channels/postids");
 const post = require("../src/channels/post");
 const bannerTemplate = require("../src/bannerTemplate");
 const pump = require("../src/services/pumpChecker");
+const audit = require("../src/services/listingAudit");
+const realCheckRow = audit.checkRow; // kept before any test stands in for it
 const { saveJSON } = require("../src/helpers/persist");
 
 const CA = "0x78fC7E13BCCab8a7aedc5b8465C3442d6D7D9d64";
@@ -45,7 +47,13 @@ function stubAll({ listings, confirm, price = PUMPED } = {}) {
     return { message_id: 100 + sent.length };
   };
   bannerTemplate.mediaOverride = () => null;
+  // The last look before an announcement (listingAudit.checkRow) asks the
+  // market and the contract — stood in for here; its own tests are below.
+  audit.checkRow = async () => ({ auditable: true, ok: true, why: null });
+  flagged.length = 0;
+  audit.flagNow = async (row, why) => (flagged.push({ row, why }), true);
 }
+const flagged = [];
 
 async function reset(base = { [KEY]: { price: 0.0272, mcap: 27e6, at: 1, listedAt: 1000 } }) {
   const { baseline, latch } = pump._state();
@@ -210,4 +218,66 @@ test("stillListed: one owner — the pump checker does not grow a second copy", 
   const src = fss.readFileSync(require.resolve("../src/services/pumpChecker.js"), "utf8");
   assert.match(src, /require\("\.\.\/helpers\/stillListed"\)/);
   assert.ok(!/async function confirmListed/.test(src), "confirmListed lives in helpers/stillListed.js only");
+});
+
+
+// ── the last look before an announcement ────────────────────────────────────
+
+test("a FREE listing that turned into a honeypot is held at the announcement, flagged, and paged", async () => {
+  // The audit's rotation re-checks 15 rows every 30 minutes; a token that went
+  // bad after listing could be announced before it was reached.
+  await reset();
+  stubAll({ listings: [ROW], confirm: [ROW] });
+  audit.checkRow = async () => ({ auditable: true, ok: true, why: "potential scam (honeypot — a sell back into the pool reverts for 3 of 3 recent buyers)" });
+  const out = await pump.sweep();
+  assert.equal(sent.length, 0, "nothing goes out about it");
+  assert.equal(out.posted, 0);
+  assert.equal(flagged.length, 1, "the row is flagged, which pages ops once and queues it for listings:nostables");
+  assert.match(flagged[0].why, /honeypot/);
+  assert.ok(!pump._state().latch.has(`${KEY}@1900`));
+});
+
+test("…but a last look that could not ASK does not silence a free listing", async () => {
+  // It cleared the door and the audit; an upstream outage must not end every
+  // free listing's alerts. Evidence holds an alert; an absence of it does not.
+  await reset();
+  stubAll({ listings: [ROW], confirm: [ROW] });
+  audit.checkRow = async () => ({ auditable: true, ok: false, why: "DexScreener HTTP 503" });
+  await pump.sweep();
+  assert.equal(sent.length, 1);
+  assert.equal(flagged.length, 0);
+});
+
+test("…and a row flagged only for its LOGO is still announced", async () => {
+  await reset();
+  stubAll({ listings: [ROW], confirm: [ROW] });
+  audit.checkRow = async () => ({ auditable: true, ok: true, why: "no logo (no source has artwork)" });
+  await pump.sweep();
+  assert.equal(sent.length, 1);
+});
+
+test("a PURCHASE is never judged by the last look", async () => {
+  await reset();
+  stubAll({ listings: [{ ...ROW, tier: "GOLD" }], confirm: [{ ...ROW, tier: "GOLD" }] });
+  // The REAL checkRow, with market and contract reads that would condemn it —
+  // a GOLD row the auto-lister did not make must never reach them.
+  let asked = 0;
+  audit.checkRow = (row) =>
+    realCheckRow(row, {
+      autoKeys: () => new Set(),
+      priceX: async () => (asked++, { ok: true, info: { symbol: "NASDUCK", name: "Nasduck", mcap: 1 } }),
+      safetyX: async () => (asked++, { ok: true, refusal: "potential scam (honeypot)" }),
+    });
+  await pump.sweep();
+  assert.equal(sent.length, 1, "a paid listing's alert is the product it bought");
+  assert.equal(asked, 0, "and it was never priced or safety-checked by the audit");
+});
+
+test("the last look sits after the fresh re-check and BEFORE the media, the tweet and the post", () => {
+  const src = fss.readFileSync(require.resolve("../src/services/pumpChecker.js"), "utf8");
+  const iLook = src.indexOf("await audit.checkRow(r)");
+  assert.ok(iLook > src.indexOf("await confirmListed(r, base)"), "after the site says it is still listed");
+  assert.ok(iLook < src.indexOf("await pumpMedia("), "before the banner is rendered");
+  assert.ok(iLook < src.indexOf("x.postPump("), "before the tweet");
+  assert.ok(iLook < src.indexOf("post.sendMedia("), "before the channel post");
 });
