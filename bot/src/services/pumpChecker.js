@@ -6,7 +6,7 @@
 // The window (default 100%–2000%) is admin-configurable; see the milestone block
 // below for why the number announced is a step and not the raw gain. Baseline and
 // the per-step latch persist across restarts.
-const { PUMP_CHECK_MS, CHANNELS, SITE_URL, X_POST_TIMEOUT_MS } = require("../config/constants");
+const { PUMP_CHECK_MS, CHANNELS, SITE_URL, X_POST_TIMEOUT_MS, CLIP_BUDGET_MS } = require("../config/constants");
 const api = require("../api/dexvra");
 // ⚠️ `fetchPrice`, NOT `fetchMarket`. This loop prices EVERY approved listing
 // every three minutes and reads two fields off the answer — the price and the
@@ -20,6 +20,9 @@ const postids = require("../channels/postids");
 const fmt = require("../channels/format");
 const post = require("../channels/post");
 const bannerTemplate = require("../bannerTemplate");
+const listingMotion = require("../listingMotion"); // called as listingMotion.render — a seam the tests can stub
+const { bounded } = require("../helpers/bounded");
+const { chainOf } = require("../config/chains");
 const x = require("../twitter");
 const { fmtPrice, formatNumber } = require("../helpers/format");
 const { DedupSet, loadJSONSync, saveJSON } = require("../helpers/persist");
@@ -218,16 +221,59 @@ async function fetchLogoBuffer(logoUrl) {
   }
 }
 
-/** Build the pump-alert media. When the admin has set a pump GIF/video, the
- *  token overlay (▲ +N% · old→new price · MCAP pill · logo ring · cyan $ticker)
- *  is composited onto it — the same auto-fill the listing/trending banners get,
- *  but with pump's DISTINCT layout. Falls back to the raw clip on any failure,
- *  and null when no clip is set (caller then posts a plain text reply). */
+/** The pump clip: the listing's motion piece with PUMP ALERT, the gain
+ *  counting up where the name goes, and LISTED AT → NOW in the panel. Null on
+ *  any failure or past the budget — the caller's ladder continues. */
+async function pumpMotion(r, base, m, pct, logoBuffer) {
+  if (!bannerTemplate.postingEnabled() || !listingMotion.enabled("pump")) return null;
+  const c = chainOf(r.chain);
+  const coin = {
+    symbol: r.sym,
+    name: r.name,
+    chain: r.chain,
+    change: `+${Math.round(pct)}%`,
+    priceFrom: base.price > 0 ? fmtPrice(base.price) : null,
+    priceTo: m.priceUsd > 0 ? fmtPrice(m.priceUsd) : null,
+    mcap: m.mcap > 0 ? "$" + formatNumber(m.mcap) : null,
+  };
+  const cancel = { cancelled: false };
+  return bounded(
+    listingMotion
+      .render(coin, logoBuffer, { variant: "pump", badge: c ? c.label : String(r.chain || "").toUpperCase(), cancel })
+      .catch(() => null),
+    CLIP_BUDGET_MS,
+    () => {
+      cancel.cancelled = true;
+      log.warn(`[pump] ${r.sym} media: premium motion passed ${CLIP_BUDGET_MS}ms — falling back`);
+      return null;
+    },
+  );
+}
+
+/** Build the pump-alert media, best first:
+ *   1. the premium motion clip ("buatkan vidio untuk pump alert"), drawn in
+ *      code with the token's own logo — it needs no admin upload, so a pump
+ *      alert is no longer a bare text reply on a box nobody gave a clip to;
+ *   2. the admin's pump GIF/video with the token overlay (▲ +N% · old→new
+ *      price · MCAP pill · logo ring · cyan $ticker) composited onto it, or the
+ *      raw clip if that fails;
+ *   3. null — the caller posts a plain text reply.
+ *  PUMP_MOTION=0 restores 2 → 3 exactly. */
 async function pumpMedia(r, base, m, pct) {
+  let logoBuffer = null;
+  try {
+    logoBuffer = await fetchLogoBuffer(r.logoUrl);
+    const motion = await pumpMotion(r, base, m, pct, logoBuffer);
+    if (motion) {
+      log.info(`[pump] ${r.sym} media: premium motion ✔`);
+      return motion;
+    }
+  } catch (e) {
+    log.warn(`[pump] ${r.sym} motion: ${e.message}`);
+  }
   const media = bannerTemplate.mediaOverride("pump"); // admin GIF/video (null → text reply)
   if (!media) return null;
   try {
-    const logoBuffer = await fetchLogoBuffer(r.logoUrl);
     const filled = await bannerTemplate.composeOntoClip("pump", media, logoBuffer, {
       symbol: r.sym,
       name: r.name,
@@ -487,4 +533,5 @@ module.exports = {
   PUMP_MIN_LIQ_PCT,
   // Test seams: the in-memory state the sweep reads and writes.
   _state: () => ({ baseline, latch }),
+  _pumpMedia: pumpMedia,
 };

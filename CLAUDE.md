@@ -4232,9 +4232,12 @@ at 10–10.5px, i.e. under 4px on a phone.
   full-screen view, X still picks the timeline variant, and it would cost about
   2× render time on the path between a payment and its post.
 
-**Where it sits.** `postMedia("listing")`, inside `postingEnabled()`, ahead of
-the admin clip. Every listing post goes through it: a purchase, an auto
-listing, the logo repair's rebuild. Trending posts never ask for it.
+**Where it sits.** `postMedia("listing")` and `postMedia("trending")`, inside
+`postingEnabled()`, ahead of the admin clip. Every listing and trending post
+goes through it: a purchase, an auto listing, the bot's own auto-trend slot,
+the force-post, the logo repair's rebuild. A pump alert asks for it from its own
+path (`pumpChecker.pumpMedia`); banner ads and rank-ups never do. See the
+trending and pump section below.
 
 - **Bounded by `CLIP_BUDGET_MS`**, like every clip on this path (it sits between
   a buyer's payment and their post). On a timeout the render is CANCELLED (a
@@ -4280,6 +4283,102 @@ turns it back on.
 `@napi-rs/canvas` and `@ffmpeg-installer/ffmpeg`, both already in `bot/`;
 without either it falls back silently to the admin clip. `bot/` only, so the
 deploy is the ecosystem restart.
+
+### "buatkan vidio untuk pump alert serta trending jugaa" — one clip, three posts
+
+Trending posts used the admin's clip with a still pasted over it, and a pump
+alert used the admin's pump clip with an overlay. On a box nobody gave a pump
+clip to, a pump alert was a bare text reply. Both now open with the listing's
+motion piece. **It is the same renderer with different words, not two new
+designs.** Three designs would be three loops to keep exact, three label floors
+to hold and three things to keep on brand, and readers learn one shape.
+
+| post | pill | badge (top right) | the line under the ticker | stat panel |
+| --- | --- | --- | --- | --- |
+| listing | NEW LISTING (mint) | the package (`XPRESS LISTING`, `GOLD TIER` …) | the name | network · price · cap · liquidity |
+| trending | NOW TRENDING (cyan) | the run (`TRENDING 24H`) | the name | the listing's panel |
+| pump | PUMP ALERT (mint) | the network (`ROBINHOOD`) | **▲ +250% SINCE LISTING**, counting up | LISTED AT · NOW · MARKET CAP |
+
+- **`VARIANTS` in `listingMotion.js` is the one table.** `variant` rides
+  `render` / `frames` / `_drawFrames`, and an unknown variant draws the listing.
+- **The pump's gain takes the NAME's line**, because "+250%" is the news and the
+  caption already names the token. The network moves to the badge, so a
+  pump.fun price twice over (from and now) is not squeezed to the label floor.
+- ⚠️ **The gain counts UP on the way in only.** The exit is a fade of the exact
+  figure; a number running backwards reads as the pump reversing. The first
+  render counted down through the outro, and the contact sheet showed it.
+- ⚠️ **A change that is not a whole percentage draws the name instead**, never
+  a made-up figure. The regex is `+N%` up to seven digits.
+- **The ▲ is a drawn path, never a glyph.** No brand face has it, and the
+  fallback chain would draw whatever it finds.
+- **One switch per post:** `LISTING_MOTION`, `TRENDING_MOTION`, `PUMP_MOTION`.
+  Each restores that post's old ladder exactly. Blank is ON, and a kind with no
+  clip (banner, rank-up) is never on.
+
+**Where they sit.**
+
+- **Trending: `postMedia("trending")`** (`MOTION_KINDS` in `fulfillment.js`).
+  That one wiring covers the paid run, auto-trend's own slot, the force-post and
+  the logo repair.
+- **Pump: `pumpChecker.pumpMedia`.** The order is the motion clip, then the
+  admin pump clip with its overlay, then a text reply.
+  - It respects the admin banner switch (`postingEnabled`), like every other
+    drawn artwork.
+  - It is bounded by `CLIP_BUDGET_MS` and cancelled at the budget.
+  - The same clip goes to every target channel AND to the X quote-tweet, so it
+    is rendered once per alert.
+- **`bannerSurfaces.js` probes `pump-motion` on its own**, because the gain line
+  is text the listing never draws. Trending draws nothing new: its pill is the
+  same sprite.
+
+⚠️ **The old test pinned the opposite rule.** *"A TRENDING post never asks for
+it — the clip is a listing announcement"* is now *"a trending post gets it, as
+the trending variant"*. A banner ad and a rank-up keep the old assertion.
+
+```bash
+cd bot && node scripts/run-tests.js test/postMotion.test.js test/listingMotion.test.js   # no network
+pm2 logs dexvra-bot --lines 300 --nostream | grep -F '[listingMotion]'          # "trending $X rendered …" / "pump $X rendered …"
+pm2 logs dexvra-bot --lines 300 --nostream | grep -F '[pump]'                   # "media: premium motion ✔"
+```
+
+Twenty-one guarantees are MUTATION-TESTED rather than argued. Each mutant fails
+between one and three tests:
+
+- **wiring:**
+  - trending dropped from `MOTION_KINDS`;
+  - the variant not passed to `render`;
+  - `enabled()` asked without the kind;
+  - the pump's motion step removed;
+  - the pump ignoring the banner switch or `PUMP_MOTION`;
+  - its timeout not cancelling;
+  - its badge or its variant dropped;
+- **renderer:**
+  - the gain counting down on the exit, or never counting up;
+  - the gain regex taking any number;
+  - the pill ignoring the variant;
+  - the pump stats branch removed;
+  - the name drawn beside the gain;
+  - the gain drawn on every variant;
+  - `statsLayout` / `drawFrames` / `render` ignoring the variant;
+- **switches:**
+  - an unknown kind switched on;
+  - the trending switch reading `LISTING_MOTION`.
+
+⚠️ Three came back alive from the first run:
+
+- One was the mutation spec's own fault. `BANNER_FILL_KINDS` spells the same
+  Set one screen up, so the replace hit the wrong line.
+- Two were test gaps:
+  - no trending coin carried a `change`, so the gain could have leaked onto
+    trending;
+  - every wiring test stubs `render`, so nothing checked that the MP4 really is
+    the pump card. It is RENDERED now, with a vacuity check that the pump and
+    listing cards differ.
+
+**Config a fix depends on:** nothing. It ships ON and **changes what pump alerts
+look like on deploy**: a box with no admin pump clip posts a clip where it used
+to post text. `PUMP_MOTION=0` / `TRENDING_MOTION=0` in `bot/.env` take one back.
+`bot/` only, so the deploy is the ecosystem restart.
 
 ## A Top 3 that was not the top of the Top 5
 

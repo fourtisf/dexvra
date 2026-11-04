@@ -71,6 +71,9 @@ const res = spawnSync(process.execPath, ["--test", ...files], {
     // in the suite so those tests keep exercising the ladder they were written
     // for; listingMotion.test.js turns it back on and drives it.
     LISTING_MOTION: process.env.LISTING_MOTION || "0",
+    // …and the same clip's trending and pump variants, for the same reason.
+    TRENDING_MOTION: process.env.TRENDING_MOTION || "0",
+    PUMP_MOTION: process.env.PUMP_MOTION || "0",
   },
 });
 // A test that reached for the internet was refused, and passed or failed on

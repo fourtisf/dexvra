@@ -730,6 +730,10 @@ function bannerFigures(live) {
   };
 }
 
+// The posts that open with the premium motion piece. A pump alert has its own
+// media path (pumpChecker.pumpMedia), which asks listingMotion directly.
+const MOTION_KINDS = new Set(["listing", "trending"]);
+
 /** Post media, best first: admin-uploaded template ARTWORK (fourtis-style,
  *  logo composited into the design) → dynamic per-token banner → static
  *  banner → token logo. */
@@ -746,22 +750,26 @@ async function postMedia(kind, bannerCoin, logoBuffer, logoFileId, logoUrl, badg
     // between a buyer's payment and their post — and a render that fails or
     // runs out of time continues down the ladder exactly as before (the admin
     // clip, then the still). LISTING_MOTION=0 switches it off.
-    if (kind === "listing" && listingMotion.enabled()) {
+    // A TRENDING post gets the same piece ("buatkan vidio untuk … trending
+    // jugaa") with its own pill and badge — the paid run, the bot's own
+    // auto-trend slot and the force-post all come through here, so one wiring
+    // covers them. TRENDING_MOTION=0 switches that one off on its own.
+    if (MOTION_KINDS.has(kind) && listingMotion.enabled(kind)) {
       const cancel = { cancelled: false };
       const motion = await bounded(
-        listingMotion.render(bannerCoin, logoBuffer, { badge, cancel }).catch(() => null),
+        listingMotion.render(bannerCoin, logoBuffer, { badge, variant: kind, cancel }).catch(() => null),
         CLIP_BUDGET_MS,
         () => {
           cancel.cancelled = true;
-          log.warn(`[fulfil] listing media: premium motion passed ${CLIP_BUDGET_MS}ms — falling back to the admin clip / still`);
+          log.warn(`[fulfil] ${kind} media: premium motion passed ${CLIP_BUDGET_MS}ms — falling back to the admin clip / still`);
           return null;
         },
       );
       if (motion) {
-        log.info("[fulfil] listing media: premium motion ✔");
+        log.info(`[fulfil] ${kind} media: premium motion ✔`);
         return motion;
       }
-      log.warn("[fulfil] listing media: premium motion unavailable — falling back to the admin clip / still");
+      log.warn(`[fulfil] ${kind} media: premium motion unavailable — falling back to the admin clip / still`);
     }
     // Admin-uploaded GIF/video wins over the composited still.
     const media = bannerTemplate.mediaOverride(kind);

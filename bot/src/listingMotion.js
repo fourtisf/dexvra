@@ -74,6 +74,19 @@ const C = {
 // problem (measured: SSIM 0.96 against the raw frame). A test holds every DRAWN
 // string to this floor, so a new label cannot quietly come back at 10px.
 const LABEL_MIN = 15;
+// ONE clip, three posts ("buatkan vidio untuk pump alert serta trending
+// jugaa"): the approved listing piece, with the words that differ per post.
+// The coin, the motion, the frame and the timing are the same on purpose —
+// three designs would be three things to keep looping, legible and on-brand,
+// and the reader learns one shape. `tone` is the pill's accent. A pump alert
+// carries its GAIN where the listing carries the name, because "+250%" is the
+// whole news and the caption already names the token.
+const VARIANTS = {
+  listing: { pill: "NEW LISTING", tone: C.mint },
+  trending: { pill: "NOW TRENDING", tone: C.mid },
+  pump: { pill: "PUMP ALERT", tone: C.mint },
+};
+const variantOf = (v) => (VARIANTS[v] ? v : "listing");
 const COIN = { cx: 958, cy: 286, r: 138 };
 const BEZEL = 13; // the gold rim beyond the face, in px at scale 1
 const PEDESTAL = { cx: 958, cy: 500, rx: 182, ry: 30 };
@@ -270,8 +283,17 @@ const hostOf = (url) => String(url || "").replace(/^https?:\/\//, "").replace(/\
 
 /** The stat blocks the panel carries — a missing figure is LEFT OUT, never
  *  printed as a dash or a zero (the post's caption already says TBA). */
-function statsOf(coin) {
+function statsOf(coin, variant = "listing") {
   const out = [];
+  if (variant === "pump") {
+    // the move, in two prices — the network rides the badge, or a pump.fun
+    // price twice over (from and now) squeezes the values to the floor
+    if (coin.priceFrom && coin.priceFrom !== "TBA") out.push(["LISTED AT", String(coin.priceFrom)]);
+    const now = coin.priceTo || coin.price;
+    if (now && now !== "TBA") out.push(["NOW", String(now)]);
+    if (coin.mcap) out.push(["MARKET CAP", String(coin.mcap)]);
+    return out;
+  }
   if (coin.chain) out.push(["NETWORK", String(coin.chain).toUpperCase()]);
   if (coin.price && coin.price !== "TBA") out.push(["PRICE", String(coin.price)]);
   if (coin.mcap) out.push(["MARKET CAP", String(coin.mcap)]);
@@ -461,8 +483,8 @@ function drawFooter(ctx) {
 const COPY_X = 66;
 const COPY_W = 600;
 
-function pillSprite(cv) {
-  const label = "NEW LISTING";
+function pillSprite(cv, variant = "listing") {
+  const { pill: label, tone } = VARIANTS[variantOf(variant)];
   const m = cv.createCanvas(10, 10).getContext("2d");
   m.font = `700 17px ${F.m7}`;
   const lw = trackedWidth(m, label, 3);
@@ -470,16 +492,16 @@ function pillSprite(cv) {
   const c = cv.createCanvas(w + 4, 44);
   const x = c.getContext("2d");
   roundRect(x, 2, 2, w, 40, 20);
-  x.fillStyle = "rgba(61,245,159,0.10)";
+  x.fillStyle = hexA(tone, 0.1);
   x.fill();
   x.lineWidth = 1.3;
-  x.strokeStyle = "rgba(61,245,159,0.5)";
+  x.strokeStyle = hexA(tone, 0.5);
   x.stroke();
   x.font = `700 17px ${F.m7}`;
-  x.fillStyle = "#E9FFF4";
+  x.fillStyle = tone === C.mint ? "#E9FFF4" : "#E6FBFF";
   x.textBaseline = "middle";
   tracked(x, label, 42, 23, 3);
-  return { canvas: c, x: COPY_X - 2, y: 172, dot: { x: COPY_X + 21, y: 195 } };
+  return { canvas: c, x: COPY_X - 2, y: 172, dot: { x: COPY_X + 21, y: 195 }, tone, label };
 }
 
 /** The ticker in gold foil: a glow pass and a crisp pass, so the shimmer can be
@@ -544,6 +566,28 @@ function nameSprite(cv, name) {
   return { canvas: c, x: COPY_X - 4, y: 372 - 27 };
 }
 
+/** The pump's headline: "▲ +250%" and SINCE LISTING, where the listing
+ *  carries the name. Null when the change is not a percentage we can read —
+ *  the name then takes the line, never a made-up figure. */
+function gainLayout(cv, change) {
+  const m = /^\+?(\d{1,7})%$/.exec(String(change || "").trim());
+  if (!m) return null;
+  const target = Number(m[1]);
+  const mm = cv.createCanvas(10, 10).getContext("2d");
+  const size = 56;
+  const font = `800 ${size}px ${F.x}`;
+  mm.font = font;
+  // the column is sized on the FINAL figure; the count-up only ever reads
+  // narrower, so nothing after it moves while it runs
+  const final = `+${target}%`;
+  const tw = mm.measureText(final.replace(/[0-9]/g, "8")).width;
+  const arrow = { x: COPY_X + 2, w: 34, h: 30 };
+  const textX = arrow.x + arrow.w + 14;
+  mm.font = `700 17px ${F.m7}`;
+  const lblX = textX + tw + 18;
+  return { target, font, size, y: 376, arrow, textX, lblX, label: "SINCE LISTING", w: lblX + trackedWidth(mm, "SINCE LISTING", 2.4) - COPY_X };
+}
+
 // The panel's widest: its right edge stays clear of the lower gem bubble
 // (BUBBLES[1], left edge x 670 at the bottom of its bob). Past this the values
 // shrink, down to LABEL_MIN; the labels never do. Clearing the bubble outranks
@@ -551,8 +595,8 @@ function nameSprite(cv, name) {
 const PANEL_MAX_W = 590;
 
 /** The stat panel's glass and labels (static) plus where each value goes. */
-function statsLayout(cv, coin) {
-  const stats = statsOf(coin);
+function statsLayout(cv, coin, variant = "listing") {
+  const stats = statsOf(coin, variant);
   if (!stats.length) return null;
   const m = cv.createCanvas(10, 10).getContext("2d");
   const padX = 16;
@@ -1241,11 +1285,11 @@ function drawPill(ctx, t, p, pill) {
   const f = (p * 3) % 1;
   ctx.beginPath();
   ctx.arc(dot.x, dot.y, 5 + f * 12, 0, TAU);
-  ctx.fillStyle = `rgba(61,245,159,${(1 - f) * 0.4})`;
+  ctx.fillStyle = hexA(pill.tone, (1 - f) * 0.4);
   ctx.fill();
   ctx.beginPath();
   ctx.arc(dot.x, dot.y, 5, 0, TAU);
-  ctx.fillStyle = SITE.mint;
+  ctx.fillStyle = pill.tone === C.mint ? SITE.mint : pill.tone;
   ctx.fill();
 }
 
@@ -1333,6 +1377,46 @@ function drawName(ctx, t, nm) {
   ctx.restore();
 }
 
+/** The gain counts up as it rises in, and holds the exact figure through the
+ *  hold — so frame 0 (Telegram's thumbnail) and the loop seam both read it. */
+function drawGain(ctx, t, gn) {
+  const k = reveal(t, "name");
+  if (k <= 0) return;
+  const e = easeOut(k);
+  // counts UP on the way in only; the exit is a fade of the exact figure —
+  // a number running backwards reads as the pump reversing
+  const n = t >= OUT_END ? Math.round(gn.target * e) : gn.target;
+  const dy = (1 - e) * 16;
+  const y = gn.y + dy;
+  ctx.save();
+  ctx.globalAlpha = clamp01(k * 1.6);
+  const g = ctx.createLinearGradient(0, y - gn.size * 0.4, 0, y + gn.size * 0.4);
+  g.addColorStop(0, "#B9FFE0");
+  g.addColorStop(0.55, SITE.mint);
+  g.addColorStop(1, "#14B877");
+  // the arrow is DRAWN, never a glyph: ▲ is in no brand face and would fall
+  // to whatever the fallback chain finds
+  const a = gn.arrow;
+  ctx.beginPath();
+  ctx.moveTo(a.x + a.w / 2, y - a.h / 2);
+  ctx.lineTo(a.x + a.w, y + a.h / 2);
+  ctx.lineTo(a.x, y + a.h / 2);
+  ctx.closePath();
+  ctx.shadowColor = hexA(SITE.mint, 0.55);
+  ctx.shadowBlur = 22;
+  ctx.fillStyle = g;
+  ctx.fill();
+  ctx.font = gn.font;
+  ctx.textBaseline = "middle";
+  ctx.fillText(`+${n}%`, gn.textX, y + 2);
+  ctx.shadowBlur = 0;
+  ctx.shadowColor = "rgba(0,0,0,0)";
+  ctx.font = `700 17px ${F.m7}`;
+  ctx.fillStyle = hexA(C.light, 0.78);
+  tracked(ctx, gn.label, gn.lblX, y + 4, 2.4);
+  ctx.restore();
+}
+
 function drawRule(ctx, t) {
   const k = easeOut(reveal(t, "rule"));
   if (k <= 0) return;
@@ -1406,10 +1490,11 @@ function drawFlash(ctx, t) {
  * frames at 1280×640 is ~490 MB held at once, on a box running four processes.
  * Returns false when canvas is unavailable.
  */
-async function drawFrames(coin, logoBuffer, { count = FRAMES, times = null, badge = null, onFrame, cancel = null }) {
+async function drawFrames(coin, logoBuffer, { count = FRAMES, times = null, badge = null, variant = "listing", onFrame, cancel = null }) {
   const cv = kit.canvasLib();
   if (!cv) return false;
-  warnBoxes("listing-motion", { symbol: coin.symbol, name: coin.name });
+  variant = variantOf(variant);
+  warnBoxes(`${variant}-motion`, { symbol: coin.symbol, name: coin.name });
 
   let img = null;
   if (logoBuffer) {
@@ -1438,11 +1523,12 @@ async function drawFrames(coin, logoBuffer, { count = FRAMES, times = null, badg
     goldSoft: glowSprite(cv, C.mid, 0.02),
     cyanSoft: glowSprite(cv, C.blue, 0.02),
   };
-  const pill = pillSprite(cv);
+  const pill = pillSprite(cv, variant);
   const tk = tickerSprites(cv, coin.symbol);
   const scratch = cv.createCanvas(tk.w, tk.h);
-  const nm = nameSprite(cv, coin.name);
-  const st = statsLayout(cv, coin);
+  const gn = variant === "pump" ? gainLayout(cv, coin.change) : null;
+  const nm = gn ? null : nameSprite(cv, coin.name);
+  const st = statsLayout(cv, coin, variant);
 
   const out = cv.createCanvas(W, H);
   const ctx = out.getContext("2d");
@@ -1483,7 +1569,8 @@ async function drawFrames(coin, logoBuffer, { count = FRAMES, times = null, badg
     if (t >= 1.5 && t <= 2.1) shine(ctx, badgeBox, (t - 1.5) / 0.6, 0.6, badgeBox ? badgeBox.h / 2 : 0);
     drawPill(ctx, t, p, pill);
     drawTicker(ctx, t, tk, scratch);
-    drawName(ctx, t, nm);
+    if (gn) drawGain(ctx, t, gn);
+    else drawName(ctx, t, nm);
     drawRule(ctx, t);
     drawStats(ctx, t, st);
     drawSweep(ctx, t);
@@ -1499,9 +1586,9 @@ async function drawFrames(coin, logoBuffer, { count = FRAMES, times = null, badg
 }
 
 /** The first `count` frames as RGBA buffers — for tests and the preview script. */
-async function frames(coin, logoBuffer, { count = FRAMES, badge = null } = {}) {
+async function frames(coin, logoBuffer, { count = FRAMES, badge = null, variant = "listing" } = {}) {
   const list = [];
-  const ok = await drawFrames(coin, logoBuffer, { count, badge, onFrame: (b) => list.push(Buffer.from(b)) });
+  const ok = await drawFrames(coin, logoBuffer, { count, badge, variant, onFrame: (b) => list.push(Buffer.from(b)) });
   return ok ? list : null;
 }
 
@@ -1564,9 +1651,13 @@ function encoder(outPath) {
   };
 }
 
-/** LISTING_MOTION=0 restores the old ladder exactly (the admin clip with its
- *  overlay, then the still). Blank or unset is ON — sourceFlag's rule. */
-const enabled = () => sourceEnabled("LISTING_MOTION");
+/** One switch per post, so an operator can take one back without the others:
+ *  LISTING_MOTION, TRENDING_MOTION, PUMP_MOTION. `=0` restores that post's old
+ *  ladder exactly (the admin clip with its overlay, then the still; for a pump,
+ *  the admin pump clip or a text reply). Blank or unset is ON — sourceFlag's
+ *  rule. */
+const FLAG = { listing: "LISTING_MOTION", trending: "TRENDING_MOTION", pump: "PUMP_MOTION" };
+const enabled = (variant = "listing") => (FLAG[variant] ? sourceEnabled(FLAG[variant]) : false);
 
 const TMP_PREFIX = "bt-out-lm-";
 const TMP_MAX_AGE_MS = 10 * 60_000;
@@ -1594,8 +1685,9 @@ async function sweepTmp(dir = os.tmpdir(), now = Date.now()) {
  * ({ symbol, name, chain, price, mcap, liq }); `badge` is the package label;
  * `cancel` is a { cancelled } flag the caller sets when it stops waiting.
  */
-async function render(coin, logoBuffer, { badge = null, outPath = null, cancel = null } = {}) {
+async function render(coin, logoBuffer, { badge = null, variant = "listing", outPath = null, cancel = null } = {}) {
   const t0 = Date.now();
+  variant = variantOf(variant);
   let file = null;
   try {
     if (!kit.canvasLib()) {
@@ -1606,17 +1698,17 @@ async function render(coin, logoBuffer, { badge = null, outPath = null, cancel =
     file = outPath || path.join(os.tmpdir(), `${TMP_PREFIX}${process.pid}-${Date.now()}-${Math.floor(Math.random() * 1e6)}.mp4`);
     const enc = encoder(file);
     try {
-      await drawFrames(coin || {}, logoBuffer, { badge, cancel, onFrame: (fr) => enc.write(fr) });
+      await drawFrames(coin || {}, logoBuffer, { badge, variant, cancel, onFrame: (fr) => enc.write(fr) });
     } catch (e) {
       enc.kill();
       throw e;
     }
     await enc.end();
     const st = fss.statSync(file);
-    log.info(`[listingMotion] ${tickerOf(coin && coin.symbol)} rendered in ${Date.now() - t0}ms (${Math.round(st.size / 1024)} KB)`);
+    log.info(`[listingMotion] ${variant} ${tickerOf(coin && coin.symbol)} rendered in ${Date.now() - t0}ms (${Math.round(st.size / 1024)} KB)`);
     return { type: "animation", source: file };
   } catch (e) {
-    log.warn(`[listingMotion] ${tickerOf(coin && coin.symbol)} render failed after ${Date.now() - t0}ms: ${e.message}`);
+    log.warn(`[listingMotion] ${variant} ${tickerOf(coin && coin.symbol)} render failed after ${Date.now() - t0}ms: ${e.message}`);
     if (file) fss.promises.unlink(file).catch(() => {}); // a half-written clip is never handed on
     return null;
   }
@@ -1644,4 +1736,7 @@ module.exports = {
   _statsLayout: statsLayout,
   _bubbles: BUBBLES,
   _labelMin: LABEL_MIN,
+  _variants: VARIANTS,
+  _gainLayout: gainLayout,
+  _pillSprite: pillSprite,
 };

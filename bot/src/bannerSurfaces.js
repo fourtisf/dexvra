@@ -115,6 +115,19 @@ const SURFACES = [
     module: 'listingMotion.js',
     run: (coin) => require('./listingMotion').frames(coin, null, { count: 1, badge: 'Xpress Listing' }),
   },
+  {
+    // The pump variant draws a line the listing does not — the gain, counted
+    // up where the name goes — so it is probed on its own. (Trending draws
+    // nothing the listing does not; its pill is the same sprite.)
+    key: 'pump-motion',
+    what: 'animated pump-alert clip (premium MP4)',
+    module: 'listingMotion.js',
+    run: (coin) => require('./listingMotion').frames(
+      { ...coin, change: '+250%', priceFrom: '$0.0001', priceTo: '$0.00035' },
+      null,
+      { count: 1, badge: 'Solana', variant: 'pump' },
+    ),
+  },
 ];
 
 /*
