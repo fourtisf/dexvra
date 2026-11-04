@@ -4191,6 +4191,47 @@ blue, with the bundled listing artwork's furniture.
   `frames()` copies. `getImageData` would copy, and peaked at 1.1 GB over one
   clip.
 
+### "vidionya aga blur tidak hd" — X shows a shrunken copy, so the labels must survive it
+
+Reported with the $VETO clip on X looking soft. **Our encode is not the
+cause**, and that was measured before anything changed: frame 0 decoded back
+out of the MP4 we upload scores SSIM 0.96 / PSNR 39.8 dB against the raw
+drawn frame. X re-encodes every video and autoplays a 480–640px-wide variant
+in the timeline, so the clip is seen at 0.375–0.5 of its size. The ticker and
+the figures survive that. The labels did not: NETWORK / PRICE / MARKET CAP /
+LIQUIDITY, TOKEN VISIBILITY, LISTED ON DEXVRA and the footer handles were drawn
+at 10–10.5px, i.e. under 4px on a phone.
+
+- **`LABEL_MIN` (15px) is the floor for every DRAWN string.** The labels sit on
+  it; the badge is 16px, the NEW LISTING pill 17px, the footer 19px, and the
+  stat values start at 30px (they were 23).
+- **A test holds the floor on what is DRAWN**, by wrapping `fillText` /
+  `strokeText`, not on fonts set for measuring. A tracked label is drawn one
+  glyph at a time, so the test also requires the floor itself to appear, or it
+  would pass with the labels unseen.
+- ⚠️ **Bigger labels are wider, and they could shrink the values.** A column is
+  as wide as the larger of its label and its value, so at the old tracking and
+  gaps a pump.fun-shaped price (`$0.0000004751` on ROBINHOOD) went from 23px
+  values to 20px: a "make it bigger" change making the commonest wide case
+  smaller. Label tracking 1.2, gaps 20 and padding 16 keep that case at 23px.
+  A test pins it.
+- **`PANEL_MAX_W` (590) keeps the panel clear of the lower gem bubble**
+  (`BUBBLES[1]`, left edge x 670 at the bottom of its bob). The old 640 cap ran
+  the worst case into it before this change. Past the cap the values shrink,
+  down to the label floor; the labels never do.
+- Ten guarantees are MUTATION-TESTED rather than argued. Each mutant fails a
+  test:
+  - the footer label, the subtitle, the stat labels or the badge back at the
+    old size;
+  - the panel cap back to 640;
+  - the old gap or the old label tracking (the values squeezed);
+  - the value floor at 20 (behaviour-neutral on every real fixture until a
+    4.2e-15 price was added, which overflows into the bubble at 20);
+  - the value floor under the label floor.
+- **Not done, deliberately: rendering at 1920×960.** It only sharpens X's
+  full-screen view, X still picks the timeline variant, and it would cost about
+  2× render time on the path between a payment and its post.
+
 **Where it sits.** `postMedia("listing")`, inside `postingEnabled()`, ahead of
 the admin clip. Every listing post goes through it: a purchase, an auto
 listing, the logo repair's rebuild. Trending posts never ask for it.
@@ -4208,7 +4249,7 @@ listing, the logo repair's rebuild. Trending posts never ask for it.
   autoplays it as an animation.
 
 ```bash
-cd bot && node scripts/run-tests.js test/listingMotion.test.js test/bannerFigures.test.js   # 20 + 5 tests, no network
+cd bot && node scripts/run-tests.js test/listingMotion.test.js test/bannerFigures.test.js   # 22 + 5 tests, no network
 cd bot && node scripts/listing-motion-preview.js                 # the clip, stills at key moments, a contact sheet
 pm2 logs dexvra-bot --lines 300 --nostream | grep -F '[listingMotion]'
 ```

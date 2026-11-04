@@ -66,6 +66,14 @@ const C = {
   blue: "#2F86FF", // electric blue — depth
   mint: "#3DF59F", // the gem's mint
 };
+// The smallest text the clip draws, in px at 1280 wide. "vidionya aga blur
+// tidak hd": X re-encodes every video and autoplays a 480–640px-wide variant in
+// the timeline, so a label is shown at 0.375–0.5 of its size. The labels were
+// 10–10.5px, i.e. under 4px on a phone, and the first thing any compression
+// smears; at 15px they survive the small variant. Our own encode is not the
+// problem (measured: SSIM 0.96 against the raw frame). A test holds every DRAWN
+// string to this floor, so a new label cannot quietly come back at 10px.
+const LABEL_MIN = 15;
 const COIN = { cx: 958, cy: 286, r: 138 };
 const BEZEL = 13; // the gold rim beyond the face, in px at scale 1
 const PEDESTAL = { cx: 958, cy: 500, rx: 182, ry: 30 };
@@ -361,19 +369,19 @@ function drawBrand(ctx, badge) {
   drawBrandMark(ctx, 54, 46, 52);
   ctx.textBaseline = "alphabetic";
   ctx.fillStyle = SITE.text;
-  ctx.font = `800 28px ${F.x}`;
-  ctx.fillText("Dexvra", 118, 72);
-  ctx.fillStyle = hexA(C.light, 0.8);
-  ctx.font = `700 10.5px ${F.m7}`;
-  tracked(ctx, "TOKEN VISIBILITY", 119, 91, 2.6);
+  ctx.font = `800 32px ${F.x}`;
+  ctx.fillText("Dexvra", 118, 71);
+  ctx.fillStyle = hexA(C.light, 0.85);
+  ctx.font = `700 ${LABEL_MIN}px ${F.m7}`;
+  tracked(ctx, "TOKEN VISIBILITY", 119, 94, 2.4);
   if (!badge) return null;
   const text = String(badge).toUpperCase().slice(0, 28);
-  ctx.font = `700 12px ${F.m7}`;
-  const tw = trackedWidth(ctx, text, 2.2);
-  const h = 32;
-  const w = tw + 38;
+  ctx.font = `700 16px ${F.m7}`;
+  const tw = trackedWidth(ctx, text, 2.4);
+  const h = 40;
+  const w = tw + 44;
   const x = W - 58 - w;
-  const y = 50;
+  const y = 51;
   roundRect(ctx, x, y, w, h, h / 2);
   const bg = ctx.createLinearGradient(x, y, x, y + h);
   bg.addColorStop(0, hexA(C.mid, 0.2));
@@ -383,9 +391,9 @@ function drawBrand(ctx, badge) {
   ctx.lineWidth = 1.3;
   ctx.strokeStyle = hexA(C.mid, 0.65);
   ctx.stroke();
-  ctx.fillStyle = foil(ctx, y + 8, y + 24);
+  ctx.fillStyle = foil(ctx, y + 9, y + 31);
   ctx.textBaseline = "middle";
-  tracked(ctx, text, x + 19, y + h / 2 + 1, 2.2);
+  tracked(ctx, text, x + 22, y + h / 2 + 1, 2.4);
   ctx.textBaseline = "alphabetic";
   return { x, y, w, h };
 }
@@ -434,18 +442,18 @@ function drawFooter(ctx) {
   ];
   let x = 70;
   const y = 588;
-  ctx.font = `600 15px ${F.d6}`;
+  ctx.font = `600 19px ${F.d6}`;
   ctx.textBaseline = "middle";
   for (const [k, text] of items) {
-    icon(ctx, k, x + 9, y, 8);
-    ctx.fillStyle = "#AEB8CA";
-    ctx.fillText(text, x + 26, y + 1);
-    x += 26 + ctx.measureText(text).width + 34;
+    icon(ctx, k, x + 10, y, 10);
+    ctx.fillStyle = "#C2CBDA";
+    ctx.fillText(text, x + 30, y + 1);
+    x += 30 + ctx.measureText(text).width + 34;
   }
-  ctx.font = `700 10.5px ${F.m7}`;
-  ctx.fillStyle = hexA(C.light, 0.55);
+  ctx.font = `700 ${LABEL_MIN}px ${F.m7}`;
+  ctx.fillStyle = hexA(C.light, 0.65);
   const t = "LISTED ON DEXVRA";
-  tracked(ctx, t, W - 66 - trackedWidth(ctx, t, 2.6), y + 1, 2.6);
+  tracked(ctx, t, W - 66 - trackedWidth(ctx, t, 2.4), y + 1, 2.4);
 }
 
 // ── copy sprites (each element is its own canvas, so the intro can move it) ──
@@ -456,22 +464,22 @@ const COPY_W = 600;
 function pillSprite(cv) {
   const label = "NEW LISTING";
   const m = cv.createCanvas(10, 10).getContext("2d");
-  m.font = `700 14px ${F.m7}`;
+  m.font = `700 17px ${F.m7}`;
   const lw = trackedWidth(m, label, 3);
-  const w = Math.ceil(lw + 56);
-  const c = cv.createCanvas(w + 4, 38);
+  const w = Math.ceil(lw + 60);
+  const c = cv.createCanvas(w + 4, 44);
   const x = c.getContext("2d");
-  roundRect(x, 2, 2, w, 34, 17);
+  roundRect(x, 2, 2, w, 40, 20);
   x.fillStyle = "rgba(61,245,159,0.10)";
   x.fill();
   x.lineWidth = 1.3;
   x.strokeStyle = "rgba(61,245,159,0.5)";
   x.stroke();
-  x.font = `700 14px ${F.m7}`;
+  x.font = `700 17px ${F.m7}`;
   x.fillStyle = "#E9FFF4";
   x.textBaseline = "middle";
-  tracked(x, label, 40, 20, 3);
-  return { canvas: c, x: COPY_X - 2, y: 176, dot: { x: COPY_X + 20, y: 196 } };
+  tracked(x, label, 42, 23, 3);
+  return { canvas: c, x: COPY_X - 2, y: 172, dot: { x: COPY_X + 21, y: 195 } };
 }
 
 /** The ticker in gold foil: a glow pass and a crisp pass, so the shimmer can be
@@ -536,13 +544,19 @@ function nameSprite(cv, name) {
   return { canvas: c, x: COPY_X - 4, y: 372 - 27 };
 }
 
+// The panel's widest: its right edge stays clear of the lower gem bubble
+// (BUBBLES[1], left edge x 670 at the bottom of its bob). Past this the values
+// shrink, down to LABEL_MIN; the labels never do. Clearing the bubble outranks
+// value size: only an absurd price ($0.0000000000000042) gets near the floor.
+const PANEL_MAX_W = 590;
+
 /** The stat panel's glass and labels (static) plus where each value goes. */
 function statsLayout(cv, coin) {
   const stats = statsOf(coin);
   if (!stats.length) return null;
   const m = cv.createCanvas(10, 10).getContext("2d");
-  const padX = 22;
-  const gap = 26;
+  const padX = 16;
+  const gap = 20;
   const vals = stats.map(([, v]) => v);
   // a value can decode wider than it ends (8s are wide): size the column on
   // the widest digit so the panel never clips a scrambled frame
@@ -550,22 +564,22 @@ function statsLayout(cv, coin) {
     m.font = `700 ${sz}px ${F.d7}`;
     return m.measureText(v.replace(/[0-9]/g, "8")).width;
   };
-  let vSize = 23;
+  let vSize = 30;
   let widths;
   let total;
   const measure = () => {
     widths = stats.map(([k], i) => {
-      m.font = `700 10px ${F.m7}`;
-      return Math.max(trackedWidth(m, k, 2), widest(vals[i], vSize));
+      m.font = `700 ${LABEL_MIN}px ${F.m7}`;
+      return Math.max(trackedWidth(m, k, 1.2), widest(vals[i], vSize));
     });
     total = padX * 2 + widths.reduce((a, b) => a + b, 0) + gap * (stats.length - 1);
   };
   measure();
-  while (total > 640 && vSize > 15) {
+  while (total > PANEL_MAX_W && vSize > LABEL_MIN) {
     vSize -= 1;
     measure();
   }
-  const ph = 82;
+  const ph = 104;
   const c = cv.createCanvas(Math.ceil(total) + 4, ph + 4);
   const x = c.getContext("2d");
   roundRect(x, 2, 2, total, ph, 16);
@@ -589,18 +603,18 @@ function statsLayout(cv, coin) {
   for (let i = 0; i < stats.length; i++) {
     const [k, v] = stats[i];
     x.textBaseline = "alphabetic";
-    x.font = `700 10px ${F.m7}`;
-    x.fillStyle = hexA(C.light, 0.75);
-    tracked(x, k, cx, 2 + 30, 2);
+    x.font = `700 ${LABEL_MIN}px ${F.m7}`;
+    x.fillStyle = hexA(C.light, 0.8);
+    tracked(x, k, cx, 2 + 36, 1.2);
     cells.push({ x: COPY_X - 2 + cx, value: v });
     cx += widths[i];
     if (i < stats.length - 1) {
       x.fillStyle = hexA(C.mid, 0.24);
-      x.fillRect(cx + gap / 2, 2 + 18, 1, ph - 36);
+      x.fillRect(cx + gap / 2, 2 + 20, 1, ph - 40);
     }
     cx += gap;
   }
-  return { canvas: c, x: COPY_X - 2, y: 436, w: total, h: ph, cells, font: `700 ${vSize}px ${F.d7}`, valueY: 436 + 2 + 62 };
+  return { canvas: c, x: COPY_X - 2, y: 432, w: total, h: ph, cells, font: `700 ${vSize}px ${F.d7}`, valueY: 432 + 2 + 82 };
 }
 
 // ── the coin ─────────────────────────────────────────────────────────────────
@@ -1627,4 +1641,7 @@ module.exports = {
   _drawFrames: drawFrames,
   _keys: Object.keys(SCHED),
   _tickerSprites: tickerSprites,
+  _statsLayout: statsLayout,
+  _bubbles: BUBBLES,
+  _labelMin: LABEL_MIN,
 };

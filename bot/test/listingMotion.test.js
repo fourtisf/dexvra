@@ -363,3 +363,59 @@ test("a ticker whose glyphs sit low in the em box is lifted clear of the name li
     assert.ok(r.top >= 222, `${sym} was lifted into the NEW LISTING pill (top ${r.top})`);
   }
 });
+
+// "vidionya aga blur tidak hd": X re-encodes every video and autoplays a
+// 480–640px-wide variant in the timeline, so the clip is seen at 0.375–0.5 of
+// its size. The labels were drawn at 10–10.5px — under 4px on a phone, the
+// first thing compression smears. Measured on what is DRAWN (fillText /
+// strokeText), not on fonts merely set for measuring.
+async function drawnSizes(coin, badge) {
+  const proto = Object.getPrototypeOf(cv.createCanvas(4, 4).getContext("2d"));
+  const seen = [];
+  const orig = { fill: proto.fillText, stroke: proto.strokeText };
+  const px = (f) => parseFloat((/(\d+(?:\.\d+)?)px/.exec(String(f)) || [])[1]);
+  proto.fillText = function (t, ...r) { seen.push({ t: String(t), px: px(this.font) }); return orig.fill.call(this, t, ...r); };
+  proto.strokeText = function (t, ...r) { seen.push({ t: String(t), px: px(this.font) }); return orig.stroke.call(this, t, ...r); };
+  try {
+    await lm.frames(coin, null, { count: 1, badge });
+  } finally {
+    proto.fillText = orig.fill;
+    proto.strokeText = orig.stroke;
+  }
+  return seen;
+}
+
+const WIDE = { symbol: "$ABCDEFGHIJKLMNOP", name: "A Very Long Project Name That Goes On And On Forever Ok", chain: "ROBINHOOD", price: "$0.0000000000042", mcap: "$999B", liq: "$999M" };
+const PUMP = { symbol: "$APECHECK", name: "Ape Check", chain: "ROBINHOOD", price: "$0.0000004751", mcap: "$4.3K", liq: "$360" };
+
+test("no text on the clip is drawn under the label floor — X's small variant smears anything smaller", { skip: !haveCanvas }, async () => {
+  for (const [coin, badge] of [[COIN, "Xpress Listing"], [WIDE, "Platinum Tier"], [PUMP, "Gold Tier"]]) {
+    const seen = await drawnSizes(coin, badge);
+    assert.ok(seen.length > 20, "the recorder saw the card being drawn");
+    const small = seen.filter((s) => !(s.px >= lm._labelMin));
+    assert.deepStrictEqual(small, [], `${coin.symbol}: drawn under ${lm._labelMin}px: ${JSON.stringify(small.slice(0, 6))}`);
+    // vacuity: the labels really are among what was measured — tracked labels
+    // are drawn one glyph at a time, so the floor itself must appear
+    assert.ok(seen.some((s) => s.px === lm._labelMin), "no label was drawn at the floor — the recorder is not seeing the labels");
+  }
+});
+
+test("the stat panel stays clear of the gem bubble beside it, and the labels never squeeze the values smaller than they were", { skip: !haveCanvas }, () => {
+  const b = lm._bubbles[1];
+  // the last one is what fmtPrice prints for 4.2e-15: the widest price it can
+  // spell before it switches to an exponent
+  for (const c of [COIN, WIDE, PUMP, { ...PUMP, chain: "ETHEREUM", price: "$12,345.60", mcap: "$2.4B", liq: "$123M" }, { ...WIDE, price: "$0.0000000000000042" }]) {
+    const st = lm._statsLayout(cv, c);
+    const right = st.x + 2 + st.w + 2; // + the 1.2px stroke, rounded up
+    assert.ok(right < b.x - b.r, `${c.chain} ${c.price}: panel right edge ${Math.round(right)} reaches the bubble at ${b.x - b.r}`);
+  }
+  // a pump.fun-shaped price is the commonest wide case; before the labels grew
+  // its values were drawn at 23px, and bigger labels must not cost them that
+  const px = (st) => parseFloat(/(\d+)px/.exec(st.font)[1]);
+  assert.ok(px(lm._statsLayout(cv, PUMP)) >= 23, `pump-case values shrank to ${px(lm._statsLayout(cv, PUMP))}px`);
+  assert.ok(px(lm._statsLayout(cv, COIN)) >= 28, "an ordinary token's values are drawn large");
+  // wider than anything fmtPrice spells: the panel may run wide here, but no
+  // value is ever drawn under the label floor to avoid it
+  const absurd = { chain: "BERACHAIN", price: "$0.00000000000000000000000000042", mcap: "$999,999,999.9T", liq: "$999,999,999.9M" };
+  assert.strictEqual(px(lm._statsLayout(cv, absurd)), lm._labelMin, "the value floor is the label floor");
+});
