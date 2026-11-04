@@ -58,14 +58,63 @@ const TAU = Math.PI * 2;
 // THE DEXVRA BRAND, not gold: "ini jelek banget, saya ingin sesuai brand kita
 // biru". The gem's own mint → cyan (canvasKit drawBrandMark, the bundled
 // banner artwork) on deep ocean blue. Every accent below reads from here.
-const C = {
+const PAL_LISTING = {
   light: "#D8FAFF", // ice — highlights, foil tops
   mid: "#22D3EE", // the brand cyan
   dark: "#0A6E9C", // deep cyan — shadows on metal
   glow: "#22D3EE",
   blue: "#2F86FF", // electric blue — depth
   mint: "#3DF59F", // the gem's mint
+  // the literals the listing has always drawn, gathered here so a scene can
+  // carry its own — byte-identical for the listing (a hash test says so)
+  foilEnd: "#1E8FD8",
+  bezel: ["#E9FFF6", "#3DF59F", "#22D3EE", "#1E8FD8", "#BFF6FF"],
+  rim: ["#A8F3FF", "#22D3EE", "#0A5F86", "#04263A"],
+  back: ["#1C5578", "#0A2539", "#030D16"],
+  base: ["#0C3047", "#06192A", "#01060B"],
+  wipeRgb: "150,235,255",
+  glintRgb: "235,252,255",
 };
+// TRENDING is HEAT: amber into magenta on a dark plum, the coin on fire.
+const PAL_TRENDING = {
+  light: "#FFE8C2",
+  mid: "#FFA62B",
+  dark: "#9A3A07",
+  glow: "#FF7A1A",
+  blue: "#FF3D7F",
+  mint: "#FFD166",
+  foilEnd: "#E8590C",
+  bezel: ["#FFF6E0", "#FFD166", "#FFA62B", "#E8590C", "#FFE3B0"],
+  rim: ["#FFE0A3", "#FFA62B", "#8A3304", "#2E0F02"],
+  back: ["#7A2E0A", "#3A1405", "#120502"],
+  base: ["#3B1226", "#1A0813", "#060205"],
+  wipeRgb: "255,196,120",
+  glintRgb: "255,240,214",
+};
+// PUMP is a LAUNCH: neon green on near-black green, the coin lifting off.
+const PAL_PUMP = {
+  light: "#D9FFEA",
+  mid: "#3DF59F",
+  dark: "#0B7A4B",
+  glow: "#2EF38F",
+  blue: "#B6FF3B",
+  mint: "#9CFF57",
+  foilEnd: "#0FA968",
+  bezel: ["#F0FFF7", "#B6FF3B", "#3DF59F", "#0FA968", "#C9FFE4"],
+  rim: ["#C9FFE4", "#3DF59F", "#0A6B40", "#03261A"],
+  back: ["#145C3C", "#08281A", "#020D08"],
+  base: ["#0B3A27", "#04180F", "#010604"],
+  wipeRgb: "150,255,200",
+  glintRgb: "225,255,238",
+};
+// ⚠️ THE CURRENT SCENE IS MODULE STATE, and it is safe only because of one
+// rule: useScene() is called at the top of every SYNCHRONOUS block that draws —
+// the build block after the logo is decoded, and the top of each frame. A
+// render awaits only between frames (the encoder's back-pressure), so two
+// renders in one process interleave whole frames, never half of one; each
+// frame re-asserts its own scene before it draws a pixel. A test renders a
+// listing and a pump CONCURRENTLY and compares them with sequential renders.
+let C = PAL_LISTING;
 // The smallest text the clip draws, in px at 1280 wide. "vidionya aga blur
 // tidak hd": X re-encodes every video and autoplays a 480–640px-wide variant in
 // the timeline, so a label is shown at 0.375–0.5 of its size. The labels were
@@ -87,7 +136,66 @@ const VARIANTS = {
   pump: { pill: "PUMP ALERT", tone: C.mint },
 };
 const variantOf = (v) => (VARIANTS[v] ? v : "listing");
-const COIN = { cx: 958, cy: 286, r: 138 };
+
+// "tampilanya harus beda beda design pump alert trending dan listing": each
+// post is its OWN design — a palette, where the coin stands, how the copy is
+// laid out, and which ambient layers move. The listing's entry is the values
+// it has always had; the operator chose that layout over a redesign, so it is
+// pinned byte-for-byte by a hash test.
+//
+//   listing   copy left, the coin on a pedestal with orbits and gem bubbles
+//   trending  MIRRORED — the coin on the LEFT, on fire (a flame plume behind
+//             it, embers rising, heat rings); the copy on the right
+//   pump      the GAIN is the headline, huge; the coin LAUNCHES — it rises in
+//             from below on an exhaust plume and blasts off the top at the
+//             outro, speed streaks falling past it. No drawn price chart: a
+//             chart is a claim about a price history nobody measured.
+const SCENES = {
+  listing: {
+    id: "listing",
+    pal: PAL_LISTING,
+    coin: { cx: 958, cy: 286, r: 138 },
+    copyX: 66,
+    copyW: 600,
+    panelMax: 590,
+    shade: "left",
+    lay: { pill: 172, ticker: 296, tickerSize: 116, tickerMin: 54, name: 372, rule: 410, stats: 432 },
+  },
+  trending: {
+    id: "trending",
+    pal: PAL_TRENDING,
+    coin: { cx: 330, cy: 330, r: 138 },
+    copyX: 642,
+    copyW: 570,
+    panelMax: 572,
+    shade: "right",
+    lay: { pill: 170, ticker: 292, tickerSize: 108, tickerMin: 44, name: 368, rule: 406, stats: 430 },
+  },
+  pump: {
+    id: "pump",
+    pal: PAL_PUMP,
+    coin: { cx: 972, cy: 262, r: 120 },
+    copyX: 66,
+    copyW: 600,
+    panelMax: 590,
+    shade: "left",
+    lay: { pill: 110, ticker: 216, tickerSize: 64, tickerMin: 34, hero: 314, heroSize: 140, heroMin: 64, caption: 392, name: 314, stats: 428 },
+  },
+};
+let SCENE = SCENES.listing;
+let LAY = SCENE.lay;
+/** Make `id` the scene every drawing helper reads. See the ⚠️ on PAL_LISTING. */
+function useScene(id) {
+  SCENE = SCENES[variantOf(id)];
+  C = SCENE.pal;
+  COIN = SCENE.coin;
+  COPY_X = SCENE.copyX;
+  COPY_W = SCENE.copyW;
+  PANEL_MAX_W = SCENE.panelMax;
+  LAY = SCENE.lay;
+  return SCENE;
+}
+let COIN = { cx: 958, cy: 286, r: 138 };
 const BEZEL = 13; // the gold rim beyond the face, in px at scale 1
 const PEDESTAL = { cx: 958, cy: 500, rx: 182, ry: 30 };
 
@@ -105,6 +213,7 @@ const SCHED = {
   rule: [1.22, 0.45],
   stats: [1.3, 0.45], // + STAT_STAGGER per block
   bubbles: [0.72, 0.5],
+  hero: [0.96, 0.62], // the pump's headline, after the coin lands
 };
 const STAT_STAGGER = 0.12;
 // the coin ARRIVES (≥98% of its size) about three quarters into its flight;
@@ -246,7 +355,7 @@ function foil(ctx, y0, y1) {
   g.addColorStop(0, "#FFFFFF");
   g.addColorStop(0.45, C.light);
   g.addColorStop(0.78, C.mid);
-  g.addColorStop(1, "#1E8FD8");
+  g.addColorStop(1, C.foilEnd);
   return g;
 }
 
@@ -336,9 +445,9 @@ function blit(ctx, sprite, x, y, size, alpha) {
 
 function drawBase(ctx) {
   const g = ctx.createRadialGradient(W * 0.72, H * 0.42, 30, W * 0.55, H * 0.5, W * 0.85);
-  g.addColorStop(0, "#0C3047");
-  g.addColorStop(0.5, "#06192A");
-  g.addColorStop(1, "#01060B");
+  g.addColorStop(0, C.base[0]);
+  g.addColorStop(0.5, C.base[1]);
+  g.addColorStop(1, C.base[2]);
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, W, H);
   ctx.fillStyle = "rgba(255,255,255,0.028)";
@@ -351,7 +460,15 @@ function drawVignette(ctx) {
   v.addColorStop(1, "rgba(0,0,0,0.66)");
   ctx.fillStyle = v;
   ctx.fillRect(0, 0, W, H);
-  // a soft left shade so the copy column always reads over the ribbons
+  // a soft shade on the copy's side so the column always reads over the art
+  if (SCENE.shade === "right") {
+    const r = ctx.createLinearGradient(W, 0, W - 700, 0);
+    r.addColorStop(0, "rgba(6,2,4,0.6)");
+    r.addColorStop(1, "rgba(6,2,4,0)");
+    ctx.fillStyle = r;
+    ctx.fillRect(W - 700, 0, 700, H);
+    return;
+  }
   const l = ctx.createLinearGradient(0, 0, 700, 0);
   l.addColorStop(0, "rgba(2,4,9,0.55)");
   l.addColorStop(1, "rgba(2,4,9,0)");
@@ -480,10 +597,11 @@ function drawFooter(ctx) {
 
 // ── copy sprites (each element is its own canvas, so the intro can move it) ──
 
-const COPY_X = 66;
-const COPY_W = 600;
+let COPY_X = 66;
+let COPY_W = 600;
 
 function pillSprite(cv, variant = "listing") {
+  if (variantOf(variant) !== "listing") return solidPillSprite(cv, variantOf(variant));
   const { pill: label, tone } = VARIANTS[variantOf(variant)];
   const m = cv.createCanvas(10, 10).getContext("2d");
   m.font = `700 17px ${F.m7}`;
@@ -501,16 +619,82 @@ function pillSprite(cv, variant = "listing") {
   x.fillStyle = tone === C.mint ? "#E9FFF4" : "#E6FBFF";
   x.textBaseline = "middle";
   tracked(x, label, 42, 23, 3);
-  return { canvas: c, x: COPY_X - 2, y: 172, dot: { x: COPY_X + 21, y: 195 }, tone, label };
+  return { canvas: c, x: COPY_X - 2, y: LAY.pill, dot: { x: COPY_X + 21, y: LAY.pill + 23 }, tone, label };
+}
+
+/** Trending and pump wear a SOLID pill — filled with their own gradient, dark
+ *  type, a drawn icon (a flame, an arrow) where the listing has its pulsing
+ *  dot. The outline pill is the listing's, and stays only the listing's. */
+function solidPillSprite(cv, variant) {
+  const label = VARIANTS[variant].pill;
+  const stops = variant === "pump" ? ["#D2FF57", "#3DF59F", "#14D98A"] : ["#FFC94A", "#FF7A1A", "#FF3D7F"];
+  const ink = variant === "pump" ? "#03170D" : "#1C0704";
+  const m = cv.createCanvas(10, 10).getContext("2d");
+  m.font = `800 17px ${F.m7}`;
+  const lw = trackedWidth(m, label, 3);
+  const w = Math.ceil(lw + 66);
+  const c = cv.createCanvas(w + 4, 46);
+  const x = c.getContext("2d");
+  roundRect(x, 2, 2, w, 42, 21);
+  const g = x.createLinearGradient(2, 0, w, 0);
+  g.addColorStop(0, stops[0]);
+  g.addColorStop(0.55, stops[1]);
+  g.addColorStop(1, stops[2]);
+  x.fillStyle = g;
+  x.fill();
+  // the glassy top half
+  const hl = x.createLinearGradient(0, 2, 0, 24);
+  hl.addColorStop(0, "rgba(255,255,255,0.42)");
+  hl.addColorStop(1, "rgba(255,255,255,0)");
+  roundRect(x, 4, 4, w - 4, 19, 10);
+  x.fillStyle = hl;
+  x.fill();
+  // the icon — DRAWN, never a glyph: no brand face carries 🔥 or ▲
+  const ix = 26;
+  const iy = 23;
+  x.fillStyle = ink;
+  x.beginPath();
+  if (variant === "pump") {
+    x.moveTo(ix, iy - 11);
+    x.lineTo(ix + 9, iy - 1);
+    x.lineTo(ix + 3.6, iy - 1);
+    x.lineTo(ix + 3.6, iy + 10);
+    x.lineTo(ix - 3.6, iy + 10);
+    x.lineTo(ix - 3.6, iy - 1);
+    x.lineTo(ix - 9, iy - 1);
+    x.closePath();
+    x.fill();
+  } else {
+    x.moveTo(ix, iy - 12);
+    x.quadraticCurveTo(ix + 11, iy - 2, ix + 7, iy + 6);
+    x.quadraticCurveTo(ix + 3, iy + 11, ix, iy + 11);
+    x.quadraticCurveTo(ix - 7, iy + 11, ix - 8, iy + 4);
+    x.quadraticCurveTo(ix - 9, iy - 3, ix - 3, iy - 6);
+    x.quadraticCurveTo(ix - 2, iy - 1, ix + 1, iy - 1);
+    x.quadraticCurveTo(ix + 3, iy - 6, ix, iy - 12);
+    x.fill();
+    x.fillStyle = stops[0];
+    x.beginPath();
+    x.moveTo(ix, iy + 1);
+    x.quadraticCurveTo(ix + 5, iy + 5, ix + 2, iy + 9);
+    x.quadraticCurveTo(ix - 3, iy + 10, ix - 3.5, iy + 6);
+    x.quadraticCurveTo(ix - 3, iy + 3, ix, iy + 1);
+    x.fill();
+  }
+  x.font = `800 17px ${F.m7}`;
+  x.fillStyle = ink;
+  x.textBaseline = "middle";
+  tracked(x, label, 46, 24, 3);
+  return { canvas: c, x: COPY_X - 2, y: LAY.pill, dot: null, solid: true, tone: stops[1], label };
 }
 
 /** The ticker in gold foil: a glow pass and a crisp pass, so the shimmer can be
  *  masked to the glyphs alone. */
 function tickerSprites(cv, symbol) {
   const m = cv.createCanvas(10, 10).getContext("2d");
-  const text = fitText(m, tickerOf(symbol), COPY_W, { weight: 800, size: 116, min: 54, family: F.x });
+  const text = fitText(m, tickerOf(symbol), COPY_W, { weight: 800, size: LAY.tickerSize, min: LAY.tickerMin, family: F.x });
   const font = m.font;
-  const size = pxOf(font, 116);
+  const size = pxOf(font, LAY.tickerSize);
   const tw = m.measureText(text).width;
   // A script whose glyphs sit LOW in the em box (Han, Hangul; a Q or a J) hangs
   // past the "$" and into the name line, which is 21px below at this size. The
@@ -552,10 +736,10 @@ function tickerSprites(cv, symbol) {
   const [mask, mx] = mk();
   mx.fillStyle = "#FFFFFF";
   mx.fillText(text, pad, mid);
-  return { glow, crisp, mask, x: COPY_X - 4 - pad, y: 296 - mid - lift, w: cw, h: ch, textX: pad, textW: tw, size, lift };
+  return { glow, crisp, mask, x: COPY_X - 4 - pad, y: LAY.ticker - mid - lift, w: cw, h: ch, textX: pad, textW: tw, size, lift };
 }
 
-function nameSprite(cv, name) {
+function nameSprite(cv, name, y = LAY.name) {
   if (!name) return null;
   const c = cv.createCanvas(COPY_W + 20, 54);
   const x = c.getContext("2d");
@@ -563,36 +747,39 @@ function nameSprite(cv, name) {
   x.fillStyle = "#D6DEEA";
   x.textBaseline = "middle";
   x.fillText(nm, 4, 27);
-  return { canvas: c, x: COPY_X - 4, y: 372 - 27 };
+  return { canvas: c, x: COPY_X - 4, y: y - 27 };
 }
 
-/** The pump's headline: "▲ +250%" and SINCE LISTING, where the listing
- *  carries the name. Null when the change is not a percentage we can read —
- *  the name then takes the line, never a made-up figure. */
-function gainLayout(cv, change) {
+/** The pump's HEADLINE: "▲ +250%" set huge, SINCE LISTING under it. Null when
+ *  the change is not a whole percentage we can read — the name then takes the
+ *  line, never a made-up figure. */
+function heroLayout(cv, change) {
   const m = /^\+?(\d{1,7})%$/.exec(String(change || "").trim());
-  if (!m) return null;
+  if (!m || LAY.hero == null) return null;
   const target = Number(m[1]);
   const mm = cv.createCanvas(10, 10).getContext("2d");
-  const size = 56;
+  // the column is sized on the FINAL figure with every digit an 8 (the widest):
+  // the count-up only ever reads narrower, so nothing moves while it runs
+  const sample = `+${target}%`.replace(/[0-9]/g, "8");
+  let size = LAY.heroSize;
+  const arrowW = (sz) => Math.round(sz * 0.5);
+  const fits = () => {
+    mm.font = `800 ${size}px ${F.x}`;
+    return arrowW(size) + 18 + mm.measureText(sample).width <= COPY_W;
+  };
+  while (!fits() && size > LAY.heroMin) size -= 2;
   const font = `800 ${size}px ${F.x}`;
+  const arrow = { x: COPY_X + 2, w: arrowW(size), h: Math.round(size * 0.42) };
+  const textX = arrow.x + arrow.w + 18;
   mm.font = font;
-  // the column is sized on the FINAL figure; the count-up only ever reads
-  // narrower, so nothing after it moves while it runs
-  const final = `+${target}%`;
-  const tw = mm.measureText(final.replace(/[0-9]/g, "8")).width;
-  const arrow = { x: COPY_X + 2, w: 34, h: 30 };
-  const textX = arrow.x + arrow.w + 14;
-  mm.font = `700 17px ${F.m7}`;
-  const lblX = textX + tw + 18;
-  return { target, font, size, y: 376, arrow, textX, lblX, label: "SINCE LISTING", w: lblX + trackedWidth(mm, "SINCE LISTING", 2.4) - COPY_X };
+  return { target, font, size, y: LAY.hero, arrow, textX, w: textX + mm.measureText(sample).width - COPY_X, caption: { label: "SINCE LISTING", x: COPY_X + 2, y: LAY.caption } };
 }
 
 // The panel's widest: its right edge stays clear of the lower gem bubble
 // (BUBBLES[1], left edge x 670 at the bottom of its bob). Past this the values
 // shrink, down to LABEL_MIN; the labels never do. Clearing the bubble outranks
 // value size: only an absurd price ($0.0000000000000042) gets near the floor.
-const PANEL_MAX_W = 590;
+let PANEL_MAX_W = 590;
 
 /** The stat panel's glass and labels (static) plus where each value goes. */
 function statsLayout(cv, coin, variant = "listing") {
@@ -658,7 +845,7 @@ function statsLayout(cv, coin, variant = "listing") {
     }
     cx += gap;
   }
-  return { canvas: c, x: COPY_X - 2, y: 432, w: total, h: ph, cells, font: `700 ${vSize}px ${F.d7}`, valueY: 432 + 2 + 82 };
+  return { canvas: c, x: COPY_X - 2, y: LAY.stats, w: total, h: ph, cells, font: `700 ${vSize}px ${F.d7}`, valueY: LAY.stats + 2 + 82 };
 }
 
 // ── the coin ─────────────────────────────────────────────────────────────────
@@ -670,11 +857,11 @@ function coinInitials(symbol) {
 
 function bezelRing(x, c, r) {
   const g = x.createLinearGradient(c - r, c - r, c + r, c + r);
-  g.addColorStop(0, "#E9FFF6");
-  g.addColorStop(0.22, C.mint);
-  g.addColorStop(0.55, C.mid);
-  g.addColorStop(0.82, "#1E8FD8");
-  g.addColorStop(1, "#BFF6FF");
+  g.addColorStop(0, C.bezel[0]);
+  g.addColorStop(0.22, C.bezel[1]);
+  g.addColorStop(0.55, C.bezel[2]);
+  g.addColorStop(0.82, C.bezel[3]);
+  g.addColorStop(1, C.bezel[4]);
   x.beginPath();
   x.arc(c, c, r + BEZEL / 2, 0, TAU);
   x.lineWidth = BEZEL;
@@ -761,9 +948,9 @@ function backTexture(cv) {
   x.arc(c, c, r, 0, TAU);
   x.clip();
   const g = x.createRadialGradient(c - r * 0.35, c - r * 0.4, r * 0.05, c, c, r * 1.05);
-  g.addColorStop(0, "#1C5578");
-  g.addColorStop(0.5, "#0A2539");
-  g.addColorStop(1, "#030D16");
+  g.addColorStop(0, C.back[0]);
+  g.addColorStop(0.5, C.back[1]);
+  g.addColorStop(1, C.back[2]);
   x.fillStyle = g;
   x.fillRect(0, 0, c * 2, c * 2);
   for (const k of [0.92, 0.84]) {
@@ -1032,10 +1219,10 @@ function drawCoin3D(ctx, st, front, back) {
   // the rim — the coin's edge, stacked from the far face to the near one
   const steps = Math.max(1, Math.ceil(Math.abs(dx)));
   const rim = ctx.createLinearGradient(0, y - R, 0, y + R);
-  rim.addColorStop(0, "#A8F3FF");
-  rim.addColorStop(0.35, C.mid);
-  rim.addColorStop(0.7, "#0A5F86");
-  rim.addColorStop(1, "#04263A");
+  rim.addColorStop(0, C.rim[0]);
+  rim.addColorStop(0.35, C.rim[1]);
+  rim.addColorStop(0.7, C.rim[2]);
+  rim.addColorStop(1, C.rim[3]);
   for (let i = 0; i <= steps; i++) {
     const k = i / steps;
     ctx.beginPath();
@@ -1079,7 +1266,7 @@ function drawCoin3D(ctx, st, front, back) {
   const bx = fx - sn * R * sx * 1.3;
   const lg = ctx.createLinearGradient(bx - R * 0.5, y - R, bx + R * 0.5, y + R);
   lg.addColorStop(0, "rgba(255,255,255,0)");
-  lg.addColorStop(0.5, `rgba(235,252,255,${sheen})`);
+  lg.addColorStop(0.5, `rgba(${C.glintRgb},${sheen})`);
   lg.addColorStop(1, "rgba(255,255,255,0)");
   ctx.globalCompositeOperation = "lighter";
   ctx.fillStyle = lg;
@@ -1268,6 +1455,262 @@ function shine(ctx, box, u, alpha, radius) {
   ctx.restore();
 }
 
+// ── the trending and pump scenes ─────────────────────────────────────────────
+//
+// Every motion here is a function of p = t / SECONDS with a WHOLE number of
+// periods per loop — the listing's seam rule, held by the same exact-seam test.
+
+// their own seed, so the listing's FIELD (and therefore its pixels) never moves
+const FIELD2 = (() => {
+  const r = rng(424242);
+  const embers = Array.from({ length: 74 }, () => ({
+    x: r() < 0.6 ? 60 + r() * 560 : r() * W, // most of them rise off the coin's side
+    phase: r(),
+    cycles: 1 + Math.floor(r() * 2),
+    size: 4 + r() * 9,
+    sway: 6 + r() * 22,
+    a: 0.35 + r() * 0.55,
+    hot: r() < 0.35,
+  }));
+  const streaks = Array.from({ length: 46 }, () => ({
+    x: r() < 0.75 ? 700 + r() * 560 : 40 + r() * 640,
+    phase: r(),
+    cycles: 2 + Math.floor(r() * 2),
+    len: 50 + r() * 150,
+    w: 1 + r() * 1.6,
+    a: 0.12 + r() * 0.3,
+  }));
+  const puffs = Array.from({ length: 22 }, () => ({
+    ox: r() * 2 - 1,
+    phase: r(),
+    cycles: 1 + Math.floor(r() * 2),
+    spread: 40 + r() * 120,
+    size: 26 + r() * 60,
+  }));
+  const chevrons = Array.from({ length: 6 }, (_, i) => ({
+    x: 760 + r() * 420,
+    phase: i / 6 + r() * 0.05,
+    size: 36 + r() * 46,
+  }));
+  return { embers, streaks, puffs, chevrons };
+})();
+
+/** Where the pump's coin is. The hold floats it with a rocket's shake; the
+ *  outro BLASTS IT OFF the top; the intro lifts it in from below the frame.
+ *  The coin never shrinks or spins away, which is the listing's exit. */
+function pumpCoinState(t) {
+  const p = t / SECONDS;
+  const shake = 5 * Math.sin(TAU * p) + 1.4 * Math.sin(TAU * p * 15);
+  let theta = 0;
+  let alpha = 1;
+  let lift = 0;
+  if (t < HOLD_END) {
+    theta = TAU * easeInOut(clamp01((t - SPIN[0]) / (SPIN[1] - SPIN[0])));
+  } else if (t < OUT_END) {
+    const u = (t - HOLD_END) / (OUT_END - HOLD_END);
+    lift = -easeIn(u) * 620;
+    alpha = 1 - clamp01((u - 0.6) / 0.4);
+  } else {
+    const u = clamp01((t - IN0 - SCHED.coin[0]) / SCHED.coin[1]);
+    lift = (1 - easeOut(u)) * 460;
+    theta = TAU * (1 - easeOut(u));
+    alpha = clamp01(u / 0.2);
+    const v = t - IMPACT;
+    if (v > 0) lift += -16 * Math.exp(-v * 7) * Math.sin(v * 26); // the arrival settles
+  }
+  return { s: 1, theta, alpha, bob: shake + lift, lift };
+}
+
+/** A warm aura round the burning coin, breathing twice a loop. */
+function drawHeatAura(ctx, st, t, p) {
+  const { cx, cy, r } = COIN;
+  const y = cy + st.bob;
+  const k = st.alpha * Math.min(1, st.s);
+  const boost = impactBoost(t, 2.5);
+  softGlow(ctx, cx, y, r * 3.1, C.glow, (0.2 + 0.06 * Math.sin(TAU * p * 2)) * k + 0.25 * boost);
+  softGlow(ctx, cx + r * 0.5, y - r * 0.6, r * 2.2, C.blue, 0.12 * k);
+  softGlow(ctx, cx, y + r * 0.9, r * 1.8, C.mint, 0.1 * k);
+}
+
+/** The flame plume behind the coin: tongues rising past its top edge, each
+ *  flickering on its own whole-number rhythm. Drawn BEHIND the coin, so the
+ *  token's face is never crossed. */
+function drawFlames(ctx, st, p) {
+  const { cx, cy, r } = COIN;
+  const k = st.alpha * Math.min(1, st.s);
+  if (k <= 0.01) return;
+  const R = r * st.s;
+  // the tongues stand on the coin's lower third and rise well past its top,
+  // spread wider than the coin, so the fire reads round a coin seen face-on
+  const by = cy + st.bob + R * 0.3;
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  const n = 11;
+  for (let pass = 0; pass < 2; pass++) {
+    for (let i = 0; i < n; i++) {
+      const u = i / (n - 1) - 0.5;
+      const bx = cx + u * R * 2.3;
+      const flick = 1 + 0.16 * Math.sin(TAU * (p * (3 + (i % 3)) + i * 0.37)) + 0.06 * Math.sin(TAU * (p * 7 + i * 0.61));
+      const hgt = R * (1.32 + 0.76 * (1 - Math.abs(u) * 1.5)) * flick * (pass ? 0.6 : 1);
+      const wid = R * (0.44 - Math.abs(u) * 0.18) * (pass ? 0.5 : 1);
+      const tipx = bx + u * R * 0.42 + Math.sin(TAU * (p * 2 + i * 0.21)) * R * 0.1;
+      // the root FADES in: a tongue that starts at full strength draws a hard
+      // flat base beside the coin
+      const root = by + wid * 0.6;
+      const g = ctx.createLinearGradient(0, root, 0, by - hgt);
+      if (pass) {
+        g.addColorStop(0, hexA("#FFF4DA", 0));
+        g.addColorStop(0.2, hexA("#FFF4DA", 0.7 * k));
+        g.addColorStop(0.58, hexA(C.mint, 0.45 * k));
+        g.addColorStop(1, hexA(C.mint, 0));
+      } else {
+        g.addColorStop(0, hexA(C.mint, 0));
+        g.addColorStop(0.2, hexA(C.mint, 0.62 * k));
+        g.addColorStop(0.58, hexA(C.glow, 0.46 * k));
+        g.addColorStop(1, hexA(C.blue, 0));
+      }
+      ctx.beginPath();
+      ctx.moveTo(bx - wid, by);
+      ctx.quadraticCurveTo(bx - wid * 0.95, by - hgt * 0.55, tipx, by - hgt);
+      ctx.quadraticCurveTo(bx + wid * 0.95, by - hgt * 0.55, bx + wid, by);
+      ctx.quadraticCurveTo(bx, by + wid * 0.6, bx - wid, by);
+      ctx.fillStyle = g;
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+
+/** Embers rising through the frame, most of them off the coin's side. */
+function drawEmbers(ctx, p, sprites) {
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  for (const e of FIELD2.embers) {
+    const f = (p * e.cycles + e.phase) % 1;
+    const y = H + 30 - f * (H + 90);
+    const x = e.x + Math.sin(TAU * (f * 2 + e.phase)) * e.sway;
+    const a = Math.sin(f * Math.PI) ** 1.2 * e.a;
+    blit(ctx, e.hot ? sprites.cyan : sprites.gold, x, y, e.size, a);
+  }
+  ctx.restore();
+}
+
+/** Heat rings: pulses leaving the coin, three at a time. */
+function drawHeatRings(ctx, st, p) {
+  const { cx, cy, r } = COIN;
+  const k = st.alpha * Math.min(1, st.s);
+  if (k <= 0.01) return;
+  ctx.save();
+  for (let i = 0; i < 3; i++) {
+    const f = (p * 2 + i / 3) % 1;
+    ctx.beginPath();
+    ctx.arc(cx, cy + st.bob, r + 30 + f * 230, 0, TAU);
+    ctx.lineWidth = 2 - f;
+    ctx.strokeStyle = hexA(C.mid, (1 - f) ** 2 * 0.34 * k);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/** Big faint chevrons climbing behind the pump's coin — an upward motif, not a
+ *  chart: nothing here could be read as a price. */
+function drawChevrons(ctx, p) {
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  ctx.lineJoin = "miter";
+  ctx.lineCap = "butt";
+  for (const c of FIELD2.chevrons) {
+    const f = (p + c.phase) % 1;
+    const y = H + 80 - f * (H + 200);
+    const a = Math.sin(f * Math.PI) * 0.1;
+    ctx.beginPath();
+    ctx.moveTo(c.x - c.size, y + c.size * 0.62);
+    ctx.lineTo(c.x, y);
+    ctx.lineTo(c.x + c.size, y + c.size * 0.62);
+    ctx.lineWidth = c.size * 0.2;
+    ctx.strokeStyle = hexA(C.mid, a);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/** Speed streaks falling past — the frame moving down, so the coin reads as
+ *  moving up. */
+function drawStreaks(ctx, p, boost = 1) {
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  ctx.lineCap = "round";
+  for (const s of FIELD2.streaks) {
+    const f = (p * s.cycles + s.phase) % 1;
+    const y = -220 + f * (H + 440);
+    const len = s.len * boost;
+    const g = ctx.createLinearGradient(0, y - len, 0, y);
+    g.addColorStop(0, hexA(C.light, 0));
+    g.addColorStop(1, hexA(C.light, Math.min(0.85, s.a * boost)));
+    ctx.beginPath();
+    ctx.moveTo(s.x, y - len);
+    ctx.lineTo(s.x, y);
+    ctx.lineWidth = s.w;
+    ctx.strokeStyle = g;
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/** The exhaust under the launching coin: a tapered flame (glow, body, white
+ *  core), rings pushed out of it, and smoke spreading off its tail. It rides
+ *  the coin, so at the outro it streaks up the frame with it. */
+function drawPlume(ctx, st, t, p, sprites) {
+  const { cx, cy, r } = COIN;
+  const k = st.alpha;
+  if (k <= 0.01) return;
+  const top = cy + st.bob + r * 0.62;
+  const burn = 1 + Math.min(1.2, Math.max(0, -st.lift) / 300); // the blast-off burns long
+  const len = 250 * burn * (1 + 0.1 * Math.sin(TAU * p * 6) + 0.05 * Math.sin(TAU * p * 11 + 1.3));
+  const w0 = r * 0.7 * (1 + 0.06 * Math.sin(TAU * p * 9));
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  softGlow(ctx, cx, top + len * 0.25, r * 1.3, C.glow, 0.32 * k);
+  // smoke and sparks off the tail, behind the flame
+  for (const pf of FIELD2.puffs) {
+    const f = (p * pf.cycles + pf.phase) % 1;
+    const x = cx + pf.ox * pf.spread * (0.3 + f);
+    const y = top + len * 0.55 + f * 170;
+    blit(ctx, sprites.goldSoft, x, y, pf.size * (0.5 + f), (1 - f) * 0.22 * k);
+  }
+  const layers = [
+    [1.0, 1.0, [hexA(C.glow, 0.72 * k), hexA(C.glow, 0.34 * k), hexA(C.glow, 0)]],
+    [0.62, 0.86, [hexA(C.blue, 0.95 * k), hexA(C.mid, 0.5 * k), hexA(C.mid, 0)]],
+    [0.3, 0.62, [`rgba(255,255,255,${k})`, hexA(C.light, 0.6 * k), hexA(C.light, 0)]],
+  ];
+  for (const [ws, ls, [c0, cm, c1]] of layers) {
+    const w = w0 * ws;
+    const L = len * ls;
+    const g = ctx.createLinearGradient(0, top, 0, top + L);
+    g.addColorStop(0, c0);
+    g.addColorStop(0.5, cm);
+    g.addColorStop(1, c1);
+    ctx.beginPath();
+    ctx.moveTo(cx - w, top);
+    ctx.bezierCurveTo(cx - w, top + L * 0.35, cx - w * 0.22, top + L * 0.78, cx, top + L);
+    ctx.bezierCurveTo(cx + w * 0.22, top + L * 0.78, cx + w, top + L * 0.35, cx + w, top);
+    ctx.closePath();
+    ctx.fillStyle = g;
+    ctx.fill();
+  }
+  // thrust rings, three in flight
+  for (let i = 0; i < 3; i++) {
+    const f = (p * 3 + i / 3) % 1;
+    const rx = r * 0.55 * (1 + f * 1.5);
+    ctx.beginPath();
+    ctx.ellipse(cx, top + 24 + f * 150, rx, rx * 0.2, 0, 0, TAU);
+    ctx.lineWidth = 2.2 * (1 - f) + 0.6;
+    ctx.strokeStyle = hexA(C.light, (1 - f) ** 2 * 0.42 * k);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 // ── the copy, per frame ──────────────────────────────────────────────────────
 
 function drawPill(ctx, t, p, pill) {
@@ -1282,6 +1725,13 @@ function drawPill(ctx, t, p, pill) {
   ctx.drawImage(canvas, 0, -canvas.height / 2);
   ctx.restore();
   if (k < 1) return;
+  if (!dot) {
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    softGlow(ctx, x + canvas.width / 2, y + canvas.height / 2, canvas.width * 0.7, pill.tone, 0.1 + 0.07 * Math.sin(TAU * p * 2));
+    ctx.restore();
+    return;
+  }
   const f = (p * 3) % 1;
   ctx.beginPath();
   ctx.arc(dot.x, dot.y, 5 + f * 12, 0, TAU);
@@ -1331,9 +1781,9 @@ function drawTicker(ctx, t, tk, scratch) {
     sx.globalCompositeOperation = "source-in";
     const ex = edge - tk.x;
     const g = sx.createLinearGradient(ex - 70, 0, ex + 4, 0);
-    g.addColorStop(0, "rgba(150,235,255,0)");
-    g.addColorStop(0.85, `rgba(235,252,255,${0.95 * Math.sin(k * Math.PI)})`);
-    g.addColorStop(1, "rgba(235,252,255,0)");
+    g.addColorStop(0, `rgba(${C.wipeRgb},0)`);
+    g.addColorStop(0.85, `rgba(${C.glintRgb},${0.95 * Math.sin(k * Math.PI)})`);
+    g.addColorStop(1, `rgba(${C.glintRgb},0)`);
     sx.fillStyle = g;
     sx.fillRect(0, 0, tk.w, tk.h);
     ctx.save();
@@ -1356,7 +1806,7 @@ function drawTicker(ctx, t, tk, scratch) {
   const g = sx.createLinearGradient(bx - 60, 0, bx + 60, tk.h);
   const a = Math.sin(u * Math.PI) * 0.75;
   g.addColorStop(0, "rgba(255,255,255,0)");
-  g.addColorStop(0.5, `rgba(235,252,255,${a})`);
+  g.addColorStop(0.5, `rgba(${C.glintRgb},${a})`);
   g.addColorStop(1, "rgba(255,255,255,0)");
   sx.fillStyle = g;
   sx.fillRect(0, 0, tk.w, tk.h);
@@ -1377,47 +1827,58 @@ function drawName(ctx, t, nm) {
   ctx.restore();
 }
 
-/** The gain counts up as it rises in, and holds the exact figure through the
+/** The headline counts UP as it rises in and holds the exact figure through the
  *  hold — so frame 0 (Telegram's thumbnail) and the loop seam both read it. */
-function drawGain(ctx, t, gn) {
-  const k = reveal(t, "name");
+function drawHero(ctx, t, h) {
+  const k = reveal(t, "hero");
   if (k <= 0) return;
   const e = easeOut(k);
-  // counts UP on the way in only; the exit is a fade of the exact figure —
-  // a number running backwards reads as the pump reversing
-  const n = t >= OUT_END ? Math.round(gn.target * e) : gn.target;
-  const dy = (1 - e) * 16;
-  const y = gn.y + dy;
+  // counts UP on the way in only; the exit is a fade of the exact figure — a
+  // number running backwards reads as the pump reversing
+  const n = t >= OUT_END ? Math.round(h.target * e) : h.target;
+  const sc = 0.82 + 0.18 * easeOutBack(Math.min(1, k));
+  const y = h.y;
   ctx.save();
   ctx.globalAlpha = clamp01(k * 1.6);
-  const g = ctx.createLinearGradient(0, y - gn.size * 0.4, 0, y + gn.size * 0.4);
-  g.addColorStop(0, "#B9FFE0");
-  g.addColorStop(0.55, SITE.mint);
-  g.addColorStop(1, "#14B877");
-  // the arrow is DRAWN, never a glyph: ▲ is in no brand face and would fall
-  // to whatever the fallback chain finds
-  const a = gn.arrow;
+  ctx.translate(COPY_X, y);
+  ctx.scale(sc, sc);
+  ctx.translate(-COPY_X, -y);
+  const g = ctx.createLinearGradient(0, y - h.size * 0.42, 0, y + h.size * 0.4);
+  g.addColorStop(0, "#F1FFF7");
+  g.addColorStop(0.45, C.mid);
+  g.addColorStop(1, C.foilEnd);
+  // the arrow is DRAWN, never a glyph: ▲ is in no brand face
+  const a = h.arrow;
   ctx.beginPath();
-  ctx.moveTo(a.x + a.w / 2, y - a.h / 2);
-  ctx.lineTo(a.x + a.w, y + a.h / 2);
-  ctx.lineTo(a.x, y + a.h / 2);
+  ctx.moveTo(a.x + a.w / 2, y - a.h / 2 - 4);
+  ctx.lineTo(a.x + a.w, y + a.h / 2 - 4);
+  ctx.lineTo(a.x, y + a.h / 2 - 4);
   ctx.closePath();
-  ctx.shadowColor = hexA(SITE.mint, 0.55);
-  ctx.shadowBlur = 22;
+  ctx.shadowColor = hexA(C.glow, 0.7);
+  ctx.shadowBlur = 34;
   ctx.fillStyle = g;
   ctx.fill();
-  ctx.font = gn.font;
+  ctx.font = h.font;
   ctx.textBaseline = "middle";
-  ctx.fillText(`+${n}%`, gn.textX, y + 2);
+  ctx.fillText(`+${n}%`, h.textX, y + 4);
   ctx.shadowBlur = 0;
   ctx.shadowColor = "rgba(0,0,0,0)";
-  ctx.font = `700 17px ${F.m7}`;
-  ctx.fillStyle = hexA(C.light, 0.78);
-  tracked(ctx, gn.label, gn.lblX, y + 4, 2.4);
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = "rgba(240,255,246,0.35)";
+  ctx.strokeText(`+${n}%`, h.textX, y + 4);
+  ctx.restore();
+  // the caption, set in the label voice under the figure
+  ctx.save();
+  ctx.globalAlpha = clamp01(k * 1.6);
+  ctx.font = `700 18px ${F.m7}`;
+  ctx.fillStyle = hexA(C.light, 0.82);
+  ctx.textBaseline = "middle";
+  tracked(ctx, h.caption.label, h.caption.x, h.caption.y + (1 - e) * 10, 3.4);
   ctx.restore();
 }
 
 function drawRule(ctx, t) {
+  if (LAY.rule == null) return;
   const k = easeOut(reveal(t, "rule"));
   if (k <= 0) return;
   const w = 180 * k;
@@ -1425,7 +1886,7 @@ function drawRule(ctx, t) {
   g.addColorStop(0, hexA(C.mid, 0.95));
   g.addColorStop(1, hexA(C.mid, 0));
   ctx.fillStyle = g;
-  ctx.fillRect(COPY_X, 410, w, 1.6);
+  ctx.fillRect(COPY_X, LAY.rule, w, 1.6);
 }
 
 /** The stat panel opens from the left; each value then decodes in turn. */
@@ -1505,6 +1966,9 @@ async function drawFrames(coin, logoBuffer, { count = FRAMES, times = null, badg
     }
   }
 
+  // the build block: every sprite below reads the scene, so it is set FIRST
+  // (and nothing between here and the first frame awaits)
+  useScene(variant);
   const base = cv.createCanvas(W, H);
   drawBase(base.getContext("2d"));
   const vignette = cv.createCanvas(W, H);
@@ -1526,8 +1990,12 @@ async function drawFrames(coin, logoBuffer, { count = FRAMES, times = null, badg
   const pill = pillSprite(cv, variant);
   const tk = tickerSprites(cv, coin.symbol);
   const scratch = cv.createCanvas(tk.w, tk.h);
-  const gn = variant === "pump" ? gainLayout(cv, coin.change) : null;
-  const nm = gn ? null : nameSprite(cv, coin.name);
+  // the pump's gain is its headline; a change we cannot read gives the line
+  // to the name instead, never to a made-up figure. (Two layers: heroLayout
+  // also refuses a scene with no hero slot, so a mutant dropping this check
+  // alone changes nothing — measured, and said here rather than claimed.)
+  const hero = variant === "pump" ? heroLayout(cv, coin.change) : null;
+  const nm = hero ? null : nameSprite(cv, coin.name, LAY.name);
   const st = statsLayout(cv, coin, variant);
 
   const out = cv.createCanvas(W, H);
@@ -1539,28 +2007,55 @@ async function drawFrames(coin, logoBuffer, { count = FRAMES, times = null, badg
     // a caller that stopped waiting (postMedia's budget) stops the work too —
     // otherwise an abandoned render goes on burning CPU for nobody
     if (cancel && cancel.cancelled) throw new Error("cancelled — the caller stopped waiting");
+    // ⚠️ every frame re-asserts its scene: another render may have drawn a
+    // frame of its own while this one awaited the encoder
+    useScene(variant);
     const t = times ? times[f] : (f % FRAMES) / FPS;
     const p = t / SECONDS;
-    const cs = coinState(t);
     ctx.globalCompositeOperation = "source-over";
     ctx.globalAlpha = 1;
     ctx.drawImage(base, 0, 0);
-    drawRibbons(ctx, p);
-    drawRays(ctx, t, p);
-    drawBokeh(ctx, p, sprites);
-    drawSparkles(ctx, p);
-    drawCoinGlow(ctx, cs, t, p);
-    drawPedestal(ctx, cs, t, p);
-    drawMotes(ctx, cs, p, sprites.gold);
-    drawBubbles(ctx, t, p);
-    drawOrbits(ctx, cs, p, "back", sprites);
-    drawDashRing(ctx, cs, p, sprites.gold);
-    // both halves BEHIND the coin: a light crossing in front of the face
-    // reads as a scratch over the token's own logo, the one thing that post
-    // exists to show
-    drawOrbits(ctx, cs, p, "front", sprites);
-    drawCoin3D(ctx, cs, front, back);
-    drawImpact(ctx, t);
+    if (variant === "pump") {
+      const cs = pumpCoinState(t);
+      // the outro is a blast-off: the streaks run long while it happens
+      const boost = t >= HOLD_END && t < OUT_END ? 1 + 1.6 * Math.sin(Math.PI * ((t - HOLD_END) / (OUT_END - HOLD_END))) : 1;
+      drawChevrons(ctx, p);
+      drawStreaks(ctx, p, boost);
+      drawSparkles(ctx, p);
+      drawCoinGlow(ctx, cs, t, p);
+      drawPlume(ctx, cs, t, p, sprites);
+      drawCoin3D(ctx, cs, front, back);
+      drawImpact(ctx, t);
+    } else if (variant === "trending") {
+      const cs = coinState(t);
+      drawRays(ctx, t, p);
+      drawEmbers(ctx, p, sprites);
+      drawSparkles(ctx, p);
+      drawHeatAura(ctx, cs, t, p);
+      drawHeatRings(ctx, cs, p);
+      drawFlames(ctx, cs, p);
+      drawDashRing(ctx, cs, p, sprites.gold);
+      drawCoin3D(ctx, cs, front, back);
+      drawImpact(ctx, t);
+    } else {
+      const cs = coinState(t);
+      drawRibbons(ctx, p);
+      drawRays(ctx, t, p);
+      drawBokeh(ctx, p, sprites);
+      drawSparkles(ctx, p);
+      drawCoinGlow(ctx, cs, t, p);
+      drawPedestal(ctx, cs, t, p);
+      drawMotes(ctx, cs, p, sprites.gold);
+      drawBubbles(ctx, t, p);
+      drawOrbits(ctx, cs, p, "back", sprites);
+      drawDashRing(ctx, cs, p, sprites.gold);
+      // both halves BEHIND the coin: a light crossing in front of the face
+      // reads as a scratch over the token's own logo, the one thing that post
+      // exists to show
+      drawOrbits(ctx, cs, p, "front", sprites);
+      drawCoin3D(ctx, cs, front, back);
+      drawImpact(ctx, t);
+    }
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = "source-over";
     ctx.drawImage(vignette, 0, 0);
@@ -1569,7 +2064,7 @@ async function drawFrames(coin, logoBuffer, { count = FRAMES, times = null, badg
     if (t >= 1.5 && t <= 2.1) shine(ctx, badgeBox, (t - 1.5) / 0.6, 0.6, badgeBox ? badgeBox.h / 2 : 0);
     drawPill(ctx, t, p, pill);
     drawTicker(ctx, t, tk, scratch);
-    if (gn) drawGain(ctx, t, gn);
+    if (hero) drawHero(ctx, t, hero);
     else drawName(ctx, t, nm);
     drawRule(ctx, t);
     drawStats(ctx, t, st);
@@ -1732,11 +2227,13 @@ module.exports = {
   _sweepTmp: sweepTmp,
   _drawFrames: drawFrames,
   _keys: Object.keys(SCHED),
-  _tickerSprites: tickerSprites,
-  _statsLayout: statsLayout,
+  _tickerSprites: (cv, symbol, variant = "listing") => (useScene(variant), tickerSprites(cv, symbol)),
+  _statsLayout: (cv, coin, variant = "listing") => (useScene(variant), statsLayout(cv, coin, variant)),
   _bubbles: BUBBLES,
   _labelMin: LABEL_MIN,
   _variants: VARIANTS,
-  _gainLayout: gainLayout,
-  _pillSprite: pillSprite,
+  _scenes: SCENES,
+  _heroLayout: (cv, change) => (useScene("pump"), heroLayout(cv, change)),
+  _pillSprite: (cv, variant = "listing") => (useScene(variant), pillSprite(cv, variant)),
+  _pumpCoinState: pumpCoinState,
 };

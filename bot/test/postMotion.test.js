@@ -180,9 +180,11 @@ test("no variant draws text under the label floor, and the pump panel stays clea
   const b = lm._bubbles[1];
   const st = lm._statsLayout(cv, PUMP, "pump");
   assert.ok(st.x + 2 + st.w + 2 < b.x - b.r, `pump panel right edge ${Math.round(st.x + st.w + 4)} reaches the bubble`);
-  // the gain line fits the copy column at the widest gain the regex admits
-  const g = lm._gainLayout(cv, "+9999999%");
-  assert.ok(g.w < 620, `gain line ${Math.round(g.w)}px runs past the copy column`);
+  // the headline fits the copy column at the widest gain the regex admits —
+  // it shrinks, and never runs into the launching coin
+  const g = lm._heroLayout(cv, "+9999999%");
+  assert.ok(g.w <= lm._scenes.pump.copyW, `headline ${Math.round(g.w)}px runs past the copy column`);
+  assert.ok(g.size >= lm._scenes.pump.lay.heroMin, "and it stays a headline, not a footnote");
 });
 
 test("render() really draws the variant it was asked for — the MP4's first frame is the PUMP card", { skip: !haveCanvas }, async () => {
@@ -216,6 +218,83 @@ test("render() really draws the variant it was asked for — the MP4's first fra
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// ── three designs, not one ───────────────────────────────────────────────────
+
+test("each post is its OWN design: a palette, where the coin stands, where the copy goes", () => {
+  const { listing, trending, pump } = lm._scenes;
+  // "tampilanya harus beda beda design" — three palettes, no two alike
+  const pals = [listing.pal, trending.pal, pump.pal].map((p) => [p.mid, p.glow, p.base[0]].join());
+  assert.strictEqual(new Set(pals).size, 3, "two posts share a palette");
+  // trending is MIRRORED: the coin on the left, the copy on the right
+  assert.ok(trending.coin.cx < lm.W / 2 && listing.coin.cx > lm.W / 2);
+  assert.ok(trending.copyX > lm.W / 2 && listing.copyX < lm.W / 2);
+  // the pump's coin rides higher (it is launching) and its gain is the headline
+  assert.ok(pump.coin.cy < listing.coin.cy);
+  assert.ok(pump.lay.heroSize > listing.lay.tickerSize, "the pump's gain outranks its ticker");
+  assert.ok(pump.lay.tickerSize < listing.lay.tickerSize);
+});
+
+test("frame 0 of each post looks nothing like the others", { skip: !haveCanvas }, async () => {
+  const f = {};
+  for (const [v, coin, badge] of [["listing", TREND, "Gold Tier"], ["trending", TREND, "Trending 24H"], ["pump", { ...PUMP, symbol: TREND.symbol }, "Solana"]]) {
+    [f[v]] = await lm.frames(coin, null, { count: 1, badge, variant: v });
+  }
+  const diff = (a, b) => {
+    let sum = 0, n = 0;
+    for (let i = 0; i < a.length; i += 7) { sum += Math.abs(a[i] - b[i]); n++; }
+    return sum / n;
+  };
+  // measured ~15–25 between scenes; a recolour of one layout is far closer,
+  // and two scenes collapsing into one design reads near 0
+  for (const [a, b] of [["listing", "trending"], ["listing", "pump"], ["trending", "pump"]]) {
+    assert.ok(diff(f[a], f[b]) > 8, `${a} and ${b} differ by only ${diff(f[a], f[b]).toFixed(2)}`);
+  }
+});
+
+test("only the listing wears the outline pill with its pulsing dot; the others wear a solid pill with a drawn icon", { skip: !haveCanvas }, () => {
+  assert.ok(lm._pillSprite(cv, "listing").dot, "the listing keeps its dot");
+  for (const v of ["trending", "pump"]) {
+    const pill = lm._pillSprite(cv, v);
+    assert.strictEqual(pill.solid, true, `${v}: solid pill`);
+    assert.strictEqual(pill.dot, null);
+  }
+});
+
+test("the pump's coin LAUNCHES: rises in from below, holds, and blasts off the top — and the seam closes", () => {
+  const { HOLD_END, OUT_END, SECONDS } = lm._timeline;
+  const at = (t) => lm._pumpCoinState(t);
+  assert.strictEqual(at(0).lift, 0, "frame 0 is the coin in place");
+  const late = HOLD_END + 0.75 * (OUT_END - HOLD_END);
+  assert.ok(at(late).lift < -200, "the outro sends it UP and away, never shrinking it");
+  assert.strictEqual(at(late).s, 1);
+  assert.ok(at(OUT_END + 0.15).lift > 100, "the intro brings it up from below the frame");
+  assert.ok(Math.abs(at(SECONDS).bob - at(0).bob) < 0.05, "t = SECONDS is where t = 0 is");
+});
+
+test("two renders in one process never borrow each other's scene — concurrent equals sequential", { skip: !haveCanvas }, async () => {
+  const crypto = require("node:crypto");
+  const times = [0, 1.2, 3.5, 4.6, 5.3];
+  const run = async (coin, badge, variant, yieldEach) => {
+    const out = [];
+    await lm._drawFrames(coin, null, {
+      times,
+      badge,
+      variant,
+      onFrame: async (b) => {
+        out.push(crypto.createHash("sha1").update(b).digest("hex"));
+        // hand the event loop to the OTHER render between every frame
+        if (yieldEach) await new Promise((r) => setImmediate(r));
+      },
+    });
+    return out;
+  };
+  const seqA = await run(TREND, "Gold Tier", "listing", false);
+  const seqB = await run(PUMP, "Solana", "pump", false);
+  const [conA, conB] = await Promise.all([run(TREND, "Gold Tier", "listing", true), run(PUMP, "Solana", "pump", true)]);
+  assert.deepStrictEqual(conA, seqA, "the listing drew with the pump's scene");
+  assert.deepStrictEqual(conB, seqB, "the pump drew with the listing's scene");
 });
 
 // ── the pump path ────────────────────────────────────────────────────────────

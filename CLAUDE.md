@@ -4284,82 +4284,116 @@ turns it back on.
 without either it falls back silently to the admin clip. `bot/` only, so the
 deploy is the ecosystem restart.
 
-### "buatkan vidio untuk pump alert serta trending jugaa" — one clip, three posts
+### "buatkan vidio untuk pump alert serta trending jugaa" — then "harus beda beda design"
 
-Trending posts used the admin's clip with a still pasted over it, and a pump
-alert used the admin's pump clip with an overlay. On a box nobody gave a pump
-clip to, a pump alert was a bare text reply. Both now open with the listing's
-motion piece. **It is the same renderer with different words, not two new
-designs.** Three designs would be three loops to keep exact, three label floors
-to hold and three things to keep on brand, and readers learn one shape.
+The first cut of this gave trending and pump the listing's design with new
+words: the same coin, the same frame and the same blue. The operator's answer
+was *"tampilanya harus beda beda design pump alert trending dan listing lol"*.
+So each post now has its own **design**: its own palette, coin position, copy
+layout and moving layers. It is still one renderer, with one loop, one label
+floor and one encoder.
 
-| post | pill | badge (top right) | the line under the ticker | stat panel |
+| post | design | coin | copy | moving layers |
 | --- | --- | --- | --- | --- |
-| listing | NEW LISTING (mint) | the package (`XPRESS LISTING`, `GOLD TIER` …) | the name | network · price · cap · liquidity |
-| trending | NOW TRENDING (cyan) | the run (`TRENDING 24H`) | the name | the listing's panel |
-| pump | PUMP ALERT (mint) | the network (`ROBINHOOD`) | **▲ +250% SINCE LISTING**, counting up | LISTED AT · NOW · MARKET CAP |
+| listing | blue, unchanged | right, on a pedestal | left | ribbons, orbits, gem bubbles, motes |
+| trending | **heat**: amber into magenta on plum | **LEFT** (mirrored), on fire | right | a flame plume behind the coin, rising embers, heat rings, warm rays |
+| pump | **launch**: neon green | right, higher, smaller | left; the **gain is the headline** (140px) | an exhaust plume, falling speed streaks, rising chevrons; the coin rises in from below and **blasts off the top** at the outro |
 
-- **`VARIANTS` in `listingMotion.js` is the one table.** `variant` rides
-  `render` / `frames` / `_drawFrames`, and an unknown variant draws the listing.
-- **The pump's gain takes the NAME's line**, because "+250%" is the news and the
-  caption already names the token. The network moves to the badge, so a
-  pump.fun price twice over (from and now) is not squeezed to the label floor.
-- ⚠️ **The gain counts UP on the way in only.** The exit is a fade of the exact
-  figure; a number running backwards reads as the pump reversing. The first
-  render counted down through the outro, and the contact sheet showed it.
-- ⚠️ **A change that is not a whole percentage draws the name instead**, never
-  a made-up figure. The regex is `+N%` up to seven digits.
-- **The ▲ is a drawn path, never a glyph.** No brand face has it, and the
-  fallback chain would draw whatever it finds.
+- **`SCENES` in `listingMotion.js` is the one table.** Each scene has a palette
+  (`PAL_*`), a coin position, a copy column, a panel width and its y slots. The
+  layer stack is branched in `drawFrames`.
+- ⚠️ **THE LISTING IS BYTE-IDENTICAL.** The operator chose that layout over a
+  redesign, so its values went into `PAL_LISTING` / `SCENES.listing` verbatim,
+  including every colour literal it used to hardcode. Its frames were hashed
+  before and after the refactor, at eight moments for two coins, and every hash
+  matched.
+- ⚠️ **THE CURRENT SCENE IS MODULE STATE, and one rule makes that safe.**
+  `useScene()` runs at the top of every synchronous drawing block: the build
+  block and each frame. A render awaits only between frames, so two renders in
+  one process interleave whole frames. A test renders a listing and a pump
+  concurrently, yields between every frame, and compares the hashes with
+  sequential renders. The test seams (`_statsLayout`, `_pillSprite`,
+  `_heroLayout`, `_tickerSprites`) assert their scene first, because they are
+  called outside `drawFrames`.
+- **The pump's coin has its own motion (`pumpCoinState`).** It holds with a
+  rocket's shake, flies UP and away at the outro (it never shrinks or spins
+  away, which is the listing's exit), and rises in from below the frame.
+- ⚠️ **No drawn price chart on the pump**, though a rising chart is the obvious
+  motif. A drawn chart is a claim about a price history nobody measured, and
+  this repo removed `syntheticTrend` from the token page for exactly that
+  reason. The upward motifs are chevrons and streaks, which nothing could read
+  as a price.
+- **Only the listing wears the outline pill with the pulsing dot.** Trending and
+  pump wear a solid gradient pill with a DRAWN icon (a flame, an arrow). No
+  brand face has 🔥 or ▲, so a glyph would fall to whatever the fallback chain
+  finds. The ▲ beside the gain is drawn too.
+- ⚠️ **The flames had to clear the coin.** The first render put the tongues
+  behind a face-on coin, and they read as an orange tray. They now start on the
+  coin's lower third, spread 2.3× its width, rise well past its top, and FADE
+  IN at the root. A tongue that starts at full strength draws a hard flat base
+  beside the coin.
+- **Trending's copy column is narrower** (570px against 600px), so its ticker
+  floor is 44px, not 54px. At 54px a 17-letter ticker was cut to "…" there.
+- **The headline shrinks to fit** the copy column at the widest gain the regex
+  admits (`+9999999%`), down to `heroMin`. It never runs into the coin.
+- **The gain counts UP on the way in only.** The exit fades the exact figure,
+  because a number running backwards reads as the pump reversing. A change that
+  is not a whole percentage draws the name instead, never a made-up figure.
+- **`FIELD2` has its own seed**, so the listing's `FIELD`, and with it the
+  listing's pixels, never moves.
 - **One switch per post:** `LISTING_MOTION`, `TRENDING_MOTION`, `PUMP_MOTION`.
-  Each restores that post's old ladder exactly. Blank is ON, and a kind with no
-  clip (banner, rank-up) is never on.
+  Blank is ON, and a kind with no clip (banner, rank-up) is never on.
 
 **Where they sit.**
 
 - **Trending: `postMedia("trending")`** (`MOTION_KINDS` in `fulfillment.js`).
   That one wiring covers the paid run, auto-trend's own slot, the force-post and
   the logo repair.
-- **Pump: `pumpChecker.pumpMedia`.** The order is the motion clip, then the
-  admin pump clip with its overlay, then a text reply.
-  - It respects the admin banner switch (`postingEnabled`), like every other
-    drawn artwork.
-  - It is bounded by `CLIP_BUDGET_MS` and cancelled at the budget.
-  - The same clip goes to every target channel AND to the X quote-tweet, so it
-    is rendered once per alert.
-- **`bannerSurfaces.js` probes `pump-motion` on its own**, because the gain line
-  is text the listing never draws. Trending draws nothing new: its pill is the
-  same sprite.
-
-⚠️ **The old test pinned the opposite rule.** *"A TRENDING post never asks for
-it — the clip is a listing announcement"* is now *"a trending post gets it, as
-the trending variant"*. A banner ad and a rank-up keep the old assertion.
+- **Pump: `pumpChecker.pumpMedia`.** The order is the clip, then the admin pump
+  clip with its overlay, then a text reply.
+  - It respects the admin banner switch and `CLIP_BUDGET_MS`.
+  - It is cancelled at the budget.
+  - It is rendered once per alert, for every channel AND the X quote-tweet.
+- **`bannerSurfaces.js` probes `pump-motion` on its own**, because the headline
+  is text the listing never draws.
+- ⚠️ **The old test pinned the opposite rule.** *"A TRENDING post never asks for
+  it"* is now *"it gets the trending design"*. A banner ad and a rank-up keep
+  the old assertion.
 
 ```bash
 cd bot && node scripts/run-tests.js test/postMotion.test.js test/listingMotion.test.js   # no network
-pm2 logs dexvra-bot --lines 300 --nostream | grep -F '[listingMotion]'          # "trending $X rendered …" / "pump $X rendered …"
-pm2 logs dexvra-bot --lines 300 --nostream | grep -F '[pump]'                   # "media: premium motion ✔"
+pm2 logs dexvra-bot --lines 300 --nostream | grep -F '[listingMotion]'   # "trending $X rendered …" / "pump $X rendered …"
+pm2 logs dexvra-bot --lines 300 --nostream | grep -F '[pump]'            # "media: premium motion ✔"
 ```
 
-Twenty-one guarantees are MUTATION-TESTED rather than argued. Each mutant fails
-between one and three tests:
+Thirty-six guarantees are MUTATION-TESTED rather than argued. Each mutant
+fails between one and eight tests:
 
 - **wiring:**
   - trending dropped from `MOTION_KINDS`;
   - the variant not passed to `render`;
   - `enabled()` asked without the kind;
-  - the pump's motion step removed;
+  - the pump's clip step removed;
   - the pump ignoring the banner switch or `PUMP_MOTION`;
   - its timeout not cancelling;
   - its badge or its variant dropped;
-- **renderer:**
+- **scenes:**
+  - no `useScene` per frame, or in the build block (the concurrent renders
+    borrow each other's scene);
+  - trending not mirrored;
+  - trending sharing the listing's palette;
+  - trending wearing the outline pill;
+  - the pump using the listing's layout or its `coinState`;
+  - the pump's coin falling DOWN at the outro, or shrinking away;
+  - the headline not shrinking to fit;
+- **copy:**
   - the gain counting down on the exit, or never counting up;
-  - the gain regex taking any number;
+  - the regex taking any number;
+  - the name drawn beside the headline;
   - the pill ignoring the variant;
   - the pump stats branch removed;
-  - the name drawn beside the gain;
-  - the gain drawn on every variant;
   - `statsLayout` / `drawFrames` / `render` ignoring the variant;
+  - the gain drawn on every scene;
 - **switches:**
   - an unknown kind switched on;
   - the trending switch reading `LISTING_MOTION`.
@@ -4369,16 +4403,19 @@ between one and three tests:
 - One was the mutation spec's own fault. `BANNER_FILL_KINDS` spells the same
   Set one screen up, so the replace hit the wrong line.
 - Two were test gaps:
-  - no trending coin carried a `change`, so the gain could have leaked onto
-    trending;
-  - every wiring test stubs `render`, so nothing checked that the MP4 really is
-    the pump card. It is RENDERED now, with a vacuity check that the pump and
-    listing cards differ.
+  - no trending coin carried a `change`;
+  - every wiring test stubs `render`. It is RENDERED now, with a check that the
+    pump and listing cards differ.
 
-**Config a fix depends on:** nothing. It ships ON and **changes what pump alerts
-look like on deploy**: a box with no admin pump clip posts a clip where it used
-to post text. `PUMP_MOTION=0` / `TRENDING_MOTION=0` in `bot/.env` take one back.
-`bot/` only, so the deploy is the ecosystem restart.
+One more, "the headline on every scene", is a genuine equivalent.
+`heroLayout` also refuses a scene with no hero slot, and the code says so.
+**The layers themselves (flame shapes, plume, streaks) are judged by LOOKING**,
+which is the `drawGem` rule.
+
+**Config a fix depends on:** nothing. It ships ON and **changes what trending
+and pump posts look like on deploy**. A box with no admin pump clip posts a clip
+where it used to post text. `TRENDING_MOTION=0` / `PUMP_MOTION=0` in `bot/.env`
+take one back. `bot/` only, so the deploy is the ecosystem restart.
 
 ## A Top 3 that was not the top of the Top 5
 
