@@ -52,7 +52,7 @@ const { chainOf } = require("../config/chains");
 // and a second spelling of "$1.10M" across surfaces is how two screens come to
 // describe one number differently.
 const { fmtCap } = require("../helpers/format");
-const { tierLabel } = require("../config/packages");
+const { publicTier, listingBadge } = require("../config/packages");
 const listingWatch = require("./listingWatch");
 const movers = require("./marketMovers");
 // The one owner of "is this the money rather than the project" — the same set
@@ -2103,20 +2103,19 @@ function bannerCoinFor(c, info, input) {
   };
 }
 
-/** The artwork's tier badge, worded exactly as fulfillment.js words it for a
- *  purchase — a Gold auto listing and a Gold purchase must not be two different
- *  looking things. "FREE" gets no badge: there is no such package to wear. */
+/** The artwork's tier badge — packages.js `listingBadge`, the same owner the
+ *  paid path reads, so a Gold auto listing and a Gold purchase cannot look like
+ *  two different products. A FREE listing wears the Xpress badge, as it reads
+ *  on the site. */
 function badgeFor(tier) {
-  if (tier === "XPRESS") return "Xpress Listing";
-  if (!tier || tier === "FREE") return null;
-  return `${tierLabel(tier)} Tier`;
+  return listingBadge(tier);
 }
 
 /**
  * Channel post(s) for an auto listing, following the package it was LISTED
  * under:
- *   free     → the listing card with NO tier badge (it wasn't bought, so it
- *              must not wear a package's colours)
+ *   free     → the Xpress card and the Xpress badge — a FREE listing reads
+ *              as Xpress everywhere it is shown (packages.js `publicTier`)
  *   xpress   → the Xpress card, same as a paid Xpress listing
  *   trending → the listing card carrying its drawn tier, the Trending card in
  *              @dexvratrending, AND the listing card again in @dexvraio
@@ -2200,10 +2199,10 @@ async function announce(tg, c, info, input, cfg = get()) {
     price: info.priceUsd,
     mcap: info.mcap,
     liq: info.liq,
-    // Whatever tier the listing really carries — XPRESS, or the Diamond/Gold/
-    // Silver the trending package drew. "FREE" is not a badge anyone can buy,
-    // so it stays off the card.
-    tier: input.tier && input.tier !== "FREE" ? input.tier : undefined,
+    // The tier the listing carries as the PUBLIC sees it: Diamond/Gold/Silver
+    // as drawn, and FREE as Xpress (packages.js `publicTier`) — the card, the
+    // banner pill and the site all name one package.
+    tier: publicTier(input.tier),
     links: { website: input.website, twitter: input.twitter, telegram: input.telegram },
     siteUrl: `${SITE_URL}/token/${c.chain}/${c.address}`,
   };

@@ -160,6 +160,23 @@ const bannerByKey = (key) => BANNERS.find((b) => b.key === key) || null;
 const TIER_TREND_HOURS = { DIAMOND: 48, GOLD: 24, PLATINUM: 18, SILVER: 12, BRONZE: 6, XPRESS: 0 };
 const tierTrendingHours = (key) => TIER_TREND_HOURS[key] || 0;
 
+// ── The public face of a tier ────────────────────────────────────────────────
+// "FREE" is the tier the auto-lister books itself, and nobody can buy it. On
+// the site it reads as Xpress (`src/lib/packages.ts` `publicTier`, the
+// operator's call), so every surface that SHOWS a listing's package says the
+// same: a free listing wears the Xpress badge, never none. "Free listing juga
+// harus ada badge nya … free listing xpress badge harus xpress". Display only:
+// the stored tier stays FREE, and the ops report and the admin console still
+// say FREE.
+const publicTier = (key) => (!key || String(key).toUpperCase() === "FREE" ? "XPRESS" : String(key).toUpperCase());
+
+/** The banner pill for a listing — ONE owner, so a paid Gold listing, a Gold
+ *  auto listing and an admin force-post can never word it three ways. */
+const listingBadge = (key) => {
+  const t = publicTier(key);
+  return t === "XPRESS" ? "Xpress Listing" : `${tierLabel(t)} Tier`;
+};
+
 // ── Formatting ───────────────────────────────────────────────────────────────
 const fmtAmount = (n) => (Number.isInteger(n) ? String(n) : String(Number(n.toFixed(6))));
 const fmtNative = (n, sym) => `${fmtAmount(n)} ${sym}`;
@@ -171,5 +188,6 @@ module.exports = {
   TRENDING, trendingForChain, trendingPrices, durationToHours, trendingAnnounces,
   BANNERS, bannerByKey,
   TIER_TREND_HOURS, tierTrendingHours,
+  publicTier, listingBadge,
   fmtAmount, fmtNative, fmtUsd,
 };

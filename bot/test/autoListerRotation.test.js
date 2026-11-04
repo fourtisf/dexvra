@@ -224,7 +224,9 @@ test("the card badge matches what a purchase of that tier gets", () => {
   assert.strictEqual(al.badgeFor("GOLD"), "Gold Tier");
   assert.strictEqual(al.badgeFor("DIAMOND"), "Diamond Tier");
   assert.strictEqual(al.badgeFor("XPRESS"), "Xpress Listing");
-  // "FREE" is not a package anyone can buy, so there is no badge to wear.
-  assert.strictEqual(al.badgeFor("FREE"), null);
-  assert.strictEqual(al.badgeFor(undefined), null);
+  // "FREE" reads as Xpress everywhere it is shown — the site's `publicTier`
+  // and the operator's call: a free listing wears the Xpress badge, never none.
+  assert.strictEqual(al.badgeFor("FREE"), "Xpress Listing");
+  assert.strictEqual(al.badgeFor(undefined), "Xpress Listing");
+  for (const t of ["BRONZE", "SILVER", "PLATINUM"]) assert.match(al.badgeFor(t), / Tier$/);
 });

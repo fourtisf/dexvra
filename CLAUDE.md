@@ -4150,9 +4150,16 @@ blue, with the bundled listing artwork's furniture.
   widest digit (8), so a decoding frame never overflows the panel.
 - **The badge, the figures and the artwork are the ORDER's.** The pill reads
   the tier the buyer paid for (`XPRESS LISTING`, `BRONZE TIER` … `DIAMOND
-  TIER`; a free listing gets no pill), the ticker and name come off the order
+  TIER`), the ticker and name come off the order
   (a long ticker shrinks to fit), and the stat panel off the live market read.
   A token with no logo gets a struck monogram coin.
+- **A FREE auto listing wears `XPRESS LISTING`, never no pill** ("free
+  listing juga harus ada badge nya … intinya harus ada"). It reads as Xpress on
+  the site (`publicTier`), so the banner pill, the channel caption (the Xpress
+  card) and the site name one package. `packages.js` `listingBadge` /
+  `publicTier` are the ONE owner, read by the paid path, the auto-lister and
+  the admin force-post (which drew no pill at all before). Display only: the
+  stored tier stays FREE, and the admin console and the ops report say FREE.
 - ⚠️ **`$牛来` hung into its own name line.** Han and Hangul fill the em box
   lower than Latin caps, and the ticker sits on a middle baseline 21px above
   the name. A ticker whose glyphs drop below the `"$"` is lifted by the excess

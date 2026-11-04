@@ -38,7 +38,7 @@ function stub(t) {
   };
   let id = 500;
   post.sendMedia = async (channel, media, payload, opts = {}) => {
-    sent.push({ channel, pin: Boolean(opts.pin), id: ++id });
+    sent.push({ channel, pin: Boolean(opts.pin), id: ++id, text: String((payload && payload.text) || payload || "") });
     return { message_id: id };
   };
   post.mirrorToGroup = async () => null;
@@ -109,18 +109,26 @@ test("the announced card wears the tier the listing was actually given", async (
   );
 });
 
-test("a plain free listing wears no badge — there is no such package to sell", async (t) => {
+test("a plain free listing wears the Xpress badge — the package it reads as on the site", async (t) => {
   const sent = stub(t);
   await al.set({ pkg: "free", postChannel: true });
   const cfg = al.get();
   const input = al.listingInput("solana", "So1AnnNoBadge1", info, cfg, now);
   await al.announce({}, { chain: "solana", address: "So1AnnNoBadge1" }, info, input, cfg);
 
+  // the STORED tier stays FREE (the admin console and the ops report say so);
+  // only what the public sees reads as Xpress
   assert.strictEqual(input.tier, "FREE");
   assert.ok(
-    sent.badges.every((b) => b.badge === null),
-    `a FREE listing put a badge on its card: ${JSON.stringify(sent.badges)}`,
+    sent.badges.length && sent.badges.every((b) => b.badge === "Xpress Listing"),
+    `a FREE listing's card should wear "Xpress Listing": ${JSON.stringify(sent.badges)}`,
   );
+  // …and the caption under it is the Xpress card, not an untiered one: a pill
+  // reading XPRESS LISTING over a caption that names no package is the two
+  // halves of one post disagreeing
+  const listingPost = sent.find((s) => s.channel === CHANNELS.listing);
+  assert.ok(listingPost, "the free listing was not posted");
+  assert.match(listingPost.text, /Xpress Listing/, `caption: ${listingPost.text.slice(0, 120)}`);
 });
 
 test("the plain Free package never reaches @dexvraio", async (t) => {

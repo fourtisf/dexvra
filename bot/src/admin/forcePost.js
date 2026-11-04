@@ -16,6 +16,7 @@
 const { CHANNELS, SITE_URL } = require("../config/constants");
 const api = require("../api/dexvra");
 const { chainOf } = require("../config/chains");
+const { listingBadge } = require("../config/packages");
 const fmt = require("../channels/format");
 const post = require("../channels/post");
 const tokenEmoji = require("../tokenEmoji");
@@ -182,7 +183,11 @@ async function ensureEmoji(coin, row) {
 }
 
 async function mediaFor(kind, coin, row, opts = {}) {
-  return postMedia(kind, bannerCoinOf(coin), null, null, row.logoUrl || "", null, opts).catch((e) => {
+  // A forced listing post wears the same pill a real one does — the badge is
+  // packages.js `listingBadge`, the owner both real paths read. Without it the
+  // preview showed the operator a card no real listing produces.
+  const badge = kind === "listing" ? listingBadge(coin.tier) : null;
+  return postMedia(kind, bannerCoinOf(coin), null, null, row.logoUrl || "", badge, opts).catch((e) => {
     log.warn(`[forcepost] ${kind} media failed (${e.message}) — posting text-only`);
     return null;
   });

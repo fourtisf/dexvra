@@ -18,7 +18,7 @@ const { SITE_URL, DEXVRA_API_BASE, CHANNELS, X_POST_TIMEOUT_MS,
   POST_MARKET_TRIES, POST_MARKET_PAUSE_MS, POST_SNAPSHOT_MAX_AGE_MS,
   POST_LOGO_TRIES, POST_LOGO_PAUSE_MS, LOGO_REPAIR_ENABLED } = require("./config/constants");
 const figures = require("./marketFigures");
-const { tierAnnounces, tierLabel } = require("./config/packages");
+const { tierAnnounces, tierLabel, listingBadge } = require("./config/packages");
 const { fmtPrice, formatNumber } = require("./helpers/format");
 const { isValidTicker, sanitizeTicker } = require("./helpers/ticker");
 const { payloadArgs } = require("./helpers/message");
@@ -1030,7 +1030,7 @@ async function fulfillListing(ctx, order) {
   const listArt = { wanted: !!(p.logoFileId || input.logoUrl), got: !!logoBuffer, absentWhy: listAbsentWhy };
   const coin = coinFrom(input, live);
   const bannerCoin = bannerCoinOf(input, live);
-  const tierBadge = input.tier === "XPRESS" ? "Xpress Listing" : input.tier ? `${tierLabel(input.tier)} Tier` : null;
+  const tierBadge = listingBadge(input.tier);
   step("market");
   const listMedia = await postMedia("listing", bannerCoin, logoBuffer, p.logoFileId, artUrl, tierBadge);
 
