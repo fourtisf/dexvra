@@ -4148,6 +4148,16 @@ blue, with the bundled listing artwork's furniture.
   zero or TBA. `bannerCoinOf` carries `liq` now (and the auto-lister's
   `bannerCoinFor`); a missing depth is null. Column widths are sized on the
   widest digit (8), so a decoding frame never overflows the panel.
+- **The badge, the figures and the artwork are the ORDER's.** The pill reads
+  the tier the buyer paid for (`XPRESS LISTING`, `BRONZE TIER` … `DIAMOND
+  TIER`; a free listing gets no pill), the ticker and name come off the order
+  (a long ticker shrinks to fit), and the stat panel off the live market read.
+  A token with no logo gets a struck monogram coin.
+- ⚠️ **`$牛来` hung into its own name line.** Han and Hangul fill the em box
+  lower than Latin caps, and the ticker sits on a middle baseline 21px above
+  the name. A ticker whose glyphs drop below the `"$"` is lifted by the excess
+  (`lift`, bounded at 0.14em); a Latin ticker with no descender is not moved.
+  Measured on the mask's PIXELS in the test, not on font metrics.
 - **It is a font-check surface** (`bannerSurfaces.js` `listing-motion`), so
   `fonts:check` measures it like every other renderer. Measured: all five
   coverage scripts reach the chain.
@@ -4176,7 +4186,7 @@ listing, the logo repair's rebuild. Trending posts never ask for it.
   autoplays it as an animation.
 
 ```bash
-cd bot && node scripts/run-tests.js test/listingMotion.test.js   # 19 tests, no network
+cd bot && node scripts/run-tests.js test/listingMotion.test.js   # 20 tests, no network
 cd bot && node scripts/listing-motion-preview.js                 # the clip, stills at key moments, a contact sheet
 pm2 logs dexvra-bot --lines 300 --nostream | grep -F '[listingMotion]'
 ```

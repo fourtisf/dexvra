@@ -330,3 +330,36 @@ test("bannerCoinOf carries the liquidity the clip prints, and leaves a missing o
   assert.strictEqual(_bannerCoinOf(row, { priceUsd: 1, mcap: 1e6, liq: 0 }).liq, null);
   assert.strictEqual(_bannerCoinOf(row, null).liq, null);
 });
+
+/** The lowest and highest lit rows of a ticker, in CANVAS coordinates. */
+function tickerRows(symbol) {
+  const tk = lm._tickerSprites(cv, symbol);
+  const { data } = tk.mask.getContext("2d").getImageData(0, 0, tk.w, tk.h);
+  let top = -1;
+  let bottom = -1;
+  for (let y = 0; y < tk.h; y++) {
+    for (let x = 0; x < tk.w; x++) {
+      if (data[(y * tk.w + x) * 4 + 3] > 64) {
+        if (top < 0) top = y;
+        bottom = y;
+        break;
+      }
+    }
+  }
+  return { tk, top: tk.y + top, bottom: tk.y + bottom };
+}
+
+test("a ticker whose glyphs sit low in the em box is lifted clear of the name line; a Latin one is not moved", { skip: !haveCanvas }, () => {
+  // `$牛来` reached the channel with its Han glyphs touching the name beneath
+  // it: Han and Hangul fill the em box lower than Latin caps, and the ticker is
+  // placed on a middle baseline. Measured on the PIXELS, not the metrics.
+  const latin = tickerRows("$AMD");
+  assert.strictEqual(latin.tk.lift, 0, "a Latin ticker with no descender must sit exactly where it always did");
+  for (const sym of ["$牛来", "$한글토큰", "$QUEJ"]) {
+    const r = tickerRows(sym);
+    assert.ok(r.tk.lift > 0, `${sym} was not lifted`);
+    assert.ok(r.bottom <= latin.bottom + 1, `${sym} still hangs ${r.bottom - latin.bottom}px below the "$" into the name line`);
+    // the NEW LISTING pill ends at y=214; the lift must never reach it
+    assert.ok(r.top >= 222, `${sym} was lifted into the NEW LISTING pill (top ${r.top})`);
+  }
+});

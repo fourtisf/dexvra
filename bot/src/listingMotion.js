@@ -482,6 +482,17 @@ function tickerSprites(cv, symbol) {
   const font = m.font;
   const size = pxOf(font, 116);
   const tw = m.measureText(text).width;
+  // A script whose glyphs sit LOW in the em box (Han, Hangul; a Q or a J) hangs
+  // past the "$" and into the name line, which is 21px below at this size. The
+  // "$" is the floor every ticker shares, so a glyph that drops below it lifts
+  // the whole ticker by the excess. A ticker whose lowest glyph is the "$"
+  // (every Latin ticker with no descender) is placed exactly where it always
+  // was. The 0.14em bound is belt-and-braces and no test can reach it: the
+  // largest lift any bundled face produces is Han/Hangul at ~0.1em, and the
+  // bound only matters for a face nobody has measured yet.
+  m.textBaseline = "middle";
+  const floor = m.measureText("$").actualBoundingBoxDescent;
+  const lift = Math.min(Math.max(0, m.measureText(text).actualBoundingBoxDescent - floor), size * 0.14);
   const pad = 44;
   const cw = Math.ceil(tw + pad * 2);
   const ch = Math.ceil(size * 1.5 + pad);
@@ -511,7 +522,7 @@ function tickerSprites(cv, symbol) {
   const [mask, mx] = mk();
   mx.fillStyle = "#FFFFFF";
   mx.fillText(text, pad, mid);
-  return { glow, crisp, mask, x: COPY_X - 4 - pad, y: 296 - mid, w: cw, h: ch, textX: pad, textW: tw, size };
+  return { glow, crisp, mask, x: COPY_X - 4 - pad, y: 296 - mid - lift, w: cw, h: ch, textX: pad, textW: tw, size, lift };
 }
 
 function nameSprite(cv, name) {
@@ -1615,4 +1626,5 @@ module.exports = {
   _sweepTmp: sweepTmp,
   _drawFrames: drawFrames,
   _keys: Object.keys(SCHED),
+  _tickerSprites: tickerSprites,
 };
