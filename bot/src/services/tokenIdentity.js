@@ -17,10 +17,12 @@
  * Rules, each a way this could mislead:
  *
  *  • "WE COULD NOT ASK" IS NEVER A VERDICT. An RPC that did not answer is
- *    `ok:false`, and every caller FAILS OPEN on it: on this box the Solana RPC
- *    answers 429 on a busy minute, and refusing every free listing whenever it
- *    does would switch the feed off over a check. Chosen deliberately: the
- *    indexer readers are already fixed and this is the second line.
+ *    `ok:false` — never a mismatch, never cooled. The alert hold and the
+ *    listing form (where a person reads the card) go on as before. The FREE
+ *    door — the one nobody confirms — HOLDS the token and asks again next
+ *    scan (the `unchecked` rule, the same as an unreachable safety source), so
+ *    nothing is listed blind; a contract unreadable for scan after scan
+ *    becomes the scan's blocker and pages, rather than ending the feed quietly.
  *  • A CONTRACT WITH NO SYMBOL MAKES NO CLAIM. An empty Metaplex record, a
  *    bytes32 ticker, a symbol() that reverts — nothing to compare, never a
  *    mismatch.

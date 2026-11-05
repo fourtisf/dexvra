@@ -126,8 +126,12 @@ test("createFromInfo — every free door — refuses a token whose market data n
     // the contract agrees → listed
     contractSays("LITTY", "Little Titty");
     assert.ok(await al.createFromInfo("bsc", "0x" + "42".repeat(20), healthy()));
-    // the contract could not be read → listed, as before this check existed
+    // the contract could not be read → HELD, never listed blind (nobody confirms this door)
     contractUnreadable("could not read the contract (rpc timeout after 4000ms)");
+    assert.equal(await al.createFromInfo("bsc", "0x" + "43".repeat(20), healthy()), null);
+    assert.equal(created.length, 1);
+    // …and listed the moment the contract answers
+    contractSays("LITTY", "Little Titty");
     assert.ok(await al.createFromInfo("bsc", "0x" + "43".repeat(20), healthy()));
     assert.equal(created.length, 2);
   });
@@ -409,4 +413,36 @@ test("the FORM passes the market record's name: one token's two spellings keep t
   assert.equal(f.identityConflict, undefined);
   assert.equal(f.logoUrl, "https://cdn.example/lemon.png");
   assert.doesNotMatch(ctx.replies.map((r) => r.text).join("\n"), /Check this is your token/);
+});
+
+// "BAGAIMANA AGAR BOT TIDAK SALAH SCAN" — every one of the eight wrong rows
+// was written with nothing between it and the site; the free door listed a
+// token whose contract it could not read. It holds it now and asks again.
+test("a SCAN holds a token whose contract cannot be read — counted, never cooled, listed when it answers", async () => {
+  await withSite(async (created) => {
+    await al.resetState(now - 10 * 3_600_000);
+    await al.set({ enabled: true, minMcap: 1 * M, maxMcap: 1.2 * M, paceListings: false, postChannel: false, minAgeHours: 0 });
+    const addr = "0x" + "45".repeat(20);
+    const deps = {
+      fetchDiscoveryX: async () => ({ items: [{ chain: "bsc", address: addr }], ok: true, sources: [] }),
+      fetchTokenInfo: async () => healthy(),
+      safetyX: async () => ({ ok: true, refusal: null }),
+      identityX: async (c, a, info) => ident.checkX(c, a, info),
+      logoX: async () => ({ ok: true, url: "/api/media/aa.png" }),
+    };
+    contractUnreadable("could not read the contract (rpc timeout after 4000ms)");
+    assert.equal(await al.runOnce({ now, deps }), 0);
+    assert.equal(created.length, 0, "never listed blind");
+    const s = al.lastScan();
+    assert.equal(s.unchecked, 1);
+    assert.ok(Object.keys(s.uncheckedWhy).some((k) => /own contract could not be read/.test(k)), JSON.stringify(s.uncheckedWhy));
+    assert.match(s.blocker || "", /could not be safety-checked/, "a scan that held everything says so");
+    const dry = await al.dryRun({ now, deps });
+    assert.equal(dry.listed, 0, "🔎 Test scan may not promise it either");
+    assert.equal(dry.unchecked, 1);
+    // not cooled: the next scan asks again, and lists it once the contract answers
+    contractSays("LITTY", "Little Titty");
+    await al.runOnce({ now: now + 60_000, deps });
+    assert.equal(created.length, 1, "listed as soon as its own contract agreed");
+  });
 });

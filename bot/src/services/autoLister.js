@@ -1304,10 +1304,13 @@ async function createFromInfo(chain, address, info, { cfg = get(), now = Date.no
   // filler and the chain seeder carry it too. $BTC went out as $LTC because the
   // market data was read off a stranger's pool; the token's own contract is the
   // one source that cannot be about somebody else (services/tokenIdentity.js).
-  // A read that could not happen lists anyway — see that file for why.
+  // ⚠️ A contract that could not be READ is held too, never listed blind: this
+  // door is the one nobody confirms, and the eight rows the first
+  // `identity:check --all` found were each written with nothing to stop them.
+  // Not a refusal and never cooled — the next scan asks again.
   const idv = identityChecked || (await tokenIdentity.checkX(chain, address, info).catch((e) => ({ ok: false, refusal: null, why: e.message })));
-  if (idv.refusal) {
-    log.info(`[autolist] refused ${info.symbol} on ${chain}/${address} — ${idv.refusal}`);
+  if (!idv.ok || idv.refusal) {
+    log.info(`[autolist] refused ${info.symbol} on ${chain}/${address} — ${idv.refusal || `its own contract could not be read: ${idv.why}`}`);
     return null;
   }
   // ⚠️ AND NEVER LIST WITHOUT ITS ARTWORK — at the same door, so the board
@@ -1684,9 +1687,17 @@ async function scanOnce({ tg, now = Date.now(), deps = {}, rng = Math.random, fo
     }
     // ⚠️ NEVER UNDER ANOTHER TOKEN'S NAME. Asked before the artwork, so nothing
     // is uploaded for a token whose market data turned out to be a stranger's.
-    // "Could not ask" lists anyway (tokenIdentity.js says why); a mismatch is a
-    // refusal, cooled like any other — the pool behind it will not move today.
+    // A mismatch is a refusal, cooled like any other — the pool behind it will
+    // not move today. "Could not ask" is the `unchecked` rule: held, no
+    // cool-off, asked again next scan — never listed blind (see the door).
     const idv = await identityX(c.chain, c.address, info).catch((e) => ({ ok: false, refusal: null, why: e.message }));
+    if (!idv.ok) {
+      report.unchecked++;
+      const b = reasonBucket(`its own contract could not be read: ${idv.why || "no answer"}`);
+      report.uncheckedWhy[b] = (report.uncheckedWhy[b] || 0) + 1;
+      log.info(`[autolist] ${sanitizeTicker(info.symbol)} (${c.chain}) not listed — its own contract could not be read: ${idv.why}`);
+      continue;
+    }
     if (idv.refusal) {
       const bucket = reasonBucket(idv.refusal);
       report.reasons[bucket] = (report.reasons[bucket] || 0) + 1;
@@ -2087,8 +2098,14 @@ async function dryRun({ now = Date.now(), deps = {} } = {}) {
       continue;
     }
     // …and the identity check, or the button promises a listing the scan
-    // refuses as another token's name.
+    // refuses as another token's name — or holds over a contract it cannot read.
     const idv = await identityX(c.chain, c.address, info).catch((e) => ({ ok: false, refusal: null, why: e.message }));
+    if (!idv.ok) {
+      report.unchecked++;
+      const b = reasonBucket(`its own contract could not be read: ${idv.why || "no answer"}`);
+      report.uncheckedWhy[b] = (report.uncheckedWhy[b] || 0) + 1;
+      continue;
+    }
     if (idv.refusal) {
       const bucket = reasonBucket(idv.refusal);
       report.reasons[bucket] = (report.reasons[bucket] || 0) + 1;

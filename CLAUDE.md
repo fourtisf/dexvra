@@ -8834,6 +8834,43 @@ deciding callers dropping the names. Each fails between one and five tests.
 **Config a fix depends on:** nothing. `bot/` only, so `npm run deploy` does the
 ecosystem restart.
 
+#### "BAGAIMANA AGAR BOT TIDAK SALAH SCAN" — the free door listed blind, and only a person looked back
+
+Asked after the six real mismatches were deleted. All eight rows had been listed
+before the reader fix (`$FAKER` 74 days earlier). New listings already met two
+layers: the base-side readers and the contract check at every door. Two holes
+were left, and both are the second layer giving way:
+
+| hole | now |
+| --- | --- |
+| the FREE door listed a token whose contract **could not be read** (fail-open) | held under the `unchecked` rule, the same as an unreachable safety source: never cooled, asked again next scan, and a scan that held everything is the blocker that pages |
+| a row written wrong was found only by an operator running `identity:check` | the **listing audit** asks every bot-made row it sweeps: a mismatch is flagged (alerts held, ops paged once, `listings:nostables` removes it) |
+
+- ⚠️ **Only the door NOBODY CONFIRMS holds.** The listing form keeps failing
+  open, because a person reads that card; the alert hold too, because an RPC
+  outage must not silence every alert on a chain. A chain with no identity
+  reader (Tron) answers `ok:true` with nothing to compare, so it is not stopped.
+- **The audit reads the row's PUBLISHED ticker and name**, so `$LEMON` "Lemon"
+  over `LEMON.FUN` "Lemon" stays clean (the `sameToken` rule above). A contract
+  it cannot read decides nothing AND does not stop the safety check behind it.
+- **The pump checker's last look skips the identity read** (`checkRow`'s default
+  `identityX: null`): `confirmListed` asked it a moment earlier.
+- Paid rows are not audited (that rule stands); a mismatched paid row is caught
+  by the alert hold, which pages, and by `identity:check`.
+
+```bash
+cd bot && node scripts/run-tests.js test/tokenIdentity.test.js test/listingAudit.test.js   # 39 tests, no network
+pm2 logs dexvra-bot --lines 300 --nostream | grep -F 'own contract could not be read'
+```
+
+Nine guarantees are MUTATION-TESTED: the door listing blind, the scan listing
+blind, the scan cooling an unread contract, the Test scan promising it, the
+audit never asking, an unread contract blocking the audit's safety check, the
+audit dropping the name, the sweep never wired, and `checkRow` reading twice.
+Each fails a test.
+
+**Config a fix depends on:** nothing. `bot/` only — the ecosystem restart.
+
 ## Two bot processes, one config
 
 `bot/` runs **two** PM2 processes: `dexvra-bot` (`main.js`) and

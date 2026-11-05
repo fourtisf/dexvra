@@ -45,6 +45,7 @@ const discovery = require('../discovery');
 const { qualityRefusal } = require('./listingQuality');
 const listingSafety = require('./listingSafety');
 const listingLogo = require('./listingLogo');
+const tokenIdentity = require('./tokenIdentity');
 
 const FILE = 'listingAudit.json'; // under DATA_DIR, shared by both bot processes
 
@@ -101,6 +102,21 @@ async function judge(row, deps) {
     const bad = qualityRefusal(row.chain, row.address, merged);
     if (bad) return { ok: true, why: bad };
   }
+  // ⚠️ AND IS IT PUBLISHED UNDER ITS OWN NAME? "bagaimana agar bot tidak salah
+  // scan": eight rows were found listed under another token's ticker, every
+  // one by an operator running `identity:check` by hand. The ROW's published
+  // ticker and name against the token's own contract (tokenIdentity.js), so a
+  // row written wrong — before the fix, or by a cause nobody has met yet — is
+  // flagged on its own: alerts held, ops paged once, removable by
+  // listings:nostables. A contract that could not be read decides nothing and
+  // does not stop the safety check below.
+  if (deps.identityX) {
+    const idv = await deps.identityX(row.chain, row.address, { symbol: symOf(row), name: row.name }).catch(() => null);
+    if (idv && idv.ok && idv.refusal) {
+      const c = tokenIdentity.conflict(symOf(row), idv.contract && idv.contract.symbol);
+      return { ok: true, why: c ? `identity mismatch (the listing says $${c.published}, its own contract says $${c.contract})` : idv.refusal };
+    }
+  }
   const safe = await deps.safetyX(row.chain, row.address, info).catch((e) => ({ ok: false, why: e.message }));
   if (!safe || !safe.ok) return { ok: false, why: (safe && safe.why) || 'safety check: no answer' };
   return { ok: true, why: safe.refusal || null };
@@ -113,6 +129,7 @@ function realDeps() {
     getListings: () => api.getListings(),
     priceX: (c, a) => discovery.fetchTokenInfoX(c, a),
     safetyX: (c, a, info) => listingSafety.checkX(c, a, { pool: info && info.poolAddress }),
+    identityX: (c, a, published) => tokenIdentity.checkX(c, a, published),
     autoKeys: () => require('./autoLister').autoListedKeys(),
     healLogo: (row) => listingLogo.healRow(row),
     alert: (html) => log.alert(html),
@@ -243,7 +260,9 @@ const flagged = () => load().flagged;
  * Returns `{ auditable:false }` for a purchase (never ours to judge), else the
  * judge's `{ ok, why }`.
  */
-async function checkRow(row, deps = realDeps()) {
+// The pump checker's last look asks the identity question itself, a moment
+// earlier (stillListed.confirmListed) — so this default skips a second read.
+async function checkRow(row, deps = { ...realDeps(), identityX: null }) {
   if (!auditable([row], deps.autoKeys()).length) return { auditable: false, ok: true, why: null };
   const v = await judge(row, deps).catch((e) => ({ ok: false, why: e.message }));
   return { auditable: true, ...v };

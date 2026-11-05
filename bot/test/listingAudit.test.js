@@ -226,3 +226,61 @@ test('a sweep does not erase a flag written WHILE it ran', async () => {
   await audit.runOnce({ deps: d });
   assert.ok(audit.flagged()['solana:hp'], 'the flag written mid-sweep survives the save');
 });
+
+// "BAGAIMANA AGAR BOT TIDAK SALAH SCAN" — eight rows listed under another
+// token's ticker were found by an operator running identity:check by hand. The
+// audit asks the same question of every bot-made row it sweeps.
+const ident = require('../src/services/tokenIdentity');
+function withContract(table, fn) {
+  const saved = { ...ident._deps };
+  const env = process.env.LISTING_IDENTITY;
+  process.env.LISTING_IDENTITY = '1';
+  ident._deps.solanaCovers = () => true;
+  ident._deps.solana = async (a) => {
+    const t = table[a];
+    if (t === 'unreadable') return { ok: false, why: 'the Solana RPC answered 429', info: null };
+    return { ok: true, why: null, info: t ? { symbol: t[0], name: t[1] } : null };
+  };
+  return Promise.resolve(fn()).finally(() => {
+    Object.assign(ident._deps, saved);
+    if (env == null) delete process.env.LISTING_IDENTITY;
+    else process.env.LISTING_IDENTITY = env;
+  });
+}
+const identityX = (c, a, published) => ident.checkX(c, a, published);
+
+test('a bot-made row published under another token\'s name is flagged and paged — its own name is not', async () => {
+  await withContract({ ltc: ['BTC', 'Big Titty Coin'], lemon: ['LEMON.FUN', 'Lemon'], fine: ['FINE', 'fine'] }, async () => {
+    const d = {
+      ...deps({ rows: [row('ltc', { sym: '$LTC', name: 'Little Titty Coin' }), row('lemon', { sym: '$LEMON', name: 'Lemon' }), row('fine')] }),
+      identityX,
+    };
+    const out = await audit.runOnce({ deps: d });
+    assert.deepEqual(out.newlyBad.map((f) => f.sym), ['LTC']);
+    assert.match(out.newlyBad[0].why, /identity mismatch \(the listing says \$LTC, its own contract says \$BTC\)/);
+    assert.equal(d.alerts.length, 1);
+    assert.match(d.alerts[0], /LTC/);
+    assert.ok(audit.flagged()['solana:ltc'], 'flagged — so listings:nostables removes it and its alerts are held');
+    // a second sweep says nothing new
+    await audit.runOnce({ deps: d });
+    assert.equal(d.alerts.length, 1);
+  });
+});
+
+test('a contract that cannot be read decides nothing — and never stops the safety check', async () => {
+  await withContract({ a: 'unreadable', b: 'unreadable' }, async () => {
+    const d = {
+      ...deps({ rows: [row('a'), row('b')], safety: { b: { ok: true, refusal: 'potential scam (honeypot)' } } }),
+      identityX,
+    };
+    const out = await audit.runOnce({ deps: d });
+    assert.equal(out.audited, 2, 'both rows were still judged');
+    assert.deepEqual(out.newlyBad.map((f) => f.address), ['b'], 'only the safety verdict flagged anything');
+  });
+});
+
+test('the pump checker\'s last look does not read the contract a second time', () => {
+  const src = fs.readFileSync(require.resolve('../src/services/listingAudit'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  assert.match(src, /async function checkRow\(row, deps = \{ \.\.\.realDeps\(\), identityX: null \}\)/);
+  assert.match(src, /identityX: \(c, a, published\) => tokenIdentity\.checkX\(c, a, published\)/, 'the sweep reads it');
+});
