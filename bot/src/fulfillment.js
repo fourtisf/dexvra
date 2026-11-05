@@ -28,6 +28,7 @@ const assets = require("./assets");
 const bannerRender = require("./bannerRender");
 const bannerTemplate = require("./bannerTemplate");
 const listingMotion = require("./listingMotion");
+const trendingMotion = require("./trendingMotion"); // called as trendingMotion.render — a seam the tests can stub
 const { bounded } = require("./helpers/bounded");
 const { mediaPath } = require("./helpers/mediaUrl");
 // The MODULE, not a destructured fetchImage: tests replace it to keep the
@@ -749,22 +750,29 @@ async function postMedia(kind, bannerCoin, logoBuffer, logoFileId, logoUrl, badg
     // between a buyer's payment and their post — and a render that fails or
     // runs out of time continues down the ladder exactly as before (the admin
     // clip, then the still). LISTING_MOTION=0 switches it off.
-    if (kind === "listing" && listingMotion.enabled()) {
+    //
+    // A TRENDING post gets its own: the "Blue Flame" (trendingMotion), the
+    // concept the operator picked ("A. Api"). Same budget, same ladder below
+    // it, TRENDING_MOTION=0 switches it off. Every trending post goes through
+    // here — a paid run, listing+trending, auto-trend, the auto-lister's
+    // trending package, the admin force-post, the logo repair's rebuild.
+    const motionMod = kind === "listing" ? listingMotion : kind === "trending" ? trendingMotion : null;
+    if (motionMod && motionMod.enabled()) {
       const cancel = { cancelled: false };
       const motion = await bounded(
-        listingMotion.render(bannerCoin, logoBuffer, { badge, cancel }).catch(() => null),
+        motionMod.render(bannerCoin, logoBuffer, { badge, cancel }).catch(() => null),
         CLIP_BUDGET_MS,
         () => {
           cancel.cancelled = true;
-          log.warn(`[fulfil] listing media: premium motion passed ${CLIP_BUDGET_MS}ms — falling back to the admin clip / still`);
+          log.warn(`[fulfil] ${kind} media: premium motion passed ${CLIP_BUDGET_MS}ms — falling back to the admin clip / still`);
           return null;
         },
       );
       if (motion) {
-        log.info("[fulfil] listing media: premium motion ✔");
+        log.info(`[fulfil] ${kind} media: premium motion ✔`);
         return motion;
       }
-      log.warn("[fulfil] listing media: premium motion unavailable — falling back to the admin clip / still");
+      log.warn(`[fulfil] ${kind} media: premium motion unavailable — falling back to the admin clip / still`);
     }
     // Admin-uploaded GIF/video wins over the composited still.
     const media = bannerTemplate.mediaOverride(kind);

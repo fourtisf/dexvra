@@ -1,0 +1,323 @@
+// The trending post's "Blue Flame" clip (trendingMotion) and its wiring.
+//
+// Every figure on the clip is the post's own: postMedia hands it the same
+// bannerCoin the caption is built from (fulfillment.bannerFigures' spelling),
+// and a figure nobody read is left OUT — never "$0", never "TBA" on the art.
+//
+// The suite runs with TRENDING_MOTION=0 (scripts/run-tests.js) so every other
+// trending test keeps the ladder it was written for; this file turns it back on.
+const path = require("node:path");
+const os = require("node:os");
+const fss = require("node:fs");
+process.env.BOT_DATA_DIR = fss.mkdtempSync(path.join(os.tmpdir(), "dexvra-trendmotion-"));
+process.env.CLIP_BUDGET_MS = "2000"; // the hang test waits out the budget
+
+const test = require("node:test");
+const assert = require("node:assert");
+const kit = require("../src/helpers/canvasKit");
+const tm = require("../src/trendingMotion");
+
+const cv = kit.canvasLib();
+const HAVE = !!cv;
+const { IGN } = tm._timeline;
+const { PANEL_Y } = tm._layout;
+
+const COIN = { symbol: "$CHOO", name: "Choo Train", chain: "SOLANA", price: "$0.004512", mcap: "$4.5M", liq: "$612K" };
+
+/** Every fillText call made while `fn` runs: [{ text, x, y, px }] (px = the font size). */
+async function drawnDuring(fn) {
+  const proto = Object.getPrototypeOf(cv.createCanvas(1, 1).getContext("2d"));
+  const orig = proto.fillText;
+  const out = [];
+  proto.fillText = function (text, x, y, ...rest) {
+    const m = /(\d+(?:\.\d+)?)px/.exec(this.font || "");
+    out.push({ text: String(text), x, y, px: m ? Number(m[1]) : null });
+    return orig.call(this, text, x, y, ...rest);
+  };
+  try {
+    await fn();
+  } finally {
+    proto.fillText = orig;
+  }
+  return out;
+}
+const texts = (calls) => calls.map((c) => c.text);
+/** Glyphs drawn one at a time (tracked labels, the per-letter ticker) on one baseline. */
+const runAt = (calls, y) => calls.filter((c) => Math.abs(c.y - y) < 0.01).map((c) => c.text).join("");
+const LABELS_Y = PANEL_Y + 36;
+const logoPng = (color) => {
+  const c = cv.createCanvas(200, 200), x = c.getContext("2d");
+  x.fillStyle = color; x.fillRect(0, 0, 200, 200);
+  return c.toBuffer("image/png");
+};
+
+test("TRENDING_MOTION: blank or unset is ON, an explicit off is off", () => {
+  const prev = process.env.TRENDING_MOTION;
+  try {
+    delete process.env.TRENDING_MOTION; assert.equal(tm.enabled(), true);
+    process.env.TRENDING_MOTION = ""; assert.equal(tm.enabled(), true, "blank is not false");
+    process.env.TRENDING_MOTION = "0"; assert.equal(tm.enabled(), false);
+    process.env.TRENDING_MOTION = "off"; assert.equal(tm.enabled(), false);
+  } finally {
+    if (prev === undefined) delete process.env.TRENDING_MOTION; else process.env.TRENDING_MOTION = prev;
+  }
+});
+
+test("the pill names the run the post announces — and a listing badge never lands on a trending clip", () => {
+  assert.equal(tm._pillOf("Trending 24H"), "TRENDING 24H");
+  assert.equal(tm._pillOf("Trending 4H"), "TRENDING 4H");
+  assert.equal(tm._pillOf("trending 168h"), "TRENDING 168H");
+  assert.equal(tm._pillOf("Xpress Listing"), "TRENDING", "the auto-lister passes its LISTING badge");
+  assert.equal(tm._pillOf("Gold Tier"), "TRENDING");
+  assert.equal(tm._pillOf(null), "TRENDING", "the admin force-post passes none");
+});
+
+test("a placeholder is not a figure", () => {
+  for (const v of ["TBA", "", null, undefined, "$0", "0", "$0.00", "—", "NaN", "undefined"]) assert.equal(tm._realFigure(v), null, String(v));
+  assert.equal(tm._realFigure("$0.004512"), "$0.004512");
+  assert.equal(tm._realFigure("$612K"), "$612K");
+});
+
+test("frame 0 is the full card, and every figure on it is the coin's own", { skip: !HAVE }, async () => {
+  const calls = await drawnDuring(() => tm.frames(COIN, logoPng("#F2B33D"), { times: [0], badge: "Trending 24H" }));
+  const t = texts(calls);
+  assert.equal(runAt(calls, 290), "$CHOO", "the ticker, letter by letter, exactly one $");
+  assert.ok(t.includes("Choo Train"), "the name");
+  assert.equal(runAt(calls, 163), "TRENDING 24H", "the pill");
+  assert.equal(runAt(calls, 65), "SOLANA", "the chain chip");
+  assert.equal(runAt(calls, LABELS_Y), "PRICEMARKET CAPLIQUIDITY", "the panel labels");
+  assert.ok(t.includes("$0.004512") && t.includes("$4.5M") && t.includes("$612K"), "the three figures, spelt as handed in");
+  assert.ok(t.includes("Live on the Dexvra trending board"));
+  const fake = (s) => /^\$0(\.0+)?$|TBA|NaN|undefined|null/.test(s);
+  assert.ok(!t.some(fake), `no fabricated figure: ${t.filter(fake)}`);
+});
+
+test("nothing drawn is smaller than the floor X's timeline copy can still read", { skip: !HAVE }, async () => {
+  const calls = await drawnDuring(() => tm.frames(COIN, null, { times: [0], badge: "Trending 24H" }));
+  const sized = calls.filter((c) => c.px != null);
+  assert.ok(sized.some((c) => c.px === tm.LABEL_MIN), "the floor itself is in use (the labels)");
+  const small = sized.filter((c) => c.px < tm.LABEL_MIN);
+  assert.deepEqual(small, [], `drawn under ${tm.LABEL_MIN}px`);
+});
+
+test("a ticker that already carries $ is not drawn with two", { skip: !HAVE }, async () => {
+  const calls = await drawnDuring(() => tm.frames({ ...COIN, symbol: "$$choo" }, null, { times: [0] }));
+  assert.equal(runAt(calls, 290), "$CHOO");
+});
+
+test("a price nobody read (TBA) and a missing depth leave their cells OUT", { skip: !HAVE }, async () => {
+  const calls = await drawnDuring(() => tm.frames({ ...COIN, price: "TBA", liq: null }, null, { times: [0] }));
+  const t = texts(calls);
+  assert.equal(runAt(calls, LABELS_Y), "MARKET CAP", "only the cell with a figure");
+  assert.ok(t.includes("$4.5M"));
+  assert.ok(!t.some((s) => /TBA|\$0\b/.test(s)));
+});
+
+test("no figure at all → no panel, and the clip still draws", { skip: !HAVE }, async () => {
+  const calls = await drawnDuring(() => tm.frames({ ...COIN, price: "TBA", mcap: null, liq: null }, null, { times: [0] }));
+  assert.equal(runAt(calls, LABELS_Y), "", "no panel labels");
+  assert.equal(runAt(calls, 290), "$CHOO");
+});
+
+test("the figures decode on the way in and are exact long before the wrap", { skip: !HAVE }, async () => {
+  const early = await drawnDuring(() => tm.frames(COIN, null, { times: [IGN + 0.9] }));
+  const late = await drawnDuring(() => tm.frames(COIN, null, { times: [5.8, 5.96] }));
+  const at = (calls) => calls.filter((c) => Math.abs(c.y - (PANEL_Y + 76)) < 0.01).map((c) => c.text);
+  assert.ok(at(early).length && !at(early).includes("$0.004512"), `still decoding mid-intro: ${at(early)}`);
+  assert.deepEqual(at(late), ["$0.004512", "$4.5M", "$612K", "$0.004512", "$4.5M", "$612K"], "settled before the loop wraps");
+});
+
+test("the loop is exact: t = 6 draws what t = 0 draws", { skip: !HAVE }, async () => {
+  const [a, b] = await tm.frames(COIN, logoPng("#3355ff"), { times: [0, tm.SECONDS], badge: "Trending 24H" });
+  let off = 0;
+  for (let i = 0; i < a.length; i += 4) if (Math.abs(a[i] - b[i]) > 12 || Math.abs(a[i + 1] - b[i + 1]) > 12 || Math.abs(a[i + 2] - b[i + 2]) > 12) off++;
+  assert.ok(off < 60, `${off} pixels differ across the seam`);
+});
+
+test("the vacuity guard: the seam test compares two DIFFERENT moments of the clip", { skip: !HAVE }, async () => {
+  const [a, b] = await tm.frames(COIN, null, { times: [0, 1.5] });
+  let off = 0;
+  for (let i = 0; i < a.length; i += 4) if (Math.abs(a[i] - b[i]) > 12) off++;
+  assert.ok(off > 2000, `t = 1.5 should differ from t = 0 (embers, sway, glint) — only ${off} px did`);
+});
+
+test("the ignition really fires: the burst frame is far from frame 0", { skip: !HAVE }, async () => {
+  const [a, b] = await tm.frames(COIN, null, { times: [0, IGN + 0.15] });
+  let off = 0;
+  for (let i = 0; i < a.length; i += 4) if (Math.abs(a[i] - b[i]) > 20) off++;
+  assert.ok(off > 20000, `only ${off} pixels changed`);
+});
+
+test("the token's logo is what the flame's bulb shows; no logo draws the ticker's monogram", { skip: !HAVE }, async () => {
+  const red = await tm.frames(COIN, logoPng("#ff0000"), { times: [0] });
+  const blue = await tm.frames(COIN, logoPng("#0000ff"), { times: [0] });
+  const body = await tm._flameBody();
+  const { OX, OY } = tm._layout;
+  const cx = Math.round(OX + body.bulb.x), cy = Math.round(OY + body.bulb.y);
+  let redder = 0;
+  for (let y = cy - 20; y < cy + 20; y++) for (let x = cx - 20; x < cx + 20; x++) {
+    const i = (y * tm.W + x) * 4;
+    if (red[0][i] > blue[0][i] + 40) redder++;
+  }
+  assert.ok(redder > 300, `the logo did not reach the bulb (${redder} px)`);
+  const calls = await drawnDuring(() => tm.frames(COIN, null, { times: [0] }));
+  assert.ok(texts(calls).includes("CH"), "the monogram");
+});
+
+test("the sway never moves the bulb: the logo sits in the same place while the tips sway", { skip: !HAVE }, async () => {
+  // t = 0 and t = 3 put the CAMERA in the same place (its drift is whole
+  // periods of 6s and 3s) while the sway's two waves differ — so any movement
+  // of the logo between them is the sway reaching the bulb. The flame's
+  // breathing scale is about the logo's own centre, so it cannot move it.
+  const fr = await tm.frames(COIN, logoPng("#ff0000"), { times: [0, 3] });
+  const body = await tm._flameBody();
+  const { OX, OY } = tm._layout;
+  const cx = Math.round(OX + body.bulb.x), cy = Math.round(OY + body.bulb.y);
+  const centroid = (f) => {
+    let sx = 0, sy = 0, n = 0;
+    for (let y = cy - 130; y < cy + 130; y++) for (let x = cx - 130; x < cx + 130; x++) {
+      const i = (y * tm.W + x) * 4;
+      if (f[i] > f[i + 1] + 70 && f[i] > f[i + 2] + 70) { sx += x; sy += y; n++; }
+    }
+    return { x: sx / n, y: sy / n, n };
+  };
+  const a = centroid(fr[0]), b = centroid(fr[1]);
+  assert.ok(a.n > 2000 && b.n > 2000, `the logo was found (${a.n}, ${b.n} px)`);
+  assert.ok(Math.abs(a.x - b.x) < 0.35 && Math.abs(a.y - b.y) < 0.35, `the logo moved: (${a.x.toFixed(2)}, ${a.y.toFixed(2)}) → (${b.x.toFixed(2)}, ${b.y.toFixed(2)})`);
+});
+
+test("an unreadable logo draws the monogram, never fails the clip", { skip: !HAVE }, async () => {
+  const fr = await tm.frames(COIN, Buffer.from("not an image"), { times: [0] });
+  assert.ok(fr && fr.length === 1);
+});
+
+test("render() writes a real, silent MP4 (an autoplaying Telegram animation)", { skip: !HAVE }, async () => {
+  const out = path.join(os.tmpdir(), `tm-test-${process.pid}.mp4`);
+  const r = await tm.render(COIN, logoPng("#F2B33D"), { badge: "Trending 24H", outPath: out, count: 8 });
+  assert.ok(r, "rendered");
+  assert.equal(r.type, "animation");
+  assert.ok(fss.statSync(out).size > 2000);
+  fss.unlinkSync(out);
+});
+
+test("a cancelled render stops and hands nothing on", { skip: !HAVE }, async () => {
+  const out = path.join(os.tmpdir(), `tm-cancel-${process.pid}.mp4`);
+  const r = await tm.render(COIN, null, { outPath: out, cancel: { cancelled: true } });
+  assert.equal(r, null);
+  assert.ok(!fss.existsSync(out), "a half-written clip is deleted");
+});
+
+test("the flame is marched once and cached on disk", { skip: !HAVE }, async () => {
+  const a = await tm._flameBody();
+  const b = await tm._flameBody();
+  assert.strictEqual(a, b, "one body per process");
+  for (let i = 0; i < 50 && !fss.existsSync(tm._cacheFile()); i++) await new Promise((r) => setTimeout(r, 100));
+  assert.ok(fss.existsSync(tm._cacheFile()), "cached for the next process");
+});
+
+test("the temp sweep reclaims only this module's old clips", async () => {
+  const dir = fss.mkdtempSync(path.join(os.tmpdir(), "tm-sweep-"));
+  const now = Date.now();
+  const old = path.join(dir, "bt-out-tm-old.mp4"), fresh = path.join(dir, "bt-out-tm-new.mp4"), other = path.join(dir, "bt-out-pm-old.mp4");
+  for (const f of [old, fresh, other]) fss.writeFileSync(f, "x");
+  const past = new Date(now - 60 * 60_000);
+  fss.utimesSync(old, past, past); fss.utimesSync(other, past, past);
+  await tm._sweepTmp(dir, now);
+  assert.strictEqual(fss.existsSync(old), false);
+  assert.strictEqual(fss.existsSync(fresh), true);
+  assert.strictEqual(fss.existsSync(other), true, "another module's file is not ours to delete");
+  fss.rmSync(dir, { recursive: true, force: true });
+});
+
+// ── the wiring: every trending post goes through postMedia ──
+function withMotion(value, fn) {
+  return async () => {
+    const prev = process.env.TRENDING_MOTION;
+    process.env.TRENDING_MOTION = value;
+    const real = tm.render;
+    try {
+      await fn();
+    } finally {
+      tm.render = real;
+      if (prev === undefined) delete process.env.TRENDING_MOTION;
+      else process.env.TRENDING_MOTION = prev;
+    }
+  };
+}
+
+test(
+  "a TRENDING post gets the flame first, with the coin, the logo and the post's own badge",
+  withMotion("1", async () => {
+    const { postMedia } = require("../src/fulfillment");
+    const bt = require("../src/bannerTemplate");
+    const posting = bt.postingEnabled;
+    const calls = [];
+    try {
+      bt.postingEnabled = () => true;
+      tm.render = async (coin, logoBuf, opts) => {
+        calls.push({ coin, logoBuf, opts });
+        return { type: "animation", source: "/tmp/stub.mp4" };
+      };
+      const lg = Buffer.from("logo");
+      const media = await postMedia("trending", COIN, lg, null, null, "Trending 24H");
+      assert.deepStrictEqual(media, { type: "animation", source: "/tmp/stub.mp4" });
+      assert.strictEqual(calls.length, 1);
+      assert.strictEqual(calls[0].coin, COIN);
+      assert.strictEqual(calls[0].logoBuf, lg);
+      assert.strictEqual(calls[0].opts.badge, "Trending 24H");
+
+      // a LISTING post never asks for the flame
+      calls.length = 0;
+      await postMedia("listing", COIN, null, null, null, "Gold Tier").catch(() => null);
+      assert.strictEqual(calls.length, 0, "the flame is the trending post's");
+    } finally {
+      bt.postingEnabled = posting;
+    }
+  }),
+);
+
+test(
+  "TRENDING_MOTION=0 and the admin's banner switch both keep the flame off",
+  withMotion("0", async () => {
+    const { postMedia } = require("../src/fulfillment");
+    const bt = require("../src/bannerTemplate");
+    const posting = bt.postingEnabled;
+    let called = 0;
+    try {
+      tm.render = async () => { called++; return { type: "animation", source: "/tmp/stub.mp4" }; };
+      bt.postingEnabled = () => true;
+      await postMedia("trending", COIN, null, null, null, "Trending 24H").catch(() => null);
+      assert.strictEqual(called, 0, "TRENDING_MOTION=0");
+      process.env.TRENDING_MOTION = "1";
+      bt.postingEnabled = () => false;
+      await postMedia("trending", COIN, null, null, null, "Trending 24H").catch(() => null);
+      assert.strictEqual(called, 0, "banners switched off");
+    } finally {
+      bt.postingEnabled = posting;
+    }
+  }),
+);
+
+test(
+  "a flame that FAILS or HANGS falls through to the ladder, and a hung one is told to stop",
+  withMotion("1", async () => {
+    const { postMedia } = require("../src/fulfillment");
+    const bt = require("../src/bannerTemplate");
+    const posting = bt.postingEnabled;
+    try {
+      bt.postingEnabled = () => true;
+      tm.render = async () => null;
+      const failed = await postMedia("trending", COIN, null, null, null, "Trending 24H");
+      assert.ok(failed && Buffer.isBuffer(failed.source), "the still artwork, as before");
+      let seen = null;
+      tm.render = (coin, logoBuf, opts) => { seen = opts.cancel; return new Promise(() => {}); };
+      const t0 = Date.now();
+      const hung = await postMedia("trending", COIN, null, null, null, "Trending 24H");
+      assert.ok(Date.now() - t0 < 6000, "bounded by CLIP_BUDGET_MS");
+      assert.ok(hung && Buffer.isBuffer(hung.source), "falls through to the still");
+      assert.ok(seen && seen.cancelled === true, "the abandoned render is cancelled, not left burning CPU");
+    } finally {
+      bt.postingEnabled = posting;
+    }
+  }),
+);

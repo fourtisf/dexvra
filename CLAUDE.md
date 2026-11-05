@@ -4303,8 +4303,8 @@ names a direction not to go back to:
 So the look is a decision. Change it only with a new approval. ⚠️ The
 listing's own clip (`listingMotion.js`) is byte-identical to main: the heat and
 launch scenes were removed with their tests, not kept behind a flag. Trending
-posts keep their old ladder (the admin clip, then the still) until a trending
-design is approved.
+posts have their own clip now, the "Blue Flame" (`trendingMotion.js`, see the
+next section).
 
 **What is drawn, and where each figure comes from.** pumpChecker builds the
 coin from the SAME values the caption uses, spelt by the caption's own
@@ -4453,6 +4453,101 @@ A seventh mutant, a `> 0.5` alpha guard on the luminance, survived: the
 luminance is already alpha-weighted, so the guard was dead and it was removed.
 Square logos render as before. Only wide, tall and dark-on-transparent logos
 change.
+
+### The trending post has its own clip: the "Blue Flame" (`trendingMotion.js`)
+
+"ok skrg buatkan gif trending premium visualnya". Three stills were shown:
+A (a flame), B (a trophy), C (a crown). The operator picked **A. Api**. Like the
+pump gauge, the look is a decision; change it only with a new approval.
+
+**What is drawn.** A 3D flame in satin blue metal with a chrome ring, the
+token's own logo set into its bulb, and the copy on the right. Every figure is
+the post's own: postMedia hands the clip the same `bannerCoin` the caption is
+built from.
+
+| on the clip | source |
+| --- | --- |
+| pill `TRENDING 24H` | the post's badge (`Trending ${hours}H`). A badge that does not name a trending run (the auto-lister's listing badge, the force-post's none) reads `TRENDING`, never a listing tier |
+| chain chip | `bannerCoin.chain` |
+| `$TICKER`, name | `bannerCoin.symbol` (exactly one `$`), `bannerCoin.name` |
+| PRICE · MARKET CAP · LIQUIDITY | `fulfillment.bannerFigures`' spelling. `TBA`, null, `$0` leave the cell OUT; no figure at all leaves the panel out |
+| the bulb | the logo through `canvasKit.drawLogoDisc`; a monogram of the ticker without one, or for bytes that are not an image |
+
+**How it is made.** It follows the gauge's recipe:
+
+- The flame is ray-marched once and cached in memory and in `os.tmpdir()`
+  (`dexvra-trendflame-v1-560x2.bin`). The march yields every 12 rows and took
+  ~4s here. Bump `FLAME_VERSION` when the geometry or the lighting changes.
+- The metal is re-lit every frame from stored reflection vectors while the
+  studio swings.
+  - ⚠️ The swing is **±0.13 rad**. At ±0.32 the flat face caught the left fill
+    and went milky for half the loop, which is not the approved still.
+- **The flame sways.** It is drawn in 2px horizontal strips whose offset grows
+  toward the tips. Nothing at or below the top of the logo moves.
+  - A test compares the logo's centroid at t = 0 and t = 3. Those two moments
+    put the camera in the same place while the sway's two waves differ.
+- Embers rise round it. Each one completes whole climbs per loop.
+
+**The 6s loop.**
+
+| seconds | what happens |
+| --- | --- |
+| 0.0–4.0 | **hold**: the card, embers rising |
+| 4.0–4.5 | **out**: the flame burns low (scaled to 0.9, darkened), the type leaves |
+| 4.5–6.0 | **in**: re-ignition at 4.55 (a flash ring off the logo, a burst of sparks, a lens flare, the flame back with an overshoot), the type returns masked and blur-to-sharp, the figures decode |
+
+- Frame 0 is the full card.
+- The loop is exact: t = 6 draws what t = 0 draws. A test says so, and a
+  vacuity test proves t = 1.5 differs from t = 0.
+- ⚠️ **The decode must settle before the wrap.** The first cut decoded until
+  t ≈ 6.05, so the last frames showed scrambled digits and the seam jumped. It
+  settles by 5.75 now.
+- The afterglow fades to exactly 0 by 5.95.
+
+**Where it sits.** `fulfillment.postMedia`, inside `postingEnabled()`, ahead of
+the admin trending clip. Every trending post goes through it:
+
+- a paid run;
+- listing+trending;
+- auto-trend;
+- the auto-lister's trending package;
+- the admin force-post;
+- the logo repair's rebuild.
+
+The render is bounded by `CLIP_BUDGET_MS` and cancelled at the budget. A
+failure or a timeout continues down the ladder exactly as before: the admin
+clip, then the still. Measured here: **~10s** for a full clip with the flame
+cached, ~0.9 MB, 150 frames. It is a font-check surface
+(`bannerSurfaces.js` `trending-motion`).
+
+```bash
+cd bot && TRENDING_MOTION=1 node scripts/run-tests.js test/trendingMotion.test.js   # 22 tests, no network
+pm2 logs dexvra-bot --lines 300 --nostream | grep -F '[trendingMotion]'              # "$X rendered in …ms"
+pm2 logs dexvra-bot --lines 300 --nostream | grep -F 'trending media: premium motion'
+```
+
+Fifteen guarantees are MUTATION-TESTED rather than argued. Each mutant fails
+between one and three tests:
+
+- **wiring:** postMedia never asking the flame; a hung render not cancelled;
+  the surface not probed;
+- **figures:** the pill printing any badge; `TBA` accepted as a figure;
+  labels drawn under the 15px floor;
+- **loop:** the decode settling after the wrap; the afterglow not faded before
+  the wrap; ember climbs not whole per loop;
+- **flame:** the sway with no anchor; the sway shifting the whole flame; the
+  logo never baked;
+- **render:** cancel ignored.
+
+⚠️ One mutant survived its first run: the bulb test sampled a ±15px window
+inside an ~88px logo, so a 9px shift of the whole flame passed. It compares
+centroids now.
+
+**Config a fix depends on:** nothing. It ships ON and **changes what trending
+posts look like on deploy**. A box with an admin trending clip now posts the
+flame ahead of it. `TRENDING_MOTION=0` in `bot/.env` restores the old ladder
+exactly. The first trending post after a deploy pays the ~4s march once.
+`bot/` only, so the deploy is the ecosystem restart.
 
 ## A Top 3 that was not the top of the Top 5
 

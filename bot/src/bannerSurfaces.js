@@ -127,6 +127,18 @@ const SURFACES = [
       { times: [0], badge: 'Solana' },
     ),
   },
+  {
+    // The trending post's "Blue Flame": its own renderer, with the pill, the
+    // chain chip and the board line the other two never draw.
+    key: 'trending-motion',
+    what: 'animated trending clip (premium MP4)',
+    module: 'trendingMotion.js',
+    run: (coin) => require('./trendingMotion').frames(
+      { symbol: coin.symbol, name: coin.name, chain: 'SOLANA', price: '$0.0042', mcap: '$4.2M', liq: '$612K' },
+      null,
+      { times: [0], badge: 'Trending 24H' },
+    ),
+  },
 ];
 
 /*

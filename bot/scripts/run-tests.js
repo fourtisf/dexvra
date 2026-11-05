@@ -74,6 +74,8 @@ const res = spawnSync(process.execPath, ["--test", ...files], {
     // …and the pump alert's gauge clip, for the same reason: pumpMotion.test.js
     // turns it back on and drives it.
     PUMP_MOTION: process.env.PUMP_MOTION || "0",
+    // …and the trending "Blue Flame", likewise: trendingMotion.test.js drives it.
+    TRENDING_MOTION: process.env.TRENDING_MOTION || "0",
     // The identity check (the free-listing door and the listing form) reads the token's own
     // contract (an RPC) — none exists here. tokenIdentity.test.js turns it back
     // on with stubbed readers, and pins that blank means ON.
