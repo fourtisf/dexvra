@@ -30,7 +30,7 @@ function liveMap(rows) {
  * A read that fails is `ok:false`: we cannot prove the token is still listed,
  * and posting about a deleted one is the defect this exists for.
  */
-async function confirmListed(r, base, getListings = () => api.getListings()) {
+async function confirmListed(r, base, getListings = () => api.getListings(), checkIdentity = identityOf) {
   let rows;
   try {
     rows = await getListings();
@@ -44,7 +44,38 @@ async function confirmListed(r, base, getListings = () => api.getListings()) {
   }
   const scam = auditScam(keyOf(r));
   if (scam) return { ok: false, why: `flagged by the listing audit (${scam})` };
+  // ⚠️ AND THE NAME THE ALERT WOULD PRINT MUST BE THIS TOKEN'S. A row listed
+  // from a stranger's pool ($LTC over Big Titty Coin's contract) keeps a
+  // baseline taken from the STRANGER's price, while the fixed readers now
+  // price the real token — so the ladder can fire "+100% since listing" under
+  // a name that is not the token's, about a move that never happened. The
+  // token's own contract decides (services/tokenIdentity.js). A contract that
+  // could not be read does NOT hold the alert: the door and the readers are the
+  // first line, and an RPC outage must not silence every alert on a chain.
+  const named = live.sym || live.symbol || r.sym || r.symbol;
+  const clash = await checkIdentity(r.chain, r.address, named).catch(() => null);
+  if (clash) {
+    return {
+      ok: false,
+      why: `published under another token's name — the listing says $${clash.published}, its own contract says $${clash.contract}; delete it and list it again`,
+    };
+  }
   return { ok: true, why: null };
+}
+
+/**
+ * `{ published, contract }` when the token's own contract names a different
+ * ticker from the one the listing publishes, else null — including when the
+ * contract could not be read, or the check is switched off. Pages ops once
+ * (de-duplicated) with the command that finds every such row.
+ */
+async function identityOf(chain, address, sym) {
+  const tokenIdentity = require("../services/tokenIdentity");
+  const v = await tokenIdentity.checkX(chain, address, { symbol: sym }, { budgetMs: 5000 });
+  if (!v.refusal || !v.contract) return null;
+  const c = tokenIdentity.conflict(sym, v.contract.symbol);
+  if (c) tokenIdentity.noteMismatch("pump/rank-up alert", chain, address, c);
+  return c;
 }
 
 /**
@@ -64,4 +95,4 @@ function auditScam(key) {
   return /^no logo/i.test(String(f.why)) ? null : String(f.why);
 }
 
-module.exports = { liveMap, confirmListed, auditScam, keyOf };
+module.exports = { liveMap, confirmListed, auditScam, keyOf, _identityOf: identityOf };

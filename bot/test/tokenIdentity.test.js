@@ -285,3 +285,64 @@ test("identity:check judges a row by its own contract — and 'could not ask' is
   contractUnreadable();
   assert.equal((await judge({ chain: "solana", address: BTC, sym: "LTC" })).state, "unread");
 });
+
+// "liat ini" — the first live identity:check found $LTC, $THE-ALGORITHM and
+// $MEMESTOCK. Each kept a pump baseline taken from the STRANGER's price while
+// the fixed readers now price the real token, so the ladder could fire
+// "+100% since listing" under a name that is not the token's. Every alert asks
+// stillListed.confirmListed before it goes out; the identity check rides there.
+test("a pump or rank-up alert is HELD for a listing published under another token's name", async () => {
+  const { confirmListed } = require("../src/helpers/stillListed");
+  const log = require("../src/helpers/logger");
+  const row = { chain: "solana", address: BTC, sym: "$LTC", status: "approved", listedAt: 1 };
+  const rows = async () => [row];
+  const warns = [];
+  const realWarn = log.warn;
+  log.warn = (...a) => warns.push(a.join(" "));
+  try {
+    contractSays("BTC", "Big Titty Coin");
+    const held = await confirmListed(row, { listedAt: 1 }, rows);
+    assert.equal(held.ok, false, "the alert would print $LTC over Big Titty Coin's price");
+    assert.match(held.why, /another token's name/);
+    assert.match(held.why, /\$LTC/);
+    assert.match(held.why, /\$BTC/);
+    assert.ok(warns.some((w) => /identity:check/.test(w)), "ops is told, with the command that finds every such row");
+
+    contractSays("LTC", "Little Titty Coin");
+    assert.equal((await confirmListed(row, { listedAt: 1 }, rows)).ok, true, "an agreeing contract changes nothing");
+
+    contractUnreadable();
+    assert.equal((await confirmListed(row, { listedAt: 1 }, rows)).ok, true, "'could not ask' never holds an alert");
+
+    contractSays("BTC", "Big Titty Coin");
+    process.env.LISTING_IDENTITY = "0";
+    assert.equal((await confirmListed(row, { listedAt: 1 }, rows)).ok, true, "the switch still switches it off");
+  } finally {
+    log.warn = realWarn;
+  }
+});
+
+test("identity:check says whether a wrong row's tier was BOUGHT or given by the auto-lister", () => {
+  const { provenance } = require("../scripts/identity-check");
+  const bsc = "0x46cEeFDa28Dd7207059ed19B0acdc026955bb15C";
+  const given = { [`bsc:${bsc.toLowerCase()}`]: "DIAMOND" };
+  assert.equal(provenance({ chain: "bsc", address: bsc, tier: "FREE" }, given), "a free listing");
+  assert.match(provenance({ chain: "bsc", address: bsc, tier: "DIAMOND" }, given), /given by the auto-lister, not bought/);
+  // A different tier from the one the bot gave means a purchase changed it.
+  assert.match(provenance({ chain: "bsc", address: bsc, tier: "GOLD" }, given), /not given by the auto-lister.*same package/);
+  assert.match(provenance({ chain: "solana", address: BTC, tier: "XPRESS" }, {}), /not given by the auto-lister/);
+});
+
+test("identity:check holds the readers' INFO detail for the run and gives it back", () => {
+  const src = require("node:fs")
+    .readFileSync(require.resolve("../scripts/identity-check"), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "");
+  const iMute = src.indexOf("log.info = () => {}");
+  const iLoop = src.indexOf("for (let i = 0; i < rows.length; i++)");
+  const iFinally = src.indexOf("} finally {", iLoop);
+  const iRestore = src.indexOf("log.info = info", iFinally);
+  assert.ok(iMute > 0 && iMute < iLoop, "muted before the first row");
+  assert.ok(iFinally > iLoop && iRestore > iFinally, "restored in a finally, whatever the loop does");
+  assert.match(src, /% 100 === 0/, "a long run says how far it has got");
+});

@@ -8638,6 +8638,47 @@ processes and rebuilds the site. ⚠️ Run `npm run identity:check -- --all` on
 after the deploy. A row written wrong before this fix is still wrong, and the
 remedy is the one above: delete it in the admin console and list it again.
 
+#### "liat ini" — the first live run found three, and each could still have pumped
+
+`identity:check -- --all` on `cb6993f` named **$LTC** (really $BTC, Big Titty
+Coin), **$THE-ALGORITHM** on Base (really $ADS, Adshares) and **$MEMESTOCK** on
+BSC (really $GMEB, GameStop): three rows written from a stranger's pool before
+the fix.
+
+- ⚠️ **Each kept a pump baseline taken from the STRANGER's price**, while the
+  fixed readers now price the real token. So the ladder could fire "+100% since
+  listing" under the wrong name about a move that never happened.
+  `stillListed.confirmListed` (the one gate before every pump and rank-up
+  alert) now asks the token's own contract too. A mismatch HOLDS the alert,
+  unlatched, and pages ops through `noteMismatch`. A contract that could not
+  be read does not hold anything, and `LISTING_IDENTITY=0` switches it off.
+  Unlike the scam hold it applies to PAID rows too, because an alert that names
+  the wrong token is wrong for whoever bought the slot.
+- **The run's output was noisy, and the fix holds that noise back.** Before,
+  the readers' own INFO lines (`[solana-meta] … metadata document could not be
+  read: jinniu.fun ENOTFOUND`) interleaved with the verdicts. Those lines are
+  about a creator's website, not the ticker, which still comes off the mint, but
+  they read as the check failing. Now they are held for the run and given back
+  after. A long run prints `… N/M checked` every 100 rows, because a matching row
+  prints nothing and a run in progress looked hung. It ends with every wrong row
+  in one list, and says for each whether the tier was **given by the
+  auto-lister** or not (a purchase to put right on the same package).
+
+```bash
+cd bot && node scripts/run-tests.js test/tokenIdentity.test.js   # 16 tests, no network
+```
+
+Seven guarantees are MUTATION-TESTED rather than argued. Each of these mutants
+fails a test:
+
+- the alert ignoring a clash;
+- the identity reader never finding one;
+- ops never told;
+- an unreadable contract holding alerts;
+- the bot's tier ignored;
+- the INFO detail never given back;
+- no progress line.
+
 ## Two bot processes, one config
 
 `bot/` runs **two** PM2 processes: `dexvra-bot` (`main.js`) and

@@ -25,6 +25,7 @@
 require('../src/config/loadEnv').loadEnv();
 
 const api = require('../src/api/dexvra');
+const log = require('../src/helpers/logger');
 const build = require('../src/helpers/build');
 const { chainOf } = require('../src/config/chains');
 const { ticker } = require('../src/helpers/format');
@@ -45,6 +46,26 @@ const GAP_MS = (() => {
   return Number.isFinite(n) && n >= 0 ? n : 300;
 })();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+const keyOf = (chain, address) => `${chain}:${String(address).toLowerCase()}`;
+// The tier the AUTO-LISTER gave each row it made. Its package rotation hands
+// out XPRESS and DIAMOND/GOLD/SILVER as well as FREE, so "not FREE" does not
+// mean somebody paid — the listings:nostables lesson. Read, never re-derived.
+function autoTiers() {
+  try {
+    return require('../src/services/autoLister').autoListedTiers() || {};
+  } catch {
+    return {};
+  }
+}
+
+/** Who gave this row its tier — the difference between a tidy-up and a customer to put right. */
+function provenance(row, granted = {}) {
+  const tier = String(row.tier || '').toUpperCase();
+  if (!tier || tier === 'FREE') return 'a free listing';
+  if (granted[keyOf(row.chain, row.address)] === tier) return `tier ${tier} given by the auto-lister, not bought`;
+  return `tier ${tier}, not given by the auto-lister — if somebody paid for it, list it again on the same package (an admin order costs nothing)`;
+}
 
 /** One row's verdict: 'match' | 'mismatch' | 'unread' | 'none'. Exported for the test. */
 async function judge(row) {
@@ -96,35 +117,62 @@ async function main() {
 
   if (!tokenIdentity.enabled()) warn('LISTING_IDENTITY is off in bot/.env — the doors are not checking; this run still reads every contract.');
 
+  const granted = autoTiers();
   const tally = { match: 0, mismatch: 0, unread: 0, none: 0 };
   const why = {};
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i];
-    if (i && GAP_MS) await sleep(GAP_MS);
-    const v = await judge(row).catch((e) => ({ state: 'unread', why: e.message }));
-    tally[v.state]++;
-    const head = `${ticker(row.sym || row.symbol || '?')}${row.name ? ` — ${row.name}` : ''}  ${D}${row.chain}/${row.address}${row.tier ? ` · ${row.tier}` : ''}${X}`;
-    if (v.state === 'mismatch') {
-      bad(head);
-      note(`the listing says $${v.clash.published}, but the token's own contract says $${v.clash.contract}${v.contract.name ? ` (${v.contract.name})` : ''}`);
-      note('the listing was made from another token\'s market data. A ticker is not editable on the site:');
-      note('delete it in the admin console (Listings → search the address → Manage → Delete), list it again,');
-      note('and delete its channel post by hand.');
-    } else if (v.state === 'unread') {
-      warn(`${head}`);
-      note(`could not read its contract: ${v.why}`);
-      const k = String(v.why || '').slice(0, 80);
-      why[k] = (why[k] || 0) + 1;
-    } else if (rows.length === 1) {
-      if (v.state === 'match') ok(`${head} — its contract says $${v.contract.symbol}`);
-      else ok(`${head} — its contract carries no ticker to compare (${v.why || 'no symbol'})`);
+  const wrong = [];
+  // The readers log their own per-token detail at INFO ("[solana-meta] …
+  // metadata document could not be read: jinniu.fun ENOTFOUND"). That is about
+  // a creator's website, not about the ticker — the ticker still comes off the
+  // mint — and interleaved with the verdicts it reads as this check failing.
+  // Held for the run, restored after; WARN and ERROR still print.
+  const info = log.info;
+  const debug = log.debug;
+  log.info = () => {};
+  log.debug = () => {};
+  try {
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      if (i && GAP_MS) await sleep(GAP_MS);
+      // A full run is minutes long and prints nothing for a row that matches,
+      // which is most of them — a run in progress and a hung one looked alike.
+      if (rows.length > 50 && i && i % 100 === 0) note(`… ${i}/${rows.length} checked`);
+      const v = await judge(row).catch((e) => ({ state: 'unread', why: e.message }));
+      tally[v.state]++;
+      const head = `${ticker(row.sym || row.symbol || '?')}${row.name ? ` — ${row.name}` : ''}  ${D}${row.chain}/${row.address}${row.tier ? ` · ${row.tier}` : ''}${X}`;
+      if (v.state === 'mismatch') {
+        wrong.push({ row, v });
+        bad(head);
+        note(`the listing says $${v.clash.published}, but the token's own contract says $${v.clash.contract}${v.contract.name ? ` (${v.contract.name})` : ''}`);
+        note(`${provenance(row, granted)}`);
+        note('the listing was made from another token\'s market data. A ticker is not editable on the site:');
+        note('delete it in the admin console (Listings → search the address → Manage → Delete), list it again,');
+        note('and delete its channel post by hand.');
+      } else if (v.state === 'unread') {
+        warn(`${head}`);
+        note(`could not read its contract: ${v.why}`);
+        const k = String(v.why || '').slice(0, 80);
+        why[k] = (why[k] || 0) + 1;
+      } else if (rows.length === 1) {
+        if (v.state === 'match') ok(`${head} — its contract says $${v.contract.symbol}`);
+        else ok(`${head} — its contract carries no ticker to compare (${v.why || 'no symbol'})`);
+      }
     }
+  } finally {
+    log.info = info;
+    log.debug = debug;
   }
 
   console.log('');
   console.log(`${D}  ${tally.match} match · ${tally.mismatch} under another name · ${tally.none} with no on-chain ticker · ${tally.unread} could not be read${X}`);
   if (tally.mismatch) {
-    bad(`${tally.mismatch} listing(s) are published under another token's name.`);
+    bad(`${tally.mismatch} listing(s) are published under another token's name:`);
+    // All of them in one place — on a long run the blocks above have scrolled
+    // past between hundreds of rows.
+    for (const { row, v } of wrong) {
+      note(`$${v.clash.published} → really $${v.clash.contract}${v.contract.name ? ` (${v.contract.name})` : ''}   ${row.chain}/${row.address}   ${provenance(row, granted)}`);
+    }
+    note('Until they are deleted, no pump or rank-up alert goes out for them (it would name the wrong token).');
     process.exit(1);
   }
   if (tally.unread && !tally.match && !tally.none) {
@@ -145,4 +193,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { judge };
+module.exports = { judge, provenance };
