@@ -32,6 +32,8 @@
     "x:retarget": "node scripts/retarget-x-handle.js",
     "ca:check": "node scripts/ca-check.js",
     "identity:check": "node scripts/identity-check.js",
+    "comment_listing_delete": "Delete ONE listing from the site, from the server: chain then address after --. Dry run without --apply. The same act as the admin console Delete, paid rows included; identity:check prints a complete line per wrongly named listing.",
+    "listing:delete": "node scripts/listing-delete.js",
     "token:verdict": "node scripts/token-verdict.js"
   },
   "engines": {

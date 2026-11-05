@@ -1,6 +1,7 @@
 import { CHAINS } from "@/config/chains";
 import { cache, cached, within } from "@/lib/cache";
 import { hiddenReport, hideFromBoard } from "@/lib/notAProject";
+import { keepCurrent } from "@/lib/boardLive";
 import {
   SEED_ROWS,
   rowToBoardToken,
@@ -82,6 +83,18 @@ async function loadRows(): Promise<ListingRow[]> {
     return expireTrending(rows.length ? rows : SEED_ROWS);
   } catch {
     return SEED_ROWS;
+  }
+}
+
+/** The rows the board may show right now — the same set `loadRows` builds the
+ *  board from (seed rows on a store with none) — or null when the store could
+ *  not be read, which `keepCurrent` takes as "drop nothing". */
+async function currentRows(): Promise<ListingRow[] | null> {
+  try {
+    const rows = await approvedRows();
+    return rows.length ? rows : SEED_ROWS;
+  } catch {
+    return null;
   }
 }
 
@@ -429,7 +442,13 @@ export async function getTokensPayload(): Promise<TokensPayload> {
   // can surface as an unhandled rejection once nobody is awaiting the load.
   const board = await within(cached(BOARD_KEY, PRICE_TTL, loadListedTokens), COLD_WAIT_MS);
   if (board.ok) {
-    tokens = board.value;
+    // ⚠️ A DELETED LISTING LEAVES THE BOARD NOW, not when the next market
+    // cycle happens to succeed. The cached board can be a minute old, or much
+    // older while a provider refuses us, and it is what the website, the
+    // channel's trending mirror and the gainers banner all read. Membership is
+    // asked of the store the delete just wrote (an in-memory read); the market
+    // numbers stay as cached. See lib/boardLive.ts.
+    tokens = keepCurrent(board.value, await currentRows());
   } else {
     tokens = rowsToBoardTokens(await loadRows());
     live = false;

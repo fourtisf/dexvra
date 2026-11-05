@@ -47,25 +47,10 @@ const GAP_MS = (() => {
 })();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const keyOf = (chain, address) => `${chain}:${String(address).toLowerCase()}`;
-// The tier the AUTO-LISTER gave each row it made. Its package rotation hands
-// out XPRESS and DIAMOND/GOLD/SILVER as well as FREE, so "not FREE" does not
-// mean somebody paid — the listings:nostables lesson. Read, never re-derived.
-function autoTiers() {
-  try {
-    return require('../src/services/autoLister').autoListedTiers() || {};
-  } catch {
-    return {};
-  }
-}
-
-/** Who gave this row its tier — the difference between a tidy-up and a customer to put right. */
-function provenance(row, granted = {}) {
-  const tier = String(row.tier || '').toUpperCase();
-  if (!tier || tier === 'FREE') return 'a free listing';
-  if (granted[keyOf(row.chain, row.address)] === tier) return `tier ${tier} given by the auto-lister, not bought`;
-  return `tier ${tier}, not given by the auto-lister — if somebody paid for it, list it again on the same package (an admin order costs nothing)`;
-}
+const { autoTiers, provenance } = require('../src/helpers/tierProvenance');
+const BOT_DIR = require('node:path').resolve(__dirname, '..');
+/** A complete, pasteable delete line for one row — its own chain and address. */
+const deleteLine = (row) => `cd ${BOT_DIR} && npm run listing:delete -- ${row.chain} ${row.address} --apply`;
 
 /** One row's verdict: 'match' | 'mismatch' | 'unread' | 'none'. Exported for the test. */
 async function judge(row) {
@@ -145,9 +130,8 @@ async function main() {
         bad(head);
         note(`the listing says $${v.clash.published}, but the token's own contract says $${v.clash.contract}${v.contract.name ? ` (${v.contract.name})` : ''}`);
         note(`${provenance(row, granted)}`);
-        note('the listing was made from another token\'s market data. A ticker is not editable on the site:');
-        note('delete it in the admin console (Listings → search the address → Manage → Delete), list it again,');
-        note('and delete its channel post by hand.');
+        note('the listing was made from another token\'s market data. A ticker is not editable on the site,');
+        note('so it is deleted and listed again — the command for that is at the end of this run.');
       } else if (v.state === 'unread') {
         warn(`${head}`);
         note(`could not read its contract: ${v.why}`);
@@ -173,6 +157,12 @@ async function main() {
       note(`$${v.clash.published} → really $${v.clash.contract}${v.contract.name ? ` (${v.contract.name})` : ''}   ${row.chain}/${row.address}   ${provenance(row, granted)}`);
     }
     note('Until they are deleted, no pump or rank-up alert goes out for them (it would name the wrong token).');
+    // REAL values, never a bracketed blank (this repo's first rule): each line
+    // can be pasted as it stands. The admin console's 🗑 does the same thing.
+    console.log('');
+    note('To delete them from this server, one line per listing:');
+    for (const { row } of wrong) console.log(`  ${deleteLine(row)}`);
+    note('Then delete their channel posts in Telegram by hand, and list the right token again.');
     process.exit(1);
   }
   if (tally.unread && !tally.match && !tally.none) {
@@ -193,4 +183,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { judge, provenance };
+module.exports = { judge, provenance, deleteLine };

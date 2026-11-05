@@ -63,6 +63,17 @@ async function deleteListing(id) {
   return call("DELETE", `/api/internal/listings/${encodeURIComponent(id)}`);
 }
 
+/**
+ * Delete ONE listing an operator named by hand — paid or not, exactly what the
+ * admin console's 🗑 does. The address is restated and must be the stored one.
+ * ⚠️ Only `scripts/listing-delete.js` may call this (test/listingDelete.test.js
+ * counts the callers): a bulk script using it would be the purchase-taking
+ * cleanup the bulk DELETE above exists to refuse.
+ */
+async function removeListingByHand(id, address) {
+  return call("POST", `/api/internal/listings/${encodeURIComponent(id)}/remove`, { address });
+}
+
 /** Every stored listing (bot reads for pump/trending). */
 async function getListings() {
   const out = await call("GET", "/api/internal/listings");
@@ -211,6 +222,7 @@ async function ping() {
 
 module.exports = {
   deleteListing,
+  removeListingByHand,
   createListing,
   canCreate,
   MIN_TOKEN_LEN,

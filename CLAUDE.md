@@ -8735,6 +8735,70 @@ fails a test:
 - the INFO detail never given back;
 - no progress line.
 
+#### "bisakah delete from server? … kalo token sudah dihapus berarti token bener2 dihapus"
+
+Two asks. The second was already true for alerts: every pump and rank-up alert
+re-reads the site right before posting (`stillListed.confirmListed`), so a
+deleted or unlisted row is never announced, and its baseline is forgotten on
+the next sweep (`pumpDeleted.test.js`). What was missing:
+
+- **A way to delete from the server.** The internal DELETE route is for BULK
+  scripts and refuses a paid tier, a non-bot row or a live trending slot. That
+  refusal stays. **`npm run listing:delete`** in `bot/` removes ONE listing named
+  by its chain and address, paid or not, which is the same act as the admin
+  console's 🗑. It is a dry run without `--apply`. It goes through its own route,
+  `POST /api/internal/listings/:id/remove`, where the caller must RESTATE the
+  stored address (`lib/handDelete.ts`). ⚠️ Exactly one script may call
+  `api.removeListingByHand`, and `listingDelete.test.js` counts the callers, so a
+  bulk cleanup cannot grow a way round the bulk guard.
+- **`identity:check` prints the delete line** for every row it finds under the
+  wrong name. The line carries real values and the bot's real directory, never
+  a placeholder.
+- ⚠️ **The website kept a deleted token on its board.** The board is a cache
+  served stale-while-revalidate with no upper bound. While a provider refused
+  us, a deleted row stayed on dexvra.io, and on the two surfaces that read the
+  same payload: the channel's trending mirror (`board-rank`) and the Top Gainers
+  banner (`/api/tokens`). `getTokensPayload` now filters the cached board
+  against the store at serve time (`lib/boardLive.ts`). The store is an
+  in-memory read. A store that could not be read drops nothing, because "could
+  not ask" is not "nothing listed".
+- **A deleted contract does not come back for free.** Every auto-lister scan
+  folds the live roster into the never-relist ledger. A row deleted before the
+  next scan was not on it, so the auto-lister could hand it straight back.
+  `listing:delete` records it (`rememberListed`, which refuses to write over an
+  unreadable state file) and says so. A purchase is unaffected; only free
+  auto-listing reads the ledger.
+
+Measured end to end against a built site: the bulk route refused the GOLD row,
+the by-hand route refused a wrong address, and the dry run changed nothing.
+`--apply` then deleted the row, the board dropped it on the next request, the
+contract was on the ledger, and a second run said "nothing to delete". ⚠️ The
+CACHED-board branch could not be driven from this sandbox: no provider answers
+here, so the board always takes the fallback branch, which reads the store
+directly. That branch is pinned by a source test and the pure function.
+
+```bash
+cd bot && node scripts/run-tests.js test/listingDelete.test.js   # 11 tests, no network
+node --test --experimental-strip-types src/lib/boardLive.test.ts  # 6 tests
+```
+
+Eighteen guarantees are MUTATION-TESTED rather than argued. Each mutant fails
+between one and two tests:
+
+- **the script:** a dry run that deletes; the typed address sent instead of the
+  stored one; an unconfirmed answer counted as a delete; the trending slot not
+  described; the ledger never written; a failed ledger write reported as safe;
+- **the guard and the printed line:** a second caller of the by-hand route;
+  identity:check's line without `--apply`;
+- **the board:** left unfiltered; `keepCurrent` keeping everything; a failed
+  store read blanking the board; the store's read failure answering empty; the
+  address compared case-sensitively; the chain dropped from the key;
+- **the route:** no address required; any address accepted; the rule skipped.
+
+**Config a fix depends on:** nothing. ⚠️ This touches `bot/` AND `src/`, so
+`npm run deploy` restarts both bots and rebuilds the site. Channel posts
+already published stay in Telegram and are deleted by hand.
+
 ## Two bot processes, one config
 
 `bot/` runs **two** PM2 processes: `dexvra-bot` (`main.js`) and
