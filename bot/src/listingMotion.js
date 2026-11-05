@@ -675,12 +675,11 @@ function faceTexture(cv, img, symbol) {
   x.arc(c, c, r, 0, TAU);
   x.clip();
   if (img) {
-    const scale = Math.max((r * 2) / img.width, (r * 2) / img.height);
-    const w = img.width * scale;
-    const h = img.height * scale;
+    // canvasKit owns the rule, shared with the pump clip's hub: a wide logo
+    // whole, a dark logo on a clear background visible, a square one as before.
     x.fillStyle = "#0B0F17";
     x.fillRect(0, 0, c * 2, c * 2);
-    x.drawImage(img, c - w / 2, c - h / 2, w, h);
+    kit.drawLogoDisc(x, img, c, c, r, { backdrop: "#0B0F17" });
   } else {
     const g = x.createRadialGradient(c - r * 0.3, c - r * 0.35, r * 0.1, c, c, r);
     g.addColorStop(0, "#2A3142");

@@ -702,9 +702,81 @@ function warnBoxes(where, coin) {
   } catch (_) { return []; }   /* a diagnostic must never be why a banner fails */
 }
 
+// ── A token's logo inside a circle ──────────────────────────────────────────
+// "pastikan semuanya berjalan dengan benar dari logo tepat posisi" — a render
+// of the pump clip with real-shaped logos found two the coin faces drew wrong:
+//
+//  • A BLACK glyph on a transparent background went out as an all-black disc.
+//    Transparency is nothing at all, so whatever sat behind it showed through,
+//    and both clips put a near-black backdrop there: the logo vanished.
+//  • A 3:1 WORDMARK was cropped to "OR". A coin face fills the circle, which is
+//    right for a square logo (the corners fall outside the coin, as every avatar
+//    does) and wrong for one whose words run past the circle on both sides.
+//
+// One rule for every round coin face, so the listing clip and the pump clip
+// cannot disagree about where a project's logo goes.
+const LOGO_SQUARE = [0.8, 1.25]; // aspect ratios still filled edge to edge
+const LOGO_CONTAIN = 0.92; // a non-square logo's CORNERS sit inside this much of the radius
+const LOGO_DARK_LUM = 0.42; // visible content darker than this needs a light backdrop
+const LOGO_LIGHT_BACKDROP = "#EEF3F9";
+const logoInfoCache = new WeakMap();
+
+/** { aspect, hasAlpha, lum } of a loaded image — lum is the mean luminance of
+ *  its VISIBLE pixels, so a black glyph on a clear background reads as dark. */
+function logoInfo(img) {
+  const hit = logoInfoCache.get(img);
+  if (hit) return hit;
+  const info = { aspect: img.width / img.height, hasAlpha: false, lum: 0.5 };
+  try {
+    const cv = canvasLib();
+    const N = 48, c = cv.createCanvas(N, N), x = c.getContext("2d");
+    const s = Math.min(N / img.width, N / img.height), w = Math.max(1, Math.round(img.width * s)), h = Math.max(1, Math.round(img.height * s));
+    const ox = Math.floor((N - w) / 2), oy = Math.floor((N - h) / 2);
+    x.drawImage(img, ox, oy, w, h);
+    const d = x.getImageData(ox, oy, w, h).data;
+    let clear = 0, lw = 0, ls = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      const a = d[i + 3] / 255;
+      if (a < 0.9) clear++;
+      // weighted by alpha, so a clear pixel's colour (0,0,0 underneath) counts for nothing
+      ls += ((0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]) / 255) * a;
+      lw += a;
+    }
+    info.hasAlpha = clear / (w * h) > 0.03;
+    info.lum = lw ? ls / lw : 0.5;
+  } catch (_) {
+    /* an image we cannot sample is drawn as it always was */
+  }
+  logoInfoCache.set(img, info);
+  return info;
+}
+
+/**
+ * Draw a token's logo filling the circle of radius r at (cx, cy) — the caller
+ * clips (or its geometry masks) to the circle. Returns how it was placed.
+ *   square-ish (0.8–1.25)  → fills the circle, as before
+ *   wide or tall           → fitted WHOLE, its corners inside the circle
+ *   dark on transparent    → on a light backdrop instead of `backdrop`
+ */
+function drawLogoDisc(ctx, img, cx, cy, r, { backdrop = "#0B0F17" } = {}) {
+  const info = logoInfo(img);
+  const darkOnClear = info.hasAlpha && info.lum < LOGO_DARK_LUM;
+  ctx.fillStyle = darkOnClear ? LOGO_LIGHT_BACKDROP : backdrop;
+  ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
+  const square = info.aspect >= LOGO_SQUARE[0] && info.aspect <= LOGO_SQUARE[1];
+  const s = square
+    ? Math.max((r * 2) / img.width, (r * 2) / img.height)
+    : (r * 2 * LOGO_CONTAIN) / Math.hypot(img.width, img.height);
+  const w = img.width * s, h = img.height * s;
+  ctx.drawImage(img, cx - w / 2, cy - h / 2, w, h);
+  return { fit: square ? "fill" : "whole", backdrop: darkOnClear ? "light" : "dark" };
+}
+
 module.exports = {
   canvasLib,
   available: () => !!canvasLib(),
+  drawLogoDisc,
+  _logoInfo: logoInfo,
   coverage,
   packagesFor,
   recordFonts,

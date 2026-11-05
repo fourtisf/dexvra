@@ -401,8 +401,10 @@ function dialTexture(cv, m, k, kRead, jit, into = null) {
 function hubTexture(cv, img, symbol) {
   const LT = 256, c = cv.createCanvas(LT, LT), x = c.getContext("2d");
   if (img) {
-    const s = Math.max(LT / img.width, LT / img.height);
-    x.drawImage(img, (LT - img.width * s) / 2, (LT - img.height * s) / 2, img.width * s, img.height * s);
+    // The hub shows the circle inscribed in this texture (measured: every hub
+    // sample lies within radius 0.5 of its centre). canvasKit owns the rule —
+    // a wide logo whole, a dark logo on a clear background visible.
+    kit.drawLogoDisc(x, img, LT / 2, LT / 2, LT / 2, { backdrop: "#0A2340" });
   } else {
     const g = x.createRadialGradient(LT / 2, LT * 0.4, 10, LT / 2, LT / 2, LT / 2);
     g.addColorStop(0, "#1E5A8C"); g.addColorStop(1, "#0A2340");

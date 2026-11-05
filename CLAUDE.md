@@ -4398,6 +4398,62 @@ ladder exactly. The FIRST pump alert after a deploy pays the ~3 s march once
 (the tmp cache serves every alert after it). `bot/` only, so the deploy is the
 ecosystem restart.
 
+#### "pastikan semuanya berjalan dengan benar dari logo tepat posisi mc brp % pump"
+
+The operator asked for a check of every element on the clip. I ran a matrix of
+nine first frames: square, round-transparent, black-on-transparent, 3:1, 1:2,
+JPEG, no logo, a CJK ticker, corrupt bytes, from +100% to +2000%, with MC
+unread and with MC present.
+
+**Every text figure was already right.** Each was read back off `fillText`:
+
+- the gain is the announced step;
+- the dial readout is the caption's own `xMultiple` (2× through 21×);
+- MC at listing → MC now use the caption's own `pumpMc`, and an unread one is
+  left out;
+- the ticker carries one `$`;
+- the chain chip is the chain's label.
+
+**The LOGO was drawn wrong in two of the nine cases, and the listing clip's
+coin had the same two defects:**
+
+- ⚠️ **A black glyph on a transparent background went out as an all-black
+  disc.** Transparency shows whatever is behind it, and both clips put a
+  near-black backdrop there.
+- ⚠️ **A 3:1 wordmark was cropped to "OR".** Filling the circle is right for a
+  square logo and wrong for a logo whose words run past the circle on both
+  sides.
+
+**`canvasKit.drawLogoDisc` is the one rule now**, and both coin faces draw
+through it:
+
+- A square-ish logo (aspect ratio 0.8–1.25) fills the circle exactly as before.
+- A wide or tall logo is fitted WHOLE, its corners at 92% of the radius.
+- A logo with transparency whose visible pixels are dark (alpha-weighted
+  luminance under 0.42) gets a light backdrop.
+- ⚠️ An OPAQUE dark logo keeps the dark one, because it is the project's own
+  art, not a hole.
+- The pump hub was measured first: it shows exactly the circle inscribed in its
+  texture (every hub sample lies within radius 0.5).
+
+```bash
+cd bot && node scripts/run-tests.js test/logoDisc.test.js   # 9 tests, no network
+```
+
+Six guarantees are MUTATION-TESTED. Each of these mutants fails between one and
+three tests:
+
+- each clip back to its private crop;
+- every logo filled;
+- never a light backdrop;
+- an opaque dark logo put on light;
+- transparency never detected.
+
+A seventh mutant, a `> 0.5` alpha guard on the luminance, survived: the
+luminance is already alpha-weighted, so the guard was dead and it was removed.
+Square logos render as before. Only wide, tall and dark-on-transparent logos
+change.
+
 ## A Top 3 that was not the top of the Top 5
 
 Two banners, one minute apart, from the same admin panel:
