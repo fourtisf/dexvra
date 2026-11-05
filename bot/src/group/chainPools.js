@@ -23,7 +23,7 @@
 //
 // THIS IS A FALLBACK, NOT A REPLACEMENT. The indexer is asked first: it is one
 // cheap request and it carries the price and market cap that this cannot.
-const { rpcRead } = require("../config/rpc");
+const { rpcRead, isTransportError } = require("../config/rpc");
 const { chainOf } = require("../config/chains");
 const log = require("../helpers/logger");
 
@@ -501,10 +501,42 @@ async function tokenMeta(chain, token) {
   }
 }
 
+/**
+ * `tokenMeta` in the shape that can tell "we could not ask" from an answer.
+ * `{ ok, symbol, name, why }`: a node that did not answer is `ok:false` (the
+ * caller must not read it as "this token has no symbol"); a `symbol()` that
+ * reverts or decodes to nothing — a bytes32 ticker, a contract that is not an
+ * ERC-20 — is an ANSWER with no symbol. tokenIdentity.js is the reader.
+ */
+async function tokenMetaX(chain, token, { timeoutMs = TIMEOUT_MS, budgetMs = BUDGET_MS } = {}) {
+  if (!supports(chain) || !token) return { ok: true, symbol: null, name: null, why: "not an EVM chain" };
+  const ethers = ethersLib();
+  if (!ethers) return { ok: false, symbol: null, name: null, why: "ethers is not installed" };
+  try {
+    const { value } = await rpcRead(
+      chain,
+      async (url) => {
+        const c = new ethers.Contract(token, ERC20_ABI, evmProvider(ethers, url));
+        const symbol = await c.symbol();
+        const name = await c.name().catch(() => "");
+        return { symbol: String(symbol || "").slice(0, 40), name: String(name || "").slice(0, 80) };
+      },
+      { timeoutMs, budgetMs, onFail: dropEndpoint },
+    );
+    return { ok: true, symbol: value.symbol || null, name: value.name || null, why: value.symbol ? null : "the contract's symbol() is empty" };
+  } catch (e) {
+    const msg = String((e && (e.shortMessage || e.message)) || e).slice(0, 160);
+    return isTransportError(e)
+      ? { ok: false, symbol: null, name: null, why: `could not read the contract (${msg})` }
+      : { ok: true, symbol: null, name: null, why: `symbol() did not answer a string (${msg})` };
+  }
+}
+
 module.exports = {
   findPool,
   readPool,
   tokenMeta,
+  tokenMetaX,
   counterUsd,
   supports,
   CREATION,

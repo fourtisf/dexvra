@@ -243,6 +243,14 @@ const DEFAULTS = {
     "📢 **Telegram:** {telegram}\n\n" +
     "🔹 This is exactly what goes live on your token page and channel posts.\n\n" +
     "Tap **✅ Confirm**, or use the edit buttons below.",
+  // The market data named a DIFFERENT ticker from the token's own contract
+  // (services/tokenIdentity.js): its name, logo, links and figures were
+  // dropped and the contract's name used. Appended under the review card,
+  // whatever an operator saved there, so it can never be edited away.
+  review_identity_warn:
+    "⚠️ **Check this is your token.** The market data named it **${indexer}**, but its own contract says **${contract}** — " +
+    "the market data was about another token, so the contract's name is used and the logo, links and overview were not filled in. " +
+    "Add them with the edit buttons below.",
   edit_field_prompt: "✏️ Send the new **{field}**:",
   invalid_address:
     "❌ That doesn't look like a valid **{chain}** contract address.\n\n🔹 Double-check and paste it again:",
@@ -1346,6 +1354,7 @@ const META = {
   // already saved this template simply will not have the placeholder and will
   // not see the notice — ♻️ Reset default picks it up.
   review_card: { group: "Bot Messages", label: "Listing review card", ph: ["chain", "name", "symbol", "address", "logo", "overview", "website", "twitter", "telegram", "bonding"] },
+  review_identity_warn: { group: "Bot Messages", label: "Listing review card: the market data named another token", ph: ["indexer", "contract"] },
   edit_field_prompt: { group: "Bot Messages", label: "Edit-field prompt", ph: ["field"] },
   invalid_address: { group: "Bot Messages", label: "Error: invalid address", ph: ["chain"] },
   ca_pair_resolved: { group: "Bot Messages", label: "Contract: a DexScreener pair was pasted (using its token)", ph: ["symbol", "chain", "address"] },

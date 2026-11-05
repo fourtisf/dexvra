@@ -2086,9 +2086,11 @@ async function gtMarketX(ca, chainKey) {
     if (r.ok) {
       const j = await r.json();
       const pools = Array.isArray(j && j.data) ? j.data : [];
-      const best = pools
-        .filter((p) => p && p.attributes && Number(p.attributes.base_token_price_usd) > 0)
-        .sort((a, b) => Number(b.attributes.reserve_in_usd || 0) - Number(a.attributes.reserve_in_usd || 0))[0];
+      // The token's OWN pool — never a stranger's pool that has this token as
+      // its QUOTE: that pool's base price, cap and name ("LTC / BTC") are the
+      // other token's. shared/geckoterminal/poolSide.js.
+      const best = gtSide.ownGtPools(pools, ca)
+        .filter((p) => Number(p.attributes.base_token_price_usd) > 0)[0];
       if (best) {
         const a = best.attributes;
         const dex = ((best.relationships && best.relationships.dex && best.relationships.dex.data) || {}).id || '';
@@ -2140,6 +2142,7 @@ async function dsMarket(ca, chainKey) {
 // "couldn't price it", or worse as the pool's LP token, which IS an ERC-20.
 const dsPairRule = require('../shared/dexscreener/pair');
 const tokenPairs = require('../shared/dexscreener/tokenPairs');
+const gtSide = require('../shared/geckoterminal/poolSide');
 const _pairCache = new Map();   // `${slugs}|${address}` → { at, r }
 const PAIR_TTL_MS = 5 * 60 * 1000;
 

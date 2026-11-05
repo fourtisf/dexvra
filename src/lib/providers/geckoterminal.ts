@@ -7,6 +7,7 @@ import { gtGet, gtInCooldown } from "./gt.ts";
 // runtime. `dsCovers` is the one owner of "does this chain have a second
 // source" and the scheduler already orders the cycle on it.
 import { dsCovers } from "./dexscreener.ts";
+import { ownOrdered, type GtSided } from "./gtSide.ts";
 import type { PeriodKey, TxSplit } from "@/lib/types";
 
 // GeckoTerminal free API (no key). We fetch live market data for a SPECIFIC
@@ -51,7 +52,7 @@ interface GtToken {
   };
   relationships?: { top_pools?: { data?: { id: string }[] } };
 }
-interface GtPool {
+interface GtPool extends GtSided {
   id: string;
   attributes: {
     address?: string;
@@ -174,8 +175,18 @@ async function fetchChunk(
   const poolsById = new Map((json.included ?? []).map((p) => [p.id, p]));
   for (const token of json.data ?? []) {
     const ids = (token.relationships?.top_pools?.data ?? []).map((d) => d.id);
-    const topId = ids[0];
-    const siblings = ids
+    // ⚠️ A pool where this token is the QUOTE is a stranger's market — its
+    // change, volume and counts are the base token's. $BTC was published as
+    // $LTC that way (src/lib/providers/gtSide.ts). Such a pool never leads and
+    // never lends a change; a pool GT sent no relationships for keeps its place.
+    // `ownOrdered` is the one owner of that rule (it drops the quote side).
+    const addr = token.attributes.address;
+    const ordered = ownOrdered(
+      ids.map((id) => poolsById.get(id) ?? ({ id } as GtPool)),
+      addr,
+    ).map((p) => p.id);
+    const topId = ordered[0];
+    const siblings = ordered
       .slice(1)
       .map((id) => poolsById.get(id))
       .filter((p): p is GtPool => p != null);

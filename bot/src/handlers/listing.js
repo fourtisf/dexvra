@@ -49,13 +49,21 @@ const URL_RE = /^https?:\/\/\S+$/i;
 // The clock and the lookup's options live in config/autofill — one spelling,
 // shared with `launchpads:check`, which prints what this form would prefill.
 const { AUTOFILL_MAX_MS, INFO_OPTS } = require("../config/autofill");
+const tokenIdentity = require("../services/tokenIdentity");
 const solanaMeta = require("../solanaMeta");
 const sessionStore = require("../helpers/sessionStore");
 const caInput = require("../helpers/caInput");
 
 /** Test seam — the three lookups, swappable without a network. The
  *  `core._deps.providerFor` shape, for the same reason. */
-const _lookups = { fetchTokenInfo, fetchMarket, fetchTokenDescription, resolveInput: (...a) => caInput.resolveInput(...a) };
+const _lookups = {
+  fetchTokenInfo,
+  fetchMarket,
+  fetchTokenDescription,
+  resolveInput: (...a) => caInput.resolveInput(...a),
+  // The token's own contract — what it calls itself (services/tokenIdentity.js).
+  identity: (chain, address) => (tokenIdentity.enabled() ? tokenIdentity.readX(chain, address, { budgetMs: AUTOFILL_MAX_MS }) : null),
+};
 
 // The pair check is ONE request to DexScreener's documented pair endpoint (the
 // chain is already picked), so it gets a tighter ceiling than the autofill: a
@@ -250,13 +258,30 @@ async function captureAddress(ctx, f, input, { waited = false } = {}) {
   // Website) — and GeckoTerminal (name/symbol/logo + project overview).
   // The indexer wins for socials. Each source has AUTOFILL_MAX_MS to
   // answer; see `bounded` for why a ceiling here is load-bearing.
-  const [ds, gt, desc] = await Promise.all([
+  let [ds, gt, desc, own] = await Promise.all([
     // The discovery gets a budget INSIDE the form's ceiling, so a source
     // that hangs costs its own answer and never the ones that arrived.
     bounded(() => _lookups.fetchTokenInfo(f.chain, input, INFO_OPTS)),
     bounded(() => _lookups.fetchMarket(f.chain, input)),
     bounded(() => _lookups.fetchTokenDescription(f.chain, input)),
+    // On Solana this shares the discovery's own metadata read (one request).
+    bounded(() => _lookups.identity(f.chain, input)),
   ]);
+  // ⚠️ THE CONTRACT DECIDES WHOSE TOKEN THIS IS. "harusnya tokenya btc not
+  // ltc": the market data was read off a stranger's pool, the card said $LTC,
+  // and the buyer confirmed it. When the token's own contract names a
+  // different ticker from the market data, that market record is about
+  // ANOTHER token: its name, logo, links, overview and figures are all dropped
+  // and the contract's name is used, and the review card says so. A contract
+  // that could not be read, or carries no symbol, changes nothing.
+  const clash = !f.sym && own && own.ok ? tokenIdentity.conflict((ds && ds.symbol) || (gt && gt.symbol), own.symbol) : null;
+  if (clash) {
+    tokenIdentity.noteMismatch("listing form", f.chain, input, clash);
+    f.identityConflict = { indexer: clash.published, contract: clash.contract };
+    ds = { name: own.name || clash.contract, symbol: own.symbol };
+    gt = null;
+    desc = null;
+  }
   const name = (ds && ds.name) || (gt && gt.name);
   const symbol = (ds && ds.symbol) || (gt && gt.symbol);
   const logoUrl = (ds && ds.logoUrl) || (gt && gt.logoUrl);
@@ -484,10 +509,15 @@ async function showReview(ctx) {
     twitter: v(f.twitter),
     telegram: v(f.telegram),
   });
+  // Appended WHOLE, after the operator's template (premium.appendBlock): a
+  // saved review_card would otherwise never show it.
+  const shownText = f.identityConflict
+    ? premium.appendBlock(text, tpl.render("review_identity_warn", { indexer: f.identityConflict.indexer, contract: f.identityConflict.contract }))
+    : text;
   const { photo, why: fetchWhy } = await reviewPhotoX(f);
   let r;
-  if (photo) r = await sendPhotoCardX(ctx, photo, text, reviewKb());
-  else r = { msg: await sendCard(ctx, text, reviewKb()), photo: false, why: null };
+  if (photo) r = await sendPhotoCardX(ctx, photo, shownText, reviewKb());
+  else r = { msg: await sendCard(ctx, shownText, reviewKb()), photo: false, why: null };
   const missed = reviewPictureMissed(f, { photo: r.photo, fetchWhy, sendWhy: r.why && `Telegram refused the photo: ${r.why}` });
   if (missed) log.warn(missed);
   return r.msg;
@@ -578,6 +608,9 @@ async function lateFill(ctx, f, msg) {
   const delays = _late.delays();
   if (!delays.length || !msg || !msg.message_id || !f || !solanaMeta.covers(f.chain)) return { applied: false, why: "not applicable" };
   if (!lacksArt(f) && !lacksSocials(f)) return { applied: false, why: "nothing missing" };
+  // The market data named ANOTHER token; a second look through the same
+  // lookup would put that token's logo and links straight back.
+  if (f.identityConflict) return { applied: false, why: "the market data named another token" };
   const { chain, address } = f;
   const msgId = msg.message_id;
   const { bounded } = require("../helpers/bounded");
@@ -702,6 +735,9 @@ async function goPay(ctx, tier) {
       // What fulfilment's final look needs to fill holes WITHOUT overruling the
       // buyer: what they removed, and whether the overview is the placeholder.
       autofill: autoState(f),
+      // The market data named another token: fulfilment's final look may not
+      // refill the logo and links from it.
+      identityConflict: f.identityConflict || null,
       // Dated, so fulfilment can refuse it once it is too old to publish.
       market: f.market || null,
       trendHours: tierTrendingHours(tier),

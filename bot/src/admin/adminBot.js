@@ -110,6 +110,9 @@ const SAMPLE_VARS = {
   // be about to edit away, and it renders as "" for a token that has migrated.
   bonding: "\n\n🚀 **Still bonding** on pump.fun — **49%** to graduation\n_No DEX pool yet, so charts and liquidity stay empty until it migrates._",
   website: "https://bullcat.io", twitter: "https://x.com/bullcat", telegram: "https://t.me/bullcat",
+  // The identity warning on the review card: the ticker the market data gave,
+  // and the one the token's own contract carries.
+  indexer: "LTC", contract: "BTC",
   label: "Diamond Listing — $BULLCAT on Solana", amount: "1", order: "k3n8_a1b2",
   // The pay card names the network because two ETH options share one 0x shape.
   network: "Robinhood Chain",

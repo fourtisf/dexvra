@@ -13,6 +13,7 @@
  */
 const { ethers } = require('ethers');
 const tokenPairs = require('../shared/dexscreener/tokenPairs');
+const gtSide = require('../shared/geckoterminal/poolSide');
 const core = require('./core');
 const goplus = require('./goplus');
 const safety = require('./safety');   // chain-aware token safety (GoPlus / RugCheck)
@@ -81,7 +82,11 @@ async function marketStats(ca, chainKey) {
     const r = await fetch(`https://api.geckoterminal.com/api/v2/networks/${net}/tokens/${ca}/pools?page=1`, { signal: AbortSignal.timeout(6000), headers: { accept: 'application/json' } });
     if (!r.ok) return null;
     const j = await r.json();
-    const a = j.data && j.data[0] && j.data[0].attributes;
+    // The token's OWN deepest pool, not whichever GeckoTerminal listed first —
+    // that one may be a stranger's pool with this token as its QUOTE, whose
+    // change and counts are the other token's.
+    const own = gtSide.bestGtPool(j && j.data, ca);
+    const a = own && own.attributes;
     if (!a) return null;
     return {
       volH24Usd: a.volume_usd && a.volume_usd.h24 != null ? Number(a.volume_usd.h24) : null,

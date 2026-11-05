@@ -5,6 +5,7 @@
 // DexScreener only; chains neither indexes → null (posts show TBA).
 const { chainOf } = require("./config/chains");
 const tokenPairs = require("../../shared/dexscreener/tokenPairs");
+const gtSide = require("../../shared/geckoterminal/poolSide");
 const launchpads = require("./launchpads");
 const ponsChain = require("./ponsChain");
 const { bounded } = require("./helpers/bounded");
@@ -123,9 +124,12 @@ function noteBrokenPool(chain, address) {
 /** The pool a token's numbers should come from: the DEEPEST one, not whichever
  *  GeckoTerminal happened to list first. A thin, freshly-created pool is where
  *  the absurd percentages and fake valuations live. */
-function deepestPool(j) {
+function deepestPool(j, address) {
   const ids = new Set((j.data?.relationships?.top_pools?.data || []).map((p) => p.id));
-  const pools = (j.included || []).filter((p) => p && ids.has(p.id) && p.attributes);
+  // ⚠️ NEVER A POOL WHERE THIS TOKEN IS THE QUOTE. Its change, volume and depth
+  // are the OTHER token's market — the $BTC/$LTC defect, on GeckoTerminal. See
+  // shared/geckoterminal/poolSide.js.
+  const pools = (j.included || []).filter((p) => p && ids.has(p.id) && p.attributes && (!address || gtSide.gtSideOf(p, address) !== "quote"));
   if (!pools.length) return null;
   return pools.reduce((best, p) =>
     (num(p.attributes.reserve_in_usd) || 0) > (num(best.attributes.reserve_in_usd) || 0) ? p : best,
@@ -159,13 +163,14 @@ const CHANGE_POOL_MIN_SHARE = 0.1;
  * about the market, and the deepest pool is the honest one. Only the CHANGE
  * falls back, and only to a pool with real liquidity behind it.
  */
-function changeFromPools(j, deepest) {
+function changeFromPools(j, deepest, address) {
   const own = poolChange(deepest);
   if (own != null) return own;
   const ids = new Set((j.data?.relationships?.top_pools?.data || []).map((p) => p.id));
   const floor = (num(deepest && deepest.attributes && deepest.attributes.reserve_in_usd) || 0) * CHANGE_POOL_MIN_SHARE;
   const alt = (j.included || [])
-    .filter((p) => p && ids.has(p.id) && p.attributes && p !== deepest)
+    // a quote-side sibling's change is the BASE token's move, never ours
+    .filter((p) => p && ids.has(p.id) && p.attributes && p !== deepest && (!address || gtSide.gtSideOf(p, address) !== "quote"))
     .filter((p) => poolChange(p) != null && (num(p.attributes.reserve_in_usd) || 0) >= floor)
     .sort((a, b) => (num(b.attributes.reserve_in_usd) || 0) - (num(a.attributes.reserve_in_usd) || 0))[0];
   return alt ? poolChange(alt) : null;
@@ -297,19 +302,23 @@ async function fetchGT(chain, address) {
     if (!attr) return null;
     const price = num(attr.price_usd);
     const mcap = num(attr.market_cap_usd) ?? num(attr.fdv_usd);
-    const pool = deepestPool(j);
-    const poolId = j.data.relationships?.top_pools?.data?.[0]?.id;
+    const pool = deepestPool(j, address);
+    // The fallback id is the CHOSEN pool's, never top_pools[0] blindly — that
+    // one may be a stranger's pool with this token as its quote.
+    // With no pool objects INCLUDED at all there is no side to judge, and the
+    // first listed id keeps its old use (a chart link, nothing priced off it).
+    const poolId = pool ? pool.id : (j.included || []).length ? null : j.data.relationships?.top_pools?.data?.[0]?.id;
     const poolAddress =
       (pool && pool.attributes && pool.attributes.address) ||
       (poolId ? poolId.split("_").slice(1).join("_") || null : null);
-    const rawChange = changeFromPools(j, pool);
+    const rawChange = changeFromPools(j, pool, address);
     // Publish nothing rather than nonsense: the board prints this straight.
     let change24h = rawChange;
     // WHY there is no reading, for the operator — the board renders "no pool
     // traded in 24h" and "the reading was 12,400% and we refused it" the same
     // way, and only one of those is a broken pool. Never rendered publicly;
     // `trending:check --rows` is the only reader.
-    let changeWhy = rawChange == null ? (deepestPool(j) ? "pools have no 24h reading (no trades in the window)" : "GT lists no pool for this token") : null;
+    let changeWhy = rawChange == null ? (pool ? "pools have no 24h reading (no trades in the window)" : "GT lists no pool of its own for this token") : null;
     if (rawChange != null && Math.abs(rawChange) > SANE_CHANGE_PCT) {
       // Once per token per hour, not once per poll. A pool with a broken
       // opening tick stays broken, and this runs on the board's refresh

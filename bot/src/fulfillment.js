@@ -149,6 +149,9 @@ async function finalLook(input, p) {
   try {
     const meta = _finalLook.meta();
     if (!input || !meta.covers(input.chain)) return null;
+    // The form found the market data was about ANOTHER token; a final look
+    // through the same lookup would refill that token's logo and links.
+    if (p && p.identityConflict) return null;
     const auto = (p && p.autofill) || {};
     const form = { ...input, logoFileId: p && p.logoFileId };
     if (!holes.hasHoles(form, auto)) return null;
@@ -1620,6 +1623,7 @@ module.exports = {
   _fetchLogoUrlWarm: fetchLogoUrlWarm,
   readArtwork,
   _finalLook,
+  _finalLookRun: finalLook,
   _resetWarm: () => warmed.clear(),
   _pinLogo: pinLogo,
   _PIN_LOGO_MS: PIN_LOGO_MS,

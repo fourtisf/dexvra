@@ -31,6 +31,7 @@
     "post:check": "node scripts/post-check.js",
     "x:retarget": "node scripts/retarget-x-handle.js",
     "ca:check": "node scripts/ca-check.js",
+    "identity:check": "node scripts/identity-check.js",
     "token:verdict": "node scripts/token-verdict.js"
   },
   "engines": {

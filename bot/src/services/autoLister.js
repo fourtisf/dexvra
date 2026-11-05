@@ -60,6 +60,7 @@ const movers = require("./marketMovers");
 const { notAProject } = require("./bigCoins");
 const { qualityRefusal, realLiquidity } = require("./listingQuality");
 const listingSafety = require("./listingSafety");
+const tokenIdentity = require('./tokenIdentity');
 const listingLogo = require("./listingLogo");
 const logoRepair = require("./logoRepair");
 const log = require("../helpers/logger");
@@ -1257,7 +1258,7 @@ function listingInput(chain, address, info, cfg = get(), now = Date.now(), pkgKe
  * Throws what the site threw: the caller decides whether one refusal ends its
  * run, and the two callers answer that differently.
  */
-async function createFromInfo(chain, address, info, { cfg = get(), now = Date.now(), pkgKey = 'free', safetyChecked = null, artChecked = null } = {}) {
+async function createFromInfo(chain, address, info, { cfg = get(), now = Date.now(), pkgKey = 'free', safetyChecked = null, artChecked = null, identityChecked = null } = {}) {
   // ⚠️ NEVER LIST THE MONEY — and it belongs HERE, not in the callers.
   //
   // "jangan pernah listing stable coin". `bigCoins.topByMcap` has filtered
@@ -1297,6 +1298,16 @@ async function createFromInfo(chain, address, info, { cfg = get(), now = Date.no
   const safe = safetyChecked || (await listingSafety.checkX(chain, address, { pool: info.poolAddress }).catch((e) => ({ ok: false, why: e.message })));
   if (!safe.ok || safe.refusal) {
     log.info(`[autolist] refused ${info.symbol} on ${chain}/${address} — ${safe.refusal || safe.why}`);
+    return null;
+  }
+  // ⚠️ AND NEVER UNDER ANOTHER TOKEN'S NAME — at the same door, so the board
+  // filler and the chain seeder carry it too. $BTC went out as $LTC because the
+  // market data was read off a stranger's pool; the token's own contract is the
+  // one source that cannot be about somebody else (services/tokenIdentity.js).
+  // A read that could not happen lists anyway — see that file for why.
+  const idv = identityChecked || (await tokenIdentity.checkX(chain, address, info).catch((e) => ({ ok: false, refusal: null, why: e.message })));
+  if (idv.refusal) {
+    log.info(`[autolist] refused ${info.symbol} on ${chain}/${address} — ${idv.refusal}`);
     return null;
   }
   // ⚠️ AND NEVER LIST WITHOUT ITS ARTWORK — at the same door, so the board
@@ -1357,7 +1368,9 @@ function seams(deps = {}) {
   // The artwork — found across every source and checked the way the renderer
   // draws it, then kept on our own disk. See listingLogo.js.
   const logoX = deps.logoX || ((c, a, info, o) => listingLogo.resolveX(c, a, info, o));
-  return { discoverX, priceX, safetyX, logoX };
+  // The token's own contract — is the name we are about to publish its own?
+  const identityX = deps.identityX || ((c, a, info) => tokenIdentity.checkX(c, a, info));
+  return { discoverX, priceX, safetyX, logoX, identityX };
 }
 
 // ⚠️ ONE SCAN AT A TIME, IN THIS PROCESS.
@@ -1445,7 +1458,7 @@ async function scanOnce({ tg, now = Date.now(), deps = {}, rng = Math.random, fo
   // are different facts and this service used to render them identically. An
   // injected LEGACY dep is wrapped rather than refused: a stub that returns a
   // record or null is stating "it answered", which is exactly what a test means.
-  const { discoverX, priceX, safetyX, logoX } = seams(deps);
+  const { discoverX, priceX, safetyX, logoX, identityX } = seams(deps);
 
   let state = loadState();
   if (!state._ok) {
@@ -1669,6 +1682,20 @@ async function scanOnce({ tg, now = Date.now(), deps = {}, rng = Math.random, fo
       log.info(`[autolist] refused ${sanitizeTicker(info.symbol)} (${c.chain}/${c.address}) — ${safe.refusal}`);
       continue;
     }
+    // ⚠️ NEVER UNDER ANOTHER TOKEN'S NAME. Asked before the artwork, so nothing
+    // is uploaded for a token whose market data turned out to be a stranger's.
+    // "Could not ask" lists anyway (tokenIdentity.js says why); a mismatch is a
+    // refusal, cooled like any other — the pool behind it will not move today.
+    const idv = await identityX(c.chain, c.address, info).catch((e) => ({ ok: false, refusal: null, why: e.message }));
+    if (idv.refusal) {
+      const bucket = reasonBucket(idv.refusal);
+      report.reasons[bucket] = (report.reasons[bucket] || 0) + 1;
+      state.cool[key] = now + 12 * HOUR_MS;
+      delete state.seen[key];
+      tokenIdentity.noteMismatch('free listing refused', c.chain, c.address, tokenIdentity.conflict(info.symbol, idv.contract && idv.contract.symbol));
+      log.info(`[autolist] refused ${sanitizeTicker(info.symbol)} (${c.chain}/${c.address}) — ${idv.refusal}`);
+      continue;
+    }
     // ⚠️ EVERY FREE LISTING CARRIES ITS LOGO — or it is not made.
     //
     // "saya ingin bot setiap free listing harus ada logonya cari di sumber2
@@ -1705,7 +1732,7 @@ async function scanOnce({ tg, now = Date.now(), deps = {}, rng = Math.random, fo
     const { key: pkgKey } = nextPkg(cfg, state);
     let made;
     try {
-      made = await createFromInfo(c.chain, c.address, info, { cfg, now, pkgKey, safetyChecked: safe, artChecked: art });
+      made = await createFromInfo(c.chain, c.address, info, { cfg, now, pkgKey, safetyChecked: safe, artChecked: art, identityChecked: idv });
     } catch (e) {
       // ON THE REPORT, not only in pm2. This token cleared every gate the
       // operator set and the site turned it down; "0 listed" with an empty
@@ -1934,7 +1961,7 @@ const DRY_LOOKUPS = 15;
 
 async function dryRun({ now = Date.now(), deps = {} } = {}) {
   const cfg = get();
-  const { discoverX, priceX, safetyX, logoX } = seams(deps);
+  const { discoverX, priceX, safetyX, logoX, identityX } = seams(deps);
   const report = blank(now);
   const state = loadState();
 
@@ -2056,6 +2083,14 @@ async function dryRun({ now = Date.now(), deps = {} } = {}) {
     }
     if (safe.refusal) {
       const bucket = reasonBucket(safe.refusal);
+      report.reasons[bucket] = (report.reasons[bucket] || 0) + 1;
+      continue;
+    }
+    // …and the identity check, or the button promises a listing the scan
+    // refuses as another token's name.
+    const idv = await identityX(c.chain, c.address, info).catch((e) => ({ ok: false, refusal: null, why: e.message }));
+    if (idv.refusal) {
+      const bucket = reasonBucket(idv.refusal);
       report.reasons[bucket] = (report.reasons[bucket] || 0) + 1;
       continue;
     }

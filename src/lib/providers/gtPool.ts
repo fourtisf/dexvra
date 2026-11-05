@@ -8,8 +8,9 @@
 // and the drift is invisible because both answers are plausible pool addresses.
 import { CHAINS } from "../../config/chains.ts";
 import { gtGet } from "./gt.ts";
+import { gtSideOf, type GtSided } from "./gtSide.ts";
 
-interface GtPoolRow {
+interface GtPoolRow extends GtSided {
   id?: string;
   attributes?: { address?: string; reserve_in_usd?: string | null };
 }
@@ -45,8 +46,14 @@ export async function topPoolAddress(network: string, address: string): Promise<
   // not be retried or thrown; every other outcome means it never looked.
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(res.reason ?? "GeckoTerminal failed");
-  const rows = (res.body?.data ?? []).filter((p) => addrOf(p));
-  if (rows.length === 0) return null;
+  const all = (res.body?.data ?? []).filter((p) => addrOf(p));
+  if (all.length === 0) return null;
+  // The token's OWN pool first — never a stranger's pool with this token as its
+  // QUOTE while one of its own exists (src/lib/providers/gtSide.ts). With none
+  // of its own, the deepest is still a market FOR it, and the candles are asked
+  // for this token by address, so the chart reads the right side.
+  const own = all.filter((p) => gtSideOf(p, address) !== "quote");
+  const rows = own.length ? own : all;
   const deepest = rows.reduce((best, p) =>
     num(p.attributes?.reserve_in_usd) > num(best.attributes?.reserve_in_usd) ? p : best,
   );

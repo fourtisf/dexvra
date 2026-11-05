@@ -8529,6 +8529,115 @@ wrong.** The admin edit cannot change a ticker (`sanitizePatch` has no `sym`).
 The remedy is to delete the row in the admin console and list the token again,
 and to delete the wrong channel post by hand.
 
+### "bagaimana agar masalah ini tidak terjadi lgi" — the other indexer had it too, and the contract decides now
+
+Asked straight after the fix above. Two things were left, and the first was
+the same defect on the other indexer.
+
+**1. ⚠️ GECKOTERMINAL RETURNS A TOKEN'S POOLS ON EITHER SIDE TOO.**
+`tokens/{address}/pools` and `?include=top_pools` work the same way as
+DexScreener's token endpoint, and five readers took the deepest pool without
+checking which side our token was on:
+
+| reader | what a stranger's quote-side pool supplied |
+| --- | --- |
+| bot `marketdata.fetchGT` | liquidity, volume, 24h change, pool address |
+| bot `gtPairs.fetchGtPool` (buy bot) | the base's PRICE and cap, the change, buys and sells the wrong way round |
+| tradebot `core.gtMarket` | the base's price, cap and ticker (`"LTC / BTC"`.split → LTC) |
+| tradebot `tokeninfo.marketStats` | change, counts, liquidity (it took `data[0]`) |
+| site board + chart pool | change, volume, counts, the charted pool |
+
+- **`shared/geckoterminal/poolSide.js` is the one owner**, the twin of
+  `tokenPairs.js`. The side is read from each pool's own
+  `relationships.base_token / quote_token` ids. A pool positively identified as
+  quote-side never describes the token. Base-side pools rank first.
+- ⚠️ **A pool with NO relationships keeps its old treatment**, i.e. it is still
+  usable, ranked after base-side pools. This sandbox cannot reach GeckoTerminal
+  to prove every response shape carries relationships. A filter that dropped
+  every pool on an unexpected shape would blank every board on the site.
+- **A quote-side-only token still gets our own USD price**
+  (`quote_token_price_usd`). Its counts are swapped, and the base's cap and
+  change come back as null (`quoteView`).
+- **The site carries a PORT** (`src/lib/providers/gtSide.ts`). `gtSide.test.ts`
+  loads the shared module and fails if the two ever answer a fixture
+  differently.
+- **The guard is counted**: `gtTokenSide.test.js` scans `bot/` and `tradebot/`
+  for every reader of a token's GT pools and fails on any that does not require
+  the owner.
+
+**2. THE TOKEN'S OWN CONTRACT DECIDES WHOSE TOKEN IT IS.** Both readers are
+fixed, but the next cause will be something else. So the promise is now
+watched: *a listing is published under the token's own name.* The indexers
+describe a token from the outside. The token's own metadata (a Solana mint's
+Metaplex / Token-2022 record, an EVM contract's `symbol()`) cannot be about
+somebody else. `services/tokenIdentity.js` reads it through the existing owners
+(`solanaMeta`, `chainPools.tokenMetaX`), never a third reader.
+
+| door | on a mismatch |
+| --- | --- |
+| **listing form** (where a human confirms) | the contract's name and ticker are used; the market record's logo, links, overview and figures are **dropped** (they were about the other token); the review card says so (`review_identity_warn`, Bot Messages); the second look and fulfilment's final look do not refill them |
+| **free-listing scan + `createFromInfo`** (nobody confirms) | refused as `identity mismatch`, cooled 12h, counted on the scan line; 🔎 Test scan says the same |
+| **rows already written** | `npm run identity:check` names them, with the remedy |
+
+- ⚠️ **"COULD NOT ASK" IS NEVER A VERDICT, AND IT FAILS OPEN.** On this box the
+  Solana RPC answers 429 on a busy minute. Refusing every free listing whenever
+  it does would switch the feed off over a check. This is a deliberate
+  exception to the `unchecked` rule: the readers are already fixed, and this is
+  the second line.
+- **A contract with no symbol makes no claim**: an empty record, a bytes32
+  ticker, a `symbol()` that reverts.
+- **Tickers are compared the way they are published**, through
+  `sanitizeTicker`. So `PEPE🐸` and `PEPE` are the same token, and case and a
+  leading `$` never decide.
+- **On Solana it costs nothing.** The form's discovery already reads the mint's
+  metadata, and `solanaMeta`'s in-flight sharing makes the identity read the
+  same request.
+- **A mismatch at a door is a WARN** (`[identity] …`), which reaches the ops
+  channel, naming both tickers and the check to run.
+- `LISTING_IDENTITY=0` in `bot/.env` turns the doors off. Blank is ON. The test
+  runner sets it off, and `tokenIdentity.test.js` turns it back on.
+
+```bash
+cd bot && node scripts/run-tests.js test/gtTokenSide.test.js test/tokenIdentity.test.js   # 14 tests, no network
+cd tradebot && SKIP_DOTENV=1 node --test dsTokenSide.test.js                              # 5 tests, no network
+node --test --experimental-strip-types src/lib/providers/gtSide.test.ts                   # 3 tests, no network
+cd /opt/dexvra/bot && npm run identity:check            # the newest 30 listings, each asked of its own contract
+cd /opt/dexvra/bot && npm run identity:check -- --all   # every listing, paced
+```
+
+`identity:check` exits 1 when a listing's ticker is not its contract's, or when
+not one contract could be read (that run says nothing about the listings). A
+token whose contract carries no symbol never turns the exit code. It prints the
+build stamp, and its only argument besides `--all` is a token's chain and
+address.
+
+Thirty-four guarantees are MUTATION-TESTED rather than argued. Each mutant fails
+between one and six tests:
+
+- **GeckoTerminal readers:** each of the five back to "deepest, any side"; a
+  quote-side sibling lending its change; a quote-only pool priced at the base's
+  price; counts not swapped; base-side not ranked first; a reader bypassing the
+  owner (the guard); the site's port drifting on base58 case or the quote side.
+- **Identity:** the comparison never firing, or comparing raw tickers; an unread
+  contract becoming a refusal; blank read as off; a failed metadata document
+  losing the on-chain ticker.
+- **Doors:** the door, the scan gate, the cool-off and the Test scan gate
+  removed; the form never comparing, keeping the stranger's record, never
+  asking, or not showing the warning; the second look, the order payload or
+  the final look not carrying the finding.
+- **`identity:check`:** every row judged a match; "could not read" counted as a
+  match.
+
+⚠️ One mutant SURVIVED its first run. The site's board had a quote-side filter
+in front of `ownOrdered`, which filters the same thing, so the line was dead. It
+was removed, and the owner's own filter is what the test kills now.
+
+**Config a fix depends on:** nothing. It ships ON. ⚠️ `shared/`, `bot/`,
+`tradebot/` AND `src/` changed, so `npm run deploy` restarts all three bot
+processes and rebuilds the site. ⚠️ Run `npm run identity:check -- --all` once
+after the deploy. A row written wrong before this fix is still wrong, and the
+remedy is the one above: delete it in the admin console and list it again.
+
 ## Two bot processes, one config
 
 `bot/` runs **two** PM2 processes: `dexvra-bot` (`main.js`) and

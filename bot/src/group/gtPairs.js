@@ -15,6 +15,7 @@
 // same-address token on another chain supplied the price.)
 const { chainOf, DEXSCREENER_SLUG } = require("../config/chains");
 const tokenPairs = require("../../../shared/dexscreener/tokenPairs");
+const gtSide = require("../../../shared/geckoterminal/poolSide");
 const log = require("../helpers/logger");
 
 // GeckoTerminal's free endpoint, and the Pro one an API key unlocks. The free
@@ -443,11 +444,34 @@ async function fetchGtPool(net, address) {
   if (!res.ok) return null;
   const pools = (res.body && res.body.data) || [];
   if (!pools.length) return null;
-  // deepest-liquidity pool wins
-  pools.sort((a, b) => (num(b.attributes?.reserve_in_usd) || 0) - (num(a.attributes?.reserve_in_usd) || 0));
-  const a = pools[0].attributes || {};
+  // The token's OWN deepest pool — never a stranger's pool that merely has
+  // this token as its QUOTE (shared/geckoterminal/poolSide.js). That pool's
+  // price, cap, change and counts are the other token's, and on it a "buy" is
+  // somebody selling us.
+  const own = gtSide.bestGtPool(pools, address);
+  if (!own) {
+    const q = gtSide.quoteView(pools, address);
+    if (!q) return null;
+    const qa = q.pool.attributes || {};
+    const qs = sidesOfGtPool(q.pool, address);
+    return {
+      poolAddress: qa.address || null,
+      symbol: qs.symbol,
+      counterSymbol: qs.counterSymbol,
+      counterAddress: qs.counterAddress,
+      priceUsd: q.priceUsd,
+      mcap: null,
+      volume24h: (qa.volume_usd && num(qa.volume_usd.h24)) || 0,
+      liquidity: num(qa.reserve_in_usd) || 0,
+      buys24h: q.buys24h || 0,
+      sells24h: q.sells24h || 0,
+      change24h: null,
+      source: "gt",
+    };
+  }
+  const a = own.attributes || {};
   const tx = (a.transactions && a.transactions.h24) || {};
-  const sides = sidesOfGtPool(pools[0], address);
+  const sides = sidesOfGtPool(own, address);
   return {
     poolAddress: a.address || null,
     symbol: sides.symbol,
