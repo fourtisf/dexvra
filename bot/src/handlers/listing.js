@@ -274,7 +274,9 @@ async function captureAddress(ctx, f, input, { waited = false } = {}) {
   // ANOTHER token: its name, logo, links, overview and figures are all dropped
   // and the contract's name is used, and the review card says so. A contract
   // that could not be read, or carries no symbol, changes nothing.
-  const clash = !f.sym && own && own.ok ? tokenIdentity.conflict((ds && ds.symbol) || (gt && gt.symbol), own.symbol) : null;
+  // The name travels with the ticker it came from: the same record answers both.
+  const mkt = ds && ds.symbol ? ds : gt;
+  const clash = !f.sym && own && own.ok ? tokenIdentity.conflict(mkt && mkt.symbol, own.symbol, { published: mkt && mkt.name, contract: own.name }) : null;
   if (clash) {
     tokenIdentity.noteMismatch("listing form", f.chain, input, clash);
     f.identityConflict = { indexer: clash.published, contract: clash.contract };

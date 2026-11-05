@@ -8799,6 +8799,41 @@ between one and two tests:
 `npm run deploy` restarts both bots and rebuilds the site. Channel posts
 already published stay in Telegram and are deleted by hand.
 
+#### The second `--all` run: 8 flagged, and two were ONE token with two ticker spellings
+
+`identity:check -- --all` on the deployed box flagged eight rows. Six had a
+name from a different token too (`$STONKBROKER` over DERP, `$FAKER` over SK
+Hynix, `$SPYB` over 何必东奔西走 币安全部都有). Two did not:
+`$LEMON` over a contract saying `LEMON.FUN` ("Lemon"), and `$BANANAS31` over
+`BANANA` ("Banana For Scale"). Those are the ticker an exchange or a launchpad
+uses beside the one the contract carries. A flag HOLDS that row's pump alerts
+and prints a delete line for it, so a false one costs a real listing.
+
+- **`tokenIdentity.sameToken` lets them agree, and needs BOTH halves.** The
+  names must match (letters and digits, case-folded, at least 3), AND one
+  ticker must be the other with something added (at least 3). A stranger's
+  pool carries the stranger's name WITH its ticker (Little Titty Coin over Big
+  Titty Coin), so a same-name stranger is not the shape the readers produced.
+  The ticker half keeps a row whose name is right and whose ticker came from
+  somewhere else (`$LTC` named "Big Titty Coin") a mismatch.
+- **Every DECIDING caller passes the names**: the free door (`checkX`), the
+  alert hold (`confirmListed` → `identityOf` → `checkX`), the listing form,
+  and `identity:check`. The two calls that only spell the pair after a
+  refusal (`identityOf`'s page, the auto-lister's note) do not, and say so.
+
+```bash
+cd bot && node scripts/run-tests.js test/tokenIdentity.test.js   # 18 tests, no network
+cd /opt/dexvra/bot && npm run identity:check -- --all            # after the deploy: only the real mismatches
+```
+
+Eleven guarantees are MUTATION-TESTED rather than argued: the rule never
+consulted, the name not required, the ticker relation not required, either
+minimum length dropped, punctuation kept in the name, and each of the five
+deciding callers dropping the names. Each fails between one and five tests.
+
+**Config a fix depends on:** nothing. `bot/` only, so `npm run deploy` does the
+ecosystem restart.
+
 ## Two bot processes, one config
 
 `bot/` runs **two** PM2 processes: `dexvra-bot` (`main.js`) and

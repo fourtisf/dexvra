@@ -81,14 +81,49 @@ async function readX(chain, address, { budgetMs = 5000 } = {}) {
   }
 }
 
+/** A name or ticker as compared: letters and digits only, case-folded —
+ *  "Banana For Scale" and "banana-for-scale" agree, as do LEMON.FUN and LEMONFUN. */
+const key = (v) =>
+  String(v == null ? '' : v)
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]/gu, '');
+
+/**
+ * ONE TOKEN, TWO SPELLINGS OF ITS TICKER. The first `identity:check -- --all`
+ * flagged $LEMON over a contract saying $LEMON.FUN ("Lemon"), and $BANANAS31
+ * over $BANANA ("Banana For Scale") — the ticker an exchange or a launchpad
+ * uses beside the one the contract carries. A flag HOLDS that row's pump alerts
+ * and tells the operator to delete it, so a false one costs a real listing.
+ *
+ * What told those two apart from the real mismatches is the NAME: a stranger's
+ * pool carries the stranger's name AND ticker together (Little Titty Coin /
+ * $LTC over Big Titty Coin / $BTC), so it is never the same name. Both are
+ * required here — the same name, AND one ticker is the other with something
+ * added — so a row whose name is right and whose ticker came from somewhere
+ * else ($LTC published as "Big Titty Coin") is still a mismatch.
+ */
+function sameToken(a, b, names) {
+  const pn = key(names && names.published);
+  const cn = key(names && names.contract);
+  if (pn.length < 3 || pn !== cn) return false;
+  const x = key(a);
+  const y = key(b);
+  const [short, long] = x.length <= y.length ? [x, y] : [y, x];
+  return short.length >= 3 && long.startsWith(short);
+}
+
 /**
  * Null when the two agree (or either is missing); otherwise
- * `{ published, contract }` in the form we publish tickers.
+ * `{ published, contract }` in the form we publish tickers. `names` is
+ * `{ published, contract }` — the listing's name and the contract's name()
+ * — and lets one token's two ticker spellings agree (see `sameToken`).
  */
-function conflict(published, contractSymbol) {
+function conflict(published, contractSymbol, names) {
   const a = sanitizeTicker(published);
   const b = sanitizeTicker(contractSymbol);
   if (!a || !b || a === b) return null;
+  if (sameToken(a, b, names)) return null;
   return { published: a, contract: b };
 }
 
@@ -102,7 +137,7 @@ async function checkX(chain, address, info, opts = {}) {
   if (!enabled()) return { ok: true, refusal: null, why: 'off', contract: null };
   const r = await readX(chain, address, opts);
   if (!r.ok) return { ok: false, refusal: null, why: r.why, contract: null };
-  const c = conflict(info && info.symbol, r.symbol);
+  const c = conflict(info && info.symbol, r.symbol, { published: info && info.name, contract: r.name });
   if (!c) return { ok: true, refusal: null, why: r.why, contract: r };
   return {
     ok: true,

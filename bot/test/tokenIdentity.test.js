@@ -346,3 +346,67 @@ test("identity:check holds the readers' INFO detail for the run and gives it bac
   assert.ok(iFinally > iLoop && iRestore > iFinally, "restored in a finally, whatever the loop does");
   assert.match(src, /% 100 === 0/, "a long run says how far it has got");
 });
+
+// "liat ini" (the first --all run): eight rows flagged, and two of them were ONE
+// token with two ticker spellings — $LEMON over a contract saying LEMON.FUN
+// ("Lemon"), $BANANAS31 over BANANA ("Banana For Scale"). A false flag holds
+// that row's pump alerts and tells the operator to delete a real listing. A
+// stranger's pool carries the stranger's NAME with its ticker, so the name is
+// what tells the two apart.
+test("one token, two ticker spellings: the same NAME and a ticker that extends the other agree", () => {
+  assert.equal(ident.conflict("$LEMON", "LEMON.FUN", { published: "Lemon", contract: "Lemon" }), null);
+  assert.equal(ident.conflict("BANANAS31", "BANANA", { published: "Banana For Scale", contract: "banana-for-scale" }), null);
+  // the real mismatches from the same run: the stranger's name came with its ticker
+  assert.deepEqual(ident.conflict("LTC", "BTC", { published: "Little Titty Coin", contract: "Big Titty Coin" }), { published: "LTC", contract: "BTC" });
+  assert.ok(ident.conflict("STONKBROKER", "DERP", { published: "Stonk Broker", contract: "DERP" }));
+  // the name alone is not enough: the right name over an unrelated ticker is still wrong
+  assert.ok(ident.conflict("LTC", "BTC", { published: "Big Titty Coin", contract: "Big Titty Coin" }));
+  // nor a related ticker alone
+  assert.ok(ident.conflict("LEMON", "LEMON.FUN"), "no names → the old rule");
+  assert.ok(ident.conflict("LEMON", "LEMON.FUN", { published: "Lemonade", contract: "Lemon" }));
+  // too short to mean anything
+  assert.ok(ident.conflict("AB", "ABC", { published: "Abc Token", contract: "Abc Token" }));
+  assert.ok(ident.conflict("ABCD", "ABCDE", { published: "Xy", contract: "Xy" }));
+});
+
+test("the free door passes the names: one token's two spellings list, a stranger's name is refused", async () => {
+  contractSays("BANANA", "Banana For Scale");
+  const addr = "0x3d4f0513e8a29669b960f9dbca61861548a9a760";
+  const same = await ident.checkX("bsc", addr, { symbol: "BANANAS31", name: "Banana For Scale" });
+  assert.equal(same.refusal, null);
+  const other = await ident.checkX("bsc", addr, { symbol: "BANANAS31", name: "Banana Gun" });
+  assert.match(String(other.refusal), /identity mismatch/);
+});
+
+test("the alert hold passes the listing's name: $LEMON over LEMON.FUN ('Lemon') is announced", async () => {
+  const { confirmListed } = require("../src/helpers/stillListed");
+  const addr = "0xf0E17e54239CD945Cd7bEa471a3a2CA6a8C7f7A3";
+  const row = { chain: "robinhood", address: addr, sym: "$LEMON", name: "Lemon", status: "approved", listedAt: 1 };
+  contractSays("LEMON.FUN", "Lemon");
+  assert.equal((await confirmListed(row, { listedAt: 1 }, async () => [row])).ok, true, "one token is not held");
+  const wrong = { ...row, name: "Lemonade Stand" };
+  const held = await confirmListed(wrong, { listedAt: 1 }, async () => [wrong]);
+  assert.equal(held.ok, false, "a different name is still another token");
+});
+
+test("identity:check passes the listing's name", async () => {
+  const { judge } = require("../scripts/identity-check");
+  contractSays("BANANA", "Banana For Scale");
+  const row = { chain: "bsc", address: "0x3d4f0513e8a29669b960f9dbca61861548a9a760", sym: "$BANANAS31", name: "Banana For Scale" };
+  assert.equal((await judge(row)).state, "match");
+  assert.equal((await judge({ ...row, name: "Banana Gun" })).state, "mismatch");
+});
+
+test("the FORM passes the market record's name: one token's two spellings keep their logo and links", async () => {
+  const LEMON_RECORD = { ...LTC_RECORD, name: "Lemon", symbol: "LEMON", logoUrl: "https://cdn.example/lemon.png" };
+  contractSays("LEMON.FUN", "Lemon");
+  listing._lookups.fetchTokenInfo = async () => LEMON_RECORD;
+  listing._lookups.fetchMarket = async () => null;
+  listing._lookups.fetchTokenDescription = async () => null;
+  const ctx = ctxWith({ type: "xpress_listing", form: { ...listing._test.emptyForm(), chain: "solana" }, awaitingField: "address" }, BTC);
+  await listing.handleText(ctx);
+  const f = ctx.session.form;
+  assert.equal(f.identityConflict, undefined);
+  assert.equal(f.logoUrl, "https://cdn.example/lemon.png");
+  assert.doesNotMatch(ctx.replies.map((r) => r.text).join("\n"), /Check this is your token/);
+});

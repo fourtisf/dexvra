@@ -57,7 +57,7 @@ async function judge(row) {
   const r = await tokenIdentity.readX(row.chain, row.address, { budgetMs: 8000 });
   if (!r.ok) return { state: 'unread', why: r.why, contract: r };
   if (!r.symbol) return { state: 'none', why: r.why, contract: r };
-  const c = tokenIdentity.conflict(row.sym || row.symbol, r.symbol);
+  const c = tokenIdentity.conflict(row.sym || row.symbol, r.symbol, { published: row.name, contract: r.name });
   return c ? { state: 'mismatch', clash: c, contract: r } : { state: 'match', contract: r };
 }
 

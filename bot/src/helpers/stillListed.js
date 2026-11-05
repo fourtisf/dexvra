@@ -53,7 +53,7 @@ async function confirmListed(r, base, getListings = () => api.getListings(), che
   // could not be read does NOT hold the alert: the door and the readers are the
   // first line, and an RPC outage must not silence every alert on a chain.
   const named = live.sym || live.symbol || r.sym || r.symbol;
-  const clash = await checkIdentity(r.chain, r.address, named).catch(() => null);
+  const clash = await checkIdentity(r.chain, r.address, named, live.name || r.name).catch(() => null);
   if (clash) {
     return {
       ok: false,
@@ -69,10 +69,11 @@ async function confirmListed(r, base, getListings = () => api.getListings(), che
  * contract could not be read, or the check is switched off. Pages ops once
  * (de-duplicated) with the command that finds every such row.
  */
-async function identityOf(chain, address, sym) {
+async function identityOf(chain, address, sym, name) {
   const tokenIdentity = require("../services/tokenIdentity");
-  const v = await tokenIdentity.checkX(chain, address, { symbol: sym }, { budgetMs: 5000 });
+  const v = await tokenIdentity.checkX(chain, address, { symbol: sym, name }, { budgetMs: 5000 });
   if (!v.refusal || !v.contract) return null;
+  // checkX decided (with the names); this only spells the pair for the page.
   const c = tokenIdentity.conflict(sym, v.contract.symbol);
   if (c) tokenIdentity.noteMismatch("pump/rank-up alert", chain, address, c);
   return c;
