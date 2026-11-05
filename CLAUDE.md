@@ -4454,7 +4454,7 @@ luminance is already alpha-weighted, so the guard was dead and it was removed.
 Square logos render as before. Only wide, tall and dark-on-transparent logos
 change.
 
-### The trending post has its own clip: the "Blue Flame" (`trendingMotion.js`)
+### The trending post has its own clip: the "Blue Flame" (`trendingMotion.js`) — and three more, one per run length
 
 "ok skrg buatkan gif trending premium visualnya". Three stills were shown:
 A (a flame), B (a trophy), C (a crown). The operator picked **A. Api**. Like the
@@ -4548,6 +4548,74 @@ posts look like on deploy**. A box with an admin trending clip now posts the
 flame ahead of it. `TRENDING_MOTION=0` in `bot/.env` restores the old ladder
 exactly. The first trending post after a deploy pays the ~4s march once.
 `bot/` only, so the deploy is the ecosystem restart.
+
+#### "bisakah anda buatkan yang berbeda2 kaya 24H 48H 12H 6H design berbeda"
+
+One design per length of trending run. The copy column, the timeline and the
+6s loop are shared; the object the logo sits in, the room around it, the colour
+and the entrance are the design's own. **24H is the approved Blue Flame,
+unchanged**, so that approval still stands. The three others are new and need
+the same approval.
+
+| run | design | object | room | entrance |
+| --- | --- | --- | --- | --- |
+| ≤ 6H | `bolt` | a mint lightning bolt, the logo in a disc at its waist | teal; speed streaks falling, arcs crackling off the rim | lightning strikes the disc |
+| ≤ 12H | `trophy` | a platinum trophy, the logo on its cup | indigo; two sweeping spotlights, a pool of light, twinkling stars | confetti |
+| ≤ 24H | `flame` | the Blue Flame | as approved | as approved |
+| > 24H | `crown` | a gold crown on a gold logo medallion | royal blue; a turning sunburst, gold dust rising, stars | ring, sparks, flare in gold |
+
+- **The badge decides.** `designFor` reads the hours in the post's own badge
+  (`Trending 18H`), and a run in between takes the next design up: 3H is the
+  bolt, 16H and 18H the flame. A badge that names no run (the auto-lister's
+  listing badge, the admin force-post) gets the flame.
+  - Listing bundles: Bronze 6H → bolt, Silver 12H → trophy, Platinum 18H and
+    Gold 24H → flame, Diamond 48H → crown.
+  - Auto-trend books 3–18h at random, so it posts a mix of the first three.
+- **`DESIGNS` is one table.** Each entry has its SDF, pose, two metals,
+  studio kickers, palette and drawers. Copy, timeline, encoder, budget and
+  wiring are untouched, so `postMedia`, the cancel and the ladder behave as
+  before.
+- ⚠️ **The flame is byte-identical, and that was measured.** A fresh march
+  hashes to the old cache file exactly (`2b77626…`), and seven frames hash the
+  same before and after the refactor. The flame's cache file keeps its name,
+  so a box already holding it does not march again.
+- **Each design marches once per box**, cached as
+  `dexvra-trend<design>-v<N>-560x2.bin`. The marches take about 2s (bolt), 3s
+  (trophy) and 4.5s (crown). A full clip renders in ~6–7.5s. Bump a design's
+  `version` when its shape or lighting changes.
+- **Every loop is exact (`t = 6` draws `t = 0`):**
+  - Every ambient motion completes whole periods per loop.
+  - The bolt's arcs are seeded by the frame index modulo `FRAMES`.
+  - The crown's sunburst alternates wide and narrow rays, so it turns two
+    ray-steps per loop. Same lesson as the listing clip's rays.
+  - The strike (0.5s) and the confetti (≤1.32s) end before the wrap.
+- ⚠️ **A flat face mirrors the dark behind the camera.** The first bolt had a
+  flat front, and it rendered black wherever it faced the lens. It is domed
+  now (thick along its spine, thin at its edges) and has a dim `wall` light
+  in its studio. That knob exists only for the bolt.
+- ⚠️ **A gold crown under a cyan kicker reads green**, so every design has its
+  own studio kickers. The flame's are the old constants, so it is unchanged.
+
+```bash
+cd bot && node scripts/run-tests.js test/trendingMotion.test.js   # 39 tests, ~25s with no march cached
+```
+
+Sixteen guarantees are MUTATION-TESTED rather than argued. Each mutant fails
+between one and nine tests:
+
+- **badge → design:** 6H not the bolt, the 12H boundary off by one, 48H not
+  the crown, the badge ignored by the frame loop;
+- **entrances:** the strike or the confetti outliving the wrap, the entrance
+  never drawn;
+- **loop:** the sunburst turning one step instead of two, the arcs seeded by
+  the unwrapped frame, the streaks, twinkles, dust, float or spotlights off
+  their period;
+- **cache:** one cache file for every design, the body ignoring the design.
+
+**Config a fix depends on:** nothing. It ships ON with the rest of the clip,
+and `TRENDING_MOTION=0` still turns every design off. The first post of each
+design on a box pays its march once. `bot/` only, so the deploy is the
+ecosystem restart.
 
 ## A Top 3 that was not the top of the Top 5
 

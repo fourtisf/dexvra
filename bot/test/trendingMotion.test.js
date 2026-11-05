@@ -1,4 +1,5 @@
-// The trending post's "Blue Flame" clip (trendingMotion) and its wiring.
+// The trending post's clip (trendingMotion) — one design per run length
+// (6H bolt · 12H trophy · 24H the "Blue Flame" · 48H crown) — and its wiring.
 //
 // Every figure on the clip is the post's own: postMedia hands it the same
 // bannerCoin the caption is built from (fulfillment.bannerFigures' spelling),
@@ -213,6 +214,99 @@ test("the flame is marched once and cached on disk", { skip: !HAVE }, async () =
   assert.strictEqual(a, b, "one body per process");
   for (let i = 0; i < 50 && !fss.existsSync(tm._cacheFile()); i++) await new Promise((r) => setTimeout(r, 100));
   assert.ok(fss.existsSync(tm._cacheFile()), "cached for the next process");
+});
+
+// ── one design per run length ──
+const BADGE = { bolt: "Trending 6H", trophy: "Trending 12H", flame: "Trending 24H", crown: "Trending 48H" };
+const offBy = (a, b, thr = 12) => {
+  let off = 0;
+  for (let i = 0; i < a.length; i += 4) if (Math.abs(a[i] - b[i]) > thr || Math.abs(a[i + 1] - b[i + 1]) > thr || Math.abs(a[i + 2] - b[i + 2]) > thr) off++;
+  return off;
+};
+
+test("each run length gets its own design; a run in between takes the next one up", () => {
+  const d = tm._designFor;
+  assert.deepEqual(tm.DESIGN_KEYS.slice().sort(), ["bolt", "crown", "flame", "trophy"]);
+  assert.equal(d("Trending 3H"), "bolt");
+  assert.equal(d("Trending 6H"), "bolt");
+  assert.equal(d("Trending 12H"), "trophy");
+  assert.equal(d("Trending 16H"), "flame");
+  assert.equal(d("Trending 18H"), "flame");
+  assert.equal(d("Trending 24H"), "flame", "24H keeps the approved Blue Flame");
+  assert.equal(d("Trending 48H"), "crown");
+  assert.equal(d("trending 168h"), "crown");
+  assert.equal(d("Xpress Listing"), "flame", "a listing badge names no run: the flame");
+  assert.equal(d(null), "flame", "the force-post passes none");
+});
+
+test("the badge picks the design the clip draws", { skip: !HAVE }, async () => {
+  const [byBadge] = await tm.frames(COIN, null, { times: [0], badge: "Trending 6H" });
+  const [named] = await tm.frames(COIN, null, { times: [0], badge: "Trending 6H", design: "bolt" });
+  const [flame] = await tm.frames(COIN, null, { times: [0], badge: "Trending 6H", design: "flame" });
+  assert.equal(offBy(byBadge, named), 0, "6H draws the bolt");
+  assert.ok(offBy(byBadge, flame) > 20000, "and the bolt is not the flame");
+});
+
+for (const key of ["bolt", "trophy", "crown"]) {
+  test(`${key}: frame 0 is the full card, the pill naming its run`, { skip: !HAVE }, async () => {
+    const calls = await drawnDuring(() => tm.frames(COIN, logoPng("#F2B33D"), { times: [0], badge: BADGE[key] }));
+    assert.equal(runAt(calls, 163), BADGE[key].toUpperCase());
+    assert.equal(runAt(calls, 290), "$CHOO");
+    assert.equal(runAt(calls, LABELS_Y), "PRICEMARKET CAPLIQUIDITY");
+    assert.ok(texts(calls).includes("Live on the Dexvra trending board"));
+  });
+}
+
+for (const key of ["bolt", "trophy", "flame", "crown"]) {
+  test(`${key}: the loop is exact (t = 6 draws t = 0) and the seam test compares two moments`, { skip: !HAVE }, async () => {
+    const [a, b, c] = await tm.frames(COIN, logoPng("#3355ff"), { times: [0, tm.SECONDS, 1.5], design: key, badge: BADGE[key] });
+    assert.ok(offBy(a, b) < 60, `${offBy(a, b)} pixels differ across the seam`);
+    assert.ok(offBy(a, c) > 2000, "vacuity: t = 1.5 is not t = 0");
+  });
+
+  test(`${key}: the token's logo is what its place shows`, { skip: !HAVE }, async () => {
+    const [red] = await tm.frames(COIN, logoPng("#ff0000"), { times: [0], design: key });
+    const [blue] = await tm.frames(COIN, logoPng("#0000ff"), { times: [0], design: key });
+    const body = await tm._bodyFor(key);
+    const { OX, OY } = tm._layout;
+    const cx = Math.round(OX + body.bulb.x), cy = Math.round(OY + body.bulb.y);
+    let redder = 0;
+    for (let y = cy - 20; y < cy + 20; y++) for (let x = cx - 20; x < cx + 20; x++) {
+      const i = (y * tm.W + x) * 4;
+      if (red[i] > blue[i] + 40) redder++;
+    }
+    assert.ok(redder > 300, `the logo did not reach its place (${redder} px)`);
+  });
+}
+
+for (const [key, what] of [["bolt", "the strike"], ["trophy", "the confetti"]]) {
+  test(`${key}: ${what} fires on the way in and is gone before the wrap`, { skip: !HAVE }, async () => {
+    const D = tm._designs[key];
+    const ignite = D.ignite;
+    const times = [IGN + 0.15, 5.96];
+    const withIt = await tm.frames(COIN, null, { times, design: key });
+    let without;
+    try {
+      D.ignite = null;
+      without = await tm.frames(COIN, null, { times, design: key });
+    } finally {
+      D.ignite = ignite;
+    }
+    assert.ok(offBy(withIt[0], without[0]) > 500, `${what} drew nothing (${offBy(withIt[0], without[0])} px)`);
+    assert.equal(offBy(withIt[1], without[1], 0), 0, `${what} is still on screen at the last frame — the seam would jump`);
+  });
+}
+
+test("every design is marched once and cached under its own name and version", { skip: !HAVE }, async () => {
+  const files = tm.DESIGN_KEYS.map((k) => tm._cacheFile(k));
+  assert.equal(new Set(files).size, files.length, "one file per design");
+  assert.ok(tm._cacheFile("flame").endsWith("dexvra-trendflame-v1-560x2.bin"), "the flame keeps its cache");
+  const a = await tm._bodyFor("crown");
+  assert.strictEqual(a, await tm._bodyFor("crown"), "one body per process");
+  const shapes = await Promise.all(tm.DESIGN_KEYS.map((k) => tm._bodyFor(k)));
+  assert.equal(new Set(shapes.map((b) => b.metalPx.length)).size, shapes.length, "four different objects, not one shape four times");
+  for (let i = 0; i < 50 && !fss.existsSync(tm._cacheFile("crown")); i++) await new Promise((r) => setTimeout(r, 100));
+  assert.ok(fss.existsSync(tm._cacheFile("crown")));
 });
 
 test("the temp sweep reclaims only this module's old clips", async () => {
