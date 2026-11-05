@@ -1,6 +1,6 @@
 /**
  * The TRENDING clip, one design per length of run (DESIGNS, at the bottom):
- * 6H a lightning bolt, 12H a trophy, 24H the "Blue Flame", 48H a crown. The
+ * 6H a chronograph, 12H a trophy, 24H the "Blue Flame", 48H a crown. The
  * flame — a 3D flame in satin blue metal with a chrome ring, the token's own
  * logo set into its bulb — is concept A of three (flame · trophy · crown),
  * picked by the operator ("A. Api"); the other three were added when the
@@ -165,28 +165,6 @@ function flameSdf(x, y, z, out) {
   return d;
 }
 
-// ── 6H: the bolt — a lightning bolt, the logo set into a disc at its waist ──
-// (the flame's idea in angular form: an outline with a bulb, the logo in the bulb)
-const BOLT_V = [[-0.05, 2.45], [1.05, 2.45], [0.35, 0.55], [1.25, 0.55], [-0.55, -2.5], [-0.05, -0.45], [-0.95, -0.45]];
-const BL = { cx: 0.15, cy: 0, r: 0.78 };
-function boltSdf(x, y, z, out) {
-  const d2 = smin(polySd(x, y, BOLT_V) - 0.04, len2(x - BL.cx, y - BL.cy) - 0.98, 0.14);
-  // domed, thick along its spine and thin at its edges: a flat face would
-  // mirror the dark behind the camera, a dome catches the studio's lights
-  const u = clamp(-d2 / 0.9);
-  let d = pillow(d2, z, 0.13 + 0.3 * u * u * (3 - 2 * u), 0.1);
-  let m = 6;
-  const rl = len2(x - BL.cx, y - BL.cy);
-  const zf = 0.28; // the front face
-  d = Math.max(d, -Math.max(rl - BL.r, -(z - (zf - 0.06))));
-  const disc = Math.max(rl - BL.r, Math.abs(z - (zf - 0.06)) - 0.014);
-  if (disc < d) { d = disc; m = 3; }
-  const ring = len2(rl - (BL.r + 0.03), z - zf) - 0.06;
-  if (ring < d) { d = ring; m = 1; }
-  if (out) out.m = m;
-  return d;
-}
-
 // ── 12H: the trophy — the logo on the cup ──
 const TR = { ey: 0.7, ex: 1.25, eyR: 1.45, cut: 1.5, lz: 1.36, lr: 0.68, ly: 0.6 };
 function trophySdf(x, y, z, out) {
@@ -260,6 +238,66 @@ function crownSdf(x, y, z, out) {
   return d;
 }
 
+// ── 6H: the chronograph — the logo is its dial ──
+function seg3(x, y, z, ax, ay, az, bx, by, bz, r) {
+  const px = x - ax, py = y - ay, pz = z - az, ex = bx - ax, ey = by - ay, ez = bz - az;
+  const h = clamp((px * ex + py * ey + pz * ez) / (ex * ex + ey * ey + ez * ez));
+  return len3(px - ex * h, py - ey * h, pz - ez * h) - r;
+}
+// a polished case, a blue bezel, a sunray dial with a minute track, a crown and a bow
+const WT = { cy: -0.45, R: 1.45, dial: 1.17, L: 0.84, zf: 0.3, zd: 0.12, slope: 0.09 };
+function watchSdf(x, y, z, out) {
+  const o = out || SCRATCH;
+  const yy = y - WT.cy, rm = len2(x, yy), a = Math.atan2(x, yy);
+  // the case: a thick rounded puck in polished steel, its dial dished in — the
+  // dial (material 2) is the blue metal, deep where it faces the camera
+  // The dial falls away gently toward its rim: a shallow cone, so its light
+  // turns with the studio — the sheen of a sunray dial.
+  const floor = (r) => WT.zd - WT.slope * clamp((r - WT.L) / (WT.dial - WT.L));
+  const fz = floor(rm);
+  let d = rbox2(rm, z, WT.R, WT.zf, 0.25);
+  d = Math.max(d, -Math.max(rm - WT.dial, -(z - fz)));
+  let m = rm < WT.dial - 0.02 && z < fz + 0.03 ? 2 : 1;
+  // a blue anodised bezel round the dial
+  const bez = len2(rm - (WT.dial + 0.12), z - (WT.zf - 0.01)) - 0.125;
+  if (bez < d) { d = bez; m = 2; }
+  // the minute track: sixty marks, every fifth a bold index, the quarters bolder
+  const sec = TAU / 60;
+  const as = ((a % sec) + sec * 1.5) % sec - sec / 2;
+  const k = ((Math.round(a / sec) % 60) + 60) % 60;
+  const u = rm * Math.sin(as), rr = rm * Math.cos(as);
+  // (twelve o'clock carries the Dexvra gem, drawn over the dial — no index)
+  const tick = k % 5 !== 0 || k === 0
+    ? Math.max(rbox2(u, rr - 1.09, 0.013, 0.035, 0.006), Math.abs(z - (floor(1.09) + 0.016)) - 0.016)
+    : Math.max(rbox2(u, rr - 1.02, k % 15 === 0 ? 0.05 : 0.032, 0.1, 0.015), Math.abs(z - (floor(1.02) + 0.035)) - 0.035);
+  if (tick < d) { d = tick; m = 1; }
+  // the logo, ringed
+  const lring = len2(rm - (WT.L + 0.035), z - (WT.zd + 0.03)) - 0.035;
+  if (lring < d) { d = lring; m = 1; }
+  const disc = Math.max(rm - WT.L, Math.abs(z - (WT.zd + 0.012)) - 0.012);
+  if (disc < d) { d = disc; m = 3; }
+  // the crown: a stem, a knurled knob, a bow
+  const rc = len2(x, z), ac = Math.atan2(x, z);
+  const stem = rbox2(rc, yy - (WT.R + 0.12), 0.12, 0.2, 0.03);
+  if (stem < d) { d = stem; m = 1; }
+  const knob = rbox2(rc + 0.016 * Math.cos(24 * ac), yy - (WT.R + 0.38), 0.27, 0.12, 0.05);
+  if (knob < d) { d = knob; m = 1; }
+  const bow = len2(len2(x, yy - (WT.R + 0.86)) - 0.34, z) - 0.075;
+  if (bow < d) { d = bow; m = 1; }
+  // two pushers, at ten and two, their caps knurled
+  for (const sgn of [-1, 1]) {
+    const sa = Math.sin(sgn * 0.72), ca = Math.cos(0.72);
+    const st = seg3(x, yy, z, sa * (WT.R - 0.1), ca * (WT.R - 0.1), 0, sa * (WT.R + 0.22), ca * (WT.R + 0.22), 0, 0.085);
+    if (st < d) { d = st; m = 1; }
+    // the cap, in its own frame: along the pusher's axis
+    const px = x - sa * (WT.R + 0.29), py = yy - ca * (WT.R + 0.29);
+    const along = px * sa + py * ca, across = len2(-px * ca + py * sa, z);
+    const cap = rbox2(across + 0.01 * Math.cos(16 * Math.atan2(z, -px * ca + py * sa)), along, 0.15, 0.08, 0.035);
+    if (cap < d) { d = cap; m = 1; }
+  }
+  o.m = m;
+  return d;
+}
 /** The rotation that turns a model a little toward the copy (right). */
 function rotator(rx, ry, rz) {
   const cX = Math.cos(rx), sX = Math.sin(rx), cYr = Math.cos(ry), sYr = Math.sin(ry), cZ = Math.cos(rz), sZ = Math.sin(rz);
@@ -278,6 +316,18 @@ function posed(D) {
   const toLocal = rotator(...D.rot);
   const sdfW = (x, y, z, out) => { const p = toLocal(x, y, z); return D.sdf(p[0], p[1], p[2], out); };
   return { toLocal, sdfW };
+}
+/** A point in the object's own coordinates → where the march drew it in the
+ *  sprite (px, py) and how near the camera it is (wz). The rotation is
+ *  orthonormal, so the way back is its transpose. */
+function projector(D) {
+  const tl = rotator(...D.rot);
+  const c0 = tl(1, 0, 0), c1 = tl(0, 1, 0), c2 = tl(0, 0, 1);
+  return (x, y, z) => {
+    const wx = c0[0] * x + c0[1] * y + c0[2] * z, wy = c1[0] * x + c1[1] * y + c1[2] * z, wz = c2[0] * x + c2[1] * y + c2[2] * z;
+    const k = CAM / (D.view * (CAM - wz));
+    return [((wx * k + 1) / 2) * FS, ((1 - wy * k) / 2) * FS, wz];
+  };
 }
 function normal(sdfW, x, y, z) {
   const e = 0.0015;
@@ -304,8 +354,6 @@ function env(rx, ry, rz, out, S) {
   if (sd > 0.97) { const sun = Math.pow(sd, 260) * 6; r += sun; g += sun; b += sun; }
   const strip = clamp((rx - 0.27) / 0.025) * clamp((0.31 - rx) / 0.025) * clamp((ry - 0.05) / 0.3);
   r += 0.7 * strip; g += 0.8 * strip; b += 0.9 * strip;
-  // a dim wall behind the camera, for a design with faces that look straight at it
-  if (S.wall) { const w = clamp((rz - 0.3) / 0.7); r += S.wall[0] * w; g += S.wall[1] * w; b += S.wall[2] * w; }
   out[0] = r; out[1] = g; out[2] = b;
   return out;
 }
@@ -628,13 +676,6 @@ function flameIcon(ctx, x, y, s, col) {
   ctx.bezierCurveTo(x - s * 0.36, y + s * 0.62, x - s * 0.34, y + s * 0.2, x + s * 0.02, y - s * 0.12); ctx.fill();
   ctx.restore();
 }
-/** The bolt for the pill. */
-function boltIcon(ctx, x, y, s, col) {
-  ctx.save(); ctx.fillStyle = col; ctx.beginPath();
-  const P = [[0.28, -1.05], [-0.58, 0.14], [-0.04, 0.14], [-0.28, 1.05], [0.6, -0.16], [0.06, -0.16]];
-  P.forEach(([px, py], i) => (i ? ctx.lineTo(x + px * s, y + py * s) : ctx.moveTo(x + px * s, y + py * s)));
-  ctx.closePath(); ctx.fill(); ctx.restore();
-}
 /** The trophy for the pill. */
 function trophyIcon(ctx, x, y, s, col) {
   ctx.save(); ctx.fillStyle = col; ctx.strokeStyle = col;
@@ -665,81 +706,6 @@ function drawHalo(ctx, t, boost, G, P) {
   const hg = ctx.createRadialGradient(G.bulbX, G.bulbY - 30, 10, G.bulbX, G.bulbY - 60, 400);
   hg.addColorStop(0, hexA(P.accent, 0.26 * k)); hg.addColorStop(0.5, hexA(P.accent2, 0.1 * k)); hg.addColorStop(1, hexA(P.accent2, 0));
   ctx.fillStyle = hg; ctx.fillRect(G.bulbX - 420, G.bulbY - 480, 840, 900);
-  ctx.restore();
-}
-
-// ── 6H: speed streaks behind, electric arcs round the medallion, a strike ──
-const STREAKS = (() => {
-  const r = rand(41);
-  return Array.from({ length: 30 }, () => ({ x0: r() * 860 - 60, len: 60 + r() * 130, cyc: 1 + Math.floor(r() * 3), ph: r(), a: 0.07 + r() * 0.14, w: 0.8 + r() * 1.6 }));
-})();
-const ARCS = (() => {
-  const r = rand(53);
-  return Array.from({ length: 11 }, (_, i) => ({ ang: (i / 11) * TAU + r() * 0.5, len: 70 + r() * 120, cyc: 2 + Math.floor(r() * 4), ph: r(), on: 0.12 + r() * 0.1, seed: 1 + Math.floor(r() * 1e6) }));
-})();
-/** A jagged path from one point to another — the shape of a spark. */
-function boltPath(x0, y0, x1, y1, n, seed, amp) {
-  const r = rand(seed), L = Math.hypot(x1 - x0, y1 - y0) || 1, nx = -(y1 - y0) / L, ny = (x1 - x0) / L;
-  const pts = [[x0, y0]];
-  for (let i = 1; i < n; i++) {
-    const u = i / n, o = (r() - 0.5) * 2 * amp * L * Math.sin(Math.PI * u);
-    pts.push([x0 + (x1 - x0) * u + nx * o, y0 + (y1 - y0) * u + ny * o]);
-  }
-  pts.push([x1, y1]);
-  return pts;
-}
-function strokePath(ctx, pts) { ctx.beginPath(); pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.stroke(); }
-function drawStreaks(ctx, t, boost, G, P) {
-  drawHalo(ctx, t, boost, G, P);
-  ctx.save(); ctx.globalCompositeOperation = "lighter"; ctx.lineCap = "round";
-  const span = H + 360, ux = -0.32, uy = 0.947; // falling, leaning back to the left
-  for (const s of STREAKS) {
-    const q = (s.ph + (s.cyc * t) / SECONDS) % 1; // whole passes a loop
-    const hx = s.x0 + ux * q * span, hy = -180 + uy * q * span;
-    const a = s.a * Math.sin(Math.PI * q) * clamp((660 - hx) / 90) * (1 + 1.5 * boost);
-    if (a <= 0.01) continue;
-    const g = ctx.createLinearGradient(hx - ux * s.len, hy - uy * s.len, hx, hy);
-    g.addColorStop(0, hexA(P.accent, 0)); g.addColorStop(1, hexA(P.accent, a));
-    ctx.strokeStyle = g; ctx.lineWidth = s.w;
-    ctx.beginPath(); ctx.moveTo(hx - ux * s.len, hy - uy * s.len); ctx.lineTo(hx, hy); ctx.stroke();
-  }
-  ctx.restore();
-}
-function drawArcs(ctx, t, G, P) {
-  // the frame within the loop: t = 6 lands on frame 0, so the seam is exact
-  const fi = Math.round(t * FPS) % FRAMES;
-  ctx.save(); ctx.globalCompositeOperation = "lighter"; ctx.lineCap = "round"; ctx.lineJoin = "round";
-  for (const a of ARCS) {
-    const q = (a.ph + (a.cyc * t) / SECONDS) % 1;
-    if (q >= a.on) continue;
-    const I = Math.sin((Math.PI * q) / a.on);
-    const r0 = G.logoR + 22;
-    const x0 = G.bulbX + Math.cos(a.ang) * r0, y0 = G.bulbY + Math.sin(a.ang) * r0;
-    const x1 = G.bulbX + Math.cos(a.ang) * (r0 + a.len), y1 = G.bulbY + Math.sin(a.ang) * (r0 + a.len);
-    if (Math.max(x0, x1) > 640) continue;
-    const pts = boltPath(x0, y0, x1, y1, 9, a.seed + (fi >> 1), 0.14);
-    ctx.lineWidth = 8; ctx.strokeStyle = hexA(P.accent, 0.2 * I); strokePath(ctx, pts);
-    ctx.lineWidth = 3; ctx.strokeStyle = hexA(P.accent, 0.5 * I); strokePath(ctx, pts);
-    ctx.lineWidth = 1.4; ctx.strokeStyle = `rgba(240,255,252,${0.95 * I})`; strokePath(ctx, pts);
-  }
-  ctx.restore();
-}
-/** On the way back in, lightning strikes the medallion. */
-function drawStrike(ctx, t, boost, G, P) {
-  const u = (t - IGN) / 0.5;
-  if (u < 0 || u >= 1) return;
-  const I = (1 - u) * (0.65 + 0.35 * Math.cos(TAU * u * 3));
-  const pts = boltPath(G.bulbX + 190, -60, G.bulbX + 6, G.bulbY - G.logoR + 10, 13, 777 + ((u * 6) | 0), 0.1);
-  const fork = boltPath(pts[6][0], pts[6][1], pts[6][0] - 150, pts[6][1] + 70, 6, 901 + ((u * 6) | 0), 0.18);
-  ctx.save(); ctx.globalCompositeOperation = "lighter"; ctx.lineCap = "round"; ctx.lineJoin = "round";
-  const fg = ctx.createRadialGradient(G.bulbX, G.bulbY, 0, G.bulbX, G.bulbY, 560);
-  fg.addColorStop(0, hexA(P.accent, 0.3 * I)); fg.addColorStop(1, hexA(P.accent, 0));
-  ctx.fillStyle = fg; ctx.fillRect(G.bulbX - 560, G.bulbY - 560, 1120, 1120);
-  for (const [path, k] of [[pts, 1], [fork, 0.6]]) {
-    ctx.lineWidth = 24 * k; ctx.strokeStyle = hexA(P.accent, 0.16 * I); strokePath(ctx, path);
-    ctx.lineWidth = 8 * k; ctx.strokeStyle = hexA(P.accent, 0.5 * I); strokePath(ctx, path);
-    ctx.lineWidth = 3 * k; ctx.strokeStyle = `rgba(245,255,252,${0.95 * I})`; strokePath(ctx, path);
-  }
   ctx.restore();
 }
 
@@ -848,6 +814,154 @@ function drawDust(ctx, t, G, P) {
   ctx.restore();
 }
 
+// ── 6H: a ghost dial turning behind, the timer and the crystal on the face ──
+/** The stopwatch for the pill. */
+function watchIcon(ctx, x, y, s, col) {
+  ctx.save(); ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = 0.2 * s; ctx.lineCap = "round";
+  ctx.beginPath(); ctx.arc(x, y + 0.15 * s, 0.78 * s, 0, TAU); ctx.stroke();
+  ctx.fillRect(x - 0.12 * s, y - 1.0 * s, 0.24 * s, 0.3 * s);
+  roundRect(ctx, x - 0.3 * s, y - 1.12 * s, 0.6 * s, 0.18 * s, 0.06 * s); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(x, y + 0.15 * s); ctx.lineTo(x + 0.32 * s, y - 0.2 * s); ctx.stroke();
+  ctx.restore();
+}
+/** Behind the watch: a great ghost dial turning slowly (five marks a loop —
+ *  every fifth mark is the same as the next fifth, so the seam is exact), and
+ *  rings of time rippling out. */
+function drawWatchBack(ctx, t, boost, G, P) {
+  drawRipples(ctx, t, boost, G, P);
+  ctx.save(); ctx.globalCompositeOperation = "lighter";
+  const cx = G.bulbX, cy = G.bulbY, rot = (5 * (TAU / 60) * t) / SECONDS, k = 1 + 1.2 * boost;
+  ctx.strokeStyle = hexA(P.accent, 0.1 * k); ctx.lineWidth = 1.2;
+  for (const r of [300, 352]) { ctx.beginPath(); ctx.arc(cx, cy, r, 0, TAU); ctx.stroke(); }
+  for (let i = 0; i < 60; i++) {
+    const a = rot + (i * TAU) / 60, major = i % 5 === 0;
+    const r0 = major ? 306 : 322, r1 = 346;
+    ctx.strokeStyle = hexA(P.accent, (major ? 0.2 : 0.09) * k); ctx.lineWidth = major ? 2.4 : 1.2;
+    ctx.beginPath(); ctx.moveTo(cx + Math.cos(a) * r0, cy + Math.sin(a) * r0); ctx.lineTo(cx + Math.cos(a) * r1, cy + Math.sin(a) * r1); ctx.stroke();
+  }
+  ctx.restore();
+}
+/** The watch's crystal: a domed glass over the dial — a crescent of reflected
+ *  light along its upper rim, a bright edge, a faint counter-reflection — that
+ *  slides as the studio turns. */
+function drawCrystal(ctx, t, boost, G, P) {
+  const sh = 0.9 * envYaw(t), r = WT.dial - 0.02, z = WT.zf + 0.03, N = 28;
+  const pt = (a, rr) => G.project(rr * Math.sin(a), WT.cy + rr * Math.cos(a), z);
+  const crescent = (a0, a1, w) => {
+    ctx.beginPath();
+    for (let i = 0; i <= N; i++) { const a = a0 + ((a1 - a0) * i) / N, p = pt(a, r); i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]); }
+    for (let i = N; i >= 0; i--) { const a = a0 + ((a1 - a0) * i) / N, p = pt(a, r - w * Math.sin((Math.PI * i) / N)); ctx.lineTo(p[0], p[1]); }
+    ctx.closePath();
+  };
+  ctx.save(); ctx.globalCompositeOperation = "lighter";
+  const c = G.project(0, WT.cy, z), tl = pt(-1.0 + sh, r);
+  const g = ctx.createLinearGradient(tl[0], tl[1], c[0], c[1]);
+  g.addColorStop(0, "rgba(225,245,255,0.5)"); g.addColorStop(0.5, "rgba(170,225,255,0.12)"); g.addColorStop(1, "rgba(170,225,255,0)");
+  crescent(-2.3 + sh, 0.1 + sh, 0.42); ctx.fillStyle = g; ctx.fill();
+  // the bright edge of the glass
+  ctx.lineCap = "round";
+  for (const [w, al] of [[5, 0.16], [1.6, 0.7]]) {
+    ctx.strokeStyle = `rgba(235,250,255,${al})`; ctx.lineWidth = w; ctx.beginPath();
+    for (let i = 0; i <= N; i++) { const a = -1.9 + sh + (1.5 * i) / N, p = pt(a, r); i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]); }
+    ctx.stroke();
+  }
+  // a faint counter-reflection low on the right
+  crescent(1.75 + sh, 2.85 + sh, 0.12); ctx.fillStyle = "rgba(160,220,255,0.1)"; ctx.fill();
+  // a hard little sun on the dome
+  const sp = pt(-0.95 + sh, r * 0.72), sg = ctx.createRadialGradient(sp[0], sp[1], 0, sp[0], sp[1], 16);
+  sg.addColorStop(0, "rgba(255,255,255,0.75)"); sg.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = sg; ctx.fillRect(sp[0] - 16, sp[1] - 16, 32, 32);
+  ctx.restore();
+}
+/** The Dexvra gem at twelve o'clock, printed on the dial in perspective. */
+function drawDialGem(ctx, t, boost, G, P) {
+  const r = 1.0, z = WT.zd - WT.slope * ((r - WT.L) / (WT.dial - WT.L)) + 0.02;
+  const p0 = G.project(0, WT.cy + r, z), pu = G.project(0.1, WT.cy + r, z), pv = G.project(0, WT.cy + r - 0.1, z);
+  const ppu = Math.hypot(pu[0] - p0[0], pu[1] - p0[1]) / 0.1 || 1;
+  const ax = (pu[0] - p0[0]) / (0.1 * ppu), ay = (pu[1] - p0[1]) / (0.1 * ppu);
+  const bx = (pv[0] - p0[0]) / (0.1 * ppu), by = (pv[1] - p0[1]) / (0.1 * ppu);
+  const sz = 0.34 * ppu;
+  ctx.save(); ctx.globalCompositeOperation = "lighter";
+  const k = 0.75 + 0.25 * Math.sin((TAU * 2 * t) / SECONDS) + boost;
+  const g = ctx.createRadialGradient(p0[0], p0[1], 0, p0[0], p0[1], sz * 1.3);
+  g.addColorStop(0, hexA(P.accent, 0.45 * k)); g.addColorStop(1, hexA(P.accent, 0));
+  ctx.fillStyle = g; ctx.fillRect(p0[0] - sz * 1.3, p0[1] - sz * 1.3, sz * 2.6, sz * 2.6);
+  ctx.restore();
+  ctx.save(); ctx.transform(ax, ay, bx, by, p0[0], p0[1]);
+  kit.drawGem(ctx, -sz / 2, -sz * 0.48, sz);
+  ctx.restore();
+}
+/** The chronograph's face: the gem and the timer under the glass, then the glass. */
+function drawWatchFront(ctx, t, boost, G, P) {
+  drawDialGem(ctx, t, boost, G, P);
+  drawTimer(ctx, t, boost, G, P);
+  drawCrystal(ctx, t, boost, G, P);
+}
+/** Rings of time rippling out from the watch, two a loop. */
+function drawRipples(ctx, t, boost, G, P) {
+  drawHalo(ctx, t, boost, G, P);
+  ctx.save(); ctx.globalCompositeOperation = "lighter";
+  for (let i = 0; i < 3; i++) {
+    const q = ((2 * t) / SECONDS + i / 3) % 1; // whole passes a loop
+    const r = G.logoR * 1.5 + q * 380, a = 0.22 * Math.sin(Math.PI * q) * (1 + boost);
+    if (a < 0.01) continue;
+    ctx.strokeStyle = hexA(P.accent, a); ctx.lineWidth = 1.5 + 2 * (1 - q);
+    ctx.beginPath(); ctx.ellipse(G.bulbX, G.bulbY, r, r * 0.94, 0, 0, TAU); ctx.stroke();
+  }
+  ctx.restore();
+}
+/** Where the timer's light is: one turn a loop, and two quick turns on the way
+ *  back in (so at t = 6 it is exactly where it was at 0, three turns on). */
+const sweepAt = (t) => 1.25 + TAU * (t / SECONDS) + 2 * TAU * easeInOut(clamp((t - IGN) / 0.75));
+/** The timer: a light running round the dial over the indices, its tail
+ *  fading behind it; the indices it passes glow. */
+function drawTimer(ctx, t, boost, G, P) {
+  const th = sweepAt(t), fast = t > IGN && t < IGN + 0.75 ? 1 : 0;
+  const tail = 1.5 + 2.2 * fast, r = 1.07, z = WT.zd + 0.04, N = 40;
+  ctx.save(); ctx.globalCompositeOperation = "lighter"; ctx.lineCap = "round";
+  const pt = (a) => G.project(r * Math.sin(a), WT.cy + r * Math.cos(a), z);
+  for (const [w, k] of [[16, 0.12], [6, 0.38], [2.2, 0.95]]) {
+    for (let i = 0; i < N; i++) {
+      const a0 = th - (tail * i) / N, a1 = th - (tail * (i + 1)) / N;
+      const al = k * Math.pow(1 - i / N, 1.6);
+      const p0 = pt(a0), p1 = pt(a1);
+      ctx.strokeStyle = w < 3 ? `rgba(235,250,255,${al})` : hexA(P.accent, al);
+      ctx.lineWidth = w; ctx.beginPath(); ctx.moveTo(p0[0], p0[1]); ctx.lineTo(p1[0], p1[1]); ctx.stroke();
+    }
+  }
+  // the head
+  const h = pt(th), hg = ctx.createRadialGradient(h[0], h[1], 0, h[0], h[1], 26);
+  hg.addColorStop(0, "rgba(255,255,255,0.95)"); hg.addColorStop(0.3, hexA(P.accent, 0.6)); hg.addColorStop(1, hexA(P.accent, 0));
+  ctx.fillStyle = hg; ctx.fillRect(h[0] - 26, h[1] - 26, 52, 52);
+  // the indices behind the head glow, fading
+  for (let k = 0; k < 12; k++) {
+    const ak = (k / 12) * TAU, behind = (((th - ak) % TAU) + TAU) % TAU;
+    const g = Math.max(0, 1 - behind / 2.2) * (0.7 + 0.3 * fast);
+    if (g < 0.02) continue;
+    const q = pt(ak), gg = ctx.createRadialGradient(q[0], q[1], 0, q[0], q[1], 14);
+    gg.addColorStop(0, hexA(P.accent, 0.55 * g)); gg.addColorStop(1, hexA(P.accent, 0));
+    ctx.fillStyle = gg; ctx.fillRect(q[0] - 14, q[1] - 14, 28, 28);
+  }
+  ctx.restore();
+}
+const MOTES = (() => {
+  const r = rand(97);
+  return Array.from({ length: 40 }, () => ({ x: OC.x + (r() - 0.5) * 560, y0: OY + FS * 0.9 + r() * 60, rise: 300 + r() * 300, cyc: 1 + Math.floor(r() * 2), ph: r(), sway: 8 + r() * 16, s: 0.9 + r() * 1.6, br: 0.3 + r() * 0.6 }));
+})();
+function drawMotes(ctx, t, G, P) {
+  ctx.save(); ctx.globalCompositeOperation = "lighter";
+  for (const e of MOTES) {
+    const ph = (e.ph + (e.cyc * t) / SECONDS) % 1; // whole climbs a loop
+    const y = e.y0 - e.rise * ph, x = e.x + e.sway * Math.sin(TAU * (ph + e.ph));
+    const a = e.br * Math.sin(Math.PI * ph) * clamp((650 - x) / 90);
+    if (a <= 0.01) continue;
+    const sg = ctx.createRadialGradient(x, y, 0, x, y, e.s * 5);
+    sg.addColorStop(0, `rgba(${P.bokeh},${a * 0.55})`); sg.addColorStop(1, `rgba(${P.bokeh},0)`);
+    ctx.fillStyle = sg; ctx.fillRect(x - e.s * 5, y - e.s * 5, e.s * 10, e.s * 10);
+    ctx.fillStyle = `rgba(235,250,255,${a})`; ctx.beginPath(); ctx.arc(x, y, e.s, 0, TAU); ctx.fill();
+  }
+  ctx.restore();
+}
 const CX = 690; // the copy column
 /** The fixed chrome: brand, the network chip, the footer handles. */
 function chromeLayer(cv, chain, P) {
@@ -1063,6 +1177,14 @@ async function drawFrames(coin, logoBuffer, { count = FRAMES, times = null, badg
   const bulbX = OX + bulb.x, bulbY = OY + bulb.y;
   // where each design's effects start from (sprite space → canvas)
   const G = { cx: OC.x, cy: OC.y, bulbX, bulbY, logoR: bulb.r, topY: OY + yTop, bottomY: OY + yBot };
+  // a point on the object → the canvas (inside the object's own transform), and
+  // whether the metal or the logo covers that pixel (an effect behind it hides)
+  const proj = projector(D);
+  G.project = (x, y, z) => { const q = proj(x, y, z); return [OX + q[0], OY + q[1], q[2]]; };
+  G.covered = (cx, cy) => {
+    const px = Math.round(cx - OX), py = Math.round(cy - OY);
+    return px >= 0 && py >= 0 && px < FS && py < FS ? sid.data[(py * FS + px) * 4 + 3] / 255 : 0;
+  };
   const S = D.studio;
 
   const n = times ? times.length : count;
@@ -1156,6 +1278,9 @@ async function drawFrames(coin, logoBuffer, { count = FRAMES, times = null, badg
     hx.globalCompositeOperation = "copy"; hx.filter = "blur(7px)"; hx.drawImage(warp, 20, 0, FS, FS, 0, 0, FS / 2, FS / 2); hx.filter = "none";
     ctx.globalCompositeOperation = "lighter"; ctx.globalAlpha = (0.16 + 0.05 * flicker(t)) * (1 - dim) + 0.3 * boost;
     ctx.drawImage(half, OX, OY, FS, FS);
+    ctx.globalCompositeOperation = "source-over"; ctx.globalAlpha = 1;
+    // effects that ride ON the object (registered to it through G.project)
+    if (D.front) D.front(ctx, t, boost, G, P);
     ctx.restore();
     // ignition: a flash ring off the logo, a burst of sparks, a flare
     if (t >= IGN && boost > 0.002) {
@@ -1304,8 +1429,12 @@ async function render(coin, logoBuffer, { badge = null, design = null, outPath =
  * loop are the same for all four; what changes is the object the logo is set
  * in, the room it stands in, the colour, and how it comes back in:
  *
- *   ≤ 6H   bolt    a lightning bolt struck through a medallion — electric
- *                  mint; speed streaks, arcs crackling off the rim, a strike
+ *   ≤ 6H   watch   a chronograph, the logo is its dial — Dexvra blue: a
+ *                  polished case, a blue bezel, a sunray dial with the gem at
+ *                  twelve; a timer light running round the minute track, a
+ *                  domed crystal, a ghost dial turning behind. It replaced a
+ *                  lightning bolt the operator rejected ("6H is bad design"),
+ *                  then had to be brand blue and "lebih premium"
  *   ≤ 12H  trophy  the trophy, the logo on its cup — platinum on indigo;
  *                  spotlights, a pool of light, twinkling stars, confetti
  *   ≤ 24H  flame   the approved "Blue Flame", unchanged — and the design for a
@@ -1322,10 +1451,10 @@ const PAL = {
     base: ["#0F5AA8", "#073063", "#03132A", "#01050C"], bokeh: "140,210,255",
     spark: ["120,255,200", "200,245,255"], flare: ["90,190,255", "190,240,255", "150,230,255", "80,180,255"],
   },
-  bolt: {
-    accent: "#2EF2D0", accent2: "#0EA5B7", iconCol: "#A8FFF0", pillText: "#E8FFFB", tickerLow: "#B6FFF1",
-    base: ["#0A6B73", "#05404B", "#031826", "#01060B"], bokeh: "110,250,225",
-    spark: ["160,255,235", "225,255,250"], flare: ["60,230,210", "195,255,245", "140,250,235", "50,210,200"],
+  watch: {
+    accent: CY, accent2: BLUE, iconCol: "#9FF3FF", pillText: "#E6FBFF", tickerLow: "#BFEFFF",
+    base: ["#1262C2", "#0A3577", "#041634", "#01050E"], bokeh: "140,210,255",
+    spark: ["140,235,255", "205,245,255"], flare: ["90,190,255", "190,240,255", "150,230,255", "80,180,255"],
   },
   trophy: {
     accent: "#A5B4FC", accent2: "#6D5DF5", iconCol: "#D4DCFF", pillText: "#EEF0FF", tickerLow: "#D9DEFF",
@@ -1339,13 +1468,13 @@ const PAL = {
   },
 };
 const DESIGNS = {
-  bolt: {
-    key: "bolt", version: 1, sdf: boltSdf, rot: [-0.1, -0.3, -0.06], view: 2.75,
-    logo: { cx: BL.cx, cy: BL.cy, r: BL.r }, q: (m) => (m === 1 ? 1 : 0),
-    mats: [{ c: [0.22, 0.95, 0.82], rough: 0.2 }, { c: [0.88, 0.95, 0.98], rough: 0.08 }],
-    rim: [0.04, 0.6, 0.55], studio: { side: [0.25, 1.3, 1.25], left: [0.6, 0.85, 0.9], wall: [0.06, 0.42, 0.4] },
-    sway: false, float: 5, pal: PAL.bolt,
-    back: drawStreaks, ambient: drawArcs, ignite: drawStrike, icon: boltIcon,
+  watch: {
+    key: "watch", version: 1, sdf: watchSdf, rot: [-0.12, -0.34, -0.05], view: 2.5,
+    logo: { cx: 0, cy: WT.cy, r: WT.L }, q: (m) => (m === 2 ? 0 : 1),
+    mats: [{ c: [0.2, 0.5, 1.0], rough: 0.16 }, { c: [0.9, 0.94, 1.0], rough: 0.05 }],
+    rim: [0.04, 0.5, 0.75], studio: { side: [0.2, 1.2, 1.7], left: [0.75, 0.85, 1.05] },
+    sway: false, float: 5, pal: PAL.watch,
+    back: drawWatchBack, ambient: drawMotes, front: drawWatchFront, ignite: null, icon: watchIcon,
   },
   trophy: {
     key: "trophy", version: 1, sdf: trophySdf, rot: [-0.2, -0.32, -0.04], view: 2.5,
@@ -1372,14 +1501,14 @@ const DESIGNS = {
     back: drawRays, ambient: drawDust, ignite: null, icon: crownIcon,
   },
 };
-/** "Trending 6H" → bolt, 12H → trophy, 24H → flame, 48H → crown. A run in
- *  between takes the next design up (3H the bolt, 16H and 18H the flame); a
+/** "Trending 6H" → watch, 12H → trophy, 24H → flame, 48H → crown. A run in
+ *  between takes the next design up (3H the watch, 16H and 18H the flame); a
  *  badge that names no run (a listing tier, nothing at all) is the flame. */
 function designFor(badge) {
   const m = /trending\s*(\d+)\s*h/i.exec(String(badge || ""));
   const h = m ? Number(m[1]) : 0;
   if (!h) return "flame";
-  if (h <= 6) return "bolt";
+  if (h <= 6) return "watch";
   if (h <= 12) return "trophy";
   if (h <= 24) return "flame";
   return "crown";
@@ -1405,6 +1534,8 @@ module.exports = {
   _bodyFor: bodyFor,
   _designs: DESIGNS,
   _cacheFile: cacheFile,
+  _projector: projector,
+  _sweepAt: sweepAt,
   _sweepTmp: sweepTmp,
   _pillOf: pillOf,
   _realFigure: realFigure,

@@ -4559,16 +4559,16 @@ the same approval.
 
 | run | design | object | room | entrance |
 | --- | --- | --- | --- | --- |
-| ≤ 6H | `bolt` | a mint lightning bolt, the logo in a disc at its waist | teal; speed streaks falling, arcs crackling off the rim | lightning strikes the disc |
+| ≤ 6H | `watch` | a chronograph, the logo is its dial (replaced the rejected bolt, see below) | Dexvra blue; a ghost dial turning, rings of time rippling out | the timer light spins twice round the dial |
 | ≤ 12H | `trophy` | a platinum trophy, the logo on its cup | indigo; two sweeping spotlights, a pool of light, twinkling stars | confetti |
 | ≤ 24H | `flame` | the Blue Flame | as approved | as approved |
 | > 24H | `crown` | a gold crown on a gold logo medallion | royal blue; a turning sunburst, gold dust rising, stars | ring, sparks, flare in gold |
 
 - **The badge decides.** `designFor` reads the hours in the post's own badge
   (`Trending 18H`), and a run in between takes the next design up: 3H is the
-  bolt, 16H and 18H the flame. A badge that names no run (the auto-lister's
+  watch, 16H and 18H the flame. A badge that names no run (the auto-lister's
   listing badge, the admin force-post) gets the flame.
-  - Listing bundles: Bronze 6H → bolt, Silver 12H → trophy, Platinum 18H and
+  - Listing bundles: Bronze 6H → watch, Silver 12H → trophy, Platinum 18H and
     Gold 24H → flame, Diamond 48H → crown.
   - Auto-trend books 3–18h at random, so it posts a mix of the first three.
 - **`DESIGNS` is one table.** Each entry has its SDF, pose, two metals,
@@ -4580,19 +4580,17 @@ the same approval.
   same before and after the refactor. The flame's cache file keeps its name,
   so a box already holding it does not march again.
 - **Each design marches once per box**, cached as
-  `dexvra-trend<design>-v<N>-560x2.bin`. The marches take about 2s (bolt), 3s
-  (trophy) and 4.5s (crown). A full clip renders in ~6–7.5s. Bump a design's
+  `dexvra-trend<design>-v<N>-560x2.bin`. The marches take about 3s (trophy),
+  4.5s (crown) and 6.5s (watch). A full clip renders in ~6–9s. Bump a design's
   `version` when its shape or lighting changes.
 - **Every loop is exact (`t = 6` draws `t = 0`):**
   - Every ambient motion completes whole periods per loop.
-  - The bolt's arcs are seeded by the frame index modulo `FRAMES`.
   - The crown's sunburst alternates wide and narrow rays, so it turns two
     ray-steps per loop. Same lesson as the listing clip's rays.
-  - The strike (0.5s) and the confetti (≤1.32s) end before the wrap.
+  - The confetti (≤1.32s) ends before the wrap.
 - ⚠️ **A flat face mirrors the dark behind the camera.** The first bolt had a
-  flat front, and it rendered black wherever it faced the lens. It is domed
-  now (thick along its spine, thin at its edges) and has a dim `wall` light
-  in its studio. That knob exists only for the bolt.
+  flat front, and it rendered black wherever it faced the lens. The
+  chronograph's dial uses that on purpose (below).
 - ⚠️ **A gold crown under a cyan kicker reads green**, so every design has its
   own studio kickers. The flame's are the old constants, so it is unchanged.
 
@@ -4610,12 +4608,92 @@ between one and nine tests:
 - **loop:** the sunburst turning one step instead of two, the arcs seeded by
   the unwrapped frame, the streaks, twinkles, dust, float or spotlights off
   their period;
+
+(The bolt's strike, arcs and streaks went with the bolt.)
 - **cache:** one cache file for every design, the body ignoring the design.
 
 **Config a fix depends on:** nothing. It ships ON with the rest of the clip,
 and `TRENDING_MOTION=0` still turns every design off. The first post of each
 design on a box pays its march once. `bot/` only, so the deploy is the
 ecosystem restart.
+
+##### "TRENDING 6H IS BAD DESIGN" — the bolt is gone; 6H is a chronograph
+
+The bolt was rejected. Two replacements were shown, a mint stopwatch and a
+blue orbit (a logo coin inside two crossed chrome rings). The answer was
+*"brand nya brand dexvra warna biru tpi designnya buruk buat lebih premium"*,
+so the stopwatch was rebuilt as a **chronograph in Dexvra blue**:
+
+- **the case and parts:** a polished steel case; a blue anodised bezel; a
+  knurled crown with a bow; two pushers with knurled caps;
+- **the dial:** the token's logo is the dial. Round it are a blue sunray
+  ring, a 60-mark minute track with bold quarters, and the **Dexvra gem at
+  twelve**;
+- **on the face:** a cyan timer light runs round the minute track and lights
+  the marks it passes. A domed crystal reflects the studio as it turns;
+- **behind it:** a great ghost dial turns slowly, and rings of time ripple
+  out.
+
+Directions not to go back to:
+
+- **The orbit/atom.** Three rings read as the React logo, and a ring crossing
+  the face hides the logo. Two rings outside the coin fixed both, and it was
+  still not chosen.
+- **A gear-toothed bezel.** Sixty flutes on the bezel read as a cog, so the
+  bezel is smooth.
+
+The rules that shipped with it:
+
+- **`D.front` draws ON the object.** It runs inside the object's transform,
+  after the sprite and the bloom, so it scales and floats with it.
+  `G.project(x, y, z)` maps a point in the object's own coordinates to the
+  canvas.
+  - ⚠️ **The way back is the TRANSPOSE.** `rotator()` is world → local and is
+    orthonormal, so local → world is its transpose. A test projects the dial's
+    centre onto the logo the march drew (within 3px). Mutation-tested: the
+    forward rotation and a flipped y each fail it.
+- **The sunray sheen is geometry, not paint.** The dial falls away toward its
+  rim (`WT.slope`, a shallow cone), so each side reflects a different part of
+  the studio: dark navy on one side, lit on the other, and it turns as the
+  studio swings. A flat dial reflected the dark behind the camera evenly, which
+  is the bolt's flat-face lesson used on purpose.
+- **The gem is the brand's own**, `canvasKit.drawGem`, printed in perspective
+  through an affine built from three projected points. A test counts the call,
+  and the trophy makes none.
+- ⚠️ **Frame 0 keeps twelve o'clock clear.** The timer starts at 1.25 rad,
+  because a light parked on the gem hides it in the thumbnail.
+  `sweepAt(6) − sweepAt(0)` is exactly three turns: one a loop, plus the
+  double spin on the way in.
+- **The crystal slides with `envYaw`**, so it moves with the reflections it
+  stands for, and loops with them.
+- ⚠️ **12H, 24H and 48H are byte-identical to the commit before this.** Seven
+  frames each were hashed against the previous module. The flame's march file
+  still hashes `2b77626…`.
+
+```bash
+cd bot && node scripts/run-tests.js test/trendingMotion.test.js   # 41 tests
+```
+
+Fifteen guarantees are MUTATION-TESTED:
+
+- **badge → design:** 6H not the chronograph;
+- **projector:** the forward rotation, y flipped;
+- **the face:** the front hook never drawn, the timer / gem / crystal each
+  never drawn;
+- **the timer:** frozen, no spin on the way in, a spin of 1.5 turns (the seam
+  jumps), starting on the gem;
+- **the loop:** the ghost dial turning 1.5 marks (not 5), the ripples, the
+  motes or the crystal off their period.
+
+⚠️ One survives, and it is behaviour-neutral: the projector without its
+perspective term. At `CAM = 24` the lens is nearly orthographic, so the
+difference stays inside the 3px tolerance. The term is kept because it is
+correct.
+
+Geometry mutations are not in that list on purpose. The march is cached on
+disk under the design's version, so a mutant that changes the SDF reads the old
+march and proves nothing. Bump `version` with every shape change; that is what
+the version is for.
 
 ## A Top 3 that was not the top of the Top 5
 

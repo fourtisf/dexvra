@@ -1,5 +1,5 @@
 // The trending post's clip (trendingMotion) — one design per run length
-// (6H bolt · 12H trophy · 24H the "Blue Flame" · 48H crown) — and its wiring.
+// (6H chronograph · 12H trophy · 24H the "Blue Flame" · 48H crown) — and its wiring.
 //
 // Every figure on the clip is the post's own: postMedia hands it the same
 // bannerCoin the caption is built from (fulfillment.bannerFigures' spelling),
@@ -217,7 +217,7 @@ test("the flame is marched once and cached on disk", { skip: !HAVE }, async () =
 });
 
 // ── one design per run length ──
-const BADGE = { bolt: "Trending 6H", trophy: "Trending 12H", flame: "Trending 24H", crown: "Trending 48H" };
+const BADGE = { watch: "Trending 6H", trophy: "Trending 12H", flame: "Trending 24H", crown: "Trending 48H" };
 const offBy = (a, b, thr = 12) => {
   let off = 0;
   for (let i = 0; i < a.length; i += 4) if (Math.abs(a[i] - b[i]) > thr || Math.abs(a[i + 1] - b[i + 1]) > thr || Math.abs(a[i + 2] - b[i + 2]) > thr) off++;
@@ -226,9 +226,9 @@ const offBy = (a, b, thr = 12) => {
 
 test("each run length gets its own design; a run in between takes the next one up", () => {
   const d = tm._designFor;
-  assert.deepEqual(tm.DESIGN_KEYS.slice().sort(), ["bolt", "crown", "flame", "trophy"]);
-  assert.equal(d("Trending 3H"), "bolt");
-  assert.equal(d("Trending 6H"), "bolt");
+  assert.deepEqual(tm.DESIGN_KEYS.slice().sort(), ["crown", "flame", "trophy", "watch"]);
+  assert.equal(d("Trending 3H"), "watch");
+  assert.equal(d("Trending 6H"), "watch");
   assert.equal(d("Trending 12H"), "trophy");
   assert.equal(d("Trending 16H"), "flame");
   assert.equal(d("Trending 18H"), "flame");
@@ -241,13 +241,13 @@ test("each run length gets its own design; a run in between takes the next one u
 
 test("the badge picks the design the clip draws", { skip: !HAVE }, async () => {
   const [byBadge] = await tm.frames(COIN, null, { times: [0], badge: "Trending 6H" });
-  const [named] = await tm.frames(COIN, null, { times: [0], badge: "Trending 6H", design: "bolt" });
+  const [named] = await tm.frames(COIN, null, { times: [0], badge: "Trending 6H", design: "watch" });
   const [flame] = await tm.frames(COIN, null, { times: [0], badge: "Trending 6H", design: "flame" });
-  assert.equal(offBy(byBadge, named), 0, "6H draws the bolt");
-  assert.ok(offBy(byBadge, flame) > 20000, "and the bolt is not the flame");
+  assert.equal(offBy(byBadge, named), 0, "6H draws the chronograph");
+  assert.ok(offBy(byBadge, flame) > 20000, "and the chronograph is not the flame");
 });
 
-for (const key of ["bolt", "trophy", "crown"]) {
+for (const key of ["watch", "trophy", "crown"]) {
   test(`${key}: frame 0 is the full card, the pill naming its run`, { skip: !HAVE }, async () => {
     const calls = await drawnDuring(() => tm.frames(COIN, logoPng("#F2B33D"), { times: [0], badge: BADGE[key] }));
     assert.equal(runAt(calls, 163), BADGE[key].toUpperCase());
@@ -257,7 +257,7 @@ for (const key of ["bolt", "trophy", "crown"]) {
   });
 }
 
-for (const key of ["bolt", "trophy", "flame", "crown"]) {
+for (const key of ["watch", "trophy", "flame", "crown"]) {
   test(`${key}: the loop is exact (t = 6 draws t = 0) and the seam test compares two moments`, { skip: !HAVE }, async () => {
     const [a, b, c] = await tm.frames(COIN, logoPng("#3355ff"), { times: [0, tm.SECONDS, 1.5], design: key, badge: BADGE[key] });
     assert.ok(offBy(a, b) < 60, `${offBy(a, b)} pixels differ across the seam`);
@@ -279,7 +279,77 @@ for (const key of ["bolt", "trophy", "flame", "crown"]) {
   });
 }
 
-for (const [key, what] of [["bolt", "the strike"], ["trophy", "the confetti"]]) {
+// ── 6H: the chronograph's face is drawn ON the object, registered through G.project ──
+test("watch: the projector puts the dial's centre where the march drew the logo", { skip: !HAVE }, async () => {
+  const D = tm._designs.watch, body = await tm._bodyFor("watch");
+  const [px, py] = tm._projector(D)(D.logo.cx, D.logo.cy, 0.13);
+  assert.ok(Math.abs(px - body.bulb.x) < 3 && Math.abs(py - body.bulb.y) < 3,
+    `projected (${px.toFixed(1)}, ${py.toFixed(1)}), the logo's centre is (${body.bulb.x.toFixed(1)}, ${body.bulb.y.toFixed(1)}) — the gem, the timer and the crystal would float off the dial`);
+  // the rim, not only the centre: a point on the dial's edge lands on metal the march drew
+  const [ex, ey] = tm._projector(D)(0, D.logo.cy - 1.1, 0.06);
+  const { OX, OY } = tm._layout;
+  const [frame] = await tm.frames(COIN, null, { times: [0], design: "watch" });
+  const i = (Math.round(OY + ey) * tm.W + Math.round(OX + ex)) * 4;
+  assert.ok(frame[i] + frame[i + 1] + frame[i + 2] > 120, "six o'clock on the dial is drawn, not the dark room");
+});
+
+test("watch: the timer, the gem and the crystal are drawn over the dial", { skip: !HAVE }, async () => {
+  const D = tm._designs.watch, front = D.front;
+  const times = [0, 2.5];
+  const withIt = await tm.frames(COIN, null, { times, design: "watch" });
+  let without;
+  try {
+    D.front = null;
+    without = await tm.frames(COIN, null, { times, design: "watch" });
+  } finally {
+    D.front = front;
+  }
+  for (const k of [0, 1]) assert.ok(offBy(withIt[k], without[k]) > 1500, `the face drew nothing at t=${times[k]} (${offBy(withIt[k], without[k])} px)`);
+  // the crystal: light on the glass over the upper-left of the dial, where
+  // neither the timer nor the gem reaches at frame 0
+  const body = await tm._bodyFor("watch"), { OX, OY } = tm._layout;
+  const liftAt = (a, r) => {
+    const [gx, gy] = tm._projector(D)(r * Math.sin(a), D.logo.cy + r * Math.cos(a), 0.12);
+    let lift = 0;
+    for (let y = -4; y <= 4; y++) for (let x = -4; x <= 4; x++) {
+      const i = (Math.round(OY + gy + y) * tm.W + Math.round(OX + gx + x)) * 4;
+      lift += (withIt[0][i] + withIt[0][i + 1] + withIt[0][i + 2]) - (without[0][i] + without[0][i + 1] + without[0][i + 2]);
+    }
+    return lift / 81;
+  };
+  const glass = liftAt(-1.4, 1.0), head = liftAt(tm._sweepAt(0), 1.07);
+  assert.ok(glass > 30, `the crystal put no light on the glass (${glass.toFixed(1)})`);
+  assert.ok(head > 120, `the timer's light is not on the minute track at frame 0 (${head.toFixed(1)})`);
+  assert.ok(body.bulb.r > 50, "vacuity: the dial is big enough to sample");
+});
+
+test("watch: the timer runs one turn a loop, spins twice on the way in, and leaves twelve o'clock to the gem", () => {
+  const s = tm._sweepAt, { IGN } = tm._timeline, turns = (a, b) => (b - a) / (2 * Math.PI);
+  const seam = turns(s(0), s(tm.SECONDS));
+  assert.ok(Math.abs(seam - Math.round(seam)) < 1e-9 && Math.round(seam) === 3, `t = 6 is ${seam} turns on — the seam would jump`);
+  assert.ok(Math.abs(turns(s(0), s(3)) - 0.5) < 1e-9, "half a turn by t = 3: it moves");
+  assert.ok(turns(s(IGN), s(IGN + 0.75)) > 2, "the quick double turn on the way in");
+  const a0 = ((s(0) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+  assert.ok(a0 > 0.6 && a0 < 2 * Math.PI - 0.6, "frame 0's timer light is clear of the gem at twelve (the thumbnail shows the gem)");
+});
+
+test("watch: the Dexvra gem is printed at twelve o'clock", { skip: !HAVE }, async () => {
+  const kit = require("../src/helpers/canvasKit");
+  const real = kit.drawGem;
+  let n = 0;
+  kit.drawGem = (...a) => { n++; return real(...a); };
+  try {
+    await tm.frames(COIN, null, { times: [0], design: "watch" });
+    assert.ok(n >= 1, "the gem was never drawn on the dial");
+    n = 0;
+    await tm.frames(COIN, null, { times: [0], design: "trophy" });
+    assert.equal(n, 0, "only the chronograph carries it");
+  } finally {
+    kit.drawGem = real;
+  }
+});
+
+for (const [key, what] of [["trophy", "the confetti"]]) {
   test(`${key}: ${what} fires on the way in and is gone before the wrap`, { skip: !HAVE }, async () => {
     const D = tm._designs[key];
     const ignite = D.ignite;
