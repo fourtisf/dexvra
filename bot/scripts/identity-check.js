@@ -154,7 +154,9 @@ async function main() {
     // All of them in one place — on a long run the blocks above have scrolled
     // past between hundreds of rows.
     for (const { row, v } of wrong) {
-      note(`$${v.clash.published} → really $${v.clash.contract}${v.contract.name ? ` (${v.contract.name})` : ''}   ${row.chain}/${row.address}   ${provenance(row, granted)}`);
+      // The listing's own NAME beside its ticker: whether two spellings are one
+      // token is read off the two names, and the block naming it has scrolled away.
+      note(`$${v.clash.published}${row.name ? ` (${row.name})` : ''} → really $${v.clash.contract}${v.contract.name ? ` (${v.contract.name})` : ''}   ${row.chain}/${row.address}   ${provenance(row, granted)}`);
     }
     note('Until they are deleted, no pump or rank-up alert goes out for them (it would name the wrong token).');
     // REAL values, never a bracketed blank (this repo's first rule): each line

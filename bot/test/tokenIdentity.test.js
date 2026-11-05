@@ -349,6 +349,10 @@ test("identity:check holds the readers' INFO detail for the run and gives it bac
   assert.ok(iMute > 0 && iMute < iLoop, "muted before the first row");
   assert.ok(iFinally > iLoop && iRestore > iFinally, "restored in a finally, whatever the loop does");
   assert.match(src, /% 100 === 0/, "a long run says how far it has got");
+  // The second --all run left $LEMON flagged with only its TICKER in the
+  // summary; whether it is one token is read off the two names.
+  const summary = src.slice(src.indexOf("for (const { row, v } of wrong)"));
+  assert.match(summary.slice(0, 400), /\$\{v\.clash\.published\}\$\{row\.name \?/, "the summary names the listing beside its ticker");
 });
 
 // "liat ini" (the first --all run): eight rows flagged, and two of them were ONE
