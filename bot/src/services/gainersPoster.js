@@ -9,6 +9,9 @@
 // Both paths are fail-safe in the same direction: no live gainers, no canvas, a
 // dead API → nothing is posted and the reason is logged. A gainers banner that
 // prints stale or invented numbers is worse than a day with no banner.
+const os = require("node:os");
+const path = require("node:path");
+const { promises: fs } = require("node:fs");
 const cfgStore = require("./gainersConfig");
 const store = require("../gainerspost/store");
 const gainers = require("../gainers");
@@ -37,10 +40,9 @@ async function drainQueue() {
   for (const job of store.pending()) {
     if (!(await store.claim(job.id))) continue; // another tick got it
     try {
-      // Every board is a still now. The ANIMATION branch stays for one reason:
-      // a motion job queued by an admin bot that was still on the old code
-      // when this one deployed is a real file waiting to go out, and sending
-      // an MP4 through sendPhoto would fail it.
+      // A 💠 Prism board is a looping MP4 (gainersPrism.js) and goes out as an
+      // animation — sending an MP4 through sendPhoto would fail it. Every
+      // other board is a still.
       const msg = job.mediaType === "animation"
         ? await post.sendMedia(job.channel, { type: "animation", source: job.imagePath }, job.caption, { pin: job.pin })
         : await post.sendPhoto(job.channel, { source: job.imagePath }, job.caption, { pin: job.pin });
@@ -96,11 +98,29 @@ async function postNow({ template = null, by = "schedule" } = {}) {
   // tweet, so a slow or unconfigured X costs the link and nothing else.
   const xUrl = await tweetGainers(res.coins, out.still, cfg);
   const caption = gainers.captionPayload(res.coins, { tz: cfg.tz, showMcap: cfg.showMcap, showPct: cfg.showPct, xUrl });
-  const msg = await post.sendPhoto(channel, { source: out.media }, caption, { pin: cfg.pin });
+  const msg = out.mediaType === "animation"
+    ? await sendClip(channel, out, caption, cfg.pin)
+    : await post.sendPhoto(channel, { source: out.media }, caption, { pin: cfg.pin });
   if (!msg || !msg.message_id) return { ok: false, reason: `${channel} refused the post — is the bot an admin there?` };
   const symbols = res.coins.map((c) => c.symbol);
   log.info(`[gainers] daily ${id} → ${tmeLink(channel, msg.message_id)} (${symbols.join(", ")}) by ${by}`);
   return { ok: true, url: tmeLink(channel, msg.message_id), template: id, symbols, source: res.source, xUrl };
+}
+
+/**
+ * A 💠 Prism clip (MP4) to the channel. Through a temp FILE, never a Buffer:
+ * the GramJS path names a Buffer upload "photo.png", and an MP4 under that
+ * name is not an animation. A path keeps its .mp4 — the shape the queued
+ * admin post has always used — and the file is removed whatever happens.
+ */
+async function sendClip(channel, out, caption, pin) {
+  const file = path.join(os.tmpdir(), `dexvra-prism-post-${process.pid}-${Date.now()}.mp4`);
+  await fs.writeFile(file, out.media);
+  try {
+    return await post.sendMedia(channel, { type: "animation", source: file }, caption, { pin });
+  } finally {
+    await fs.unlink(file).catch(() => {});
+  }
 }
 
 /** Tweet a gainers board. `list` is the plain-text leaderboard, `image` a Buffer

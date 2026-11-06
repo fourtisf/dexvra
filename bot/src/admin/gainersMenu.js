@@ -65,6 +65,7 @@ function homeText() {
   if (hasBg()) lines.push("🎨 <b>Background:</b> custom artwork set");
   if (!gb.available()) lines.push("\n⚠️ <b>canvas is unavailable on this host</b> — banners cannot be rendered here.");
   lines.push("", "Pick a layout to preview it with live data — ✨ the premium set, one design per board size (Top 1 → Top 10):");
+  lines.push("💠 <b>Prism</b> — the animated set, one per board size too (💠1 → 💠10).");
   return lines.join("\n");
 }
 
@@ -77,8 +78,19 @@ function layoutRows(ids) {
   return rows;
 }
 
+/** 💠 Prism, five compact buttons a row — ADDED under the premium set
+ *  ("Tambahan saja"), so the front set and 🎲 random stay what they were. */
+function prismRows() {
+  const rows = [];
+  for (let i = 0; i < gr.PRISM_IDS.length; i += 5) {
+    rows.push(gr.PRISM_IDS.slice(i, i + 5).map((id) => Markup.button.callback(gr.buttonOf(id), `gn_t:${id}`)));
+  }
+  return rows;
+}
+
 function homeKb() {
   const rows = layoutRows(gr.PREMIUM_IDS);
+  rows.push(...prismRows());
   rows.push([Markup.button.callback("🖼 Classic layouts", "gn_img")]);
   rows.push([Markup.button.callback("🎲 Random", "gn_t:random")]);
   rows.push([Markup.button.callback("📡 Check live data", "gn_data"), Markup.button.callback("⚙️ Settings", "gn_set")]);
@@ -303,7 +315,9 @@ async function sendPreview(ctx, template, { fresh = true, note = "" } = {}) {
   // emoji ride as entities), and the controls card below it is admin-only chrome.
   // Merging them would make the admin approve a caption they never saw clean.
   const capExtra = { caption: shown.text, ...(shown.entities && shown.entities.length ? { caption_entities: shown.entities } : {}) };
-  await ctx.replyWithPhoto({ source: out.media }, capExtra);
+  // 💠 Prism is a looping MP4 — an animation, or Telegram shows a file card.
+  if (out.mediaType === "animation") await ctx.replyWithAnimation({ source: out.media }, capExtra);
+  else await ctx.replyWithPhoto({ source: out.media }, capExtra);
   const short = coins.length < need ? `\n⚠️ Only <b>${coins.length}</b> live gainer(s) passed the filters — the layout adapted to fit.` : "";
   // THE POOL, ON THE SCREEN. topGainers has always measured and returned it, and
   // nothing ever printed it — so when the board's live rows collapsed from many
@@ -331,7 +345,7 @@ async function sendPreview(ctx, template, { fresh = true, note = "" } = {}) {
     hOn(hx.notListed).length ? `\n🔗 <i>Not in the listing store: ${escapeHtml(hOn(hx.notListed).map((s) => `$${s}`).join(", "))} — on the site board but never listed through the bot.</i>` : "",
   ].join("");
   await ctx.reply(
-    `👀 <b>Preview — ${escapeHtml(gr.labelOf(id))}</b>${gr.isPremium(id) ? " · ✨ premium" : ""}\n` +
+    `👀 <b>Preview — ${escapeHtml(gr.labelOf(id))}</b>${gr.isPremium(id) ? " · ✨ premium" : ""}${out.mediaType === "animation" ? " · 💠 animated" : ""}\n` +
       `📡 Data: <b>${escapeHtml(source)}</b> · ${escapeHtml(coins.map((c) => `$${c.symbol}`).join(", "))}` +
       (cfg.showPct ? "" : "\n📈 <b>Percentage gain: hidden</b> — the ranking is published without the figures. Tap 📈 below to show them.") +
       (cfg.bannerMcap ? "" : "\n🏦 <b>Market cap: hidden</b> on the banner. Tap 🏦 below to show it.") +
@@ -371,8 +385,9 @@ async function waitForJob(id, { tries = 14, gapMs = 1500 } = {}) {
   return store.get(id);
 }
 
-/** Said before the render, or the tap reads as dead while it draws. */
-const buildingNote = () => "⏳ Building the preview…";
+/** Said before the render, or the tap reads as dead while it draws. A 💠 Prism
+ *  clip encodes for a few seconds more than a still, so it says so. */
+const buildingNote = (id) => (gr.isPrism(id) ? "⏳ Building the 💠 animated preview — a few seconds…" : "⏳ Building the preview…");
 
 // ── registration ────────────────────────────────────────────────────────────
 /**
@@ -792,7 +807,7 @@ function register(bot, deps) {
 module.exports = {
   register,
   // exposed for tests / the smoke check
-  _panels: { homeText, homeKb, setText, setKb, tplPickKb, bgText, previewKb, posKb, layoutRows },
+  _panels: { homeText, homeKb, setText, setKb, tplPickKb, bgText, previewKb, posKb, layoutRows, prismRows },
   BG_NAME,
   bgPath,
   hasBg,

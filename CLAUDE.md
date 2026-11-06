@@ -5029,7 +5029,8 @@ screen offer ten NEW premium still banners, Top 1 → Top 10, all different.
   admin's old card, opens settings rather than spinning.
 - The poster's queued-job ANIMATION branch stays: a motion job queued by an
   admin bot still on the old code when this deploys is a real file waiting to
-  go out. Everything rendered from now on is a `sendPhoto`.
+  go out. Everything rendered from now on is a `sendPhoto` — except 💠 Prism,
+  the animated set the operator asked for ADDED on 2026-11-06 (section below).
 - **Every token draws its logo, three passes cheapest first**
   (`gainers.resolveLogo`) — unchanged, it belongs to gainers.js, not to the
   removed renderer.
@@ -5208,6 +5209,67 @@ cd bot && node scripts/gainers-preview.js --no-pct                              
 **Config a fix depends on:** nothing — it ships ON, which is what every install
 publishes today. This touches `bot/` only, so the deploy is the ecosystem
 restart and no web rebuild.
+
+### 💠 Prism — the animated set, ADDED beside the premium stills (2026-11-06)
+
+"buatkan gif top gainer … warnanya biru kaya brand dexvra" — four rounds of
+renders judged by the operator: a terminal-style board ("so bad"), a dark
+glossy one ("bagus … tapi kaya fourtis, copy paste"), a bright blue one
+("tambah jelek"), and **Prism**, approved: "thats good buatkan dari top 1
+sampai 10 premium visual dan annimasinya bagus". Asked where it goes, the
+operator chose **"Tambahan saja"** — so it is ADDED, it replaces nothing:
+
+- **The premium still set stays the front set and the 🎲 random default.**
+  Prism is its own row of ten compact buttons, `💠1 … 💠10`, UNDER it; the
+  classic stills are still one tap away. Random with an empty rotation never
+  rolls a clip by itself — an operator puts a Prism board in the rotation or
+  makes it the daily layout from ⚙️ → 🖼 Default layout, like any other.
+- **`bot/src/gainersPrism.js`** draws it: a poster panel on the left (the
+  Dexvra mark, a giant cut-crystal numeral between TOP and GAINERS, the date,
+  a LIVE chip), gem-cut cards on the right (the mark's facet cut on two
+  corners), the leader on a wide spotlight card and one composition PER COUNT
+  (`COMPOSITIONS`: Solo, Duel, Trio, Quartet, Quad, tiered 2+3, twin rows,
+  tiered 2+2+3, tiered 2+3+3, nine grid) — higher ranks get the bigger cards.
+  Sapphire blue, Space Grotesk, the site's own logo mark.
+- **It moves, and frame 0 IS the board.** An 8 s loop at 24 fps, 1600×900
+  MP4: a prism shine over the numeral, a sparkle on the leader's ring, a glint
+  over each card, a light round the spotlight card; then the cards slide out
+  and are DEALT back in from behind the panel while the gains count up and the
+  bars fill. The first frame is the finished board (Telegram's thumbnail, the
+  X still) and t = 1 draws t = 0 — both pinned.
+- **One door, as for every board** — `gainersRender.render()` returns
+  `{mediaType: "animation", ext: "mp4", media, still}` for a Prism id. The
+  preview is a `replyWithAnimation` (an MP4 through sendPhoto is refused), 📤
+  Post queues the MP4 + its still through `gainerspost/store` (the animation
+  branch the poster kept), and the DAILY post sends it with `sendMedia` from a
+  temp **`.mp4` file**. ⚠️ Not a Buffer: GramJS names a Buffer upload
+  `photo.png`, and an MP4 under that name is not an animation. The tweet takes
+  the still, like every board.
+- **The renderer rules are the same rules**: never throws (null → nothing is
+  posted), nothing invented (no figure, no cell), `fmtPct` is the caption's
+  formatter, 📈 off removes every % AND every bar (the bar is the % as a
+  length), 🏦 / 💲 off remove the cap / the price — decided once, on copies.
+  The admin's 🎨 background is not used: the poster panel IS Prism's backdrop.
+- **No clip on this host → the still frame goes out**, not nothing: a broken
+  or missing ffmpeg costs the motion, never the post (logged as a WARN).
+  ffmpeg is `@ffmpeg-installer/ffmpeg`, already a dependency of the trending
+  clip, so a normal `npm ci` box has it.
+- A clip renders in ~3–4 s on a dev box (frames composited from sprites built
+  once; the bot yields between frames). The tap says "Building the 💠 animated
+  preview — a few seconds…" so it never reads as dead.
+
+```bash
+cd bot && node scripts/run-tests.js test/gainersPrism.test.js     # 14 tests, no network
+cd bot && node scripts/gainers-preview.js prism5 prism10           # LOOK at it: the still + the MP4
+```
+
+Mutation-tested: the preview sent as a photo, the daily clip sent as a photo,
+the clip sent as a Buffer, the bars ignoring 📈, 🏦 ignored, 🎲 rolling Prism
+by default, the Prism row missing, and the still fallback removed — each fails
+a test.
+
+**Config a fix depends on:** nothing. ⚠️ `bot/` only, so the deploy is the
+ecosystem restart (the admin bot renders the preview, the main bot publishes).
 
 ## "Beberapa token tidak punya logo" — and a guess that outranked the answer
 
