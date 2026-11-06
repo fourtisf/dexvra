@@ -120,6 +120,90 @@ test("no figure at all → no panel, and the clip still draws", { skip: !HAVE },
   assert.equal(runAt(calls, 290), "$CHOO");
 });
 
+// ── The copy column is 530px (CX → W - 60) and nothing may cross its edge ──
+//
+// Found by driving postMedia with real-shaped rows before the merge: a 24-character
+// ticker (the bot's MAX_TICKER), a 60-character name and a 19-character price
+// beside a cap and a depth all ran past the column — the ticker and the name
+// toward the frame edge, the price into the market-cap cell.
+
+/** Every string drawn in the copy column, with its right edge measured in the
+ *  font it was drawn in (the per-letter ticker included). */
+async function copyEdges(coin, badge = "Trending 24H") {
+  const proto = Object.getPrototypeOf(cv.createCanvas(1, 1).getContext("2d"));
+  const orig = proto.fillText;
+  const out = [];
+  proto.fillText = function (text, x, y, ...rest) {
+    out.push({ text: String(text), x, y, end: x + this.measureText(String(text)).width });
+    return orig.call(this, text, x, y, ...rest);
+  };
+  try {
+    await tm.frames(coin, null, { times: [0], badge });
+  } finally {
+    proto.fillText = orig;
+  }
+  return out.filter((c) => c.x >= tm._layout.CX - 10);
+}
+const RIGHT = tm.W - 60;
+const VALUES_Y = PANEL_Y + 76;
+const WORST = {
+  "the bot's longest real ticker": { ...COIN, symbol: "SUPERMEGAULTRATOKENCOIN1" },
+  "an impossible ticker": { ...COIN, symbol: "W".repeat(24) },
+  "a 64-character name": { ...COIN, name: "The Extraordinarily Long Name Of A Memecoin Project On Base Chain" },
+  "a name of wide letters": { ...COIN, name: "W".repeat(32) },
+  "a 19-character price beside a cap and a depth": { ...COIN, price: "$0.0000000000000042", mcap: "$999.9B", liq: "$999.9M" },
+  "a nine-digit price beside a cap and a depth": { ...COIN, price: "$123,456,789.00", mcap: "$999.9B", liq: "$999.9M" },
+  // No spelling the bot makes is this long — a guard against a caller's own: the
+  // three cells cannot fit even at the label floor, so the value itself is cut.
+  "an absurd figure": { ...COIN, price: "$" + "9".repeat(60), mcap: "$999.9B", liq: "$999.9M" },
+};
+
+test("nothing in the copy column crosses its edge, and no value runs into the next cell", { skip: !HAVE }, async () => {
+  for (const [what, coin] of Object.entries(WORST)) {
+    const calls = await copyEdges(coin);
+    for (const c of calls) assert.ok(c.end <= RIGHT + 0.5, `${what}: "${c.text}" ends at ${Math.round(c.end)}, past ${RIGHT}`);
+    const vals = calls.filter((c) => Math.abs(c.y - VALUES_Y) < 0.01).sort((a, b) => a.x - b.x);
+    assert.ok(vals.length > 0, `${what}: the panel was drawn`);
+    vals.forEach((v, i) => {
+      const edge = i + 1 < vals.length ? vals[i + 1].x - 24 : RIGHT; // the next cell starts 24px before its value
+      assert.ok(v.end <= edge - 8, `${what}: value "${v.text}" ends at ${Math.round(v.end)}, into the next cell at ${Math.round(edge)}`);
+    });
+  }
+});
+
+test("a real 24-character ticker is drawn whole; only an impossible one is cut, with an ellipsis", { skip: !HAVE }, async () => {
+  const real = await copyEdges(WORST["the bot's longest real ticker"]);
+  assert.equal(runAt(real, 290), "$SUPERMEGAULTRATOKENCOIN1");
+  const wide = await copyEdges(WORST["an impossible ticker"]);
+  assert.match(runAt(wide, 290), /^\$W+…$/);
+  const name = await copyEdges(WORST["a 64-character name"]);
+  const drawnName = name.find((c) => c.y === 334);
+  assert.ok(drawnName && /^The Extraordinarily Long Name.*…$/.test(drawnName.text), "the name is cut, not dropped");
+});
+
+test("clipTo cuts by code point, never between the two halves of an emoji", () => {
+  // width = UTF-16 length × 10: a cut by unit lands on "🚀\uD83D…" here; a cut by code point cannot.
+  const width = (s) => s.length * 10;
+  const out = tm._clipTo(null, "🚀🚀🚀🚀🚀", 45, width);
+  assert.ok(out.endsWith("…"));
+  assert.ok(!/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(out), `no lone surrogate in ${JSON.stringify(out)}`);
+  assert.equal(tm._clipTo(null, "SHORT", 999, width), "SHORT", "a string that fits is untouched");
+});
+
+test("a cut is made by code point: an emoji ticker never leaves half a surrogate", { skip: !HAVE }, async () => {
+  const calls = await copyEdges({ ...COIN, symbol: "🚀".repeat(24) });
+  const run = runAt(calls, 290);
+  assert.ok(run.endsWith("…"), "the run was long enough to be cut");
+  assert.ok(!/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(run), "no lone surrogate");
+});
+
+test("an ordinary token keeps equal cells — content-sized cells are only for a value that cannot fit", { skip: !HAVE }, async () => {
+  const PW = RIGHT - tm._layout.CX;
+  const vals = (await copyEdges(COIN)).filter((c) => Math.abs(c.y - VALUES_Y) < 0.01).sort((a, b) => a.x - b.x);
+  assert.deepEqual(vals.map((v) => v.text), ["$0.004512", "$4.5M", "$612K"]);
+  vals.forEach((v, i) => assert.ok(Math.abs(v.x - (tm._layout.CX + 24 + (i * PW) / 3)) < 0.01, `value ${i} at its third`));
+});
+
 test("the figures decode on the way in and are exact long before the wrap", { skip: !HAVE }, async () => {
   const early = await drawnDuring(() => tm.frames(COIN, null, { times: [IGN + 0.9] }));
   const late = await drawnDuring(() => tm.frames(COIN, null, { times: [5.8, 5.96] }));

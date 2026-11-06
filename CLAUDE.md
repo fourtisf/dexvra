@@ -4695,6 +4695,60 @@ disk under the design's version, so a mutant that changes the SDF reads the old
 march and proves nothing. Bump `version` with every shape change; that is what
 the version is for.
 
+##### "pastikan semuanya … sesuai kaya logo mc dll" — the copy column could not hold the bot's own maximums
+
+Asked when the four designs were approved for merge. `fulfillment.postMedia
+("trending", …)` was DRIVEN with real-shaped rows, not read:
+- PNG, JPEG, SVG, corrupt bytes, a wide wordmark, dark-on-transparent art;
+- a url fetched through a stand-in `/api/logo`;
+- a pump.fun price, no market at all, nine-figure caps;
+- `$牛来`, the auto-lister's tier badge, a null badge.
+
+**Every logo and every figure came out right.** The price and MC are spelt by
+the same functions as the caption (`fmtPrice`, `$` + `formatNumber`), so a post
+cannot print two MCs. A corrupt or dead logo draws the monogram. A missing
+liquidity drops its cell, and no figure at all drops the panel.
+
+**What did NOT fit is the copy column** (530px, `CX` → `W − 60`):
+
+| string | old behaviour |
+| --- | --- |
+| a 24-character ticker (`MAX_TICKER`) | 775px at the 44px floor, ending ~245px past the column edge |
+| a 60-character name | ran 100px past the panel, to within 17px of the frame |
+| `$0.0000000000000042` beside a cap and a depth | spilled into the MC cell |
+
+- **Shrink first, then cut with an ellipsis** (`clipTo`), the `canvasKit.fitText`
+  rule. The ticker floor went 44 → 28, so the bot's longest REAL ticker is drawn
+  whole; only an impossible one (24 W's) is cut.
+- ⚠️ **The ticker is drawn LETTER BY LETTER, so it is measured as the sum of
+  its glyphs.** `measureText` of the whole word kerns and reads narrower; a
+  24-character ticker then ended 1px past the edge.
+- ⚠️ **The cut is by CODE POINT** (`[...s]`). `kit.fitText` trims UTF-16 units
+  and can leave half an emoji, which draws as a box.
+- **Content-sized cells ONLY for a value that cannot fit an equal cell at the
+  floor.** One common value size, each cell as wide as its label or value
+  needs, the slack shared equally. Every ordinary token keeps the approved
+  equal thirds: 84 of 100 frames hash identical to `66a6480`, and the 16 that
+  differ are one value that was already overflowing its cell's padding.
+
+```bash
+cd bot && node scripts/run-tests.js test/trendingMotion.test.js   # 46 tests
+```
+
+Nine guarantees are MUTATION-TESTED. Each mutant fails between one and three
+tests:
+- the ticker never cut, measured as a word, or its floor back at 44;
+- the name never cut;
+- no content-sized fallback, or content-sized cells for everyone;
+- a cut by UTF-16 unit;
+- the draw ignoring the cell offsets;
+- a value never cut past the label floor.
+
+Two survived the first run, and both were test gaps. The emoji test stopped on
+an even count by chance; `clipTo` is now called directly with a width that
+lands mid-pair. No real spelling reaches the value cut; an absurd caller figure
+does now.
+
 ## A Top 3 that was not the top of the Top 5
 
 Two banners, one minute apart, from the same admin panel:

@@ -1032,27 +1032,80 @@ const realFigure = (v) => {
   const s = String(v == null ? "" : v).trim();
   return s && !/^(TBA|—|-|\$?0(\.0+)?|n\/?a|null|undefined|NaN)$/i.test(s) ? s : null;
 };
+/** `s` cut to `maxW` with an ellipsis, in the font already set on `m`. Trimmed
+ *  by CODE POINT, never by UTF-16 unit: half a surrogate pair is a box, and a
+ *  ticker carrying an emoji is routine. Only ever reached past a size floor. */
+function clipTo(m, s, maxW, width = (str) => m.measureText(str).width) {
+  if (width(s) <= maxW) return s;
+  const cs = [...s];
+  while (cs.length > 2 && width(cs.join("") + "…") > maxW) cs.pop();
+  return cs.join("") + "…";
+}
+/** The copy column is COPY_W wide (CX → W - 60). Nothing drawn in it may cross
+ *  that edge: past it is the frame's own margin, and a 24-character ticker (the
+ *  bot's MAX_TICKER) or a 60-character name used to run straight into it. */
+const COPY_W = 530;
 /** Sizes and cells for the copy, decided once per clip from the FINAL strings. */
 function copyLayout(cv, coin, badge) {
   const m = cv.createCanvas(10, 10).getContext("2d");
-  const sym = tickerOf(coin.symbol);
+  // Shrink first, and only past the floor cut — the size a ticker or name is
+  // drawn at never changes for one that already fit.
+  // The ticker is drawn LETTER BY LETTER from CX - 4 (drawCopy), so its real
+  // width is the sum of its glyphs — wider than measureText of the whole word,
+  // which kerns. Measuring the word let a 24-character ticker end past the edge.
+  let sym = tickerOf(coin.symbol);
+  const glyphs = (str) => trackedW(m, str, 0);
+  const TICK_W = COPY_W + 4;
   let ts = 100; m.font = `800 ${ts}px ${F.x}`;
-  while (m.measureText(sym).width > 530 && ts > 44) { ts -= 2; m.font = `800 ${ts}px ${F.x}`; }
-  const name = String(coin.name || "").trim();
+  while (glyphs(sym) > TICK_W && ts > 28) { ts -= 2; m.font = `800 ${ts}px ${F.x}`; }
+  sym = clipTo(m, sym, TICK_W, glyphs);
+  let name = String(coin.name || "").trim();
   let ns = 30;
-  if (name) { m.font = `500 ${ns}px ${F.m}`; while (m.measureText(name).width > 530 && ns > 18) { ns -= 1; m.font = `500 ${ns}px ${F.m}`; } }
+  if (name) {
+    m.font = `500 ${ns}px ${F.m}`;
+    while (m.measureText(name).width > COPY_W && ns > 18) { ns -= 1; m.font = `500 ${ns}px ${F.m}`; }
+    name = clipTo(m, name, COPY_W);
+  }
   const cells = [];
   const price = realFigure(coin.price), mcap = realFigure(coin.mcap), liq = realFigure(coin.liq);
   if (price) cells.push(["PRICE", price]);
   if (mcap) cells.push(["MARKET CAP", mcap]);
   if (liq) cells.push(["LIQUIDITY", liq]);
   const PW = W - 60 - CX, cw = cells.length ? PW / cells.length : PW;
-  const vs = cells.map(([, v]) => {
+  // Equal cells, each value shrunk to fit its own — what every ordinary token gets.
+  let xs = cells.map((_, i) => i * cw);
+  let vs = cells.map(([, v]) => {
     let s = 30; m.font = `700 ${s}px ${F.d7}`;
     while (m.measureText(v).width > cw - 40 && s > 18) { s -= 1; m.font = `700 ${s}px ${F.d7}`; }
     return s;
   });
-  return { sym, ts, name, ns, cells, vs, PW, cw, pill: pillOf(badge) };
+  let vals = cells.map(([, v]) => v);
+  const over = cells.some(([, v], i) => { m.font = `700 ${vs[i]}px ${F.d7}`; return m.measureText(v).width > cw - 40; });
+  if (over) {
+    // A value that cannot fit an equal cell even at the floor ($0.0000000000000042
+    // beside a cap and a depth) spilled into the next cell. Size the cells by what
+    // they hold instead: one common value size, each cell as wide as its label or
+    // value needs, the slack shared equally — and only then, if the three still
+    // cannot fit at the label floor, cut the values.
+    m.font = `700 ${LABEL_MIN}px ${F.m7}`;
+    const labW = cells.map(([k]) => trackedW(m, k, 1.6));
+    let s = 30, need;
+    for (;;) {
+      m.font = `700 ${s}px ${F.d7}`;
+      need = cells.map(([, v], i) => Math.max(labW[i], m.measureText(v).width) + 48);
+      if (need.reduce((a, b) => a + b, 0) <= PW || s <= LABEL_MIN) break;
+      s -= 1;
+    }
+    if (need.reduce((a, b) => a + b, 0) > PW) {
+      vals = vals.map((v) => clipTo(m, v, PW / cells.length - 48));
+      need = vals.map((v, i) => Math.max(labW[i], m.measureText(v).width) + 48);
+    }
+    const slack = Math.max(0, (PW - need.reduce((a, b) => a + b, 0)) / cells.length);
+    let x = 0;
+    xs = need.map((w) => { const at = x; x += w + slack; return at; });
+    vs = cells.map(() => s);
+  }
+  return { sym, ts, name, ns, cells: cells.map(([k], i) => [k, vals[i]]), vs, xs, PW, cw, pill: pillOf(badge) };
 }
 /** A figure decoding on the way in: digits not yet settled show a scramble. */
 function decode(v, k, f) {
@@ -1110,8 +1163,8 @@ function drawCopy(ctx, t, L, f, P, icon) {
         roundRect(c, CX, PANEL_Y, L.PW, PANEL_H, 18); c.strokeStyle = cg; c.lineWidth = 2; c.stroke();
       }
       L.cells.forEach(([k, v], i) => {
-        const cx = CX + i * L.cw + 24;
-        if (i) { c.strokeStyle = hexA(P.accent, 0.18); c.lineWidth = 1.2; c.beginPath(); c.moveTo(CX + i * L.cw, PANEL_Y + 20); c.lineTo(CX + i * L.cw, PANEL_Y + PANEL_H - 20); c.stroke(); }
+        const cx = CX + L.xs[i] + 24;
+        if (i) { c.strokeStyle = hexA(P.accent, 0.18); c.lineWidth = 1.2; c.beginPath(); c.moveTo(CX + L.xs[i], PANEL_Y + 20); c.lineTo(CX + L.xs[i], PANEL_Y + PANEL_H - 20); c.stroke(); }
         c.font = `700 ${LABEL_MIN}px ${F.m7}`; c.fillStyle = hexA(ICE, 0.72); c.textBaseline = "alphabetic"; tracked(c, k, cx, PANEL_Y + 36, 1.6);
         c.font = `700 ${L.vs[i]}px ${F.d7}`; c.fillStyle = k === "MARKET CAP" ? "#FFFFFF" : "#DCEBFA";
         c.fillText(decode(v, kv, f), cx, PANEL_Y + 76);
@@ -1538,6 +1591,7 @@ module.exports = {
   _sweepAt: sweepAt,
   _sweepTmp: sweepTmp,
   _pillOf: pillOf,
+  _clipTo: clipTo,
   _realFigure: realFigure,
   _timeline: { HOLD, OUTE, IN0, IGN },
   _layout: { CX, PANEL_Y, OX, OY, FS },
