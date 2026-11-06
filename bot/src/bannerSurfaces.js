@@ -139,6 +139,18 @@ const SURFACES = [
       { times: [0], badge: 'Trending 24H' },
     ),
   },
+  {
+    // The 🎬 Top-Gainers family draws every card in code into its own sprite,
+    // so it is its own surface. Frame 0 is the full board — the still is it.
+    key: 'gainers-motion',
+    what: 'animated Top Gainers board (premium MP4)',
+    module: 'gainersMotion.js',
+    run: (coin) => require('./gainersMotion').renderStill({
+      template: 'm3',
+      coins: [{ ...coin, pct: 210 }, { ...coin, pct: 96 }, { ...coin, pct: 41 }],
+      dateText: 'Friday | November 06 2026',
+    }),
+  },
 ];
 
 /*

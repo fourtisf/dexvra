@@ -105,10 +105,20 @@ test("🎲 random with no rotation rolls the PREMIUM set", () => {
   assert.strictEqual(gr.pickTemplate("list5"), "list5");
 });
 
-test("every board is a still — the motion path is gone", async () => {
-  assert.ok(!fs.existsSync(path.join(__dirname, "..", "src", "gainersMotion.js")), "the motion renderer is back");
-  const src = fs.readFileSync(path.join(__dirname, "..", "src", "gainersRender.js"), "utf8");
-  assert.ok(!/require\(["']\.\/gainersMotion["']\)/.test(src));
+// The motion boards were removed on 2026-10-03 and came back on 2026-11-06 as
+// a FAMILY BESIDE the stills ("buat banner vidio seperti fourtis"), never
+// instead of them. So what this pins now: the still boards stay stills, and
+// the 🎬 family has an id space of its own — not the removed v1..v10, which an
+// old config may still name — that random never draws from unasked.
+test("every still board is a still, and the 🎬 family never takes their place", async () => {
+  const gm = require("../src/gainersMotion");
+  assert.deepStrictEqual(gm.TEMPLATE_IDS, Array.from({ length: 10 }, (_, i) => `m${i + 1}`));
+  for (const id of gm.TEMPLATE_IDS) assert.ok(!gb.isTemplate(id), `${id} collides with a still layout`);
+  for (let i = 1; i <= 10; i++) assert.ok(!gm.isTemplate(`v${i}`), `v${i} is the REMOVED family's id`);
+  for (let k = 0; k < 40; k++) {
+    const id = gr.pickTemplate("random", { rng: () => k / 40 });
+    assert.ok(gr.PREMIUM_IDS.includes(id), `random with no rotation drew ${id}`);
+  }
   if (!gb.available()) return;
   for (const id of ["random", gr.PREMIUM_IDS[4], "list5"]) {
     const out = await gr.render({ template: gr.pickTemplate(id), coins: many(5), dateText: "" });
