@@ -7,14 +7,22 @@
 // 🎬: the same KIND of product — a leaderboard that moves, one composition per
 // count, frame 0 the full board — in Dexvra's own look, not Fourtis's:
 //
-//   - a deep ocean-blue stage: aurora ribbons flowing behind the headline, a
-//     fan of light from above, and a perspective grid floor that mirrors the
-//     cards standing on it;
-//   - glass cards with a gem facet; the leader is rim-lit in the gem's own
-//     mint → cyan, with a comet ring orbiting its logo;
-//   - hexagonal rank badges (gold / silver / bronze for the podium);
+//   - a deep sapphire stage: spotlights swaying from above, aurora ribbons
+//     behind the headline, a lattice of gem facets, lens bokeh in front of and
+//     behind the stage, and a perspective grid floor that mirrors the cards;
+//   - sapphire glass cards in a bevelled platinum frame; the leader is rim-lit
+//     in the gem's own mint → cyan, with art-deco corners, a light running
+//     round its frame, a gold crown on its coin and an orbiting comet ring;
+//   - logos struck into a reeded chrome bezel; hexagonal rank badges (gold /
+//     silver / bronze for the podium); a light running along every gain bar;
+//   - the camera breathes in and out once per loop, the room less than the
+//     stage and the front bokeh most — parallax — and is exactly still at
+//     frame 0;
 //   - the SITE's type: Sora for the figures, Space Grotesk for names,
 //     JetBrains Mono for the tracked labels; the Dexvra gem mark.
+//
+// "buatkan design yang lebih premium" (2026-11-06) is what added the frame,
+// the bezel, the crown, the moving light and the camera to the first cut.
 //
 // ⚠️ THIS FAMILY ONCE EXISTED AND WAS REMOVED ("hapus top gainer yang vidio
 // ganti ke foto banner aja", 2026-10-03). It comes back as a FAMILY BESIDE the
@@ -199,6 +207,14 @@ const metaOf = (c) => {
 };
 const pctOf = (c) => numOrNull(c && c.pct);
 
+/** How full a bar is: the gain against the leader of its group (`min` keeps a
+ *  real but tiny gain visible as a sliver). */
+function barFrac(c, top, min) {
+  const v = pctOf(c);
+  if (v === null) return 0;
+  return v > 0 ? Math.max(min, Math.min(1, v / top)) : min;
+}
+
 /** The leader's gain on this board, the scale every bar is drawn against. */
 function topVal(coins) {
   const vals = coins.map(pctOf).filter((v) => v !== null && v > 0);
@@ -212,6 +228,8 @@ class Board {
     this.n = n;
     this.showPct = showPct !== false;
     this.items = [];
+    this.bars = []; // every gain bar, for the light that runs along it
+    this.cur = null; // the card being built
     this.ring = null; // { cx, cy, d } of the leader's logo, design units
     this.liveDot = null;
     this.title = null; // { canvas, x, y } — the headline as a mask, px
@@ -286,22 +304,22 @@ class Board {
     ctx.restore();
   }
 
-  /** Glass card with a gem facet. The leader is rim-lit, mint → cyan. */
+  /** Sapphire glass in a platinum frame. The leader is rim-lit, mint → cyan,
+   *  with art-deco corners — and a light runs round its frame (compose). */
   card(ctx, box, r, hero) {
     const [x0, y0, x1, y1] = box;
     const w = x1 - x0;
     const h = y1 - y0;
     ctx.save();
-    // the shadow and, for the leader, the brand glow
     roundRect(ctx, x0, y0, w, h, r);
-    ctx.fillStyle = "rgba(4,10,20,1)";
-    ctx.shadowColor = "rgba(0,0,0,0.72)";
-    ctx.shadowBlur = 28 * K;
-    ctx.shadowOffsetY = 14 * K;
+    ctx.fillStyle = "rgba(3,8,18,1)";
+    ctx.shadowColor = "rgba(0,0,0,0.78)";
+    ctx.shadowBlur = 30 * K;
+    ctx.shadowOffsetY = 16 * K;
     ctx.fill();
     if (hero) {
-      ctx.shadowColor = rgba(C.cyan, 0.42);
-      ctx.shadowBlur = 34 * K;
+      ctx.shadowColor = rgba(C.cyan, 0.5);
+      ctx.shadowBlur = 42 * K;
       ctx.shadowOffsetY = 0;
       ctx.fill();
     }
@@ -311,12 +329,12 @@ class Board {
     roundRect(ctx, x0, y0, w, h, r);
     ctx.clip();
     ctx.fillStyle = lin(ctx, 0, y0, 0, y1, hero
-      ? [[0, "#123A5A"], [0.45, "#0A2038"], [1, "#050E1C"]]
-      : [[0, "#11243C"], [1, "#060E1C"]]);
+      ? [[0, "#1B4C76"], [0.38, "#0E2C4D"], [1, "#05122A"]]
+      : [[0, "#15304F"], [0.5, "#0B1C34"], [1, "#050E1E"]]);
     ctx.fillRect(x0, y0, w, h);
     // the light from above pooling on the top of the card
-    const lg = ctx.createRadialGradient(x0 + w / 2, y0 - h * 0.15, 0, x0 + w / 2, y0 - h * 0.15, Math.max(w, h) * 0.7);
-    lg.addColorStop(0, rgba(hero ? C.cyan : "#8FD3FF", hero ? 0.26 : 0.1));
+    const lg = ctx.createRadialGradient(x0 + w / 2, y0 - h * 0.12, 0, x0 + w / 2, y0 - h * 0.12, Math.max(w, h) * 0.75);
+    lg.addColorStop(0, rgba(hero ? "#7FE8FF" : "#9FD8FF", hero ? 0.3 : 0.12));
     lg.addColorStop(1, rgba(C.cyan, 0));
     ctx.fillStyle = lg;
     ctx.fillRect(x0, y0, w, h);
@@ -327,90 +345,191 @@ class Board {
     ctx.lineTo(x0 + Math.min(w * 0.2, 110), y0 + h * 0.62);
     ctx.lineTo(x0, y0 + h * 0.4);
     ctx.closePath();
-    ctx.fillStyle = lin(ctx, x0, y0, x0 + w * 0.3, y0 + h * 0.5, [[0, "rgba(255,255,255,0.075)"], [1, "rgba(255,255,255,0.01)"]]);
+    ctx.fillStyle = lin(ctx, x0, y0, x0 + w * 0.3, y0 + h * 0.5, [[0, "rgba(255,255,255,0.08)"], [1, "rgba(255,255,255,0.008)"]]);
     ctx.fill();
+    // a specular band along the top
+    ctx.fillStyle = lin(ctx, 0, y0, 0, y0 + Math.min(70, h * 0.22), [[0, "rgba(255,255,255,0.09)"], [1, "rgba(255,255,255,0)"]]);
+    ctx.fillRect(x0, y0, w, Math.min(70, h * 0.22));
     // weight at the bottom
-    ctx.fillStyle = lin(ctx, 0, y0 + h * 0.55, 0, y1, [[0, "rgba(0,0,0,0)"], [1, "rgba(0,0,0,0.28)"]]);
+    ctx.fillStyle = lin(ctx, 0, y0 + h * 0.55, 0, y1, [[0, "rgba(0,0,0,0)"], [1, "rgba(0,0,0,0.32)"]]);
     ctx.fillRect(x0, y0, w, h);
     ctx.restore();
 
-    // the rim
+    // the frame: platinum, bevelled
     ctx.save();
-    roundRect(ctx, x0 + 0.5, y0 + 0.5, w - 1, h - 1, r);
-    if (hero) {
-      ctx.lineWidth = 1.8;
-      ctx.strokeStyle = lin(ctx, x0, y0, x1, y1, [[0, C.mint], [0.5, C.cyan], [1, C.blue]]);
-    } else {
-      ctx.lineWidth = 1;
-      ctx.strokeStyle = lin(ctx, 0, y0, 0, y1, [[0, "rgba(160,220,255,0.30)"], [1, "rgba(120,190,255,0.08)"]]);
-    }
+    roundRect(ctx, x0 + 1, y0 + 1, w - 2, h - 2, r - 1);
+    ctx.lineWidth = hero ? 2.4 : 2;
+    ctx.strokeStyle = hero
+      ? lin(ctx, x0, y0, x1, y1, [[0, "#B8FFE0"], [0.3, C.mint], [0.55, "#9DEFFF"], [0.8, C.cyan], [1, C.blue]])
+      : lin(ctx, x0, y0, x1, y1, [[0, "#EEF5FB"], [0.3, "#7C91A7"], [0.55, "#D3E0EB"], [0.8, "#53677D"], [1, "#9FB2C4"]]);
+    if (!hero) ctx.globalAlpha = 0.55;
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    roundRect(ctx, x0 + 3.5, y0 + 3.5, w - 7, h - 7, Math.max(2, r - 3.5));
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = `rgba(255,255,255,${hero ? 0.1 : 0.06})`;
     ctx.stroke();
     // a bright hairline along the top edge
     ctx.beginPath();
-    ctx.moveTo(x0 + r * 1.2, y0 + 1);
-    ctx.lineTo(x1 - r * 1.2, y0 + 1);
-    ctx.lineWidth = 1.1;
-    ctx.strokeStyle = lin(ctx, x0 + r, 0, x1 - r, 0, [[0, "rgba(255,255,255,0)"], [0.5, `rgba(255,255,255,${hero ? 0.7 : 0.3})`], [1, "rgba(255,255,255,0)"]]);
+    ctx.moveTo(x0 + r * 1.2, y0 + 1.2);
+    ctx.lineTo(x1 - r * 1.2, y0 + 1.2);
+    ctx.lineWidth = 1.2;
+    ctx.strokeStyle = lin(ctx, x0 + r, 0, x1 - r, 0, [[0, "rgba(255,255,255,0)"], [0.5, `rgba(255,255,255,${hero ? 0.85 : 0.4})`], [1, "rgba(255,255,255,0)"]]);
     ctx.stroke();
+    if (hero) {
+      // art-deco corners: an L and a diamond at each
+      const L = Math.min(26, w * 0.08);
+      const ins = 9;
+      ctx.lineWidth = 1.6;
+      ctx.strokeStyle = rgba(C.ice, 0.9);
+      ctx.fillStyle = rgba(C.ice, 0.95);
+      for (const [sx, sy] of [[1, 1], [-1, 1], [1, -1], [-1, -1]]) {
+        const cx = sx > 0 ? x0 + ins : x1 - ins;
+        const cy = sy > 0 ? y0 + ins : y1 - ins;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy + sy * L);
+        ctx.lineTo(cx, cy);
+        ctx.lineTo(cx + sx * L, cy);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(cx + sx * 6, cy + sy * 2.5);
+        ctx.lineTo(cx + sx * 8.5, cy + sy * 6);
+        ctx.lineTo(cx + sx * 6, cy + sy * 9.5);
+        ctx.lineTo(cx + sx * 3.5, cy + sy * 6);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
     ctx.restore();
   }
 
-  /** The logo in a bezel; no logo (or bytes that are not one) is a monogram. */
+  /** The logo struck into a reeded chrome bezel; no logo (or bytes that are
+   *  not one) is a monogram. */
   disc(ctx, c, cx, cy, d, hero = false) {
     const r = d / 2;
+    const band = Math.max(2.4, d * 0.07);
+    const ri = r - band;
     ctx.save();
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, TAU);
     ctx.fillStyle = "#06101E";
-    ctx.shadowColor = "rgba(0,0,0,0.65)";
-    ctx.shadowBlur = d * 0.12 * K;
-    ctx.shadowOffsetY = d * 0.06 * K;
+    ctx.shadowColor = "rgba(0,0,0,0.7)";
+    ctx.shadowBlur = d * 0.14 * K;
+    ctx.shadowOffsetY = d * 0.07 * K;
     ctx.fill();
     if (hero) {
-      ctx.shadowColor = rgba(C.cyan, 0.65);
-      ctx.shadowBlur = d * 0.3 * K;
+      ctx.shadowColor = rgba(C.cyan, 0.7);
+      ctx.shadowBlur = d * 0.34 * K;
       ctx.shadowOffsetY = 0;
       ctx.fill();
     }
     ctx.restore();
 
+    // the bezel: chrome, reeded
     ctx.save();
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, TAU);
+    ctx.arc(cx, cy, ri, 0, TAU, true);
+    ctx.fillStyle = lin(ctx, cx - r, cy - r, cx + r, cy + r, hero
+      ? [[0, "#FFFFFF"], [0.25, "#B9FFE4"], [0.5, C.cyan], [0.75, "#E4FBFF"], [1, C.deep]]
+      : [[0, "#FFFFFF"], [0.3, "#AFC2D3"], [0.52, "#EAF2F8"], [0.78, "#5B7088"], [1, "#C9D7E3"]]);
+    ctx.fill();
+    if (d >= 44) {
+      const n = Math.round(Math.min(120, d * 0.9));
+      ctx.lineWidth = Math.max(0.5, d * 0.006);
+      ctx.strokeStyle = "rgba(10,24,40,0.35)";
+      ctx.beginPath();
+      for (let i = 0; i < n; i++) {
+        const a = (i * TAU) / n;
+        ctx.moveTo(cx + Math.cos(a) * (ri + band * 0.22), cy + Math.sin(a) * (ri + band * 0.22));
+        ctx.lineTo(cx + Math.cos(a) * (r - band * 0.18), cy + Math.sin(a) * (r - band * 0.18));
+      }
+      ctx.stroke();
+    }
+    ctx.beginPath();
+    ctx.arc(cx, cy, r - 0.4, 0, TAU);
+    ctx.lineWidth = 0.8;
+    ctx.strokeStyle = "rgba(255,255,255,0.55)";
+    ctx.stroke();
+    ctx.restore();
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, ri, 0, TAU);
     ctx.clip();
     if (c.img) {
-      drawLogoDisc(ctx, c.img, cx, cy, r, { backdrop: "#0B1424" });
+      drawLogoDisc(ctx, c.img, cx, cy, ri, { backdrop: "#0B1424" });
     } else {
-      const g = ctx.createRadialGradient(cx - r * 0.3, cy - r * 0.35, 0, cx, cy, r);
+      const g = ctx.createRadialGradient(cx - ri * 0.3, cy - ri * 0.35, 0, cx, cy, ri);
       g.addColorStop(0, "#1C4A6E");
       g.addColorStop(1, "#071426");
       ctx.fillStyle = g;
-      ctx.fillRect(cx - r, cy - r, d, d);
+      ctx.fillRect(cx - ri, cy - ri, ri * 2, ri * 2);
       const ini = [...String(c.symbol || "?").replace(/^\$+/, "")].slice(0, 2).join("").toUpperCase() || "?";
-      ctx.font = fx(r * 0.78);
+      ctx.font = fx(ri * 0.8);
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillStyle = lin(ctx, cx - r, cy - r, cx + r, cy + r, [[0, C.mint], [1, C.cyan]]);
-      ctx.fillText(ini, cx, cy + r * 0.04);
+      ctx.fillStyle = lin(ctx, cx - ri, cy - ri, cx + ri, cy + ri, [[0, C.mint], [1, C.cyan]]);
+      ctx.fillText(ini, cx, cy + ri * 0.04);
     }
-    // gloss on the upper half, weight on the lower
-    ctx.fillStyle = lin(ctx, 0, cy - r, 0, cy + r * 0.1, [[0, "rgba(255,255,255,0.22)"], [1, "rgba(255,255,255,0)"]]);
+    // gloss on the upper half, weight on the lower, and the inner rim
+    ctx.fillStyle = lin(ctx, 0, cy - ri, 0, cy + ri * 0.1, [[0, "rgba(255,255,255,0.24)"], [1, "rgba(255,255,255,0)"]]);
     ctx.beginPath();
-    ctx.ellipse(cx, cy - r * 0.42, r * 0.66, r * 0.5, 0, 0, TAU);
+    ctx.ellipse(cx, cy - ri * 0.42, ri * 0.68, ri * 0.5, 0, 0, TAU);
     ctx.fill();
-    ctx.fillStyle = lin(ctx, 0, cy, 0, cy + r, [[0, "rgba(0,0,0,0)"], [1, "rgba(0,0,0,0.28)"]]);
-    ctx.fillRect(cx - r, cy, d, r);
+    ctx.fillStyle = lin(ctx, 0, cy, 0, cy + ri, [[0, "rgba(0,0,0,0)"], [1, "rgba(0,0,0,0.3)"]]);
+    ctx.fillRect(cx - ri, cy, ri * 2, ri);
     ctx.restore();
-
-    // the bezel
     ctx.save();
     ctx.beginPath();
-    ctx.arc(cx, cy, r, 0, TAU);
-    ctx.lineWidth = Math.max(1.4, d * 0.032);
-    ctx.strokeStyle = lin(ctx, 0, cy - r, 0, cy + r, hero
-      ? [[0, "#FFFFFF"], [0.4, C.mint], [0.7, C.cyan], [1, C.deep]]
-      : [[0, "#F2FAFF"], [0.5, "#9DB4C9"], [1, "#2E4660"]]);
+    ctx.arc(cx, cy, ri, 0, TAU);
+    ctx.lineWidth = Math.max(0.8, d * 0.01);
+    ctx.strokeStyle = "rgba(4,12,24,0.75)";
     ctx.stroke();
+    ctx.restore();
+  }
+
+  /** The champion's crown, sat on top of its coin: gold, a cyan gem. */
+  crown(ctx, cx, bottom, w) {
+    const h = w * 0.62;
+    const top = bottom - h;
+    const m = MEDAL[1];
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(cx - w / 2, bottom);
+    ctx.lineTo(cx - w / 2, top + h * 0.34);
+    ctx.lineTo(cx - w * 0.25, top + h * 0.6);
+    ctx.lineTo(cx, top + h * 0.12);
+    ctx.lineTo(cx + w * 0.25, top + h * 0.6);
+    ctx.lineTo(cx + w / 2, top + h * 0.34);
+    ctx.lineTo(cx + w / 2, bottom);
+    ctx.closePath();
+    ctx.shadowColor = rgba(m.glow, 0.6);
+    ctx.shadowBlur = w * 0.3 * K;
+    ctx.fillStyle = lin(ctx, 0, top, 0, bottom, [[0, m.light], [0.45, m.mid], [1, m.dark]]);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.lineWidth = Math.max(0.8, w * 0.025);
+    ctx.strokeStyle = rgba("#FFF6D8", 0.8);
+    ctx.stroke();
+    // the band
+    ctx.fillStyle = lin(ctx, 0, bottom - h * 0.24, 0, bottom, [[0, m.mid], [1, m.dark]]);
+    ctx.fillRect(cx - w / 2, bottom - h * 0.24, w, h * 0.24);
+    // pearls on the points, a cyan gem in the band
+    for (const [px, py] of [[cx - w / 2, top + h * 0.34], [cx, top + h * 0.12], [cx + w / 2, top + h * 0.34]]) {
+      ctx.beginPath();
+      ctx.arc(px, py, w * 0.07, 0, TAU);
+      ctx.fillStyle = "#FFFBEA";
+      ctx.fill();
+    }
+    ctx.beginPath();
+    ctx.moveTo(cx, bottom - h * 0.21);
+    ctx.lineTo(cx + w * 0.07, bottom - h * 0.12);
+    ctx.lineTo(cx, bottom - h * 0.03);
+    ctx.lineTo(cx - w * 0.07, bottom - h * 0.12);
+    ctx.closePath();
+    ctx.fillStyle = lin(ctx, cx - w * 0.07, 0, cx + w * 0.07, 0, [[0, C.mint], [1, C.cyan]]);
+    ctx.fill();
     ctx.restore();
   }
 
@@ -454,7 +573,7 @@ class Board {
     ctx.fill();
     const v = pctOf(c);
     if (v === null) return ctx.restore();
-    const frac = (v > 0 ? Math.max(0.04, Math.min(1, v / top)) : 0.04) * easeOut(p);
+    const frac = barFrac(c, top, 0.04) * easeOut(p);
     if (frac < 0.005) return ctx.restore();
     const xe = x0 + (x1 - x0) * frac;
     const up = v >= 0;
@@ -481,7 +600,7 @@ class Board {
     ctx.fill();
     const v = pctOf(c);
     if (v === null) return ctx.restore();
-    const frac = (v > 0 ? Math.max(0.05, Math.min(1, v / top)) : 0.05) * easeOut(p);
+    const frac = barFrac(c, top, 0.05) * easeOut(p);
     if (frac < 0.005) return ctx.restore();
     const ye = yb - (yb - yt) * frac;
     const up = v >= 0;
@@ -520,7 +639,9 @@ class Board {
     const bx = body.getContext("2d");
     local(bx);
     this.card(bx, box, r, hero);
+    this.cur = { order, hero, box };
     const lives = build(bx) || [];
+    this.cur = null;
     const final = this.cv.createCanvas(sw, sh);
     const fx2 = final.getContext("2d");
     fx2.drawImage(body, 0, 0);
@@ -564,7 +685,8 @@ function portrait(b, ctx, box, c, rank, { plinth = false } = {}) {
   if (hero) caps(ctx, x0 + 18 + bs * 2 + 10, y0 + 18 + bs, "TOP GAINER", w > 240 ? 11 : 10, C.mint);
   let symSz = Math.min(46, Math.max(18, w * 0.13));
   let gSz = Math.min(44, Math.max(17, w * 0.12));
-  const topY = y0 + 30 + bs * 2;
+  // the champion's crown sits on its coin: room for it under the badge row
+  const topY = y0 + 30 + bs * 2 + (hero ? Math.min(46, w * 0.11) : 0);
   const botY = base - 14;
   const avail = botY - topY;
   let withMeta = !!metaOf(c);
@@ -586,7 +708,10 @@ function portrait(b, ctx, box, c, rank, { plinth = false } = {}) {
   const t0 = topY + Math.max(0, (avail - block) * 0.42);
   const dcy = t0 + d / 2;
   b.disc(ctx, c, cx, dcy, d, hero);
-  if (hero) b.ring = { cx, cy: dcy, d };
+  if (hero) {
+    b.ring = { cx, cy: dcy, d };
+    b.crownSpec = { cx: cx, bottom: dcy - d / 2 + d * 0.4 * 0.62 * 0.3, w: d * 0.4 };
+  }
   const room = w - 36;
   const rows = [[symSz * 1.25, (y) => b.sym(ctx, c, cx, y, symSz, "center", room)]];
   if (hasName(c)) rows.push([Math.max(LABEL_MIN, symSz * 0.36) * 1.7, (y) => b.nm(ctx, c, cx, y, symSz * 0.36, "center", room)]);
@@ -625,7 +750,10 @@ function landscape(b, ctx, box, c, rank, { big = true } = {}) {
   const d = Math.min(h * 0.64, 150);
   const dcx = x0 + 26 + d / 2;
   b.disc(ctx, c, dcx, cy, d, hero);
-  if (hero) b.ring = { cx: dcx, cy, d };
+  if (hero) {
+    b.ring = { cx: dcx, cy, d };
+    b.crownSpec = { cx: dcx, bottom: cy - d / 2 + d * 0.36 * 0.62 * 0.3, w: d * 0.36 };
+  }
   const right = x1 - 28;
   const gSz = big ? Math.min(56, h * 0.3) : Math.min(30, h * 0.22);
   const gw = big ? b.gainW(ctx, c, gSz) : 0;
@@ -694,7 +822,11 @@ function row(b, ctx, box, c, rank, top) {
   // the name beside the ticker, only where it fits whole enough to read
   const nameX = tx + sw + 12;
   if (hasName(c) && barX1 - nameX > 70) b.nm(ctx, c, nameX, ty + symSz * 0.08, Math.max(LABEL_MIN, symSz * 0.5), "left", barX1 - nameX);
-  if (b.hasPct(c)) lives.push((c2, p) => b.comet(c2, tx, barX1, cy + h * 0.22, Math.max(4, h * 0.06), c, top, p));
+  if (b.hasPct(c)) {
+    const bh = Math.max(4, h * 0.06);
+    lives.push((c2, p) => b.comet(c2, tx, barX1, cy + h * 0.22, bh, c, top, p));
+    b.bars.push({ kind: "h", x0: tx, x1: barX1, y: cy + h * 0.22, h: bh, frac: barFrac(c, top, 0.04), order: b.cur.order });
+  }
   return lives;
 }
 
@@ -714,6 +846,7 @@ function column(b, ctx, box, c, rank, top) {
   if (b.hasPct(c)) {
     const bw = Math.min(w * 0.22, 26);
     lives.push((c2, p) => b.vbar(c2, cx, yb, yt, bw, c, top, p));
+    b.bars.push({ kind: "v", cx, yb, yt, w: bw, frac: barFrac(c, top, 0.05), order: b.cur.order });
   }
   b.disc(ctx, c, cx, dcy, d);
   const symSz = Math.min(20, w * 0.11);
@@ -741,6 +874,7 @@ function heroStage(b, ctx, box, c) {
   const dcx = x0 + 70 + d / 2;
   b.disc(ctx, c, dcx, cy, d, true);
   b.ring = { cx: dcx, cy, d };
+  b.crownSpec = { cx: dcx, bottom: cy - d / 2 + d * 0.34 * 0.62 * 0.3, w: d * 0.34 };
   const right = x1 - 60;
   const gSz = 78;
   const gw = b.gainW(ctx, c, gSz);
@@ -972,7 +1106,7 @@ function backdrop(cv) {
   const out = cv.createCanvas(W, H);
   const ctx = out.getContext("2d");
   ctx.scale(K, K);
-  ctx.fillStyle = lin(ctx, 0, 0, 0, DH, [[0, "#0A1C33"], [0.42, "#050F1F"], [1, "#02060E"]]);
+  ctx.fillStyle = lin(ctx, 0, 0, 0, DH, [[0, "#0B2244"], [0.4, "#06142C"], [1, "#020611"]]);
   ctx.fillRect(0, 0, DW, DH);
   const bloom = (x, y, r, color, a) => {
     const g = ctx.createRadialGradient(x, y, 0, x, y, r);
@@ -981,33 +1115,31 @@ function backdrop(cv) {
     ctx.fillStyle = g;
     ctx.fillRect(x - r, y - r, r * 2, r * 2);
   };
-  bloom(640, 70, 640, "#1B6FB0", 0.42); // behind the headline
-  bloom(640, FLOOR + 10, 600, "#1784C4", 0.3); // the light pooling on the floor
-  bloom(70, 430, 420, "#0E3E7A", 0.3);
-  bloom(1210, 430, 420, "#0E3E7A", 0.3);
+  bloom(640, 60, 680, "#1C78C0", 0.45); // behind the headline
+  bloom(640, FLOOR + 10, 620, "#1784C4", 0.32); // the light pooling on the floor
+  bloom(60, 420, 440, "#123F80", 0.32);
+  bloom(1220, 420, 440, "#123F80", 0.32);
 
-  // a fan of light from above
-  const ax = 640;
-  const ay = -90;
-  for (let i = -7; i <= 7; i++) {
-    const a = Math.PI / 2 + i * 0.105;
-    const spread = i % 2 ? 0.026 : 0.042;
-    const L = 980;
-    ctx.beginPath();
-    ctx.moveTo(ax, ay);
-    ctx.lineTo(ax + L * Math.cos(a - spread), ay + L * Math.sin(a - spread));
-    ctx.lineTo(ax + L * Math.cos(a + spread), ay + L * Math.sin(a + spread));
-    ctx.closePath();
-    const g = ctx.createRadialGradient(ax, ay, 0, ax, ay, L);
-    g.addColorStop(0, rgba(C.ice, i % 2 ? 0.05 : 0.075));
-    g.addColorStop(0.6, rgba(C.cyan, 0.02));
-    g.addColorStop(1, rgba(C.cyan, 0));
-    ctx.fillStyle = g;
-    ctx.fill();
+  // a lattice of gem facets, fading down from the top
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, 0, DW, FLOOR);
+  ctx.clip();
+  ctx.strokeStyle = lin(ctx, 0, 0, 0, FLOOR, [[0, rgba("#A8DCFF", 0.075)], [0.45, rgba("#A8DCFF", 0.03)], [1, rgba("#A8DCFF", 0)]]);
+  ctx.lineWidth = 0.7;
+  const k = Math.tan(Math.PI / 6);
+  ctx.beginPath();
+  for (let x = -FLOOR; x < DW + FLOOR; x += 56) {
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x + FLOOR / k / 2.2, FLOOR);
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x - FLOOR / k / 2.2, FLOOR);
   }
+  ctx.stroke();
+  ctx.restore();
 
   // the floor: a sheen under the horizon and a perspective grid
-  ctx.fillStyle = lin(ctx, 0, FLOOR, 0, DH, [[0, rgba(C.cyan, 0.08)], [1, rgba(C.cyan, 0)]]);
+  ctx.fillStyle = lin(ctx, 0, FLOOR, 0, DH, [[0, rgba(C.cyan, 0.09)], [1, rgba(C.cyan, 0)]]);
   ctx.fillRect(0, FLOOR, DW, DH - FLOOR);
   const vpY = FLOOR - 340;
   ctx.save();
@@ -1021,36 +1153,42 @@ function backdrop(cv) {
     ctx.moveTo(640 + (xb - 640) * t, FLOOR);
     ctx.lineTo(xb, DH + 40);
     ctx.lineWidth = 0.8;
-    ctx.strokeStyle = lin(ctx, 0, FLOOR, 0, DH, [[0, rgba(C.cyan, 0.14)], [1, rgba(C.cyan, 0.02)]]);
+    ctx.strokeStyle = lin(ctx, 0, FLOOR, 0, DH, [[0, rgba(C.cyan, 0.16)], [1, rgba(C.cyan, 0.02)]]);
     ctx.stroke();
   }
-  for (let k = 1; k <= 6; k++) {
-    const y = FLOOR + 6 * k * k * 0.9;
+  for (let j = 1; j <= 6; j++) {
+    const y = FLOOR + 6 * j * j * 0.9;
     if (y > DH) break;
     ctx.beginPath();
     ctx.moveTo(0, y);
     ctx.lineTo(DW, y);
     ctx.lineWidth = 0.7;
-    ctx.strokeStyle = lin(ctx, 0, 0, DW, 0, [[0, rgba(C.cyan, 0)], [0.5, rgba(C.cyan, 0.1 / k ** 0.5)], [1, rgba(C.cyan, 0)]]);
+    ctx.strokeStyle = lin(ctx, 0, 0, DW, 0, [[0, rgba(C.cyan, 0)], [0.5, rgba(C.cyan, 0.11 / j ** 0.5)], [1, rgba(C.cyan, 0)]]);
     ctx.stroke();
   }
   ctx.restore();
   // the horizon line
   ctx.save();
   ctx.beginPath();
-  ctx.moveTo(80, FLOOR);
-  ctx.lineTo(1200, FLOOR);
+  ctx.moveTo(60, FLOOR);
+  ctx.lineTo(1220, FLOOR);
   ctx.lineWidth = 1.4;
-  ctx.strokeStyle = lin(ctx, 80, 0, 1200, 0, [[0, rgba(C.cyan, 0)], [0.25, rgba(C.cyan, 0.6)], [0.5, rgba(C.mint, 0.85)], [0.75, rgba(C.cyan, 0.6)], [1, rgba(C.cyan, 0)]]);
-  ctx.shadowColor = rgba(C.cyan, 0.8);
-  ctx.shadowBlur = 10 * K;
+  ctx.strokeStyle = lin(ctx, 60, 0, 1220, 0, [[0, rgba(C.cyan, 0)], [0.25, rgba(C.cyan, 0.6)], [0.5, rgba(C.mint, 0.9)], [0.75, rgba(C.cyan, 0.6)], [1, rgba(C.cyan, 0)]]);
+  ctx.shadowColor = rgba(C.cyan, 0.85);
+  ctx.shadowBlur = 12 * K;
   ctx.stroke();
   ctx.restore();
+  return out;
+}
 
-  // vignette
-  const vg = ctx.createRadialGradient(640, 360, 300, 640, 360, 820);
+/** The cinematic vignette, laid over everything last. */
+function vignette(cv) {
+  const out = cv.createCanvas(W, H);
+  const ctx = out.getContext("2d");
+  ctx.scale(K, K);
+  const vg = ctx.createRadialGradient(640, 380, 330, 640, 380, 860);
   vg.addColorStop(0, "rgba(0,0,0,0)");
-  vg.addColorStop(1, "rgba(0,0,0,0.62)");
+  vg.addColorStop(1, "rgba(0,0,0,0.66)");
   ctx.fillStyle = vg;
   ctx.fillRect(0, 0, DW, DH);
   return out;
@@ -1074,6 +1212,15 @@ function chrome(cv, b, n, dateText) {
   const sep = 30;
   const total = 13 + wLive + sep + mark + 8 + wDex + sep + wTail;
   let x = 640 - total / 2;
+  // the kicker sits in a glass capsule
+  ctx.save();
+  roundRect(ctx, x - 18, y - 14, total + 36, 28, 14);
+  ctx.fillStyle = "rgba(255,255,255,0.05)";
+  ctx.fill();
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = lin(ctx, x - 18, 0, x + total + 18, 0, [[0, rgba(C.cyan, 0.15)], [0.5, rgba("#BFE9FF", 0.4)], [1, rgba(C.cyan, 0.15)]]);
+  ctx.stroke();
+  ctx.restore();
   b.liveDot = { x: x + 3.5, y };
   ctx.save();
   ctx.beginPath();
@@ -1159,6 +1306,15 @@ function chrome(cv, b, n, dateText) {
       ctx.lineWidth = 0.9;
       ctx.strokeStyle = lin(ctx, a0, 0, a1, 0, [[0, rgba(C.cyan, 0.6)], [1, rgba(C.cyan, 0)]]);
       ctx.stroke();
+      // a cut diamond where each rule begins
+      ctx.beginPath();
+      ctx.moveTo(a0 - s * 2, dy);
+      ctx.lineTo(a0 - s * 6, dy - 4);
+      ctx.lineTo(a0 - s * 10, dy);
+      ctx.lineTo(a0 - s * 6, dy + 4);
+      ctx.closePath();
+      ctx.fillStyle = lin(ctx, 0, dy - 4, 0, dy + 4, [[0, C.mint], [1, C.cyan]]);
+      ctx.fill();
     }
   }
 
@@ -1259,13 +1415,111 @@ function ringSprite(cv, dPx) {
   return s;
 }
 
+/** A lens bokeh: a soft disc with a brighter rim. */
+function bokehSprite(cv, D, color) {
+  const s = cv.createCanvas(D, D);
+  const x = s.getContext("2d");
+  const g = x.createRadialGradient(D / 2, D / 2, 0, D / 2, D / 2, D / 2);
+  g.addColorStop(0, rgba(color, 0.55));
+  g.addColorStop(0.78, rgba(color, 0.62));
+  g.addColorStop(0.9, rgba(color, 0.85));
+  g.addColorStop(1, rgba(color, 0));
+  x.fillStyle = g;
+  x.beginPath();
+  x.arc(D / 2, D / 2, D / 2, 0, TAU);
+  x.fill();
+  return s;
+}
+
+/** The champion's crown as a sprite, drawn over its orbit ring. */
+function crownSprite(cv, b, spec) {
+  const Sw = Math.ceil(spec.w * 1.7 * K);
+  const Sh = Math.ceil(spec.w * 1.3 * K);
+  const s = cv.createCanvas(Sw, Sh);
+  const x = s.getContext("2d");
+  x.scale(K, K);
+  const bx = spec.w * 0.85;
+  const by = spec.w * 1.05;
+  b.crown(x, bx, by, spec.w);
+  return { canvas: s, dx: spec.cx * K - bx * K, dy: spec.bottom * K - by * K };
+}
+
+/** Behind the cards: the champion's spotlight, and a pool of light under every
+ *  card that stands on the floor. */
+function stageBack(cv, b) {
+  const out = cv.createCanvas(W, H);
+  const ctx = out.getContext("2d");
+  ctx.scale(K, K);
+  const hero = b.items.find((it) => it.hero);
+  if (hero) {
+    const [x0, y0, x1] = hero.box;
+    const cx = (x0 + x1) / 2;
+    const w = x1 - x0;
+    ctx.beginPath();
+    ctx.moveTo(cx - w * 0.12, -40);
+    ctx.lineTo(cx + w * 0.12, -40);
+    ctx.lineTo(cx + w * 0.62, y0 + 40);
+    ctx.lineTo(cx - w * 0.62, y0 + 40);
+    ctx.closePath();
+    ctx.fillStyle = lin(ctx, 0, -40, 0, y0 + 40, [[0, rgba(C.ice, 0.0)], [0.35, rgba(C.ice, 0.07)], [1, rgba(C.cyan, 0.12)]]);
+    ctx.fill();
+  }
+  for (const it of b.items) {
+    const [x0, , x1, y1] = it.box;
+    if (Math.abs(y1 - FLOOR) > 0.5) continue;
+    const cx = (x0 + x1) / 2;
+    const rx = (x1 - x0) * 0.62;
+    ctx.save();
+    ctx.translate(cx, FLOOR + 4);
+    ctx.scale(1, 0.09);
+    const g = ctx.createRadialGradient(0, 0, 0, 0, 0, rx);
+    g.addColorStop(0, rgba(it.hero ? C.mint : C.cyan, it.hero ? 0.55 : 0.32));
+    g.addColorStop(1, rgba(C.cyan, 0));
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(0, 0, rx, 0, TAU);
+    ctx.fill();
+    ctx.restore();
+  }
+  return out;
+}
+
+// the spotlights from above: each sways one whole cycle per loop
+const BEAMS = [
+  { x: 230, w: 250, a: 0.06, ph: 0.0 },
+  { x: 500, w: 290, a: 0.085, ph: 0.3 },
+  { x: 780, w: 290, a: 0.085, ph: 0.55 },
+  { x: 1050, w: 250, a: 0.06, ph: 0.8 },
+];
+function drawBeams(ctx, u) {
+  ctx.save();
+  ctx.scale(K, K);
+  ctx.globalCompositeOperation = "lighter";
+  for (const bm of BEAMS) {
+    const sway = 70 * Math.sin(TAU * (u + bm.ph));
+    const fx = bm.x + (640 - bm.x) * 0.22 + sway;
+    ctx.beginPath();
+    ctx.moveTo(bm.x - 16, -60);
+    ctx.lineTo(bm.x + 16, -60);
+    ctx.lineTo(fx + bm.w / 2, FLOOR);
+    ctx.lineTo(fx - bm.w / 2, FLOOR);
+    ctx.closePath();
+    ctx.fillStyle = lin(ctx, 0, -60, 0, FLOOR, [[0, rgba(C.ice, bm.a)], [0.5, rgba(C.cyan, bm.a * 0.45)], [1, rgba(C.cyan, 0)]]);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
 /** Lay out the board once: the stage, the chrome, and every card's sprite. */
 function build(cv, n, coins, { dateText = "", showPct = true } = {}) {
   const b = new Board(cv, n, { showPct });
   b.bg = backdrop(cv);
   b.chrome = chrome(cv, b, n, dateText);
+  b.vig = vignette(cv);
   LAYOUTS[n](b, coins);
-  if (b.ring) b.ringSprite = ringSprite(cv, Math.round(b.ring.d * 1.18 * K));
+  b.back = stageBack(cv, b);
+  if (b.ring) b.ringSprite = ringSprite(cv, Math.round(b.ring.d * 1.22 * K));
+  if (b.crownSpec) b.crownSprite = crownSprite(cv, b, b.crownSpec);
   const r = rng(n * 7919 + 3);
   const sprites = { 4: glowSprite(cv, Math.round(6 * K), C.cyan), 7: glowSprite(cv, Math.round(10 * K), C.mint), 11: glowSprite(cv, Math.round(15 * K), C.ice) };
   b.motes = Array.from({ length: 34 }, () => ({
@@ -1278,6 +1532,24 @@ function build(cv, n, coins, { dateText = "", showPct = true } = {}) {
     tw: 1 + Math.floor(r() * 3),
     a: 0.2 + r() * 0.45,
   }));
+  const bok = { cyan: bokehSprite(cv, 192, "#5FD8FF"), blue: bokehSprite(cv, 192, "#3E7BFF"), mint: bokehSprite(cv, 192, "#5DF5B2") };
+  const kinds = ["cyan", "cyan", "blue", "mint"];
+  b.bokehBack = Array.from({ length: 14 }, () => ({
+    x: r() * DW, y: 150 + r() * (FLOOR - 120), rad: 22 + r() * 46,
+    sprite: bok[kinds[Math.floor(r() * 4)]], a: 0.05 + r() * 0.08,
+    ax: 18 + r() * 40, ph: r(),
+  }));
+  const corners = [[70, 160], [1210, 180], [40, 640], [1250, 620], [640, 700]];
+  b.bokehFront = corners.map(([x, y]) => ({
+    x, y, rad: 80 + r() * 70, sprite: bok[kinds[Math.floor(r() * 4)]], a: 0.035 + r() * 0.035,
+    ax: 26 + r() * 30, ph: r(),
+  }));
+  // sparkles round the champion's coin, each twinkling whole cycles per loop
+  if (b.ring) {
+    b.sparkles = [-0.95, -0.35, 0.35, 2.25, 2.85, 3.55].map((a, i) => ({
+      a, rad: b.ring.d * (0.66 + 0.12 * r()), size: 4 + r() * 5, tw: 1 + (i % 3), ph: r(),
+    }));
+  }
   b.tmp = null;
   return b;
 }
@@ -1303,6 +1575,21 @@ function glintWindow(it, nItems) {
   return [s, s + 0.1];
 }
 
+// The camera breathes in and back out once per loop — the background less
+// than the stage, the front bokeh more: parallax. At u = 0 every scale is
+// exactly 1, so frame 0 is the still.
+const camScale = (u, amp) => 1 + (amp * (1 - Math.cos(TAU * u))) / 2;
+function camera(ctx, s) {
+  const cx = W / 2;
+  const cy = H * 0.56;
+  ctx.translate(cx, cy);
+  ctx.scale(s, s);
+  ctx.translate(-cx, -cy);
+}
+
+// the champion lands at about this point of the loop: a ring of light bursts
+const FLASH = [0.765, 0.86];
+
 /** One frame at loop position u ∈ [0, 1). compose(b, ctx, 0) is the full board. */
 function compose(b, ctx, u) {
   u = ((u % 1) + 1) % 1;
@@ -1310,9 +1597,37 @@ function compose(b, ctx, u) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.globalAlpha = 1;
   ctx.globalCompositeOperation = "source-over";
+  // bilinear, not "high": the camera moves every sprite by under 3%, where a
+  // high-quality resample is invisible and costs half the frame (measured:
+  // 126ms → 62ms of rasterising per frame)
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "low";
+
+  // ── the room (slow camera)
+  ctx.save();
+  camera(ctx, camScale(u, 0.012));
   ctx.drawImage(b.bg, 0, 0);
+  drawBeams(ctx, u);
   drawAurora(ctx, u);
+  ctx.save();
+  ctx.scale(K, K);
+  for (const k of b.bokehBack) {
+    const x = k.x + k.ax * Math.sin(TAU * (u + k.ph));
+    const y = k.y + 8 * Math.sin(TAU * (2 * u + k.ph));
+    ctx.globalAlpha = k.a;
+    ctx.drawImage(k.sprite, x - k.rad, y - k.rad, k.rad * 2, k.rad * 2);
+  }
+  ctx.restore();
+  ctx.restore();
+  ctx.globalAlpha = 1;
+
+  // ── the header and footer stand still: the parallax is against them
   ctx.drawImage(b.chrome, 0, 0);
+
+  // ── the stage (the camera's push)
+  ctx.save();
+  camera(ctx, camScale(u, 0.026));
+  ctx.drawImage(b.back, 0, 0);
 
   // motes rising through the light, behind the cards; whole laps per loop
   const span = FLOOR - 120;
@@ -1345,6 +1660,8 @@ function compose(b, ctx, u) {
   }
   ctx.globalAlpha = 1;
 
+  ctx.save();
+  ctx.scale(K, K);
   // a glint crosses each card in turn (hold only)
   for (const it of b.items) {
     const [g0, g1] = glintWindow(it, nItems);
@@ -1353,35 +1670,154 @@ function compose(b, ctx, u) {
     const gp = easeInOut((u - g0) / (g1 - g0));
     const w = x1 - x0;
     const bw = Math.max(30, w * 0.18);
-    const bx = x0 - bw - (y1 - y0) * 0.35 + (w + bw + (y1 - y0) * 0.35) * gp;
+    const sk = (y1 - y0) * 0.35;
+    const bx = x0 - bw - sk + (w + bw + sk) * gp;
     ctx.save();
-    ctx.scale(K, K);
     roundRect(ctx, x0, y0, w, y1 - y0, it.r);
     ctx.clip();
     ctx.beginPath();
-    ctx.moveTo(bx + (y1 - y0) * 0.35, y0);
-    ctx.lineTo(bx + (y1 - y0) * 0.35 + bw, y0);
+    ctx.moveTo(bx + sk, y0);
+    ctx.lineTo(bx + sk + bw, y0);
     ctx.lineTo(bx + bw, y1);
     ctx.lineTo(bx, y1);
     ctx.closePath();
-    ctx.fillStyle = lin(ctx, bx, 0, bx + bw + (y1 - y0) * 0.35, 0, [[0, "rgba(255,255,255,0)"], [0.5, `rgba(255,255,255,${it.hero ? 0.16 : 0.11})`], [1, "rgba(255,255,255,0)"]]);
+    ctx.fillStyle = lin(ctx, bx, 0, bx + bw + sk, 0, [[0, "rgba(255,255,255,0)"], [0.5, `rgba(255,255,255,${it.hero ? 0.17 : 0.12})`], [1, "rgba(255,255,255,0)"]]);
     ctx.fill();
     ctx.restore();
   }
 
-  // the leader's orbit ring: two turns per loop
-  const lead = b.items.find((it) => it.order === 0);
-  if (b.ringSprite && lead) {
-    const [a, dy] = itemState(lead, u, nItems);
+  // a light runs along every gain bar, one after another (hold only)
+  for (const bar of b.bars) {
+    const s0 = 0.1 + bar.order * 0.03;
+    if (!(u >= s0 && u < s0 + 0.16) || bar.frac <= 0) continue;
+    const q = easeInOut((u - s0) / 0.16);
+    ctx.save();
+    if (bar.kind === "h") {
+      const xe = bar.x0 + (bar.x1 - bar.x0) * bar.frac;
+      roundRect(ctx, bar.x0, bar.y - bar.h / 2, Math.max(xe - bar.x0, bar.h), bar.h, bar.h / 2);
+      ctx.clip();
+      const L = Math.max(40, (xe - bar.x0) * 0.35);
+      const px = bar.x0 - L + (xe - bar.x0 + L) * q;
+      ctx.fillStyle = lin(ctx, px, 0, px + L, 0, [[0, "rgba(255,255,255,0)"], [0.6, "rgba(255,255,255,0.75)"], [1, "rgba(255,255,255,0)"]]);
+      ctx.fillRect(px, bar.y - bar.h, L, bar.h * 2);
+    } else {
+      const ye = bar.yb - (bar.yb - bar.yt) * bar.frac;
+      roundRect(ctx, bar.cx - bar.w / 2, ye, bar.w, bar.yb - ye, bar.w / 2);
+      ctx.clip();
+      const L = Math.max(30, (bar.yb - ye) * 0.4);
+      const py = bar.yb - (bar.yb - ye + L) * q;
+      ctx.fillStyle = lin(ctx, 0, py + L, 0, py, [[0, "rgba(255,255,255,0)"], [0.6, "rgba(255,255,255,0.7)"], [1, "rgba(255,255,255,0)"]]);
+      ctx.fillRect(bar.cx - bar.w, py, bar.w * 2, L);
+    }
+    ctx.restore();
+  }
+
+  // the champion: a light running round its frame, once per loop
+  const hero = b.items.find((it) => it.hero);
+  if (hero) {
+    const [a, dy] = itemState(hero, u, nItems);
     if (a > 0.01) {
+      const [x0, y0, x1, y1] = hero.box;
+      const cx = (x0 + x1) / 2;
+      const cy = (y0 + y1) / 2 + dy;
+      const g = ctx.createConicGradient(-Math.PI / 2 + TAU * u, cx, cy);
+      g.addColorStop(0, "rgba(255,255,255,0)");
+      g.addColorStop(0.05, "rgba(220,255,245,0.95)");
+      g.addColorStop(0.11, "rgba(61,245,159,0)");
+      g.addColorStop(0.5, "rgba(34,211,238,0)");
+      g.addColorStop(0.54, "rgba(160,235,255,0.6)");
+      g.addColorStop(0.58, "rgba(34,211,238,0)");
+      g.addColorStop(1, "rgba(255,255,255,0)");
       ctx.save();
       ctx.globalAlpha = a;
-      ctx.translate(b.ring.cx * K, (b.ring.cy + dy) * K);
-      ctx.rotate(-TAU * 2 * u);
-      ctx.drawImage(b.ringSprite, -b.ringSprite.width / 2, -b.ringSprite.height / 2);
+      roundRect(ctx, x0 + 1, y0 + 1 + dy, x1 - x0 - 2, y1 - y0 - 2, hero.r - 1);
+      ctx.strokeStyle = g;
+      ctx.lineWidth = 7;
+      ctx.globalAlpha = a * 0.35;
+      ctx.stroke();
+      ctx.lineWidth = 2.4;
+      ctx.globalAlpha = a;
+      ctx.stroke();
       ctx.restore();
     }
   }
+  ctx.restore();
+
+  // the leader's orbit ring: two turns per loop; the crown rides over it
+  const lead = b.items.find((it) => it.order === 0);
+  if (lead && b.ring) {
+    const [a, dy] = itemState(lead, u, nItems);
+    if (a > 0.01) {
+      if (b.ringSprite) {
+        ctx.save();
+        ctx.globalAlpha = a;
+        ctx.translate(b.ring.cx * K, (b.ring.cy + dy) * K);
+        ctx.rotate(-TAU * 2 * u);
+        ctx.drawImage(b.ringSprite, -b.ringSprite.width / 2, -b.ringSprite.height / 2);
+        ctx.restore();
+      }
+      if (b.crownSprite) {
+        ctx.globalAlpha = a;
+        ctx.drawImage(b.crownSprite.canvas, b.crownSprite.dx, b.crownSprite.dy + dy * K);
+      }
+      // sparkles twinkling round the coin
+      for (const sp of b.sparkles || []) {
+        const tw = 0.5 + 0.5 * Math.sin(TAU * (u * sp.tw + sp.ph));
+        if (tw < 0.25) continue;
+        const sx = (b.ring.cx + Math.cos(sp.a) * sp.rad) * K;
+        const sy = (b.ring.cy + dy + Math.sin(sp.a) * sp.rad) * K;
+        const r = sp.size * K * (0.55 + 0.45 * tw);
+        ctx.save();
+        ctx.globalAlpha = a * tw;
+        ctx.fillStyle = "#FFFFFF";
+        ctx.shadowColor = C.cyan;
+        ctx.shadowBlur = r * 2.2;
+        ctx.beginPath();
+        for (let i = 0; i < 8; i++) {
+          const ang = (Math.PI / 4) * i;
+          const rad = i % 2 ? r * 0.22 : r;
+          ctx[i ? "lineTo" : "moveTo"](sx + Math.cos(ang) * rad, sy + Math.sin(ang) * rad);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+      }
+      // the landing: a ring of light bursting off the coin
+      if (u >= FLASH[0] && u < FLASH[1]) {
+        const q = (u - FLASH[0]) / (FLASH[1] - FLASH[0]);
+        const R = b.ring.d * (0.5 + 0.95 * easeOut(q)) * K;
+        ctx.save();
+        ctx.globalAlpha = (1 - q) ** 1.6;
+        ctx.beginPath();
+        ctx.arc(b.ring.cx * K, (b.ring.cy + dy) * K, R, 0, TAU);
+        ctx.lineWidth = 3 * K * (1 - q) + 1;
+        ctx.strokeStyle = "#D8FAFF";
+        ctx.shadowColor = C.cyan;
+        ctx.shadowBlur = 18 * K;
+        ctx.stroke();
+        const gl = ctx.createRadialGradient(b.ring.cx * K, (b.ring.cy + dy) * K, 0, b.ring.cx * K, (b.ring.cy + dy) * K, R);
+        gl.addColorStop(0, rgba(C.cyan, 0.22 * (1 - q)));
+        gl.addColorStop(1, rgba(C.cyan, 0));
+        ctx.fillStyle = gl;
+        ctx.fill();
+        ctx.restore();
+      }
+      ctx.globalAlpha = 1;
+    }
+  }
+  ctx.restore();
+
+  // ── the front bokeh, closest to the lens: the most parallax
+  ctx.save();
+  camera(ctx, camScale(u, 0.045));
+  ctx.scale(K, K);
+  for (const k of b.bokehFront) {
+    const x = k.x + k.ax * Math.sin(TAU * (u + k.ph));
+    ctx.globalAlpha = k.a;
+    ctx.drawImage(k.sprite, x - k.rad, k.y - k.rad, k.rad * 2, k.rad * 2);
+  }
+  ctx.restore();
+  ctx.globalAlpha = 1;
 
   // the headline shine, once per loop
   if (b.title && u >= 0.3 && u < 0.44) {
@@ -1400,7 +1836,7 @@ function compose(b, ctx, u) {
     tx.lineTo(bx + bw * 0.6, t.canvas.height);
     tx.lineTo(bx, t.canvas.height);
     tx.closePath();
-    tx.fillStyle = lin(tx, bx, 0, bx + bw * 1.2, 0, [[0, "rgba(255,255,255,0)"], [0.5, "rgba(255,255,255,0.75)"], [1, "rgba(255,255,255,0)"]]);
+    tx.fillStyle = lin(tx, bx, 0, bx + bw * 1.2, 0, [[0, "rgba(255,255,255,0)"], [0.5, "rgba(255,255,255,0.8)"], [1, "rgba(255,255,255,0)"]]);
     tx.fill();
     tx.globalCompositeOperation = "destination-in";
     tx.drawImage(t.canvas, 0, 0);
@@ -1419,6 +1855,8 @@ function compose(b, ctx, u) {
     ctx.stroke();
     ctx.restore();
   }
+
+  ctx.drawImage(b.vig, 0, 0);
 }
 
 // ── render ──────────────────────────────────────────────────────────────────
