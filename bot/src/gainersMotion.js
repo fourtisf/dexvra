@@ -2,48 +2,45 @@
 // Dexvra MOTION — the 🎬 Top-Gainers family m1..m10 (2026-11).
 //
 // "bisakah anda buat banner vidio seperti fourtis banner premium model dexvra"
-// (2026-11-06), with a screenshot of the Fourtis gainers panel: 👑 1–10,
-// 💎 1–10 and 🎬 1–10, the last being a looping video board. This is Dexvra's
-// 🎬: the same KIND of product — a leaderboard that moves, one composition per
-// count, frame 0 the full board — in Dexvra's own look, not Fourtis's:
+// asked for the KIND of product the Fourtis panel has — a looping video board
+// per count — and "mksud saya tampilan design harus beda masa sama persis kaya
+// fourtis" is what it has to look like: NOT Fourtis. The first cut copied the
+// Fourtis board almost line for line (its ten layouts, the stage and mirrored
+// floor, spotlights, the orbit ring, comet bars, the centred kicker / title /
+// date and the two-tagline footer) and changed only the colour. Nothing of
+// that structure is left. This is built from DEXVRA's own surfaces:
 //
-//   - a deep sapphire stage: spotlights swaying from above, aurora ribbons
-//     behind the headline, a lattice of gem facets, lens bokeh in front of and
-//     behind the stage, and a perspective grid floor that mirrors the cards;
-//   - sapphire glass cards in a bevelled platinum frame; the leader is rim-lit
-//     in the gem's own mint → cyan, with art-deco corners, a light running
-//     round its frame, a gold crown on its coin and an orbiting comet ring;
-//   - logos struck into a reeded chrome bezel; hexagonal rank badges (gold /
-//     silver / bronze for the podium); a light running along every gain bar;
-//   - the camera breathes in and out once per loop, the room less than the
-//     stage and the front bokeh most — parallax — and is exactly still at
-//     frame 0;
-//   - the SITE's type: Sora for the figures, Space Grotesk for names,
-//     JetBrains Mono for the tracked labels; the Dexvra gem mark.
+//   - the room is a cut gem: a low-poly facet field in deep blue, a light
+//     sliding across it and catching the facet edges;
+//   - a TERMINAL top bar (the site's): brand lockup left, the title centre,
+//     LIVE and the date right — and the site's "Top Movers" ticker tape
+//     scrolling along the bottom;
+//   - gem-cut plates (two corners cut deep, two shallow) instead of cards,
+//     logos set in hexagons, the site's terminal TABLE for the ranked lists,
+//     LED segment bars for the strength of each move;
+//   - the site's type: Sora for figures, Space Grotesk for names, JetBrains
+//     Mono for every label and column.
 //
-// "buatkan design yang lebih premium" (2026-11-06) is what added the frame,
-// the bezel, the crown, the moving light and the camera to the first cut.
+// The loop, and FRAME 0 IS THE FULL BOARD (the thumbnail before autoplay, and
+// the still that goes to X):
 //
-// ⚠️ THIS FAMILY ONCE EXISTED AND WAS REMOVED ("hapus top gainer yang vidio
-// ganti ke foto banner aja", 2026-10-03). It comes back as a FAMILY BESIDE the
-// premium stills, never instead of them, and it has an ID SPACE of its own
-// (m1..m10): the removed boards were v1..v10, and an install whose stored
-// template still names one must not wake up posting a video it never chose.
+//     hold   0.00 – 0.60  the board; the light slides over the facets, the
+//                         tape scrolls, a pulse runs down each LED bar, a
+//                         glint crosses the leader's plate, the title shines
+//     off    0.60 – 0.68  the plates switch off like a terminal — each folds
+//                         to a bright line and is gone, the last rank first
+//     on     0.70 – 1.00  they switch back on, the leader first, and every
+//                         figure DECODES into place; the bars light segment by
+//                         segment — ending exactly on frame 0
 //
-// The loop (fractions of SECONDS), and FRAME 0 IS THE FULL BOARD, so the
-// thumbnail Telegram shows before autoplay — and the still that goes to X —
-// is never an empty stage:
+// Every ambient motion runs whole cycles per loop, so the loop has no seam.
+// Data is real or absent: a price, a cap or a change the feed did not carry is
+// LEFT OUT, never drawn as "$0", "—" or "0.0%".
 //
-//     hold   0.00 – 0.62  the board at rest; a glint crosses each card in
-//                         turn, the leader's ring orbits, the title shines once
-//     exit   0.62 – 0.69  the cards dip and fade
-//     enter  0.69 – 1.00  they rise back one by one, the gains count up from
-//                         zero and the bars fill — ending exactly on frame 0
-//
-// Every ambient motion (aurora, motes, ring, live pulse) runs whole cycles per
-// loop, so the last frame flows into the first. Data is real or absent: a
-// price, a market cap or a 24h change the feed did not carry is LEFT OUT,
-// never drawn as a zero.
+// ⚠️ THIS FAMILY ONCE EXISTED AND WAS REMOVED ("hapus top gainer yang vidio",
+// 2026-10-03). It comes back BESIDE the premium stills, never instead of them,
+// with an id space of its own (m1..m10): the removed boards were v1..v10, and a
+// config still naming one must not wake up posting a video nobody chose.
 const path = require("node:path");
 const os = require("node:os");
 const fss = require("node:fs");
@@ -53,7 +50,7 @@ const kit = require("./helpers/canvasKit");
 const { toSendBuffer } = require("./helpers/encodeImage");
 const { fmtPct, fmtPrice, fmtCap, ticker } = require("./helpers/format");
 
-const { F, MEDAL, roundRect, drawBrandMark, drawLogoDisc, warnBoxes } = kit;
+const { F, drawBrandMark, drawLogoDisc, warnBoxes } = kit;
 
 // Design units are 1280 × 720; the board renders at 1920 × 1080.
 const DW = 1280;
@@ -66,8 +63,7 @@ const SECONDS = 7;
 const FRAMES = FPS * SECONDS;
 const TAU = Math.PI * 2;
 
-// THE DEXVRA BRAND (the gem's mint → cyan on deep ocean blue, the listing
-// clip's palette), and the site's red for a loss.
+// THE DEXVRA BRAND: the gem's mint → cyan, deep blue, the site's red.
 const C = {
   ice: "#D8FAFF",
   cyan: "#22D3EE",
@@ -80,27 +76,29 @@ const C = {
   red: "#FF5C7A",
 };
 
-// The stage, design units.
-const X0 = 56;
-const X1 = 1224;
-const Y0 = 178;
-const Y1 = 612;
-const FLOOR = Y1; // a card ending here stands on the floor
-const REFLECT = 60; // depth of the mirror image under it
-const FOOT_Y = 692;
-const PAD = 30; // room around a card in its sprite, for its glow and shadow
-// The smallest drawn string, in design units (15px at 1920 wide) — the
-// listing clip's floor: X autoplays a ~640px variant, so a label under this
-// is a smear on a phone.
+// Zones, design units.
+const SX0 = 56;
+const SX1 = 1224;
+const SY0 = 140;
+const SY1 = 644;
+const BAR_Y = 112; // the hairline under the top bar
+const TAPE_Y = 668; // the ticker tape runs from here to the bottom edge
+const TAPE_L = 196; // the left chip ends here
+const TAPE_R = 1090; // the right chip starts here
+const PAD = 26; // room round a plate in its sprite, for its glow and shadow
+// The smallest drawn string, in design units (15px at 1920 wide): X autoplays
+// a ~640px variant, so a label under this is a smear on a phone.
 const LABEL_MIN = 10;
 
 // The timeline, as fractions of one loop.
-const HOLD_END = 0.62;
-const EXIT_END = 0.69;
-const ENTER_DUR = 0.085; // one card's rise
-const COUNT_DELAY = 0.02;
-const COUNT_DUR = 0.14; // its figures counting up
-const ENTER_SLACK = 0.02; // everything settled this long before the loop ends
+const HOLD_END = 0.6;
+const OFF_END = 0.68;
+const OFF_DUR = 0.035;
+const ON0 = 0.7;
+const ON_DUR = 0.06;
+const COUNT_DELAY = 0.025;
+const COUNT_DUR = 0.14;
+const ENTER_SLACK = 0.02;
 
 const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
 const easeOut = (x) => 1 - (1 - clamp01(x)) ** 3;
@@ -120,6 +118,11 @@ function rng(seed) {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
+const hash2 = (a, b) => {
+  let h = (a * 374761393 + b * 668265263) >>> 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177) >>> 0;
+  return (h ^ (h >>> 16)) >>> 0;
+};
 
 const numOrNull = (v) => {
   if (v === null || v === undefined || v === "") return null; // Number(null) is 0
@@ -132,12 +135,14 @@ const pos = (v) => {
 };
 
 // ── type ────────────────────────────────────────────────────────────────────
-const fx = (s) => `800 ${s}px ${F.x}`; // Sora 800 — headline, tickers, figures
-const fname = (s) => `500 ${s}px ${F.d5}`; // Space Grotesk 500 — names, dates
-const fcap = (s) => `700 ${Math.max(LABEL_MIN, s)}px ${F.m7}`; // JetBrains Mono 700 — tracked caps
-const fnum = (s) => `800 ${s}px ${F.m8}`; // JetBrains Mono 800 — rank numerals, stats
+const fx = (s) => `800 ${s}px ${F.x}`; // Sora 800 — titles, tickers, figures
+const fx7 = (s) => `700 ${s}px ${F.b}`; // Sora 700
+const fname = (s) => `500 ${Math.max(LABEL_MIN, s)}px ${F.d5}`; // Space Grotesk 500 — names, dates
+const fword = (s) => `700 ${s}px ${F.d7}`; // Space Grotesk 700 — the wordmark
+const fcap = (s) => `700 ${Math.max(LABEL_MIN, s)}px ${F.m7}`; // JetBrains Mono 700 — labels
+const fmono = (s) => `600 ${Math.max(LABEL_MIN, s)}px ${F.m6}`; // JetBrains Mono 600 — figures in a table
+const fnum = (s) => `800 ${Math.max(LABEL_MIN, s)}px ${F.m8}`; // JetBrains Mono 800 — rank numerals
 
-/** Width of a letter-spaced run (drawn glyph by glyph, so measured that way). */
 function trackedW(ctx, s, sp) {
   const ch = [...String(s)];
   return ch.reduce((a, c) => a + ctx.measureText(c).width, 0) + sp * Math.max(0, ch.length - 1);
@@ -164,8 +169,7 @@ function clipTo(ctx, s, maxW) {
   return cs.join("") + "…";
 }
 
-/** Shrink `text` from `size` toward `floor` until it fits, then cut. Sets
- *  ctx.font to the size chosen. */
+/** Shrink `text` from `size` toward `floor` until it fits, then cut. */
 function fit(ctx, text, maxW, mk, size, floor) {
   let s = size;
   ctx.font = mk(s);
@@ -199,63 +203,129 @@ const hasName = (c) => {
   const n = String((c && c.name) || "").trim();
   return !!n && n.toUpperCase() !== String((c && c.symbol) || "").replace(/^\$+/, "").toUpperCase();
 };
-const metaOf = (c) => {
-  const parts = [];
-  if (pos(c.price)) parts.push(fmtPrice(c.price));
-  if (pos(c.mcap)) parts.push(`MC ${fmtCap(c.mcap)}`);
-  return parts.join("  ·  ");
-};
 const pctOf = (c) => numOrNull(c && c.pct);
 
 /** How full a bar is: the gain against the leader of its group (`min` keeps a
- *  real but tiny gain visible as a sliver). */
-function barFrac(c, top, min) {
+ *  real but tiny gain visible). */
+function barFrac(c, top, min = 0.04) {
   const v = pctOf(c);
   if (v === null) return 0;
   return v > 0 ? Math.max(min, Math.min(1, v / top)) : min;
 }
-
-/** The leader's gain on this board, the scale every bar is drawn against. */
 function topVal(coins) {
   const vals = coins.map(pctOf).filter((v) => v !== null && v > 0);
   return vals.length ? Math.max(...vals) : 1;
 }
 
+/** A figure as it reads while it DECODES: the digits not yet locked are
+ *  noise; p = 1 is the real string. */
+function decode(final, p, salt) {
+  if (p >= 1) return final;
+  const chars = [...final];
+  const fixed = Math.floor(chars.length * easeOut(p));
+  return chars.map((ch, i) => (i < fixed || !/[0-9]/.test(ch) ? ch : String(hash2(i + 1, salt) % 10))).join("");
+}
+
+// ── geometry ────────────────────────────────────────────────────────────────
+/** A quadrilateral [tl, tr, br, bl] with its corners cut — deep on the top-left
+ *  and bottom-right, shallow on the other two: a gem's cut, not a card. */
+function gemPath(ctx, P, deep, shallow = deep * 0.35) {
+  ctx.beginPath();
+  for (let i = 0; i < 4; i++) {
+    const a = P[(i + 3) % 4];
+    const b = P[i];
+    const d = P[(i + 1) % 4];
+    const cut = i % 2 === 0 ? deep : shallow;
+    const n1 = Math.hypot(a[0] - b[0], a[1] - b[1]) || 1;
+    const n2 = Math.hypot(d[0] - b[0], d[1] - b[1]) || 1;
+    const p1 = [b[0] + ((a[0] - b[0]) / n1) * cut, b[1] + ((a[1] - b[1]) / n1) * cut];
+    const p2 = [b[0] + ((d[0] - b[0]) / n2) * cut, b[1] + ((d[1] - b[1]) / n2) * cut];
+    if (i) ctx.lineTo(...p1);
+    else ctx.moveTo(...p1);
+    ctx.lineTo(...p2);
+  }
+  ctx.closePath();
+}
+const rectQuad = ([x0, y0, x1, y1]) => [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+const quadBox = (P) => [
+  Math.min(...P.map((p) => p[0])), Math.min(...P.map((p) => p[1])),
+  Math.max(...P.map((p) => p[0])), Math.max(...P.map((p) => p[1])),
+];
+function inset(P, d) {
+  const cx = P.reduce((a, p) => a + p[0], 0) / 4;
+  const cy = P.reduce((a, p) => a + p[1], 0) / 4;
+  return P.map(([x, y]) => {
+    const dx = cx - x;
+    const dy = cy - y;
+    const n = Math.hypot(dx, dy) || 1;
+    return [x + (dx / n) * d * 1.3, y + (dy / n) * d];
+  });
+}
+
+function hexPath(ctx, cx, cy, R) {
+  ctx.beginPath();
+  for (let i = 0; i < 6; i++) {
+    const a = -Math.PI / 2 + (i * TAU) / 6;
+    const x = cx + R * Math.cos(a);
+    const y = cy + R * Math.sin(a);
+    if (i) ctx.lineTo(x, y);
+    else ctx.moveTo(x, y);
+  }
+  ctx.closePath();
+}
+
 // ── the board ───────────────────────────────────────────────────────────────
 class Board {
-  constructor(cv, n, { showPct = true } = {}) {
+  constructor(cv, n, coins, { showPct = true } = {}) {
     this.cv = cv;
     this.n = n;
+    this.coins = coins;
     this.showPct = showPct !== false;
     this.items = [];
-    this.bars = []; // every gain bar, for the light that runs along it
-    this.cur = null; // the card being built
-    this.ring = null; // { cx, cy, d } of the leader's logo, design units
+    this.bars = [];
+    this.cur = null;
     this.liveDot = null;
-    this.title = null; // { canvas, x, y } — the headline as a mask, px
+    this.title = null;
   }
 
   hasPct(c) {
     return this.showPct && pctOf(c) !== null;
   }
 
-  // the gain as drawn at count-up progress p (p = 1 is the real figure)
-  gain(ctx, c, x, y, size, align, p = 1, glow = false) {
+  /** The gain, decoding while p < 1, with a small arrow ahead of it. */
+  gain(ctx, c, x, y, size, align, p = 1, salt = 0, glow = false) {
     const v = pctOf(c);
     if (!this.showPct || v === null) return;
-    const shown = p >= 1 ? v : v * easeOut(p);
+    const s = decode(fmtPct(v), p, salt);
+    const up = v >= 0;
     ctx.save();
     ctx.font = fx(size);
-    ctx.textAlign = align;
     ctx.textBaseline = "middle";
-    const up = v >= 0;
-    ctx.fillStyle = up ? lin(ctx, 0, y - size / 2, 0, y + size / 2, [[0, "#B6FFDD"], [0.55, C.mint], [1, "#17C6A0"]]) : C.red;
-    if (glow) {
-      ctx.shadowColor = rgba(up ? C.mint : C.red, 0.55);
-      ctx.shadowBlur = size * 0.45 * K;
+    const tw = ctx.measureText(fmtPct(v)).width;
+    const aw = size * 0.42;
+    const gap = size * 0.18;
+    const x0 = align === "right" ? x - tw - aw - gap : align === "center" ? x - (tw + aw + gap) / 2 : x;
+    ctx.fillStyle = up ? C.mint : C.red;
+    ctx.beginPath(); // the arrow
+    const ay = y;
+    if (up) {
+      ctx.moveTo(x0, ay + aw * 0.42);
+      ctx.lineTo(x0 + aw / 2, ay - aw * 0.48);
+      ctx.lineTo(x0 + aw, ay + aw * 0.42);
+    } else {
+      ctx.moveTo(x0, ay - aw * 0.42);
+      ctx.lineTo(x0 + aw / 2, ay + aw * 0.48);
+      ctx.lineTo(x0 + aw, ay - aw * 0.42);
     }
-    // counting up from zero still carries the sign of where it is going
-    ctx.fillText(shown === 0 && v > 0 ? "+0.0%" : fmtPct(shown), x, y);
+    ctx.closePath();
+    ctx.fill();
+    ctx.textAlign = "left";
+    ctx.fillStyle = up ? lin(ctx, 0, y - size / 2, 0, y + size / 2, [[0, "#C9FFE6"], [0.5, C.mint], [1, "#19C79A"]]) : C.red;
+    if (glow) {
+      ctx.shadowColor = rgba(up ? C.mint : C.red, 0.5);
+      ctx.shadowBlur = size * 0.4 * K;
+    }
+    ctx.fillText(s, x0 + aw + gap, y);
     ctx.restore();
   }
 
@@ -263,18 +333,15 @@ class Board {
     const v = pctOf(c);
     if (!this.showPct || v === null) return 0;
     ctx.font = fx(size);
-    return ctx.measureText(fmtPct(v)).width;
+    return ctx.measureText(fmtPct(v)).width + size * 0.6;
   }
 
-  sym(ctx, c, x, y, size, align, maxW, floor = 13) {
+  sym(ctx, c, x, y, size, align, maxW, floor = 12) {
     ctx.save();
     const r = fit(ctx, tickerOf(c), maxW || 9999, fx, size, Math.min(size, floor));
     ctx.textAlign = align;
     ctx.textBaseline = "middle";
     ctx.fillStyle = C.ink;
-    ctx.shadowColor = "rgba(0,0,0,0.55)";
-    ctx.shadowBlur = 6 * K;
-    ctx.shadowOffsetY = 2 * K;
     ctx.fillText(r.text, x, y);
     const w = ctx.measureText(r.text).width;
     ctx.restore();
@@ -284,7 +351,7 @@ class Board {
   nm(ctx, c, x, y, size, align, maxW) {
     if (!hasName(c)) return;
     ctx.save();
-    ctx.font = fname(Math.max(LABEL_MIN, size));
+    ctx.font = fname(size);
     ctx.textAlign = align;
     ctx.textBaseline = "middle";
     ctx.fillStyle = C.dim;
@@ -292,328 +359,198 @@ class Board {
     ctx.restore();
   }
 
-  meta(ctx, c, x, y, size, align, maxW) {
-    const s = metaOf(c);
-    if (!s) return;
+  /** A gem-cut plate. The leader's edge is the gem's own mint → cyan. */
+  plate(ctx, P, { lead = false, deep = 22 } = {}) {
+    const [x0, y0, x1, y1] = quadBox(P);
     ctx.save();
-    ctx.font = `600 ${Math.max(LABEL_MIN, size)}px ${F.m6}`;
-    ctx.textAlign = align;
-    ctx.textBaseline = "middle";
-    ctx.fillStyle = C.dim;
-    ctx.fillText(clipTo(ctx, s, maxW || 9999), x, y);
-    ctx.restore();
-  }
-
-  /** Sapphire glass in a platinum frame. The leader is rim-lit, mint → cyan,
-   *  with art-deco corners — and a light runs round its frame (compose). */
-  card(ctx, box, r, hero) {
-    const [x0, y0, x1, y1] = box;
-    const w = x1 - x0;
-    const h = y1 - y0;
-    ctx.save();
-    roundRect(ctx, x0, y0, w, h, r);
-    ctx.fillStyle = "rgba(3,8,18,1)";
-    ctx.shadowColor = "rgba(0,0,0,0.78)";
-    ctx.shadowBlur = 30 * K;
-    ctx.shadowOffsetY = 16 * K;
+    gemPath(ctx, P, deep);
+    ctx.fillStyle = "rgba(2,6,14,1)";
+    ctx.shadowColor = "rgba(0,0,0,0.75)";
+    ctx.shadowBlur = 26 * K;
+    ctx.shadowOffsetY = 12 * K;
     ctx.fill();
-    if (hero) {
-      ctx.shadowColor = rgba(C.cyan, 0.5);
-      ctx.shadowBlur = 42 * K;
+    if (lead) {
+      ctx.shadowColor = rgba(C.mint, 0.32);
+      ctx.shadowBlur = 36 * K;
       ctx.shadowOffsetY = 0;
       ctx.fill();
     }
     ctx.restore();
 
     ctx.save();
-    roundRect(ctx, x0, y0, w, h, r);
+    gemPath(ctx, P, deep);
     ctx.clip();
-    ctx.fillStyle = lin(ctx, 0, y0, 0, y1, hero
-      ? [[0, "#1B4C76"], [0.38, "#0E2C4D"], [1, "#05122A"]]
-      : [[0, "#15304F"], [0.5, "#0B1C34"], [1, "#050E1E"]]);
-    ctx.fillRect(x0, y0, w, h);
-    // the light from above pooling on the top of the card
-    const lg = ctx.createRadialGradient(x0 + w / 2, y0 - h * 0.12, 0, x0 + w / 2, y0 - h * 0.12, Math.max(w, h) * 0.75);
-    lg.addColorStop(0, rgba(hero ? "#7FE8FF" : "#9FD8FF", hero ? 0.3 : 0.12));
-    lg.addColorStop(1, rgba(C.cyan, 0));
-    ctx.fillStyle = lg;
-    ctx.fillRect(x0, y0, w, h);
-    // the gem facet: a cut of glass across the top-left corner
+    ctx.fillStyle = lin(ctx, 0, y0, 0, y1, lead
+      ? [[0, "#103A4C"], [0.5, "#0A2436"], [1, "#061522"]]
+      : [[0, "#13233C"], [1, "#081222"]]);
+    ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
+    // the table facet: a lighter cut along the top
     ctx.beginPath();
     ctx.moveTo(x0, y0);
-    ctx.lineTo(x0 + Math.min(w * 0.46, 240), y0);
-    ctx.lineTo(x0 + Math.min(w * 0.2, 110), y0 + h * 0.62);
-    ctx.lineTo(x0, y0 + h * 0.4);
+    ctx.lineTo(x1, y0);
+    ctx.lineTo(x1 - (x1 - x0) * 0.08, y0 + Math.min(46, (y1 - y0) * 0.18));
+    ctx.lineTo(x0 + (x1 - x0) * 0.08, y0 + Math.min(46, (y1 - y0) * 0.18));
     ctx.closePath();
-    ctx.fillStyle = lin(ctx, x0, y0, x0 + w * 0.3, y0 + h * 0.5, [[0, "rgba(255,255,255,0.08)"], [1, "rgba(255,255,255,0.008)"]]);
+    ctx.fillStyle = `rgba(255,255,255,${lead ? 0.06 : 0.04})`;
     ctx.fill();
-    // a specular band along the top
-    ctx.fillStyle = lin(ctx, 0, y0, 0, y0 + Math.min(70, h * 0.22), [[0, "rgba(255,255,255,0.09)"], [1, "rgba(255,255,255,0)"]]);
-    ctx.fillRect(x0, y0, w, Math.min(70, h * 0.22));
-    // weight at the bottom
-    ctx.fillStyle = lin(ctx, 0, y0 + h * 0.55, 0, y1, [[0, "rgba(0,0,0,0)"], [1, "rgba(0,0,0,0.32)"]]);
-    ctx.fillRect(x0, y0, w, h);
+    // a crown facet across the top-left
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    ctx.lineTo(x0 + Math.min(260, (x1 - x0) * 0.42), y0);
+    ctx.lineTo(x0, y0 + Math.min(220, (y1 - y0) * 0.8));
+    ctx.closePath();
+    ctx.fillStyle = lin(ctx, x0, y0, x0 + 160, y0 + 120, [[0, "rgba(255,255,255,0.07)"], [1, "rgba(255,255,255,0)"]]);
+    ctx.fill();
     ctx.restore();
 
-    // the frame: platinum, bevelled
     ctx.save();
-    roundRect(ctx, x0 + 1, y0 + 1, w - 2, h - 2, r - 1);
-    ctx.lineWidth = hero ? 2.4 : 2;
-    ctx.strokeStyle = hero
-      ? lin(ctx, x0, y0, x1, y1, [[0, "#B8FFE0"], [0.3, C.mint], [0.55, "#9DEFFF"], [0.8, C.cyan], [1, C.blue]])
-      : lin(ctx, x0, y0, x1, y1, [[0, "#EEF5FB"], [0.3, "#7C91A7"], [0.55, "#D3E0EB"], [0.8, "#53677D"], [1, "#9FB2C4"]]);
-    if (!hero) ctx.globalAlpha = 0.55;
-    ctx.stroke();
-    ctx.globalAlpha = 1;
-    roundRect(ctx, x0 + 3.5, y0 + 3.5, w - 7, h - 7, Math.max(2, r - 3.5));
+    // the bevel: an inner cut, lit from the top-left
+    gemPath(ctx, inset(P, 5), Math.max(4, deep - 5));
     ctx.lineWidth = 1;
-    ctx.strokeStyle = `rgba(255,255,255,${hero ? 0.1 : 0.06})`;
+    ctx.strokeStyle = lin(ctx, x0, y0, x1, y1, [[0, "rgba(255,255,255,0.14)"], [0.5, "rgba(255,255,255,0.03)"], [1, "rgba(0,0,0,0.25)"]]);
     ctx.stroke();
-    // a bright hairline along the top edge
-    ctx.beginPath();
-    ctx.moveTo(x0 + r * 1.2, y0 + 1.2);
-    ctx.lineTo(x1 - r * 1.2, y0 + 1.2);
-    ctx.lineWidth = 1.2;
-    ctx.strokeStyle = lin(ctx, x0 + r, 0, x1 - r, 0, [[0, "rgba(255,255,255,0)"], [0.5, `rgba(255,255,255,${hero ? 0.85 : 0.4})`], [1, "rgba(255,255,255,0)"]]);
+    gemPath(ctx, P, deep);
+    ctx.lineWidth = lead ? 2 : 1.2;
+    ctx.strokeStyle = lead
+      ? lin(ctx, x0, y0, x1, y1, [[0, C.mint], [0.5, C.cyan], [1, C.blue]])
+      : lin(ctx, x0, y0, x1, y1, [[0, "rgba(170,225,255,0.45)"], [0.5, "rgba(120,180,240,0.16)"], [1, "rgba(170,225,255,0.3)"]]);
     ctx.stroke();
-    if (hero) {
-      // art-deco corners: an L and a diamond at each
-      const L = Math.min(26, w * 0.08);
-      const ins = 9;
-      ctx.lineWidth = 1.6;
-      ctx.strokeStyle = rgba(C.ice, 0.9);
-      ctx.fillStyle = rgba(C.ice, 0.95);
-      for (const [sx, sy] of [[1, 1], [-1, 1], [1, -1], [-1, -1]]) {
-        const cx = sx > 0 ? x0 + ins : x1 - ins;
-        const cy = sy > 0 ? y0 + ins : y1 - ins;
-        ctx.beginPath();
-        ctx.moveTo(cx, cy + sy * L);
-        ctx.lineTo(cx, cy);
-        ctx.lineTo(cx + sx * L, cy);
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(cx + sx * 6, cy + sy * 2.5);
-        ctx.lineTo(cx + sx * 8.5, cy + sy * 6);
-        ctx.lineTo(cx + sx * 6, cy + sy * 9.5);
-        ctx.lineTo(cx + sx * 3.5, cy + sy * 6);
-        ctx.closePath();
-        ctx.fill();
-      }
-    }
     ctx.restore();
   }
 
-  /** The logo struck into a reeded chrome bezel; no logo (or bytes that are
-   *  not one) is a monogram. */
-  disc(ctx, c, cx, cy, d, hero = false) {
-    const r = d / 2;
-    const band = Math.max(2.4, d * 0.07);
-    const ri = r - band;
+  /** The logo set in a hexagon, the hexagon in a bevelled metal frame. */
+  hexLogo(ctx, c, cx, cy, R, lead = false) {
+    const Ri = R * 0.84;
     ctx.save();
-    ctx.beginPath();
-    ctx.arc(cx, cy, r, 0, TAU);
-    ctx.fillStyle = "#06101E";
-    ctx.shadowColor = "rgba(0,0,0,0.7)";
-    ctx.shadowBlur = d * 0.14 * K;
-    ctx.shadowOffsetY = d * 0.07 * K;
+    hexPath(ctx, cx, cy, R);
+    ctx.fillStyle = "#050C18";
+    ctx.shadowColor = lead ? rgba(C.mint, 0.55) : "rgba(0,0,0,0.6)";
+    ctx.shadowBlur = R * (lead ? 0.5 : 0.25) * K;
     ctx.fill();
-    if (hero) {
-      ctx.shadowColor = rgba(C.cyan, 0.7);
-      ctx.shadowBlur = d * 0.34 * K;
-      ctx.shadowOffsetY = 0;
-      ctx.fill();
-    }
     ctx.restore();
-
-    // the bezel: chrome, reeded
     ctx.save();
-    ctx.beginPath();
-    ctx.arc(cx, cy, r, 0, TAU);
-    ctx.arc(cx, cy, ri, 0, TAU, true);
-    ctx.fillStyle = lin(ctx, cx - r, cy - r, cx + r, cy + r, hero
-      ? [[0, "#FFFFFF"], [0.25, "#B9FFE4"], [0.5, C.cyan], [0.75, "#E4FBFF"], [1, C.deep]]
-      : [[0, "#FFFFFF"], [0.3, "#AFC2D3"], [0.52, "#EAF2F8"], [0.78, "#5B7088"], [1, "#C9D7E3"]]);
+    hexPath(ctx, cx, cy, R);
+    ctx.fillStyle = lin(ctx, cx - R, cy - R, cx + R, cy + R, lead
+      ? [[0, "#E9FFF6"], [0.35, C.mint], [0.7, C.cyan], [1, C.deep]]
+      : [[0, "#F1F8FF"], [0.4, "#8FA6BC"], [0.7, "#D9E6F1"], [1, "#3E5268"]]);
     ctx.fill();
-    if (d >= 44) {
-      const n = Math.round(Math.min(120, d * 0.9));
-      ctx.lineWidth = Math.max(0.5, d * 0.006);
-      ctx.strokeStyle = "rgba(10,24,40,0.35)";
-      ctx.beginPath();
-      for (let i = 0; i < n; i++) {
-        const a = (i * TAU) / n;
-        ctx.moveTo(cx + Math.cos(a) * (ri + band * 0.22), cy + Math.sin(a) * (ri + band * 0.22));
-        ctx.lineTo(cx + Math.cos(a) * (r - band * 0.18), cy + Math.sin(a) * (r - band * 0.18));
-      }
-      ctx.stroke();
-    }
-    ctx.beginPath();
-    ctx.arc(cx, cy, r - 0.4, 0, TAU);
-    ctx.lineWidth = 0.8;
-    ctx.strokeStyle = "rgba(255,255,255,0.55)";
-    ctx.stroke();
-    ctx.restore();
-
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(cx, cy, ri, 0, TAU);
+    hexPath(ctx, cx, cy, Ri);
     ctx.clip();
     if (c.img) {
-      drawLogoDisc(ctx, c.img, cx, cy, ri, { backdrop: "#0B1424" });
+      drawLogoDisc(ctx, c.img, cx, cy, Ri, { backdrop: "#0B1424" });
     } else {
-      const g = ctx.createRadialGradient(cx - ri * 0.3, cy - ri * 0.35, 0, cx, cy, ri);
-      g.addColorStop(0, "#1C4A6E");
-      g.addColorStop(1, "#071426");
-      ctx.fillStyle = g;
-      ctx.fillRect(cx - ri, cy - ri, ri * 2, ri * 2);
+      ctx.fillStyle = lin(ctx, cx, cy - Ri, cx, cy + Ri, [[0, "#173B5E"], [1, "#07152A"]]);
+      ctx.fillRect(cx - Ri, cy - Ri, Ri * 2, Ri * 2);
       const ini = [...String(c.symbol || "?").replace(/^\$+/, "")].slice(0, 2).join("").toUpperCase() || "?";
-      ctx.font = fx(ri * 0.8);
+      ctx.font = fx(Ri * 0.72);
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillStyle = lin(ctx, cx - ri, cy - ri, cx + ri, cy + ri, [[0, C.mint], [1, C.cyan]]);
-      ctx.fillText(ini, cx, cy + ri * 0.04);
+      ctx.fillStyle = lin(ctx, cx - Ri, cy - Ri, cx + Ri, cy + Ri, [[0, C.mint], [1, C.cyan]]);
+      ctx.fillText(ini, cx, cy + Ri * 0.05);
     }
-    // gloss on the upper half, weight on the lower, and the inner rim
-    ctx.fillStyle = lin(ctx, 0, cy - ri, 0, cy + ri * 0.1, [[0, "rgba(255,255,255,0.24)"], [1, "rgba(255,255,255,0)"]]);
+    // a facet of light over the upper half
     ctx.beginPath();
-    ctx.ellipse(cx, cy - ri * 0.42, ri * 0.68, ri * 0.5, 0, 0, TAU);
+    ctx.moveTo(cx - Ri, cy - Ri);
+    ctx.lineTo(cx + Ri, cy - Ri);
+    ctx.lineTo(cx + Ri, cy - Ri * 0.15);
+    ctx.lineTo(cx - Ri, cy + Ri * 0.2);
+    ctx.closePath();
+    ctx.fillStyle = "rgba(255,255,255,0.12)";
     ctx.fill();
-    ctx.fillStyle = lin(ctx, 0, cy, 0, cy + ri, [[0, "rgba(0,0,0,0)"], [1, "rgba(0,0,0,0.3)"]]);
-    ctx.fillRect(cx - ri, cy, ri * 2, ri);
     ctx.restore();
     ctx.save();
-    ctx.beginPath();
-    ctx.arc(cx, cy, ri, 0, TAU);
-    ctx.lineWidth = Math.max(0.8, d * 0.01);
-    ctx.strokeStyle = "rgba(4,12,24,0.75)";
+    hexPath(ctx, cx, cy, Ri);
+    ctx.lineWidth = Math.max(0.8, R * 0.025);
+    ctx.strokeStyle = "rgba(3,10,22,0.8)";
     ctx.stroke();
     ctx.restore();
   }
 
-  /** The champion's crown, sat on top of its coin: gold, a cyan gem. */
-  crown(ctx, cx, bottom, w) {
-    const h = w * 0.62;
-    const top = bottom - h;
-    const m = MEDAL[1];
+  /** The rank as a slanted tag: the leader's is solid mint. Returns its width. */
+  tag(ctx, x, y, rank, size = 12, lead = false) {
+    const s = String(rank).padStart(2, "0");
     ctx.save();
+    ctx.font = fnum(size);
+    const tw = ctx.measureText(s).width;
+    const h = size * 1.7;
+    const sl = h * 0.35;
+    const w = tw + size * 1.2 + sl;
     ctx.beginPath();
-    ctx.moveTo(cx - w / 2, bottom);
-    ctx.lineTo(cx - w / 2, top + h * 0.34);
-    ctx.lineTo(cx - w * 0.25, top + h * 0.6);
-    ctx.lineTo(cx, top + h * 0.12);
-    ctx.lineTo(cx + w * 0.25, top + h * 0.6);
-    ctx.lineTo(cx + w / 2, top + h * 0.34);
-    ctx.lineTo(cx + w / 2, bottom);
+    ctx.moveTo(x + sl, y - h / 2);
+    ctx.lineTo(x + w, y - h / 2);
+    ctx.lineTo(x + w - sl, y + h / 2);
+    ctx.lineTo(x, y + h / 2);
     ctx.closePath();
-    ctx.shadowColor = rgba(m.glow, 0.6);
-    ctx.shadowBlur = w * 0.3 * K;
-    ctx.fillStyle = lin(ctx, 0, top, 0, bottom, [[0, m.light], [0.45, m.mid], [1, m.dark]]);
-    ctx.fill();
-    ctx.shadowBlur = 0;
-    ctx.lineWidth = Math.max(0.8, w * 0.025);
-    ctx.strokeStyle = rgba("#FFF6D8", 0.8);
-    ctx.stroke();
-    // the band
-    ctx.fillStyle = lin(ctx, 0, bottom - h * 0.24, 0, bottom, [[0, m.mid], [1, m.dark]]);
-    ctx.fillRect(cx - w / 2, bottom - h * 0.24, w, h * 0.24);
-    // pearls on the points, a cyan gem in the band
-    for (const [px, py] of [[cx - w / 2, top + h * 0.34], [cx, top + h * 0.12], [cx + w / 2, top + h * 0.34]]) {
-      ctx.beginPath();
-      ctx.arc(px, py, w * 0.07, 0, TAU);
-      ctx.fillStyle = "#FFFBEA";
+    if (lead) {
+      ctx.fillStyle = lin(ctx, x, 0, x + w, 0, [[0, C.mint], [1, C.cyan]]);
       ctx.fill();
+    } else {
+      ctx.fillStyle = "rgba(255,255,255,0.06)";
+      ctx.fill();
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = rgba(C.cyan, rank <= 3 ? 0.65 : 0.35);
+      ctx.stroke();
     }
-    ctx.beginPath();
-    ctx.moveTo(cx, bottom - h * 0.21);
-    ctx.lineTo(cx + w * 0.07, bottom - h * 0.12);
-    ctx.lineTo(cx, bottom - h * 0.03);
-    ctx.lineTo(cx - w * 0.07, bottom - h * 0.12);
-    ctx.closePath();
-    ctx.fillStyle = lin(ctx, cx - w * 0.07, 0, cx + w * 0.07, 0, [[0, C.mint], [1, C.cyan]]);
-    ctx.fill();
-    ctx.restore();
-  }
-
-  /** A hexagonal rank badge — a cut gem; metal for the podium. */
-  badge(ctx, cx, cy, s, rank) {
-    const m = rank <= 3 ? MEDAL[rank] : null;
-    ctx.save();
-    ctx.beginPath();
-    for (let i = 0; i < 6; i++) {
-      const a = -Math.PI / 2 + (i * TAU) / 6;
-      const px = cx + s * Math.cos(a);
-      const py = cy + s * Math.sin(a);
-      if (i) ctx.lineTo(px, py);
-      else ctx.moveTo(px, py);
-    }
-    ctx.closePath();
-    ctx.shadowColor = m ? rgba(m.glow, 0.45) : "rgba(0,0,0,0.5)";
-    ctx.shadowBlur = s * 0.6 * K;
-    ctx.fillStyle = m
-      ? lin(ctx, cx, cy - s, cx, cy + s, [[0, m.light], [0.5, m.mid], [1, m.dark]])
-      : lin(ctx, cx, cy - s, cx, cy + s, [[0, "#163654"], [1, "#081628"]]);
-    ctx.fill();
-    ctx.shadowBlur = 0;
-    ctx.lineWidth = 1.2;
-    ctx.strokeStyle = m ? rgba("#FFFFFF", 0.55) : rgba(C.cyan, 0.6);
-    ctx.stroke();
-    ctx.font = fnum(Math.max(LABEL_MIN, s * 0.98));
+    ctx.fillStyle = lead ? "#04121A" : rank <= 3 ? C.ice : C.dim;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillStyle = m ? "#0B1220" : C.ink;
-    ctx.fillText(String(rank), cx, cy + s * 0.06);
+    ctx.fillText(s, x + w / 2, y + size * 0.04);
     ctx.restore();
+    return w;
   }
 
-  /** Gain bar: a faint track, a blue → cyan → mint fill and a glowing head. */
-  comet(ctx, x0, x1, y, h, c, top, p = 1) {
+  /** LED segments: as many lit as the move is strong against the leader. */
+  led(ctx, x0, x1, y, h, c, top, p = 1, segs = 24) {
     if (!this.showPct) return; // the bar is the % drawn as a length
-    ctx.save();
-    roundRect(ctx, x0, y - h / 2, x1 - x0, h, h / 2);
-    ctx.fillStyle = "rgba(255,255,255,0.07)";
-    ctx.fill();
     const v = pctOf(c);
-    if (v === null) return ctx.restore();
-    const frac = barFrac(c, top, 0.04) * easeOut(p);
-    if (frac < 0.005) return ctx.restore();
-    const xe = x0 + (x1 - x0) * frac;
-    const up = v >= 0;
-    roundRect(ctx, x0, y - h / 2, Math.max(xe - x0, h), h, h / 2);
-    ctx.fillStyle = lin(ctx, x0, 0, xe, 0, up ? [[0, C.blue], [0.55, C.cyan], [1, C.mint]] : [[0, "#5A1424"], [1, C.red]]);
-    ctx.shadowColor = rgba(up ? C.cyan : C.red, 0.5);
-    ctx.shadowBlur = h * 1.4 * K;
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(xe, y, h * 0.95, 0, TAU);
-    ctx.fillStyle = "#FFFFFF";
-    ctx.shadowColor = rgba(up ? C.mint : C.red, 0.9);
-    ctx.shadowBlur = h * 2.2 * K;
-    ctx.fill();
+    const gap = Math.max(1.5, h * 0.35);
+    const sw = (x1 - x0 - gap * (segs - 1)) / segs;
+    const lit = v === null ? 0 : Math.max(1, Math.round(barFrac(c, top) * segs));
+    const on = Math.round(lit * easeOut(p));
+    const up = v === null || v >= 0;
+    ctx.save();
+    for (let i = 0; i < segs; i++) {
+      const x = x0 + i * (sw + gap);
+      if (i < on) {
+        const t = i / Math.max(1, segs - 1);
+        ctx.fillStyle = up ? (t < 0.4 ? C.blue : t < 0.75 ? C.cyan : C.mint) : C.red;
+        if (i === on - 1) {
+          ctx.shadowColor = rgba(up ? C.mint : C.red, 0.85);
+          ctx.shadowBlur = h * 2 * K;
+        }
+      } else {
+        ctx.fillStyle = "rgba(255,255,255,0.07)";
+      }
+      ctx.fillRect(x, y - h / 2, sw, h);
+      ctx.shadowBlur = 0;
+    }
     ctx.restore();
+    return { lit, segs, sw, gap };
   }
 
-  /** Equalizer column: the height is the gain against the leader. */
-  vbar(ctx, cx, yb, yt, w, c, top, p = 1) {
-    if (!this.showPct) return;
-    ctx.save();
-    roundRect(ctx, cx - w / 2, yt, w, yb - yt, w / 2);
-    ctx.fillStyle = "rgba(255,255,255,0.05)";
-    ctx.fill();
-    const v = pctOf(c);
-    if (v === null) return ctx.restore();
-    const frac = barFrac(c, top, 0.05) * easeOut(p);
-    if (frac < 0.005) return ctx.restore();
-    const ye = yb - (yb - yt) * frac;
-    const up = v >= 0;
-    roundRect(ctx, cx - w / 2, ye, w, yb - ye, w / 2);
-    ctx.fillStyle = lin(ctx, 0, ye, 0, yb, up ? [[0, C.mint], [0.45, C.cyan], [1, "#0B3460"]] : [[0, C.red], [1, "#3A0E1C"]]);
-    ctx.shadowColor = rgba(up ? C.cyan : C.red, 0.45);
-    ctx.shadowBlur = w * 0.8 * K;
-    ctx.fill();
-    ctx.shadowBlur = 0;
-    roundRect(ctx, cx - w / 2, ye, w, Math.min(w * 0.5, yb - ye), w / 2);
-    ctx.fillStyle = "rgba(255,255,255,0.85)";
-    ctx.fill();
-    ctx.restore();
+  /** The label above, the value under it — a terminal's readout. Skipped for
+   *  a value the feed did not carry. */
+  cells(ctx, x0, x1, y, list, size = 20) {
+    const live = list.filter(([, v]) => v);
+    if (!live.length) return;
+    const cw = (x1 - x0) / live.length;
+    live.forEach(([k, v], j) => {
+      const mx = x0 + cw * j + 18;
+      if (j) {
+        ctx.beginPath();
+        ctx.moveTo(x0 + cw * j, y - size * 0.95);
+        ctx.lineTo(x0 + cw * j, y + size * 0.95);
+        ctx.lineWidth = 0.8;
+        ctx.strokeStyle = "rgba(160,220,255,0.18)";
+        ctx.stroke();
+      }
+      caps(ctx, mx, y - size * 0.55, k, 10, C.faint);
+      ctx.font = fmono(size);
+      ctx.fillStyle = C.ink;
+      ctx.textAlign = "left";
+      ctx.textBaseline = "middle";
+      ctx.fillText(clipTo(ctx, v, cw - 30), mx, y + size * 0.45);
+    });
   }
 
   /** Rows of (height, fn(y)) drawn top-down as one block centred on cy. */
@@ -625,9 +562,10 @@ class Board {
     }
   }
 
-  /** One card into its own sprite: build() draws the static parts and returns
-   *  the LIVE ones (count-up gains, filling bars) as fn(ctx, p). */
-  item(box, order, build, { r = 20, hero = false } = {}) {
+  /** One element into its own sprite: build() draws the static parts and
+   *  returns the LIVE ones (decoding figures, lighting bars) as fn(ctx, p, salt). */
+  item(P, order, build, { lead = false, plate = true, deep = 22 } = {}) {
+    const box = quadBox(P);
     const [x0, y0, x1, y1] = box;
     const sw = Math.ceil((x1 - x0 + PAD * 2) * K);
     const sh = Math.ceil((y1 - y0 + PAD * 2) * K);
@@ -638,288 +576,274 @@ class Board {
     const body = this.cv.createCanvas(sw, sh);
     const bx = body.getContext("2d");
     local(bx);
-    this.card(bx, box, r, hero);
-    this.cur = { order, hero, box };
+    if (plate) this.plate(bx, P, { lead, deep });
+    this.cur = { order };
     const lives = build(bx) || [];
     this.cur = null;
     const final = this.cv.createCanvas(sw, sh);
-    const fx2 = final.getContext("2d");
-    fx2.drawImage(body, 0, 0);
-    local(fx2);
-    for (const lv of lives) lv(fx2, 1);
-    let reflect = null;
-    if (Math.abs(y1 - FLOOR) < 0.5) {
-      const rh = Math.round(REFLECT * K);
-      reflect = this.cv.createCanvas(sw, rh);
-      const rx = reflect.getContext("2d");
-      rx.translate(0, (PAD + y1 - y0) * K);
-      rx.scale(1, -1);
-      rx.drawImage(final, 0, 0);
-      rx.setTransform(1, 0, 0, 1, 0, 0);
-      rx.globalCompositeOperation = "destination-in";
-      rx.fillStyle = lin(rx, 0, 0, 0, rh, [[0, "rgba(0,0,0,0.30)"], [1, "rgba(0,0,0,0)"]]);
-      rx.fillRect(0, 0, sw, rh);
-    }
-    this.items.push({
-      box, r, hero, order, lives, body, final, reflect,
-      x: Math.round((x0 - PAD) * K),
-      y: Math.round((y0 - PAD) * K),
-      local,
-    });
+    const fc = final.getContext("2d");
+    fc.drawImage(body, 0, 0);
+    local(fc);
+    for (const lv of lives) lv(fc, 1, 0);
+    this.items.push({ P, box, order, lead, plate, deep, lives, body, final, local, x: Math.round((x0 - PAD) * K), y: Math.round((y0 - PAD) * K) });
   }
 }
 
-// ── card contents ───────────────────────────────────────────────────────────
+// ── plate contents ──────────────────────────────────────────────────────────
 const at = (coins, i) => (i < coins.length && coins[i] ? coins[i] : null);
+const statsOf = (c) => [
+  ["PRICE", pos(c.price) ? fmtPrice(c.price) : null],
+  ["MARKET CAP", pos(c.mcap) ? fmtCap(c.mcap) : null],
+  ["LIQUIDITY", pos(c.liq) ? fmtCap(c.liq) : null],
+];
 
-/** Logo on top; ticker, name, gain and the market line stacked under it. */
-function portrait(b, ctx, box, c, rank, { plinth = false } = {}) {
-  const [x0, y0, x1, y1] = box;
-  const w = x1 - x0;
-  const cx = (x0 + x1) / 2;
-  const hero = rank === 1;
+/** Register a bar, for the pulse that runs down it in the hold. */
+function regBar(b, x0, x1, y, h, c, top, segs = 24) {
+  if (!b.hasPct(c)) return;
+  const lit = Math.max(1, Math.round(barFrac(c, top) * segs));
+  b.bars.push({ x0, x1, y, h, segs, lit, order: b.cur.order, up: pctOf(c) >= 0 });
+}
+
+/** m1: the one token, large: hexagon left, the figures right, a readout
+ *  strip along the bottom of the plate. */
+function solo(b, ctx, P, c) {
+  const [x0, y0, x1, y1] = quadBox(P);
   const lives = [];
-  const base = y1 - (plinth ? 56 : 0);
-  const bs = w > 240 ? 15 : 13;
-  b.badge(ctx, x0 + 18 + bs, y0 + 18 + bs, bs, rank);
-  if (hero) caps(ctx, x0 + 18 + bs * 2 + 10, y0 + 18 + bs, "TOP GAINER", w > 240 ? 11 : 10, C.mint);
-  let symSz = Math.min(46, Math.max(18, w * 0.13));
-  let gSz = Math.min(44, Math.max(17, w * 0.12));
-  // the champion's crown sits on its coin: room for it under the badge row
-  const topY = y0 + 30 + bs * 2 + (hero ? Math.min(46, w * 0.11) : 0);
-  const botY = base - 14;
-  const avail = botY - topY;
-  let withMeta = !!metaOf(c);
-  let d = 0;
-  let textH = 0;
-  for (let k = 0; k < 8; k++) {
-    textH = symSz * 1.25 + (hasName(c) ? Math.max(LABEL_MIN, symSz * 0.36) * 1.7 : 0) + (b.hasPct(c) ? gSz * 1.5 : 0) + (withMeta ? 22 : 0);
-    d = Math.min(w * 0.44, 190, avail - textH - 16);
-    if (d >= Math.max(46, avail * 0.3)) break;
-    if (withMeta) {
-      withMeta = false; // the market line is the first thing to go
-      continue;
-    }
-    symSz = Math.max(13, symSz * 0.9);
-    gSz = Math.max(12, gSz * 0.9);
+  const stats = statsOf(c);
+  const hasStats = stats.some(([, v]) => v);
+  const split = hasStats ? y1 - 96 : y1;
+  const R = Math.min(128, (split - y0) * 0.36);
+  const hx = x0 + 70 + R;
+  const hy = (y0 + split) / 2;
+  b.hexLogo(ctx, c, hx, hy, R, true);
+  const tx = hx + R + 56;
+  const right = x1 - 56;
+  const tw = b.tag(ctx, tx, y0 + 64, 1, 13, true);
+  caps(ctx, tx + tw + 14, y0 + 64, "TOP GAINER OF THE DAY", 12, C.mint);
+  b.sym(ctx, c, tx, y0 + 140, 66, "left", right - tx, 26);
+  if (hasName(c)) b.nm(ctx, c, tx + 2, y0 + 192, 22, "left", right - tx);
+  if (b.hasPct(c)) {
+    lives.push((cc, p, salt) => b.gain(cc, c, tx, y0 + 270, 80, "left", p, salt, true));
+    lives.push((cc, p) => b.led(cc, tx, right, y0 + 330, 10, c, pctOf(c) || 1, p, 32));
+    regBar(b, tx, right, y0 + 330, 10, c, pctOf(c) || 1, 32);
   }
-  d = Math.max(34, d);
-  const block = d + 16 + textH;
-  const t0 = topY + Math.max(0, (avail - block) * 0.42);
-  const dcy = t0 + d / 2;
-  b.disc(ctx, c, cx, dcy, d, hero);
-  if (hero) {
-    b.ring = { cx, cy: dcy, d };
-    b.crownSpec = { cx: cx, bottom: dcy - d / 2 + d * 0.4 * 0.62 * 0.3, w: d * 0.4 };
-  }
-  const room = w - 36;
-  const rows = [[symSz * 1.25, (y) => b.sym(ctx, c, cx, y, symSz, "center", room)]];
-  if (hasName(c)) rows.push([Math.max(LABEL_MIN, symSz * 0.36) * 1.7, (y) => b.nm(ctx, c, cx, y, symSz * 0.36, "center", room)]);
-  if (b.hasPct(c)) rows.push([gSz * 1.5, (y) => lives.push((cx2, p) => b.gain(cx2, c, cx, y, gSz, "center", p, hero))]);
-  if (withMeta) rows.push([22, (y) => b.meta(ctx, c, cx, y, w > 300 ? 11 : 10, "center", room)]);
-  b.stack(dcy + d / 2 + 16 + textH / 2, rows);
-  if (plinth) {
+  if (hasStats) {
     ctx.save();
-    roundRect(ctx, x0 + 1, base, w - 2, y1 - base - 1, 16);
-    ctx.fillStyle = "rgba(0,0,0,0.28)";
-    ctx.fill();
     ctx.beginPath();
-    ctx.moveTo(x0 + 18, base);
-    ctx.lineTo(x1 - 18, base);
+    ctx.moveTo(x0 + 30, split);
+    ctx.lineTo(x1 - 30, split);
     ctx.lineWidth = 1;
-    ctx.strokeStyle = lin(ctx, x0, 0, x1, 0, [[0, rgba(C.cyan, 0)], [0.5, rgba(hero ? C.mint : C.cyan, 0.7)], [1, rgba(C.cyan, 0)]]);
+    ctx.strokeStyle = lin(ctx, x0, 0, x1, 0, [[0, "rgba(160,220,255,0)"], [0.5, "rgba(160,220,255,0.3)"], [1, "rgba(160,220,255,0)"]]);
     ctx.stroke();
-    ctx.font = fnum(hero ? 30 : 24);
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    const m = MEDAL[rank];
-    ctx.fillStyle = m ? lin(ctx, 0, base + 14, 0, base + 42, [[0, m.light], [1, m.mid]]) : C.dim;
-    ctx.fillText(String(rank).padStart(2, "0"), cx, base + 29);
     ctx.restore();
+    b.cells(ctx, x0 + 40, x1 - 40, split + 48, stats, 24);
   }
   return lives;
 }
 
-/** Logo on the left, the text beside it; the gain big on the right. */
-function landscape(b, ctx, box, c, rank, { big = true } = {}) {
-  const [x0, y0, x1, y1] = box;
-  const h = y1 - y0;
-  const cy = (y0 + y1) / 2;
-  const hero = rank === 1;
-  const lives = [];
-  const d = Math.min(h * 0.64, 150);
-  const dcx = x0 + 26 + d / 2;
-  b.disc(ctx, c, dcx, cy, d, hero);
-  if (hero) {
-    b.ring = { cx: dcx, cy, d };
-    b.crownSpec = { cx: dcx, bottom: cy - d / 2 + d * 0.36 * 0.62 * 0.3, w: d * 0.36 };
-  }
-  const right = x1 - 28;
-  const gSz = big ? Math.min(56, h * 0.3) : Math.min(30, h * 0.22);
-  const gw = big ? b.gainW(ctx, c, gSz) : 0;
-  if (big && gw) {
-    caps(ctx, right, cy - gSz * 0.66, "24H CHANGE", 10, hero ? C.mint : C.faint, "right");
-    lives.push((c2, p) => b.gain(c2, c, right, cy + 10, gSz, "right", p, hero));
-  }
-  const tx = dcx + d / 2 + 22;
-  const room = right - tx - (gw ? gw + 30 : 0);
-  const symSz = Math.min(50, h * 0.27);
-  const bs = 11;
-  const rows = [[24, (y) => {
-    b.badge(ctx, tx + bs, y, bs, rank);
-    caps(ctx, tx + bs * 2 + 8, y, hero ? "TOP GAINER" : `RANK ${rank}`, 10, hero ? C.mint : C.dim);
-  }], [symSz * 1.22, (y) => b.sym(ctx, c, tx, y, symSz, "left", room)]];
-  if (hasName(c) && h > 110) rows.push([Math.max(LABEL_MIN, symSz * 0.34) * 1.6, (y) => b.nm(ctx, c, tx + 1, y, symSz * 0.34, "left", room)]);
-  if (!big && b.hasPct(c)) rows.push([gSz * 1.45, (y) => lives.push((c2, p) => b.gain(c2, c, tx + 1, y, gSz, "left", p))]);
-  if (metaOf(c) && h >= 136) rows.push([20, (y) => b.meta(ctx, c, tx + 1, y, 11, "left", room)]);
-  b.stack(cy, rows);
-  return lives;
-}
-
-/** Small card: logo, ticker and gain; the rank in the corner. */
-function compact(b, ctx, box, c, rank) {
-  const [x0, y0, x1, y1] = box;
+/** Standing plate: the hexagon on top; ticker, name, gain and bar stacked
+ *  under it; the market line along the bottom. Everything is measured first
+ *  and the hexagon takes what is left, so nothing ever lands on anything. */
+function upright(b, ctx, P, c, rank, top) {
+  const [x0, y0, x1, y1] = quadBox(P);
   const w = x1 - x0;
-  const h = y1 - y0;
-  const cy = (y0 + y1) / 2;
+  const lead = rank === 1;
   const lives = [];
-  const d = Math.min(h * 0.5, 84, w * 0.3);
-  const dcx = x0 + 16 + d / 2;
-  b.disc(ctx, c, dcx, cy, d);
-  b.badge(ctx, x1 - 20, y0 + 20, 11, rank);
-  const tx = dcx + d / 2 + 14;
-  const room = x1 - 14 - tx - 18;
-  const symSz = Math.min(26, Math.max(14, h * 0.17), w * 0.09);
-  const gSz = Math.min(22, Math.max(13, h * 0.15));
-  const rows = [[symSz * 1.25, (y) => b.sym(ctx, c, tx, y, symSz, "left", room, 11)]];
-  if (b.hasPct(c)) rows.push([gSz * 1.45, (y) => lives.push((c2, p) => b.gain(c2, c, tx + 1, y, gSz, "left", p))]);
-  b.stack(cy, rows);
-  return lives;
-}
-
-/** Leaderboard row: badge, logo, ticker, comet bar, gain. */
-function row(b, ctx, box, c, rank, top) {
-  const [x0, y0, x1, y1] = box;
-  const w = x1 - x0;
-  const h = y1 - y0;
-  const cy = (y0 + y1) / 2;
-  const lives = [];
-  const bs = Math.min(17, h * 0.2);
-  const nx = x0 + 16 + bs;
-  b.badge(ctx, nx, cy, bs, rank);
-  const d = Math.min(h * 0.58, 70);
-  const dcx = nx + bs + 14 + d / 2;
-  b.disc(ctx, c, dcx, cy, d, rank === 1);
-  const right = x1 - 24;
-  const gSz = Math.min(30, h * 0.27);
-  const gw = b.gainW(ctx, c, gSz);
-  if (gw) lives.push((c2, p) => b.gain(c2, c, right, cy, gSz, "right", p, rank === 1));
-  const tx = dcx + d / 2 + 16;
-  const barX1 = right - (gw ? gw + 26 : 0);
-  const symSz = Math.min(26, h * 0.25);
-  const ty = b.hasPct(c) ? cy - h * 0.13 : cy;
-  const sw = b.sym(ctx, c, tx, ty, symSz, "left", Math.min(barX1 - tx, w * 0.34));
-  // the name beside the ticker, only where it fits whole enough to read
-  const nameX = tx + sw + 12;
-  if (hasName(c) && barX1 - nameX > 70) b.nm(ctx, c, nameX, ty + symSz * 0.08, Math.max(LABEL_MIN, symSz * 0.5), "left", barX1 - nameX);
-  if (b.hasPct(c)) {
-    const bh = Math.max(4, h * 0.06);
-    lives.push((c2, p) => b.comet(c2, tx, barX1, cy + h * 0.22, bh, c, top, p));
-    b.bars.push({ kind: "h", x0: tx, x1: barX1, y: cy + h * 0.22, h: bh, frac: barFrac(c, top, 0.04), order: b.cur.order });
-  }
-  return lives;
-}
-
-/** Equalizer column: the bar rises behind; logo, ticker and gain below. */
-function column(b, ctx, box, c, rank, top) {
-  const [x0, y0, x1, y1] = box;
-  const w = x1 - x0;
-  const h = y1 - y0;
   const cx = (x0 + x1) / 2;
-  const lives = [];
-  b.badge(ctx, cx, y0 + 22, 12, rank);
-  const foot = h * 0.44;
-  const d = Math.min(w * 0.4, foot * 0.42, 64);
-  const dcy = y1 - foot + 10 + d / 2;
-  const yb = dcy - d / 2 - 12;
-  const yt = y0 + 44;
+  const tw = b.tag(ctx, x0 + 30, y0 + 34, rank, 13, lead);
+  if (lead) caps(ctx, x0 + 30 + tw + 12, y0 + 34, "TOP GAINER", 11, C.mint);
+  const stats = statsOf(c).slice(0, 2);
+  const hasStats = stats.some(([, v]) => v);
+  const areaTop = y0 + 62;
+  const areaBot = hasStats ? y1 - 88 : y1 - 30;
+  const symSz = Math.min(50, w * 0.09);
+  const gSz = Math.min(54, w * 0.095);
+  const rows = [];
+  rows.push([symSz * 1.2, (y) => b.sym(ctx, c, cx, y, symSz, "center", w - 80)]);
+  if (hasName(c)) rows.push([28, (y) => b.nm(ctx, c, cx, y, 17, "center", w - 80)]);
   if (b.hasPct(c)) {
-    const bw = Math.min(w * 0.22, 26);
-    lives.push((c2, p) => b.vbar(c2, cx, yb, yt, bw, c, top, p));
-    b.bars.push({ kind: "v", cx, yb, yt, w: bw, frac: barFrac(c, top, 0.05), order: b.cur.order });
+    rows.push([gSz * 1.35, (y) => lives.push((cc, p, salt) => b.gain(cc, c, cx, y, gSz, "center", p, salt, lead))]);
+    rows.push([26, (y) => {
+      const bx0 = x0 + 56;
+      const bx1 = x1 - 56;
+      lives.push((cc, p) => b.led(cc, bx0, bx1, y, 8, c, top, p));
+      regBar(b, bx0, bx1, y, 8, c, top);
+    }]);
   }
-  b.disc(ctx, c, cx, dcy, d);
-  const symSz = Math.min(20, w * 0.11);
-  const gSz = Math.min(19, w * 0.1);
-  const rows = [[symSz * 1.3, (y) => b.sym(ctx, c, cx, y, symSz, "center", w - 20, 11)]];
-  if (b.hasPct(c)) rows.push([gSz * 1.45, (y) => lives.push((c2, p) => b.gain(c2, c, cx, y, gSz, "center", p))]);
-  b.stack((dcy + d / 2 + y1) / 2, rows);
+  const textH = rows.reduce((a2, [h]) => a2 + h, 0);
+  const R = Math.max(30, Math.min(88, w * 0.16, (areaBot - areaTop - textH - 26) / 2));
+  const blockH = R * 2 + 26 + textH;
+  let y = areaTop + Math.max(0, (areaBot - areaTop - blockH) / 2);
+  b.hexLogo(ctx, c, cx, y + R, R, lead);
+  y += R * 2 + 26;
+  for (const [h, fn] of rows) {
+    fn(y + h / 2);
+    y += h;
+  }
+  if (hasStats) b.cells(ctx, x0 + 30, x1 - 30, y1 - 46, stats, 18);
   return lives;
 }
 
-/** m1: one card — the logo large with the orbit ring, the gain huge, and a
- *  strip of whatever market numbers the feed carried. */
-function heroStage(b, ctx, box, c) {
-  const [x0, y0, x1, y1] = box;
+/** Lying plate: the hexagon on the left and the text beside it. Wide enough,
+ *  the gain stands on the right; too narrow for that, it goes under the
+ *  ticker — never on top of the logo. The bar runs along the bottom. */
+function wide(b, ctx, P, c, rank, top, { big = true } = {}) {
+  const [x0, y0, x1, y1] = quadBox(P);
   const w = x1 - x0;
+  const h = y1 - y0;
+  const lead = rank === 1;
   const lives = [];
-  const stats = [
-    ["PRICE", pos(c.price) ? fmtPrice(c.price) : null],
-    ["MARKET CAP", pos(c.mcap) ? fmtCap(c.mcap) : null],
-    ["LIQUIDITY", pos(c.liq) ? fmtCap(c.liq) : null],
-  ].filter(([, v]) => v);
-  const split = stats.length ? y1 - 96 : y1;
-  const cy = (y0 + split) / 2;
-  const d = Math.min(220, (split - y0) * 0.7);
-  const dcx = x0 + 70 + d / 2;
-  b.disc(ctx, c, dcx, cy, d, true);
-  b.ring = { cx: dcx, cy, d };
-  b.crownSpec = { cx: dcx, bottom: cy - d / 2 + d * 0.34 * 0.62 * 0.3, w: d * 0.34 };
-  const right = x1 - 60;
-  const gSz = 78;
-  const gw = b.gainW(ctx, c, gSz);
-  if (gw) {
-    caps(ctx, right, cy - 56, "24H CHANGE", 12, C.mint, "right");
-    lives.push((c2, p) => b.gain(c2, c, right, cy + 8, gSz, "right", p, true));
+  const barY = y1 - Math.max(20, h * 0.12);
+  const midY = (y0 + barY) / 2 + 2;
+  const R = Math.min(h * 0.29, 74, w * 0.12);
+  const hx = x0 + 30 + R;
+  b.hexLogo(ctx, c, hx, midY, R, lead);
+  const right = x1 - 30;
+  const tx = hx + R + 24;
+  const gBig = big ? Math.min(54, h * 0.24) : Math.min(32, h * 0.2);
+  const gw = b.gainW(ctx, c, gBig);
+  const side = gw && right - tx - gw - 26 >= Math.max(170, w * 0.26);
+  const room = side ? right - tx - gw - 26 : right - tx;
+  const symSz = Math.min(lead ? 46 : 38, h * 0.2);
+  const rows = [[24, (y) => {
+    const tw = b.tag(ctx, tx, y, rank, 11, lead);
+    if (lead) caps(ctx, tx + tw + 10, y, "TOP GAINER", 10, C.mint);
+  }], [symSz * 1.18, (y) => b.sym(ctx, c, tx, y, symSz, "left", room)]];
+  if (hasName(c) && h > (side ? 130 : 200)) rows.push([Math.max(12, symSz * 0.34) * 1.7, (y) => b.nm(ctx, c, tx + 1, y, Math.max(12, symSz * 0.34), "left", room)]);
+  if (gw && side) lives.push((cc, p, salt) => b.gain(cc, c, right, midY + 4, gBig, "right", p, salt, lead));
+  if (gw && !side) {
+    const gS = Math.min(gBig, h * 0.19, 40);
+    rows.push([gS * 1.3, (y) => lives.push((cc, p, salt) => b.gain(cc, c, tx, y, gS, "left", p, salt, lead))]);
   }
-  const tx = dcx + d / 2 + 46;
-  const room = right - tx - (gw ? gw + 40 : 0);
-  const rows = [
-    [30, (y) => {
-      b.badge(ctx, tx + 13, y, 13, 1);
-      caps(ctx, tx + 36, y, "TOP GAINER OF THE DAY", 12, C.mint);
-    }],
-    [84, (y) => b.sym(ctx, c, tx, y, 70, "left", room, 26)],
-  ];
-  if (hasName(c)) rows.push([34, (y) => b.nm(ctx, c, tx + 3, y, 21, "left", room)]);
-  b.stack(cy, rows);
-  if (stats.length) {
-    ctx.save();
+  b.stack(midY, rows);
+  if (b.hasPct(c)) {
+    lives.push((cc, p) => b.led(cc, x0 + 28, x1 - 28, barY, 6, c, top, p, 36));
+    regBar(b, x0 + 28, x1 - 28, barY, 6, c, top, 36);
+  }
+  return lives;
+}
+
+/** Small plate: hexagon, ticker and gain; the tag in the corner. */
+function tile(b, ctx, P, c, rank, top) {
+  const [x0, y0, x1, y1] = quadBox(P);
+  const h = y1 - y0;
+  const lives = [];
+  const R = Math.min(h * 0.27, 40);
+  const hx = x0 + 26 + R;
+  const cy = y0 + h * 0.44;
+  b.hexLogo(ctx, c, hx, cy, R);
+  b.tag(ctx, x1 - 58, y0 + 22, rank, 10);
+  const tx = hx + R + 18;
+  const room = x1 - 20 - tx;
+  b.sym(ctx, c, tx, cy - 12, Math.min(26, h * 0.17), "left", room - 40, 11);
+  if (b.hasPct(c)) {
+    lives.push((cc, p, salt) => b.gain(cc, c, tx, cy + 20, Math.min(22, h * 0.15), "left", p, salt));
+    const ly = y1 - 18;
+    lives.push((cc, p) => b.led(cc, x0 + 22, x1 - 22, ly, 5, c, top, p, 28));
+    regBar(b, x0 + 22, x1 - 22, ly, 5, c, top, 28);
+  }
+  return lives;
+}
+
+// ── the terminal table (the site's) ─────────────────────────────────────────
+function columns(w) {
+  const cols = [["rank", 74], ["token", 0], ["price", 150], ["mcap", 150], ["bar", 220], ["chg", 150]];
+  const drop = (k) => cols.splice(cols.findIndex(([x]) => x === k), 1);
+  if (w < 980) drop("price");
+  if (w < 700) drop("mcap");
+  if (w < 560) drop("bar");
+  const fixed = cols.reduce((a, [, cw]) => a + cw, 0);
+  cols.find(([k]) => k === "token")[1] = Math.max(140, w - 48 - fixed);
+  return cols;
+}
+const COL_LABEL = { rank: "#", token: "TOKEN", price: "PRICE", mcap: "MKT CAP", bar: "MOMENTUM", chg: "24H" };
+
+/** The table's frame and its header row, as one item. Returns the row slots. */
+function table(b, box, rows, firstRank, order, top) {
+  const [x0, y0, x1, y1] = box;
+  const headH = 40;
+  const rowH = Math.min(96, (y1 - y0 - headH - 10) / rows.length);
+  const cols = columns(x1 - x0);
+  b.item(rectQuad(box), order, (ctx) => {
+    let cx = x0 + 24;
+    for (const [k, cw] of cols) {
+      const right = k === "chg" || k === "price" || k === "mcap";
+      caps(ctx, right ? cx + cw - 12 : k === "bar" ? cx + 30 : cx, y0 + headH / 2 + 4, COL_LABEL[k], 10, C.faint, right ? "right" : "left");
+      cx += cw;
+    }
     ctx.beginPath();
-    ctx.moveTo(x0 + 34, split);
-    ctx.lineTo(x1 - 34, split);
-    ctx.lineWidth = 0.9;
-    ctx.strokeStyle = lin(ctx, x0, 0, x1, 0, [[0, "rgba(255,255,255,0)"], [0.5, "rgba(160,220,255,0.3)"], [1, "rgba(255,255,255,0)"]]);
+    ctx.moveTo(x0 + 16, y0 + headH);
+    ctx.lineTo(x1 - 16, y0 + headH);
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = lin(ctx, x0, 0, x1, 0, [[0, rgba(C.mint, 0.6)], [0.5, rgba(C.cyan, 0.35)], [1, rgba(C.cyan, 0.05)]]);
     ctx.stroke();
-    const cw = w / stats.length;
-    stats.forEach(([k, v], j) => {
-      const mx = x0 + cw * (j + 0.5);
-      if (j) {
-        ctx.beginPath();
-        ctx.moveTo(x0 + cw * j, split + 22);
-        ctx.lineTo(x0 + cw * j, y1 - 22);
-        ctx.lineWidth = 0.8;
-        ctx.strokeStyle = "rgba(160,220,255,0.18)";
-        ctx.stroke();
+    for (let i = 1; i < rows.length; i++) {
+      const y = y0 + headH + 4 + rowH * i;
+      ctx.beginPath();
+      ctx.moveTo(x0 + 16, y);
+      ctx.lineTo(x1 - 16, y);
+      ctx.lineWidth = 0.7;
+      ctx.strokeStyle = "rgba(160,220,255,0.08)";
+      ctx.stroke();
+    }
+    return [];
+  }, { deep: 20 });
+  rows.forEach((c, i) => {
+    if (!c) return;
+    const ry0 = y0 + headH + 4 + rowH * i;
+    const rbox = [x0 + 8, ry0, x1 - 8, ry0 + rowH];
+    const rank = firstRank + i;
+    b.item(rectQuad(rbox), order + 1 + i, (ctx) => tableRow(b, ctx, rbox, cols, x0, c, rank, top), { plate: false });
+  });
+}
+
+function tableRow(b, ctx, box, cols, tableX0, c, rank, top) {
+  const [x0, y0, x1, y1] = box;
+  const h = y1 - y0;
+  const cy = (y0 + y1) / 2;
+  const lead = rank === 1;
+  const lives = [];
+  if (lead) {
+    ctx.fillStyle = lin(ctx, x0, 0, x1, 0, [[0, rgba(C.mint, 0.14)], [0.6, rgba(C.cyan, 0.05)], [1, rgba(C.cyan, 0)]]);
+    ctx.fillRect(x0, y0 + 3, x1 - x0, h - 6);
+    ctx.fillStyle = lin(ctx, 0, y0, 0, y1, [[0, C.mint], [1, C.cyan]]);
+    ctx.fillRect(x0, y0 + 6, 3, h - 12);
+  }
+  let cx = tableX0 + 24;
+  for (const [k, cw] of cols) {
+    if (k === "rank") b.tag(ctx, cx, cy, rank, Math.min(12, h * 0.2), lead);
+    if (k === "token") {
+      const R = Math.min(h * 0.33, 30);
+      b.hexLogo(ctx, c, cx + R, cy, R, lead);
+      const tx = cx + R * 2 + 14;
+      const room = cw - R * 2 - 24;
+      const sz = Math.min(lead ? 26 : 24, h * 0.3);
+      if (hasName(c) && h >= 50) {
+        b.sym(ctx, c, tx, cy - h * 0.14, sz, "left", room, 11);
+        b.nm(ctx, c, tx + 1, cy + h * 0.2, Math.max(LABEL_MIN, sz * 0.5), "left", room);
+      } else b.sym(ctx, c, tx, cy, sz, "left", room, 11);
+    }
+    if (k === "price" || k === "mcap") {
+      const v = k === "price" ? (pos(c.price) ? fmtPrice(c.price) : null) : (pos(c.mcap) ? fmtCap(c.mcap) : null);
+      if (v) {
+        ctx.font = fmono(Math.min(17, h * 0.22));
+        ctx.fillStyle = C.ink;
+        ctx.textAlign = "right";
+        ctx.textBaseline = "middle";
+        ctx.fillText(clipTo(ctx, v, cw - 20), cx + cw - 12, cy);
       }
-      caps(ctx, mx, split + 32, k, 11, C.faint, "center");
-      ctx.font = fnum(24);
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillStyle = C.ink;
-      ctx.fillText(clipTo(ctx, v, cw - 30), mx, split + 64);
-    });
-    ctx.restore();
+    }
+    if (k === "bar" && b.hasPct(c)) {
+      const bx0 = cx + 30;
+      const bx1 = cx + cw - 16;
+      lives.push((cc, p) => b.led(cc, bx0, bx1, cy, 7, c, top, p, 16));
+      regBar(b, bx0, bx1, cy, 7, c, top, 16);
+    }
+    if (k === "chg") {
+      const gx = cx + cw - 12;
+      lives.push((cc, p, salt) => b.gain(cc, c, gx, cy, Math.min(26, h * 0.3), "right", p, salt, lead));
+    }
+    cx += cw;
   }
   return lives;
 }
@@ -928,1128 +852,538 @@ function heroStage(b, ctx, box, c) {
 function m1(b, coins) {
   const c = at(coins, 0);
   if (!c) return;
-  const box = [X0 + 70, Y0, X1 - 70, Y1];
-  b.item(box, 0, (ctx) => heroStage(b, ctx, box, c), { r: 26, hero: true });
+  const P = rectQuad([150, 150, 1130, 632]);
+  b.item(P, 0, (ctx) => solo(b, ctx, P, c), { lead: true, deep: 34 });
 }
 
+/** m2: two slanted plates, the cut between them a diagonal. */
 function m2(b, coins) {
-  const gap = 28;
-  const w = (X1 - X0 - gap) / 2;
-  [[0, [X0, Y0, X0 + w, Y1]], [1, [X0 + w + gap, Y0 + 34, X1, Y1]]].forEach(([i, box]) => {
+  const top = topVal(coins.slice(0, 2));
+  const plates = [
+    [[SX0, 150], [672, 150], [622, 636], [SX0, 636]],
+    [[700, 172], [SX1, 172], [SX1, 636], [650, 636]],
+  ];
+  plates.forEach((P, i) => {
     const c = at(coins, i);
-    if (c) b.item(box, i, (ctx) => portrait(b, ctx, box, c, i + 1), { r: 24, hero: i === 0 });
+    if (c) b.item(P, i, (ctx) => upright(b, ctx, P, c, i + 1, top), { lead: i === 0, deep: 30 });
   });
 }
 
+/** m3: the leader at the apex, the next two beneath it. */
 function m3(b, coins) {
-  const sw = 352;
-  const cw = 420;
-  const gap = 22;
-  [[1, [X0, Y0 + 50, X0 + sw, Y1]], [0, [X0 + sw + gap, Y0, X0 + sw + gap + cw, Y1]], [2, [X1 - sw, Y0 + 86, X1, Y1]]].forEach(([i, box]) => {
+  const top = topVal(coins.slice(0, 3));
+  const boxes = [[372, 146, 908, 396], [SX0, 414, 628, 640], [652, 414, SX1, 640]];
+  boxes.forEach((box, i) => {
     const c = at(coins, i);
-    if (c) b.item(box, i, (ctx) => portrait(b, ctx, box, c, i + 1, { plinth: true }), { r: 24, hero: i === 0 });
+    const P = rectQuad(box);
+    if (c) b.item(P, i, (ctx) => wide(b, ctx, P, c, i + 1, top, { big: i === 0 }), { lead: i === 0, deep: 26 });
   });
 }
 
 function m4(b, coins) {
-  const gap = 20;
-  const w = (X1 - X0 - gap * 3) / 4;
+  const top = topVal(coins.slice(0, 4));
+  const w = (SX1 - SX0 - 24) / 2;
+  const h = (SY1 - SY0 - 20) / 2;
   for (let i = 0; i < 4; i++) {
     const c = at(coins, i);
     if (!c) continue;
-    const box = [X0 + i * (w + gap), Y0, X0 + i * (w + gap) + w, Y1];
-    b.item(box, i, (ctx) => portrait(b, ctx, box, c, i + 1), { r: 22, hero: i === 0 });
+    const x0 = SX0 + (i % 2) * (w + 24);
+    const y0 = SY0 + Math.floor(i / 2) * (h + 20);
+    const P = rectQuad([x0, y0, x0 + w, y0 + h]);
+    b.item(P, i, (ctx) => wide(b, ctx, P, c, i + 1, top), { lead: i === 0 });
   }
 }
 
+/** m5: the site's terminal table, five rows. */
 function m5(b, coins) {
-  const c = at(coins, 0);
-  const lw = 400;
-  if (c) {
-    const box = [X0, Y0, X0 + lw, Y1];
-    b.item(box, 0, (ctx) => portrait(b, ctx, box, c, 1), { r: 24, hero: true });
-  }
-  // the rows' bars against the leader OF THE ROWS: the hero carries no bar,
-  // and a +3981% leader would leave every row a sliver
-  const top = topVal(coins.slice(1, 5));
-  const gap = 14;
-  const h = (Y1 - Y0 - gap * 3) / 4;
-  for (let k = 0; k < 4; k++) {
-    const cc = at(coins, k + 1);
-    if (!cc) continue;
-    const y0 = Y0 + k * (h + gap);
-    const box = [X0 + lw + 24, y0, X1, y0 + h];
-    b.item(box, k + 1, (ctx) => row(b, ctx, box, cc, k + 2, top), { r: 18 });
-  }
+  table(b, [SX0, SY0, SX1, SY1], coins.slice(0, 5), 1, 0, topVal(coins.slice(0, 5)));
 }
 
+/** m6: a hive — three plates over three, the lower row offset by half. */
 function m6(b, coins) {
-  const th = 206;
-  const gap = 20;
-  [[0, [X0, Y0, X0 + 700, Y0 + th]], [1, [X0 + 700 + gap, Y0, X1, Y0 + th]]].forEach(([i, box]) => {
+  const top = topVal(coins.slice(0, 6));
+  const w = 340;
+  const g = 22;
+  const h = 236;
+  const rows = [[SX0, SY0], [SX1 - (w * 3 + g * 2), SY1 - h]];
+  for (let i = 0; i < 6; i++) {
     const c = at(coins, i);
-    if (c) b.item(box, i, (ctx) => landscape(b, ctx, box, c, i + 1, { big: i === 0 }), { r: 22, hero: i === 0 });
-  });
-  const g = 18;
-  const w = (X1 - X0 - g * 3) / 4;
-  for (let k = 0; k < 4; k++) {
-    const c = at(coins, k + 2);
     if (!c) continue;
-    const x0 = X0 + k * (w + g);
-    const box = [x0, Y0 + th + 18, x0 + w, Y1];
-    b.item(box, k + 2, (ctx) => portrait(b, ctx, box, c, k + 3), { r: 20 });
+    const [rx, ry] = rows[Math.floor(i / 3)];
+    const x0 = rx + (i % 3) * (w + g);
+    const P = rectQuad([x0, ry, x0 + w, ry + h]);
+    b.item(P, i, (ctx) => wide(b, ctx, P, c, i + 1, top, { big: i === 0 }), { lead: i === 0 });
   }
 }
 
+/** m7: the leader standing on the left, the next six in the table. */
 function m7(b, coins) {
-  const th = 150;
   const c = at(coins, 0);
   if (c) {
-    const box = [X0, Y0, X1, Y0 + th];
-    b.item(box, 0, (ctx) => landscape(b, ctx, box, c, 1), { r: 22, hero: true });
+    const P = rectQuad([SX0, SY0, 452, SY1]);
+    b.item(P, 0, (ctx) => upright(b, ctx, P, c, 1, pctOf(c) || 1), { lead: true, deep: 30 });
   }
-  const top = topVal(coins.slice(1, 7)); // the columns against their own leader
-  const gap = 16;
-  const w = (X1 - X0 - gap * 5) / 6;
-  for (let k = 0; k < 6; k++) {
-    const cc = at(coins, k + 1);
-    if (!cc) continue;
-    const x0 = X0 + k * (w + gap);
-    const box = [x0, Y0 + th + 18, x0 + w, Y1];
-    b.item(box, k + 1, (ctx) => column(b, ctx, box, cc, k + 2, top), { r: 20 });
-  }
+  table(b, [472, SY0, SX1, SY1], coins.slice(1, 7), 2, 1, topVal(coins.slice(1, 7)));
 }
 
 function m8(b, coins) {
-  const top = topVal(coins.slice(0, 8));
-  const gx = 24;
-  const gy = 12;
-  const w = (X1 - X0 - gx) / 2;
-  const h = (Y1 - Y0 - gy * 3) / 4;
-  for (let i = 0; i < 8; i++) {
+  table(b, [SX0, SY0, SX1, SY1], coins.slice(0, 8), 1, 0, topVal(coins.slice(0, 8)));
+}
+
+/** m9: a honeycomb of nine small plates, the middle row offset. */
+function m9(b, coins) {
+  const top = topVal(coins.slice(0, 9));
+  const w = 360;
+  const g = 20;
+  const h = 152;
+  const vg = (SY1 - SY0 - h * 3) / 2;
+  for (let i = 0; i < 9; i++) {
     const c = at(coins, i);
     if (!c) continue;
-    const col = Math.floor(i / 4);
-    const r = i % 4;
-    const x0 = X0 + col * (w + gx);
-    const y0 = Y0 + r * (h + gy);
-    const box = [x0, y0, x0 + w, y0 + h];
-    b.item(box, i, (ctx) => row(b, ctx, box, c, i + 1, top), { r: 18, hero: i === 0 });
+    const r = Math.floor(i / 3);
+    const x0 = SX0 + (r === 1 ? SX1 - SX0 - (w * 3 + g * 2) : 0) + (i % 3) * (w + g);
+    const y0 = SY0 + r * (h + vg);
+    const P = rectQuad([x0, y0, x0 + w, y0 + h]);
+    if (i === 0) b.item(P, i, (ctx) => wide(b, ctx, P, c, 1, top, { big: false }), { lead: true, deep: 18 });
+    else b.item(P, i, (ctx) => tile(b, ctx, P, c, i + 1, top), { deep: 18 });
   }
 }
 
-function m9(b, coins) {
-  const c = at(coins, 0);
-  const h1 = 136;
-  if (c) {
-    const box = [X0 + 234, Y0, X1 - 234, Y0 + h1];
-    b.item(box, 0, (ctx) => landscape(b, ctx, box, c, 1), { r: 22, hero: true });
-  }
-  const g = 18;
-  const w2 = (X1 - X0 - g * 2) / 3;
-  const y2 = Y0 + h1 + 14;
-  const h2 = 132;
-  for (let k = 0; k < 3; k++) {
-    const cc = at(coins, k + 1);
-    if (!cc) continue;
-    const x0 = X0 + k * (w2 + g);
-    const box = [x0, y2, x0 + w2, y2 + h2];
-    b.item(box, k + 1, (ctx) => landscape(b, ctx, box, cc, k + 2, { big: false }), { r: 20 });
-  }
-  const g3 = 14;
-  const w3 = (X1 - X0 - g3 * 4) / 5;
-  const y3 = y2 + h2 + 14;
-  for (let k = 0; k < 5; k++) {
-    const cc = at(coins, k + 4);
-    if (!cc) continue;
-    const x0 = X0 + k * (w3 + g3);
-    const box = [x0, y3, x0 + w3, Y1];
-    b.item(box, k + 4, (ctx) => compact(b, ctx, box, cc, k + 5), { r: 18 });
-  }
-}
-
+/** m10: the leader across the top, the next nine in two tables. */
 function m10(b, coins) {
-  const lw = 360;
   const c = at(coins, 0);
   if (c) {
-    const box = [X0, Y0, X0 + lw, Y1];
-    b.item(box, 0, (ctx) => portrait(b, ctx, box, c, 1), { r: 24, hero: true });
+    const P = rectQuad([SX0, SY0, SX1, 300]);
+    b.item(P, 0, (ctx) => wide(b, ctx, P, c, 1, pctOf(c) || 1), { lead: true, deep: 28 });
   }
-  const gx = 14;
-  const gy = 12;
-  const w = (X1 - X0 - lw - 20 - gx * 2) / 3;
-  const h = (Y1 - Y0 - gy * 2) / 3;
-  for (let k = 0; k < 9; k++) {
-    const cc = at(coins, k + 1);
-    if (!cc) continue;
-    const r = Math.floor(k / 3);
-    const col = k % 3;
-    const x0 = X0 + lw + 20 + col * (w + gx);
-    const y0 = Y0 + r * (h + gy);
-    const box = [x0, y0, x0 + w, y0 + h];
-    b.item(box, k + 1, (ctx) => compact(b, ctx, box, cc, k + 2), { r: 18 });
-  }
+  const top = topVal(coins.slice(1, 10));
+  table(b, [SX0, 318, 632, SY1], coins.slice(1, 6), 2, 1, top);
+  table(b, [648, 318, SX1, SY1], coins.slice(6, 10), 7, 7, top);
 }
 
 const LAYOUTS = { 1: m1, 2: m2, 3: m3, 4: m4, 5: m5, 6: m6, 7: m7, 8: m8, 9: m9, 10: m10 };
 const NAMES = {
-  1: "Hero Stage", 2: "Face-off", 3: "Podium", 4: "Showcase", 5: "Spotlight + Rows",
-  6: "Two Tier", 7: "Hero + Equalizer", 8: "Ranked Rows", 9: "Pyramid 1-3-5", 10: "Hero + Nine",
+  1: "Solo Gem", 2: "Slant Duel", 3: "Apex", 4: "Quad", 5: "Terminal 5",
+  6: "Hive", 7: "Leader + Table", 8: "Terminal 8", 9: "Honeycomb", 10: "Leader + Board",
 };
 const TEMPLATE_IDS = Object.keys(LAYOUTS).map((n) => `m${n}`);
 const isTemplate = (id) => TEMPLATE_IDS.includes(id);
 const countOf = (id) => (isTemplate(id) ? Number(String(id).slice(1)) : null);
 const labelOf = (id) => (isTemplate(id) ? `🎬 ${NAMES[countOf(id)]}` : String(id));
 
-// ── chrome: the stage, the header, the footer ───────────────────────────────
-function backdrop(cv) {
+// ── the room: a cut gem ─────────────────────────────────────────────────────
+/** A low-poly facet field, lit from the top-left, and its edges on their own
+ *  layer for the light that slides across them. */
+function facetRoom(cv) {
   const out = cv.createCanvas(W, H);
   const ctx = out.getContext("2d");
   ctx.scale(K, K);
-  ctx.fillStyle = lin(ctx, 0, 0, 0, DH, [[0, "#0B2244"], [0.4, "#06142C"], [1, "#020611"]]);
+  ctx.fillStyle = "#06101F";
   ctx.fillRect(0, 0, DW, DH);
-  const bloom = (x, y, r, color, a) => {
-    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
-    g.addColorStop(0, rgba(color, a));
-    g.addColorStop(1, rgba(color, 0));
-    ctx.fillStyle = g;
-    ctx.fillRect(x - r, y - r, r * 2, r * 2);
-  };
-  bloom(640, 60, 680, "#1C78C0", 0.45); // behind the headline
-  bloom(640, FLOOR + 10, 620, "#1784C4", 0.32); // the light pooling on the floor
-  bloom(60, 420, 440, "#123F80", 0.32);
-  bloom(1220, 420, 440, "#123F80", 0.32);
-
-  // a lattice of gem facets, fading down from the top
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(0, 0, DW, FLOOR);
-  ctx.clip();
-  ctx.strokeStyle = lin(ctx, 0, 0, 0, FLOOR, [[0, rgba("#A8DCFF", 0.075)], [0.45, rgba("#A8DCFF", 0.03)], [1, rgba("#A8DCFF", 0)]]);
-  ctx.lineWidth = 0.7;
-  const k = Math.tan(Math.PI / 6);
-  ctx.beginPath();
-  for (let x = -FLOOR; x < DW + FLOOR; x += 56) {
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x + FLOOR / k / 2.2, FLOOR);
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x - FLOOR / k / 2.2, FLOOR);
+  const r = rng(90919);
+  const cols = 18;
+  const rows = 11;
+  const cw = DW / cols;
+  const ch = DH / rows;
+  const pts = [];
+  for (let j = 0; j <= rows; j++) {
+    pts.push([]);
+    for (let i = 0; i <= cols; i++) {
+      const edge = i === 0 || j === 0 || i === cols || j === rows;
+      pts[j].push([i * cw + (edge ? 0 : (r() - 0.5) * cw * 0.8), j * ch + (edge ? 0 : (r() - 0.5) * ch * 0.8), r()]);
+    }
   }
-  ctx.stroke();
-  ctx.restore();
-
-  // the floor: a sheen under the horizon and a perspective grid
-  ctx.fillStyle = lin(ctx, 0, FLOOR, 0, DH, [[0, rgba(C.cyan, 0.09)], [1, rgba(C.cyan, 0)]]);
-  ctx.fillRect(0, FLOOR, DW, DH - FLOOR);
-  const vpY = FLOOR - 340;
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(0, FLOOR, DW, DH - FLOOR);
-  ctx.clip();
-  for (let i = -16; i <= 16; i++) {
-    const xb = 640 + i * 110;
-    const t = (FLOOR - vpY) / (DH + 40 - vpY);
+  const tris = [];
+  for (let j = 0; j < rows; j++) {
+    for (let i = 0; i < cols; i++) {
+      const a = pts[j][i];
+      const b2 = pts[j][i + 1];
+      const c2 = pts[j + 1][i + 1];
+      const d = pts[j + 1][i];
+      if ((i + j) % 2) tris.push([a, b2, c2], [a, c2, d]);
+      else tris.push([a, b2, d], [b2, c2, d]);
+    }
+  }
+  const L = [-0.45, -0.65, 0.62];
+  for (const t of tris) {
+    const [p0, p1, p2] = t;
+    const u = [p1[0] - p0[0], p1[1] - p0[1], (p1[2] - p0[2]) * 60];
+    const v = [p2[0] - p0[0], p2[1] - p0[1], (p2[2] - p0[2]) * 60];
+    const n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+    const nl = Math.hypot(...n) || 1;
+    const lit = Math.abs((n[0] * L[0] + n[1] * L[1] + n[2] * L[2]) / nl);
+    const cyM = (p0[1] + p1[1] + p2[1]) / 3;
+    const fall = 1 - Math.min(1, cyM / DH) * 0.55;
+    const k2 = (0.25 + lit * 0.75) * fall;
+    const R = Math.round(7 + 22 * k2);
+    const G = Math.round(17 + 42 * k2);
+    const B = Math.round(36 + 80 * k2);
     ctx.beginPath();
-    ctx.moveTo(640 + (xb - 640) * t, FLOOR);
-    ctx.lineTo(xb, DH + 40);
-    ctx.lineWidth = 0.8;
-    ctx.strokeStyle = lin(ctx, 0, FLOOR, 0, DH, [[0, rgba(C.cyan, 0.16)], [1, rgba(C.cyan, 0.02)]]);
+    ctx.moveTo(p0[0], p0[1]);
+    ctx.lineTo(p1[0], p1[1]);
+    ctx.lineTo(p2[0], p2[1]);
+    ctx.closePath();
+    ctx.fillStyle = `rgb(${R},${G},${B})`;
+    ctx.fill();
+    ctx.strokeStyle = `rgb(${R},${G},${B})`; // seal the seams between facets
+    ctx.lineWidth = 0.6;
     ctx.stroke();
   }
-  for (let j = 1; j <= 6; j++) {
-    const y = FLOOR + 6 * j * j * 0.9;
-    if (y > DH) break;
-    ctx.beginPath();
-    ctx.moveTo(0, y);
-    ctx.lineTo(DW, y);
-    ctx.lineWidth = 0.7;
-    ctx.strokeStyle = lin(ctx, 0, 0, DW, 0, [[0, rgba(C.cyan, 0)], [0.5, rgba(C.cyan, 0.11 / j ** 0.5)], [1, rgba(C.cyan, 0)]]);
-    ctx.stroke();
-  }
-  ctx.restore();
-  // the horizon line
-  ctx.save();
-  ctx.beginPath();
-  ctx.moveTo(60, FLOOR);
-  ctx.lineTo(1220, FLOOR);
-  ctx.lineWidth = 1.4;
-  ctx.strokeStyle = lin(ctx, 60, 0, 1220, 0, [[0, rgba(C.cyan, 0)], [0.25, rgba(C.cyan, 0.6)], [0.5, rgba(C.mint, 0.9)], [0.75, rgba(C.cyan, 0.6)], [1, rgba(C.cyan, 0)]]);
-  ctx.shadowColor = rgba(C.cyan, 0.85);
-  ctx.shadowBlur = 12 * K;
-  ctx.stroke();
-  ctx.restore();
-  return out;
-}
-
-/** The cinematic vignette, laid over everything last. */
-function vignette(cv) {
-  const out = cv.createCanvas(W, H);
-  const ctx = out.getContext("2d");
-  ctx.scale(K, K);
-  const vg = ctx.createRadialGradient(640, 380, 330, 640, 380, 860);
+  // the light from the brand side of the room, and the dark it falls into
+  const g1 = ctx.createRadialGradient(640, 60, 0, 640, 60, 760);
+  g1.addColorStop(0, rgba("#2F86FF", 0.22));
+  g1.addColorStop(1, rgba("#2F86FF", 0));
+  ctx.fillStyle = g1;
+  ctx.fillRect(0, 0, DW, DH);
+  const vg = ctx.createRadialGradient(640, 380, 300, 640, 380, 860);
   vg.addColorStop(0, "rgba(0,0,0,0)");
-  vg.addColorStop(1, "rgba(0,0,0,0.66)");
+  vg.addColorStop(1, "rgba(0,0,0,0.6)");
   ctx.fillStyle = vg;
   ctx.fillRect(0, 0, DW, DH);
-  return out;
+
+  // the facet edges, half resolution: the light reveals them
+  const edges = cv.createCanvas(Math.round(W / 2), Math.round(H / 2));
+  const ex = edges.getContext("2d");
+  ex.scale(K / 2, K / 2);
+  ex.strokeStyle = "rgba(170,230,255,0.9)";
+  ex.lineWidth = 1.1;
+  ex.beginPath();
+  for (const [p0, p1, p2] of tris) {
+    ex.moveTo(p0[0], p0[1]);
+    ex.lineTo(p1[0], p1[1]);
+    ex.lineTo(p2[0], p2[1]);
+    ex.closePath();
+  }
+  ex.stroke();
+  return { base: out, edges };
 }
 
-/** The header and footer, on a transparent layer drawn over the aurora. */
+// the two lights that slide across the facets; whole cycles per loop
+const LIGHTS = [
+  { ax: 520, ay: 150, cx: 1, cy: 2, ph: 0, r: 380, color: "#22D3EE", a: 0.1 },
+  { ax: 460, ay: 120, cx: -1, cy: 1, ph: 0.4, r: 300, color: "#3DF59F", a: 0.06 },
+];
+function lightAt(l, u) {
+  return [640 + l.ax * Math.cos(TAU * (l.cx * u + l.ph)), 360 + l.ay * Math.sin(TAU * (l.cy * u + l.ph))];
+}
+
+// ── chrome: the top bar and the ticker tape ─────────────────────────────────
 function chrome(cv, b, n, dateText) {
   const out = cv.createCanvas(W, H);
   const ctx = out.getContext("2d");
   ctx.scale(K, K);
   ctx.textBaseline = "middle";
 
-  // kicker: ● LIVE · ◆ DEXVRA · 24H TOP GAINERS
-  const y = 40;
-  ctx.font = fcap(11);
-  const sp = 2.6;
-  const wLive = trackedW(ctx, "LIVE", sp);
-  const wDex = trackedW(ctx, "DEXVRA", sp);
-  const wTail = trackedW(ctx, "24H TOP GAINERS", sp);
-  const mark = 17;
-  const sep = 30;
-  const total = 13 + wLive + sep + mark + 8 + wDex + sep + wTail;
-  let x = 640 - total / 2;
-  // the kicker sits in a glass capsule
-  ctx.save();
-  roundRect(ctx, x - 18, y - 14, total + 36, 28, 14);
-  ctx.fillStyle = "rgba(255,255,255,0.05)";
-  ctx.fill();
-  ctx.lineWidth = 1;
-  ctx.strokeStyle = lin(ctx, x - 18, 0, x + total + 18, 0, [[0, rgba(C.cyan, 0.15)], [0.5, rgba("#BFE9FF", 0.4)], [1, rgba(C.cyan, 0.15)]]);
-  ctx.stroke();
-  ctx.restore();
-  b.liveDot = { x: x + 3.5, y };
-  ctx.save();
-  ctx.beginPath();
-  ctx.arc(x + 3.5, y, 3.5, 0, TAU);
-  ctx.fillStyle = C.mint;
-  ctx.shadowColor = C.mint;
-  ctx.shadowBlur = 8 * K;
-  ctx.fill();
-  ctx.restore();
-  x += 13;
-  ctx.fillStyle = C.mint;
-  tracked(ctx, "LIVE", x, y, sp);
-  x += wLive + sep / 2;
-  ctx.fillStyle = C.faint;
-  ctx.textAlign = "center";
-  ctx.fillText("·", x, y);
-  ctx.textAlign = "left";
-  x += sep / 2;
-  drawBrandMark(ctx, x, y - mark / 2, mark);
-  x += mark + 8;
-  ctx.font = fcap(11);
-  ctx.fillStyle = C.ink;
-  tracked(ctx, "DEXVRA", x, y, sp);
-  x += wDex + sep / 2;
-  ctx.fillStyle = C.faint;
-  ctx.textAlign = "center";
-  ctx.fillText("·", x, y);
-  ctx.textAlign = "left";
-  x += sep / 2;
-  ctx.fillStyle = C.dim;
-  tracked(ctx, "24H TOP GAINERS", x, y, sp);
+  // the bar's glass
+  ctx.fillStyle = lin(ctx, 0, 0, 0, BAR_Y, [[0, "rgba(3,8,18,0.7)"], [1, "rgba(3,8,18,0.35)"]]);
+  ctx.fillRect(0, 0, DW, BAR_Y);
+  ctx.fillStyle = lin(ctx, 0, 0, DW, 0, [[0, rgba(C.mint, 0.9)], [0.35, rgba(C.cyan, 0.7)], [0.75, rgba(C.blue, 0.25)], [1, rgba(C.blue, 0)]]);
+  ctx.fillRect(0, BAR_Y - 1, DW, 2);
 
-  // the headline: chrome, the count in the gem's mint → cyan
-  const ty = 94;
-  const tsz = 56;
+  // left: the brand lockup
+  drawBrandMark(ctx, SX0, 30, 50);
+  ctx.font = fword(26);
+  ctx.fillStyle = C.ink;
+  tracked(ctx, "DEXVRA", SX0 + 64, 49, 4.5);
+  caps(ctx, SX0 + 65, 75, "MARKET INTELLIGENCE", 10, C.faint, "left", 2.2);
+
+  // centre: the title, the count in the gem's colours
+  const ty = 50;
+  const tsz = 42;
   const parts = n === 1 ? [["TOP GAINER", false]] : [["TOP ", false], [String(n), true], [" GAINERS", false]];
   ctx.font = fx(tsz);
-  const tsp = 1.4;
+  const tsp = 1.2;
   const widths = parts.map(([t]) => trackedW(ctx, t, tsp));
   const tw = widths.reduce((a, v) => a + v, 0);
-  // the title as a mask, for the shine that crosses it once per loop
-  const pad = 12;
-  const mx = Math.floor((640 - tw / 2 - pad) * K);
-  const my = Math.floor((ty - tsz * 0.75) * K);
-  const mw = Math.ceil((tw + pad * 2) * K);
-  const mh = Math.ceil(tsz * 1.5 * K);
-  const mask = cv.createCanvas(mw, mh);
+  const pad = 10;
+  const mxD = 640 - tw / 2 - pad;
+  const myD = ty - tsz * 0.75;
+  const mask = cv.createCanvas(Math.ceil((tw + pad * 2) * K), Math.ceil(tsz * 1.5 * K));
   const mc = mask.getContext("2d");
   mc.scale(K, K);
-  mc.translate(-(640 - tw / 2 - pad), -(ty - tsz * 0.75));
+  mc.translate(-mxD, -myD);
   mc.font = fx(tsz);
   mc.textBaseline = "middle";
   mc.fillStyle = "#FFFFFF";
-  x = 640 - tw / 2;
+  let x = 640 - tw / 2;
   parts.forEach(([t, em], i) => {
     ctx.save();
     ctx.font = fx(tsz);
-    ctx.shadowColor = em ? rgba(C.cyan, 0.55) : "rgba(0,0,0,0.85)";
-    ctx.shadowBlur = (em ? 22 : 12) * K;
-    ctx.shadowOffsetY = em ? 0 : 4 * K;
     ctx.fillStyle = em
       ? lin(ctx, 0, ty - tsz / 2, 0, ty + tsz / 2, [[0, "#E6FFF5"], [0.45, C.mint], [1, C.cyan]])
-      : lin(ctx, 0, ty - tsz / 2, 0, ty + tsz / 2, [[0, "#FFFFFF"], [0.5, C.ice], [0.62, "#9EB8CF"], [1, "#E8F4FF"]]);
+      : lin(ctx, 0, ty - tsz / 2, 0, ty + tsz / 2, [[0, "#FFFFFF"], [0.55, C.ice], [1, "#B8CCE0"]]);
+    if (em) {
+      ctx.shadowColor = rgba(C.mint, 0.5);
+      ctx.shadowBlur = 16 * K;
+    }
     tracked(ctx, t, x, ty, tsp);
     ctx.restore();
     tracked(mc, t, x, ty, tsp);
     x += widths[i];
   });
-  b.title = { canvas: mask, x: mx, y: my };
+  b.title = { canvas: mask, x: Math.floor(mxD * K), y: Math.floor(myD * K) };
+  caps(ctx, 640, 86, "24H · RANKED BY PRICE CHANGE", 10, C.faint, "center", 2.2);
 
-  // the date between two fading rules
-  if (dateText) {
-    const dy = 136;
-    ctx.font = fname(12);
-    ctx.fillStyle = C.dim;
-    const wd = tracked(ctx, String(dateText).toUpperCase(), 640, dy, 2.2, "center");
-    for (const s of [-1, 1]) {
-      const a0 = 640 + s * (wd / 2 + 18);
-      const a1 = a0 + s * 150;
-      ctx.beginPath();
-      ctx.moveTo(Math.min(a0, a1), dy);
-      ctx.lineTo(Math.max(a0, a1), dy);
-      ctx.lineWidth = 0.9;
-      ctx.strokeStyle = lin(ctx, a0, 0, a1, 0, [[0, rgba(C.cyan, 0.6)], [1, rgba(C.cyan, 0)]]);
-      ctx.stroke();
-      // a cut diamond where each rule begins
-      ctx.beginPath();
-      ctx.moveTo(a0 - s * 2, dy);
-      ctx.lineTo(a0 - s * 6, dy - 4);
-      ctx.lineTo(a0 - s * 10, dy);
-      ctx.lineTo(a0 - s * 6, dy + 4);
-      ctx.closePath();
-      ctx.fillStyle = lin(ctx, 0, dy - 4, 0, dy + 4, [[0, C.mint], [1, C.cyan]]);
-      ctx.fill();
-    }
-  }
-
-  // footer: ◆ dexvra.io, between the tagline and the ranking rule
-  ctx.font = fx(14);
-  const fm = 16;
-  const fw = fm + 8 + ctx.measureText("dexvra.io").width;
-  const fx0 = 640 - fw / 2;
-  drawBrandMark(ctx, fx0, FOOT_Y - fm / 2, fm);
-  ctx.font = fx(14);
-  ctx.fillStyle = C.ink;
-  ctx.textAlign = "left";
-  ctx.fillText("dexvra.io", fx0 + fm + 8, FOOT_Y);
-  for (const s of [-1, 1]) {
-    const a0 = 640 + s * (fw / 2 + 22);
-    const a1 = a0 + s * 200;
-    ctx.beginPath();
-    ctx.moveTo(Math.min(a0, a1), FOOT_Y);
-    ctx.lineTo(Math.max(a0, a1), FOOT_Y);
-    ctx.lineWidth = 0.8;
-    ctx.strokeStyle = lin(ctx, a0, 0, a1, 0, [[0, rgba(C.cyan, 0.4)], [1, rgba(C.cyan, 0)]]);
-    ctx.stroke();
-  }
-  caps(ctx, X0, FOOT_Y, "FIND THE NEXT MOONSHOT", 10, C.faint, "left", 1.8);
-  caps(ctx, X1, FOOT_Y, "RANKED BY 24H CHANGE", 10, C.faint, "right", 1.8);
-  return out;
-}
-
-// the aurora: ribbons whose phases advance a WHOLE number of cycles per loop
-const RIBBONS = [
-  { y: 112, amp: 18, th: 16, k1: 2, c1: 1, k2: 3, c2: -1, k3: 1, c3: 1, color: "#22D3EE", a: 0.07 },
-  { y: 150, amp: 14, th: 12, k1: 1, c1: -1, k2: 4, c2: 1, k3: 2, c3: -1, color: "#2F86FF", a: 0.06 },
-  { y: 70, amp: 12, th: 10, k1: 3, c1: 1, k2: 2, c2: 1, k3: 1, c3: -1, color: "#3DF59F", a: 0.04 },
-];
-function drawAurora(ctx, u) {
-  ctx.save();
-  ctx.scale(K, K);
-  for (const r of RIBBONS) {
-    const pts = [];
-    for (let x = -20; x <= DW + 20; x += 20) {
-      const s = x / DW;
-      const yc = r.y + r.amp * Math.sin(TAU * (r.k1 * s + r.c1 * u)) + r.amp * 0.6 * Math.sin(TAU * (r.k2 * s + r.c2 * u) + 1.3);
-      const t = r.th * (0.55 + 0.45 * Math.sin(TAU * (r.k3 * s + r.c3 * u) + 0.7));
-      pts.push([x, yc, t]);
-    }
-    for (const [mul, a] of [[3, 0.35], [1.8, 0.6], [1, 1]]) {
-      ctx.beginPath();
-      pts.forEach(([x, y, t], i) => (i ? ctx.lineTo(x, y - t * mul) : ctx.moveTo(x, y - t * mul)));
-      for (let i = pts.length - 1; i >= 0; i--) ctx.lineTo(pts[i][0], pts[i][1] + pts[i][2] * mul);
-      ctx.closePath();
-      ctx.fillStyle = lin(ctx, 0, 0, DW, 0, [[0, rgba(r.color, 0)], [0.25, rgba(r.color, r.a * a)], [0.5, rgba(r.color, r.a * a * 1.4)], [0.75, rgba(r.color, r.a * a)], [1, rgba(r.color, 0)]]);
-      ctx.fill();
-    }
-  }
-  ctx.restore();
-}
-
-function glowSprite(cv, D, color) {
-  const s = cv.createCanvas(D, D);
-  const x = s.getContext("2d");
-  const g = x.createRadialGradient(D / 2, D / 2, 0, D / 2, D / 2, D / 2);
-  g.addColorStop(0, rgba("#FFFFFF", 0.95));
-  g.addColorStop(0.25, rgba(color, 0.7));
-  g.addColorStop(1, rgba(color, 0));
-  x.fillStyle = g;
-  x.fillRect(0, 0, D, D);
-  return s;
-}
-
-/** The leader's orbit ring: a light arc with a bright head and a fading tail. */
-function ringSprite(cv, dPx) {
-  const pad = Math.max(10, Math.round(dPx * 0.14));
-  const S = dPx + pad * 2;
-  const s = cv.createCanvas(S, S);
-  const x = s.getContext("2d");
-  const r = dPx / 2;
-  const segs = 90;
-  const lw = Math.max(2, dPx * 0.022);
-  x.lineCap = "round";
-  for (let i = 0; i < segs; i++) {
-    const f = i / (segs - 1);
-    const a0 = -Math.PI / 2 + (i * (TAU * 300 / 360)) / segs;
-    x.beginPath();
-    x.arc(S / 2, S / 2, r, a0, a0 + (TAU * 300 / 360) / segs + 0.02);
-    x.lineWidth = lw;
-    x.strokeStyle = rgba(f > 0.6 ? C.mint : C.cyan, f ** 2.2);
-    x.shadowColor = rgba(C.cyan, f ** 2);
-    x.shadowBlur = dPx * 0.05;
-    x.stroke();
-  }
-  const ha = -Math.PI / 2 + TAU * 300 / 360;
-  x.beginPath();
-  x.arc(S / 2 + r * Math.cos(ha), S / 2 + r * Math.sin(ha), lw * 1.5, 0, TAU);
-  x.fillStyle = "#FFFFFF";
-  x.shadowColor = C.mint;
-  x.shadowBlur = dPx * 0.08;
-  x.fill();
-  return s;
-}
-
-/** A lens bokeh: a soft disc with a brighter rim. */
-function bokehSprite(cv, D, color) {
-  const s = cv.createCanvas(D, D);
-  const x = s.getContext("2d");
-  const g = x.createRadialGradient(D / 2, D / 2, 0, D / 2, D / 2, D / 2);
-  g.addColorStop(0, rgba(color, 0.55));
-  g.addColorStop(0.78, rgba(color, 0.62));
-  g.addColorStop(0.9, rgba(color, 0.85));
-  g.addColorStop(1, rgba(color, 0));
-  x.fillStyle = g;
-  x.beginPath();
-  x.arc(D / 2, D / 2, D / 2, 0, TAU);
-  x.fill();
-  return s;
-}
-
-/** The champion's crown as a sprite, drawn over its orbit ring. */
-function crownSprite(cv, b, spec) {
-  const Sw = Math.ceil(spec.w * 1.7 * K);
-  const Sh = Math.ceil(spec.w * 1.3 * K);
-  const s = cv.createCanvas(Sw, Sh);
-  const x = s.getContext("2d");
-  x.scale(K, K);
-  const bx = spec.w * 0.85;
-  const by = spec.w * 1.05;
-  b.crown(x, bx, by, spec.w);
-  return { canvas: s, dx: spec.cx * K - bx * K, dy: spec.bottom * K - by * K };
-}
-
-/** Behind the cards: the champion's spotlight, and a pool of light under every
- *  card that stands on the floor. */
-function stageBack(cv, b) {
-  const out = cv.createCanvas(W, H);
-  const ctx = out.getContext("2d");
-  ctx.scale(K, K);
-  const hero = b.items.find((it) => it.hero);
-  if (hero) {
-    // a soft halo behind the champion — a hard-edged cone of light read as
-    // a pale triangle cut out of the room
-    const [x0, y0, x1, y1] = hero.box;
-    const cx = (x0 + x1) / 2;
-    const cy = (y0 + y1) / 2;
-    const rx = (x1 - x0) * 0.85;
-    ctx.save();
-    ctx.translate(cx, cy);
-    ctx.scale(1, Math.min(1.4, (y1 - y0) / (x1 - x0) + 0.35));
-    const g = ctx.createRadialGradient(0, 0, 0, 0, 0, rx);
-    g.addColorStop(0, rgba(C.cyan, 0.2));
-    g.addColorStop(0.55, rgba("#2F86FF", 0.08));
-    g.addColorStop(1, rgba("#2F86FF", 0));
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.arc(0, 0, rx, 0, TAU);
-    ctx.fill();
-    ctx.restore();
-  }
-  for (const it of b.items) {
-    const [x0, , x1, y1] = it.box;
-    if (Math.abs(y1 - FLOOR) > 0.5) continue;
-    const cx = (x0 + x1) / 2;
-    const rx = (x1 - x0) * 0.62;
-    ctx.save();
-    ctx.translate(cx, FLOOR + 4);
-    ctx.scale(1, 0.09);
-    const g = ctx.createRadialGradient(0, 0, 0, 0, 0, rx);
-    g.addColorStop(0, rgba(it.hero ? C.mint : C.cyan, it.hero ? 0.55 : 0.32));
-    g.addColorStop(1, rgba(C.cyan, 0));
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.arc(0, 0, rx, 0, TAU);
-    ctx.fill();
-    ctx.restore();
-  }
-  return out;
-}
-
-// the spotlights from above: each sways one whole cycle per loop
-const BEAMS = [
-  { x: 230, w: 250, a: 0.06, ph: 0.0 },
-  { x: 500, w: 290, a: 0.085, ph: 0.3 },
-  { x: 780, w: 290, a: 0.085, ph: 0.55 },
-  { x: 1050, w: 250, a: 0.06, ph: 0.8 },
-];
-function drawBeams(ctx, u) {
-  ctx.save();
-  ctx.scale(K, K);
-  ctx.globalCompositeOperation = "lighter";
-  for (const bm of BEAMS) {
-    const sway = 70 * Math.sin(TAU * (u + bm.ph));
-    const fx = bm.x + (640 - bm.x) * 0.22 + sway;
-    ctx.beginPath();
-    ctx.moveTo(bm.x - 16, -60);
-    ctx.lineTo(bm.x + 16, -60);
-    ctx.lineTo(fx + bm.w / 2, FLOOR);
-    ctx.lineTo(fx - bm.w / 2, FLOOR);
-    ctx.closePath();
-    ctx.fillStyle = lin(ctx, 0, -60, 0, FLOOR, [[0, rgba(C.ice, bm.a)], [0.5, rgba(C.cyan, bm.a * 0.45)], [1, rgba(C.cyan, 0)]]);
-    ctx.fill();
-  }
-  ctx.restore();
-}
-
-// ── the rooms ───────────────────────────────────────────────────────────────
-// "backroundya burukkkk cobaaa buatkan another backround" (2026-11-06): the
-// room the board stands in is a SCENE — its static base, what moves in it,
-// and whether lens bokeh floats in front. The cards, the header and the
-// timeline are the same in every one.
-
-/** A fine film grain: a photographic room never bands. Deterministic. */
-function grain(cv, ctx, seed, amount = 0.035) {
-  const T = 192;
-  const tile = cv.createCanvas(T, T);
-  const tx = tile.getContext("2d");
-  const id = tx.createImageData(T, T);
-  const r = rng(seed);
-  for (let i = 0; i < T * T; i++) {
-    const v = r() < 0.5 ? 0 : 255;
-    id.data[i * 4] = v;
-    id.data[i * 4 + 1] = v;
-    id.data[i * 4 + 2] = v;
-    id.data[i * 4 + 3] = Math.round(255 * amount * r());
-  }
-  tx.putImageData(id, 0, 0);
-  ctx.save();
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.fillStyle = ctx.createPattern(tile, "repeat");
-  ctx.fillRect(0, 0, W, H);
-  ctx.restore();
-}
-
-/** The floor every room shares: a sheen under the horizon, the horizon line. */
-function floorGloss(ctx, tint = C.cyan, strength = 1) {
-  ctx.fillStyle = lin(ctx, 0, FLOOR, 0, DH, [[0, rgba(tint, 0.1 * strength)], [1, rgba(tint, 0)]]);
-  ctx.fillRect(0, FLOOR, DW, DH - FLOOR);
+  // right: LIVE, and the date under it
+  const pw = 74;
+  const px0 = SX1 - pw;
   ctx.save();
   ctx.beginPath();
-  ctx.moveTo(60, FLOOR);
-  ctx.lineTo(1220, FLOOR);
-  ctx.lineWidth = 1.3;
-  ctx.strokeStyle = lin(ctx, 60, 0, 1220, 0, [[0, rgba(tint, 0)], [0.3, rgba(tint, 0.5 * strength)], [0.5, rgba(C.ice, 0.75 * strength)], [0.7, rgba(tint, 0.5 * strength)], [1, rgba(tint, 0)]]);
-  ctx.shadowColor = rgba(tint, 0.8);
-  ctx.shadowBlur = 12 * K;
+  ctx.moveTo(px0 + 10, 34);
+  ctx.lineTo(SX1, 34);
+  ctx.lineTo(SX1 - 10, 58);
+  ctx.lineTo(px0, 58);
+  ctx.closePath();
+  ctx.fillStyle = rgba(C.mint, 0.12);
+  ctx.fill();
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = rgba(C.mint, 0.6);
   ctx.stroke();
   ctx.restore();
-}
-
-function bloomAt(ctx, x, y, r, color, a) {
-  const g = ctx.createRadialGradient(x, y, 0, x, y, r);
-  g.addColorStop(0, rgba(color, a));
-  g.addColorStop(1, rgba(color, 0));
-  ctx.fillStyle = g;
-  ctx.fillRect(x - r, y - r, r * 2, r * 2);
-}
-
-/** The first room: swaying spotlights, aurora, a gem lattice, bokeh. */
-const SAPPHIRE = {
-  name: "Sapphire",
-  base: (cv) => backdrop(cv),
-  room(b, ctx, u) {
-    ctx.drawImage(b.bg, 0, 0);
-    drawBeams(ctx, u);
-    drawAurora(ctx, u);
-    ctx.save();
-    ctx.scale(K, K);
-    for (const k of b.bokehBack) {
-      const x = k.x + k.ax * Math.sin(TAU * (u + k.ph));
-      const y = k.y + 8 * Math.sin(TAU * (2 * u + k.ph));
-      ctx.globalAlpha = k.a;
-      ctx.drawImage(k.sprite, x - k.rad, y - k.rad, k.rad * 2, k.rad * 2);
-    }
-    ctx.restore();
-  },
-  front: true,
-};
-
-/** A: STUDIO — a photographer's sweep. One key light behind the stage, the
- *  rings of an amphitheatre, grain; a slow light passes once per loop. */
-const STUDIO = {
-  name: "Studio",
-  base(cv) {
-    const out = cv.createCanvas(W, H);
-    const ctx = out.getContext("2d");
-    ctx.scale(K, K);
-    ctx.fillStyle = lin(ctx, 0, 0, 0, DH, [[0, "#0C2141"], [0.5, "#07142B"], [1, "#03070F"]]);
-    ctx.fillRect(0, 0, DW, DH);
-    bloomAt(ctx, 640, 300, 820, "#2E74CC", 0.62); // the key light
-    bloomAt(ctx, 640, 150, 420, "#7FDCFF", 0.26);
-    // the edges fall off into the dark
-    ctx.fillStyle = lin(ctx, 0, 0, DW, 0, [[0, "rgba(0,0,0,0.45)"], [0.22, "rgba(0,0,0,0)"], [0.78, "rgba(0,0,0,0)"], [1, "rgba(0,0,0,0.45)"]]);
-    ctx.fillRect(0, 0, DW, DH);
-    // an amphitheatre: rings centred under the stage
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(0, 0, DW, FLOOR);
-    ctx.clip();
-    for (let R = 300, i = 0; R < 1150; R += 62, i++) {
-      ctx.beginPath();
-      ctx.arc(640, FLOOR + 40, R, Math.PI, TAU);
-      ctx.lineWidth = i % 3 === 0 ? 1.3 : 0.8;
-      ctx.strokeStyle = rgba("#B8DDFF", Math.max(0.03, 0.13 - i * 0.007));
-      ctx.stroke();
-    }
-    // the cove: wall meeting floor, lit from the front
-    ctx.fillStyle = lin(ctx, 0, FLOOR - 170, 0, FLOOR, [[0, rgba("#3A86D8", 0)], [1, rgba("#4FA2F0", 0.22)]]);
-    ctx.fillRect(0, FLOOR - 170, DW, 170);
-    ctx.restore();
-    // the gem, large and faint on the wall behind the stage
-    ctx.save();
-    ctx.globalAlpha = 0.07;
-    kit.drawGem(ctx, 640 - 330, 150, 660);
-    ctx.restore();
-    floorGloss(ctx, C.cyan, 0.9);
-    grain(cv, ctx, 401);
-    return out;
-  },
-  room(b, ctx, u) {
-    ctx.drawImage(b.bg, 0, 0);
-    ctx.save();
-    ctx.scale(K, K);
-    ctx.globalCompositeOperation = "lighter";
-    // the key light breathes
-    bloomAt(ctx, 640, 330, 700, "#2F7FD8", 0.07 * (1 - Math.cos(TAU * u)) / 2);
-    // one slow pass of light across the sweep, off-frame at both ends
-    const x = -360 + (DW + 720) * easeInOut(u);
-    ctx.beginPath();
-    ctx.rect(0, 0, DW, FLOOR);
-    ctx.clip();
-    ctx.beginPath();
-    ctx.moveTo(x - 60, 0);
-    ctx.lineTo(x + 200, 0);
-    ctx.lineTo(x + 20, FLOOR);
-    ctx.lineTo(x - 240, FLOOR);
-    ctx.closePath();
-    ctx.fillStyle = lin(ctx, x - 240, 0, x + 200, 0, [[0, "rgba(140,210,255,0)"], [0.5, "rgba(140,210,255,0.07)"], [1, "rgba(140,210,255,0)"]]);
-    ctx.fill();
-    ctx.restore();
-  },
-  front: false,
-};
-
-/** B: COSMIC — a nebula drifting over a starfield, and the board standing on
- *  the rim of a planet, its atmosphere lit cyan. A star falls once a loop. */
-const PLANET = { cx: 640, R: 2400 };
-PLANET.cy = FLOOR - 26 + PLANET.R;
-const COSMIC = {
-  name: "Cosmic",
-  base(cv) {
-    const out = cv.createCanvas(W, H);
-    const ctx = out.getContext("2d");
-    ctx.scale(K, K);
-    ctx.fillStyle = lin(ctx, 0, 0, 0, DH, [[0, "#061031"], [0.55, "#040A20"], [1, "#010309"]]);
-    ctx.fillRect(0, 0, DW, DH);
-    const r = rng(7031);
-    for (let i = 0; i < 320; i++) {
-      const x = r() * DW;
-      const y = r() * (FLOOR + 10);
-      ctx.fillStyle = rgba(r() < 0.8 ? "#FFFFFF" : "#BFE6FF", 0.15 + r() * 0.5);
-      ctx.beginPath();
-      ctx.arc(x, y, 0.35 + r() * 0.8, 0, TAU);
-      ctx.fill();
-    }
-    grain(cv, ctx, 911, 0.025);
-    return out;
-  },
-  prep(cv, b) {
-    // the nebula, a little larger than the frame, so it can drift
-    const M = 60;
-    const neb = cv.createCanvas(Math.round((DW + M * 2) * K), Math.round((DH + M * 2) * K));
-    const nx = neb.getContext("2d");
-    nx.scale(K, K);
-    nx.translate(M, M);
-    nx.globalCompositeOperation = "lighter";
-    const r = rng(5521);
-    const cols = ["#1E4FD8", "#1E4FD8", "#18B8E0", "#5B3CFF", "#2F86FF", "#3DF5C0"];
-    for (let i = 0; i < 46; i++) {
-      const x = -40 + r() * (DW + 80);
-      const y = -40 + r() * (FLOOR * 0.62);
-      const rad = 70 + r() * 230;
-      const c = cols[Math.floor(r() * cols.length)];
-      bloomAt(nx, x, y, rad, c, (c === "#3DF5C0" ? 0.06 : 0.12) + r() * 0.1);
-    }
-    nx.globalCompositeOperation = "source-over";
-    for (let i = 0; i < 14; i++) bloomAt(nx, r() * DW, r() * FLOOR * 0.8, 60 + r() * 140, "#01030A", 0.35); // dust lanes
-    // the planet, its own layer over the nebula
-    const pl = cv.createCanvas(W, H);
-    const px = pl.getContext("2d");
-    px.scale(K, K);
-    const { cx, cy, R } = PLANET;
-    const halo = px.createRadialGradient(cx, cy, R - 4, cx, cy, R + 120);
-    halo.addColorStop(0, rgba(C.cyan, 0.42));
-    halo.addColorStop(0.1, rgba("#2F86FF", 0.18));
-    halo.addColorStop(1, rgba("#2F86FF", 0));
-    px.fillStyle = halo;
-    px.fillRect(0, 0, DW, DH);
-    px.beginPath();
-    px.arc(cx, cy, R, 0, TAU);
-    px.fillStyle = lin(px, 0, cy - R, 0, DH, [[0, "#0D2C52"], [0.06, "#071833"], [1, "#02060F"]]);
-    px.fill();
-    const rim = px.createRadialGradient(cx, cy, R - 70, cx, cy, R);
-    rim.addColorStop(0, rgba(C.cyan, 0));
-    rim.addColorStop(1, rgba(C.cyan, 0.32));
-    px.fillStyle = rim;
-    px.fill();
-    px.beginPath();
-    px.arc(cx, cy, R, Math.PI * 1.25, Math.PI * 1.75);
-    px.lineWidth = 1.6;
-    px.strokeStyle = rgba(C.ice, 0.9);
-    px.shadowColor = C.cyan;
-    px.shadowBlur = 14 * K;
-    px.stroke();
-    const star = (x, y, s) => ({ x, y, s });
-    const tw = Array.from({ length: 44 }, () => ({ ...star(r() * DW, r() * (FLOOR - 40), 0.9 + r() * 1.6), ph: r(), cyc: 1 + Math.floor(r() * 3) }));
-    b.cosmic = { neb, M, planet: pl, twinkle: tw, glint: glowSprite(cv, Math.round(14 * K), "#9FE6FF") };
-  },
-  room(b, ctx, u) {
-    const s = b.cosmic;
-    ctx.drawImage(b.bg, 0, 0);
-    const ox = 22 * Math.cos(TAU * u);
-    const oy = 12 * Math.sin(TAU * u);
-    ctx.drawImage(s.neb, (-s.M + ox) * K, (-s.M + oy) * K);
-    ctx.save();
-    ctx.scale(K, K);
-    for (const t of s.twinkle) {
-      const a = 0.5 + 0.5 * Math.sin(TAU * (u * t.cyc + t.ph));
-      if (a < 0.15) continue;
-      ctx.globalAlpha = a;
-      const z = t.s * 3.2;
-      ctx.drawImage(s.glint, t.x - z, t.y - z, z * 2, z * 2);
-    }
-    ctx.globalAlpha = 1;
-    // a falling star, once a loop
-    if (u >= 0.16 && u < 0.27) {
-      const q = (u - 0.16) / 0.11;
-      const x0 = 1010 - 520 * q;
-      const y0 = 70 + 170 * q;
-      ctx.globalAlpha = Math.sin(Math.PI * q);
-      ctx.lineCap = "round";
-      ctx.lineWidth = 1.6;
-      ctx.strokeStyle = lin(ctx, x0, y0, x0 + 150, y0 - 49, [[0, "rgba(255,255,255,0.95)"], [1, "rgba(160,220,255,0)"]]);
-      ctx.beginPath();
-      ctx.moveTo(x0, y0);
-      ctx.lineTo(x0 + 150, y0 - 49);
-      ctx.stroke();
-    }
-    ctx.restore();
-    ctx.drawImage(s.planet, 0, 0);
-  },
-  front: false,
-};
-
-/** C: SILK — two bundles of light threads flowing across the room, like
- *  liquid sapphire; they ripple one whole cycle per loop. */
-const SILK = {
-  name: "Silk",
-  base(cv) {
-    const out = cv.createCanvas(W, H);
-    const ctx = out.getContext("2d");
-    ctx.scale(K, K);
-    ctx.fillStyle = lin(ctx, 0, 0, 0, DH, [[0, "#081B3A"], [0.5, "#04102A"], [1, "#01050F"]]);
-    ctx.fillRect(0, 0, DW, DH);
-    bloomAt(ctx, 640, 300, 720, "#1E5CAE", 0.4);
-    floorGloss(ctx, C.cyan, 0.8);
-    grain(cv, ctx, 1203, 0.03);
-    return out;
-  },
-  prep(cv, b) {
-    b.silk = cv.createCanvas(Math.round(W / 2), Math.round(H / 2)); // half-res: threads are soft anyway
-  },
-  room(b, ctx, u) {
-    ctx.drawImage(b.bg, 0, 0);
-    const sc = b.silk;
-    const sx = sc.getContext("2d");
-    sx.setTransform(1, 0, 0, 1, 0, 0);
-    sx.clearRect(0, 0, sc.width, sc.height);
-    sx.scale(K / 2, K / 2);
-    sx.globalCompositeOperation = "lighter";
-    sx.lineWidth = 1.1;
-    const bundle = (y0, amp, dir, n, colA, colB, a, clearMiddle = false) => {
-      for (let i = 0; i < n; i++) {
-        const t = i / (n - 1);
-        const bell = Math.exp(-((t - 0.5) ** 2) / 0.045);
-        sx.beginPath();
-        for (let x = -20; x <= DW + 20; x += 20) {
-          const s = x / DW;
-          const y = y0
-            + amp * Math.sin(TAU * (0.85 * s + dir * u) + t * 1.4)
-            + amp * 0.35 * Math.sin(TAU * (1.9 * s - dir * u) + t * 2.6)
-            + (t - 0.5) * amp * 1.3 * (0.6 + 0.4 * Math.sin(TAU * (s + dir * u)));
-          if (x === -20) sx.moveTo(x, y);
-          else sx.lineTo(x, y);
-        }
-        // behind the headline the threads part, so the date stays clean
-        sx.strokeStyle = lin(sx, 0, 0, DW, 0, clearMiddle
-          ? [[0, rgba(colA, 0)], [0.16, rgba(colA, a * (0.3 + bell))], [0.36, rgba(colA, a * 0.08)], [0.64, rgba(colB, a * 0.08)], [0.84, rgba(colB, a * (0.3 + bell))], [1, rgba(colB, 0)]]
-          : [[0, rgba(colA, 0)], [0.3, rgba(colA, a * (0.25 + bell))], [0.6, rgba(colB, a * (0.3 + bell))], [1, rgba(colB, 0)]]);
-        sx.stroke();
-      }
-    };
-    bundle(118, 70, 1, 60, "#8FE8FF", "#2F86FF", 0.34, true);
-    bundle(420, 90, -1, 50, "#2F86FF", "#3DF5B2", 0.24);
-    bundle(664, 40, 1, 44, "#7FE3FF", "#3DF5B2", 0.3);
-    ctx.save();
-    ctx.globalCompositeOperation = "lighter";
-    ctx.drawImage(sc, 0, 0, W, H);
-    ctx.restore();
-  },
-  front: false,
-};
-
-/** D: AURORA — curtains of northern light over a night sky, in the gem's
- *  own mint and cyan, rippling one whole cycle per loop; a still lake below
- *  catches them. */
-const AURORA = {
-  name: "Aurora",
-  base(cv) {
-    const out = cv.createCanvas(W, H);
-    const ctx = out.getContext("2d");
-    ctx.scale(K, K);
-    ctx.fillStyle = lin(ctx, 0, 0, 0, DH, [[0, "#030A1E"], [0.5, "#061634"], [0.85, "#04102A"], [1, "#01040C"]]);
-    ctx.fillRect(0, 0, DW, DH);
-    const r = rng(3301);
-    for (let i = 0; i < 220; i++) {
-      ctx.fillStyle = rgba("#FFFFFF", 0.1 + r() * 0.45);
-      ctx.beginPath();
-      ctx.arc(r() * DW, r() * FLOOR * 0.7, 0.3 + r() * 0.7, 0, TAU);
-      ctx.fill();
-    }
-    bloomAt(ctx, 640, FLOOR + 20, 640, "#1F7FC8", 0.28);
-    floorGloss(ctx, C.mint, 0.9);
-    grain(cv, ctx, 77, 0.025);
-    return out;
-  },
-  prep(cv, b) {
-    b.aurora = cv.createCanvas(Math.round(W / 2), Math.round(H / 2)); // soft by nature: half-res
-  },
-  room(b, ctx, u) {
-    ctx.drawImage(b.bg, 0, 0);
-    const a = b.aurora;
-    const x = a.getContext("2d");
-    x.setTransform(1, 0, 0, 1, 0, 0);
-    x.clearRect(0, 0, a.width, a.height);
-    x.scale(K / 2, K / 2);
-    x.globalCompositeOperation = "lighter";
-    const curtain = (base, amp, k1, k2, dir, h, colTop, colBase, alpha) => {
-      for (let px = -10; px <= DW + 10; px += 3) {
-        const s = px / DW;
-        const y = base + amp * Math.sin(TAU * (k1 * s + dir * u)) + amp * 0.45 * Math.sin(TAU * (k2 * s - dir * u) + 1.7);
-        const flick = 0.55 + 0.45 * Math.sin(TAU * (7.3 * s + 2 * dir * u) + 0.4) * Math.sin(TAU * (3.1 * s - dir * u));
-        const hh = h * (0.7 + 0.3 * flick);
-        const g = x.createLinearGradient(0, y - hh, 0, y + 14);
-        g.addColorStop(0, rgba(colTop, 0));
-        g.addColorStop(0.7, rgba(colTop, alpha * 0.55 * flick));
-        g.addColorStop(0.94, rgba(colBase, alpha * flick));
-        g.addColorStop(1, rgba(colBase, 0));
-        x.fillStyle = g;
-        x.fillRect(px, y - hh, 3.4, hh + 14);
-      }
-    };
-    curtain(150, 40, 1, 2, 1, 150, "#2F86FF", "#3DF59F", 0.42);
-    curtain(205, 30, 2, 3, -1, 120, "#5B3CFF", "#22D3EE", 0.3);
-    ctx.save();
-    ctx.globalCompositeOperation = "lighter";
-    ctx.drawImage(a, 0, 0, W, H);
-    // the lake below the horizon holds them, upside down and dimmer
-    ctx.beginPath();
-    ctx.rect(0, FLOOR * K, W, H - FLOOR * K);
-    ctx.clip();
-    ctx.globalAlpha = 0.28;
-    ctx.translate(0, FLOOR * K * 2);
-    ctx.scale(1, -1);
-    ctx.drawImage(a, 0, 0, W, H);
-    ctx.restore();
-  },
-  front: false,
-};
-
-const SCENES = { sapphire: SAPPHIRE, studio: STUDIO, cosmic: COSMIC, silk: SILK, aurora: AURORA };
-const DEFAULT_SCENE = "sapphire";
-const sceneOf = (name) => SCENES[name] || SCENES[process.env.GAINERS_MOTION_SCENE] || SCENES[DEFAULT_SCENE];
-
-/** Lay out the board once: the stage, the chrome, and every card's sprite. */
-function build(cv, n, coins, { dateText = "", showPct = true, scene = null } = {}) {
-  const b = new Board(cv, n, { showPct });
-  b.scene = sceneOf(scene);
-  b.bg = b.scene.base(cv);
-  b.chrome = chrome(cv, b, n, dateText);
-  b.vig = vignette(cv);
-  LAYOUTS[n](b, coins);
-  b.back = stageBack(cv, b);
-  if (b.scene.prep) b.scene.prep(cv, b);
-  if (b.ring) b.ringSprite = ringSprite(cv, Math.round(b.ring.d * 1.22 * K));
-  if (b.crownSpec) b.crownSprite = crownSprite(cv, b, b.crownSpec);
-  const r = rng(n * 7919 + 3);
-  const sprites = { 4: glowSprite(cv, Math.round(6 * K), C.cyan), 7: glowSprite(cv, Math.round(10 * K), C.mint), 11: glowSprite(cv, Math.round(15 * K), C.ice) };
-  b.motes = Array.from({ length: 34 }, () => ({
-    x: 40 + r() * (DW - 80),
-    y: 160 + r() * (FLOOR - 170),
-    sprite: sprites[[4, 4, 7, 7, 11][Math.floor(r() * 5)]],
-    laps: r() < 0.6 ? 1 : 2,
-    sway: 4 + r() * 12,
-    ph: r() * TAU,
-    tw: 1 + Math.floor(r() * 3),
-    a: 0.2 + r() * 0.45,
-  }));
-  const bok = { cyan: bokehSprite(cv, 192, "#5FD8FF"), blue: bokehSprite(cv, 192, "#3E7BFF"), mint: bokehSprite(cv, 192, "#5DF5B2") };
-  const kinds = ["cyan", "cyan", "blue", "mint"];
-  b.bokehBack = Array.from({ length: 14 }, () => ({
-    x: r() * DW, y: 150 + r() * (FLOOR - 120), rad: 22 + r() * 46,
-    sprite: bok[kinds[Math.floor(r() * 4)]], a: 0.05 + r() * 0.08,
-    ax: 18 + r() * 40, ph: r(),
-  }));
-  const corners = [[70, 160], [1210, 180], [40, 640], [1250, 620], [640, 700]];
-  b.bokehFront = corners.map(([x, y]) => ({
-    x, y, rad: 80 + r() * 70, sprite: bok[kinds[Math.floor(r() * 4)]], a: 0.035 + r() * 0.035,
-    ax: 26 + r() * 30, ph: r(),
-  }));
-  // sparkles round the champion's coin, each twinkling whole cycles per loop
-  if (b.ring) {
-    b.sparkles = [-0.95, -0.35, 0.35, 2.25, 2.85, 3.55].map((a, i) => ({
-      a, rad: b.ring.d * (0.66 + 0.12 * r()), size: 4 + r() * 5, tw: 1 + (i % 3), ph: r(),
-    }));
+  b.liveDot = { x: px0 + 18, y: 46 };
+  ctx.beginPath();
+  ctx.arc(px0 + 18, 46, 3.5, 0, TAU);
+  ctx.fillStyle = C.mint;
+  ctx.fill();
+  caps(ctx, px0 + 28, 46, "LIVE", 11, C.mint, "left", 2);
+  if (dateText) {
+    ctx.font = fname(12);
+    ctx.fillStyle = C.dim;
+    tracked(ctx, String(dateText).toUpperCase(), SX1, 78, 1.6, "right");
   }
-  b.tmp = null;
+
+  // the ticker tape's band, and its two fixed chips
+  ctx.fillStyle = "rgba(3,8,18,0.86)";
+  ctx.fillRect(0, TAPE_Y, DW, DH - TAPE_Y);
+  ctx.fillStyle = lin(ctx, 0, 0, DW, 0, [[0, rgba(C.cyan, 0)], [0.2, rgba(C.cyan, 0.5)], [0.8, rgba(C.mint, 0.5)], [1, rgba(C.mint, 0)]]);
+  ctx.fillRect(0, TAPE_Y, DW, 1);
+  ctx.beginPath();
+  ctx.moveTo(0, TAPE_Y);
+  ctx.lineTo(TAPE_L, TAPE_Y);
+  ctx.lineTo(TAPE_L - 22, DH);
+  ctx.lineTo(0, DH);
+  ctx.closePath();
+  ctx.fillStyle = lin(ctx, 0, 0, TAPE_L, 0, [[0, C.mint], [1, C.cyan]]);
+  ctx.fill();
+  caps(ctx, 24, (TAPE_Y + DH) / 2, "24H GAINERS", 12, "#04121A", "left", 2);
+  ctx.beginPath();
+  ctx.moveTo(TAPE_R + 22, TAPE_Y);
+  ctx.lineTo(DW, TAPE_Y);
+  ctx.lineTo(DW, DH);
+  ctx.lineTo(TAPE_R, DH);
+  ctx.closePath();
+  ctx.fillStyle = "#07111F";
+  ctx.fill();
+  drawBrandMark(ctx, TAPE_R + 36, (TAPE_Y + DH) / 2 - 12, 24);
+  ctx.font = fx(15);
+  ctx.fillStyle = C.ink;
+  ctx.textAlign = "left";
+  ctx.fillText("dexvra.io", TAPE_R + 68, (TAPE_Y + DH) / 2 + 1);
+  return out;
+}
+
+/** The ticker tape's content, one period of it, as a strip. */
+function tapeStrip(cv, b) {
+  const items = b.coins.map((c) => {
+    const v = pctOf(c);
+    return { sym: tickerOf(c), fig: b.showPct && v !== null ? fmtPct(v) : pos(c.price) ? fmtPrice(c.price) : "", up: v === null || v >= 0 };
+  });
+  const m = cv.createCanvas(10, 10).getContext("2d");
+  const widths = items.map((it) => {
+    m.font = fx(17);
+    const a = m.measureText(it.sym).width;
+    m.font = fx(17);
+    const f = it.fig ? m.measureText(it.fig).width + 12 : 0;
+    return a + f + 54;
+  });
+  let segW = widths.reduce((a, v) => a + v, 0);
+  const reps = Math.max(1, Math.ceil(620 / segW)); // a short board is repeated, or it races
+  segW *= reps;
+  const h = DH - TAPE_Y;
+  const s = cv.createCanvas(Math.ceil(segW * K), Math.ceil(h * K));
+  const x = s.getContext("2d");
+  x.scale(K, K);
+  x.textBaseline = "middle";
+  let px = 0;
+  for (let r = 0; r < reps; r++) {
+    items.forEach((it, i) => {
+      kit.drawGem(x, px + 6, h / 2 - 8, 16);
+      x.font = fx(17);
+      x.fillStyle = C.ink;
+      x.fillText(it.sym, px + 30, h / 2 + 1);
+      const a = x.measureText(it.sym).width;
+      if (it.fig) {
+        x.fillStyle = it.up ? C.mint : C.red;
+        x.fillText(it.fig, px + 30 + a + 12, h / 2 + 1);
+      }
+      px += widths[i];
+    });
+  }
+  return { canvas: s, segW };
+}
+
+/** Lay out the board once: the room, the chrome, every plate's sprite. */
+function build(cv, n, coins, { dateText = "", showPct = true } = {}) {
+  const b = new Board(cv, n, coins, { showPct });
+  const room = facetRoom(cv);
+  b.bg = room.base;
+  b.edges = room.edges;
+  b.chrome = chrome(cv, b, n, dateText);
+  LAYOUTS[n](b, coins);
+  b.tape = tapeStrip(cv, b);
+  b.tmp = cv.createCanvas(b.edges.width, b.edges.height);
+  b.shine = null;
   return b;
 }
 
+/** A plate at loop position u: its alpha, its vertical scale (a terminal
+ *  switching it off and on), its decode progress, and the flash of the line. */
 function itemState(it, u, nItems) {
-  if (u < HOLD_END) return [1, 0, 1];
-  if (u < EXIT_END) {
-    const k = easeIn((u - HOLD_END) / (EXIT_END - HOLD_END));
-    return [1 - k, 12 * k, 1];
+  if (u < HOLD_END) return { a: 1, s: 1, p: 1, flash: 0 };
+  if (u < ON0) {
+    const step = Math.min(0.006, (OFF_END - HOLD_END - OFF_DUR) / Math.max(1, nItems - 1));
+    const st = HOLD_END + (nItems - 1 - it.order) * step; // the last rank first, the leader last
+    const q = clamp01((u - st) / OFF_DUR);
+    if (q >= 1) return { a: 0, s: 0.02, p: 1, flash: 0 };
+    return { a: 1, s: 1 - 0.98 * easeIn(q), p: 1, flash: q > 0 ? q : 0 };
   }
-  const span = Math.max(0, 1 - ENTER_SLACK - EXIT_END - COUNT_DELAY - COUNT_DUR - ENTER_DUR);
-  const step = Math.min(0.016, span / Math.max(1, nItems - 1));
-  const start = EXIT_END + 0.004 + it.order * step;
-  const e = easeOut((u - start) / ENTER_DUR);
-  const p = clamp01((u - start - COUNT_DELAY) / COUNT_DUR);
-  return [e, 22 * (1 - e), p];
+  const span = Math.max(0, 1 - ENTER_SLACK - ON0 - ON_DUR - COUNT_DELAY - COUNT_DUR);
+  const step = Math.min(0.018, span / Math.max(1, nItems - 1));
+  const st = ON0 + it.order * step;
+  if (u < st) return { a: 0, s: 0.02, p: 0, flash: 0 };
+  const q = clamp01((u - st) / ON_DUR);
+  const p = clamp01((u - st - COUNT_DELAY) / COUNT_DUR);
+  return { a: 1, s: 0.02 + 0.98 * easeOut(q), p, flash: 1 - q };
 }
-
-function glintWindow(it, nItems) {
-  if (it.order === 0) return [0.05, 0.19];
-  const g = Math.min(0.05, (0.56 - 0.21 - 0.1) / Math.max(1, nItems - 2));
-  const s = 0.21 + (it.order - 1) * g;
-  return [s, s + 0.1];
-}
-
-// The camera breathes in and back out once per loop — the background less
-// than the stage, the front bokeh more: parallax. At u = 0 every scale is
-// exactly 1, so frame 0 is the still.
-const camScale = (u, amp) => 1 + (amp * (1 - Math.cos(TAU * u))) / 2;
-function camera(ctx, s) {
-  const cx = W / 2;
-  const cy = H * 0.56;
-  ctx.translate(cx, cy);
-  ctx.scale(s, s);
-  ctx.translate(-cx, -cy);
-}
-
-// the champion lands at about this point of the loop: a ring of light bursts
-const FLASH = [0.765, 0.86];
 
 /** One frame at loop position u ∈ [0, 1). compose(b, ctx, 0) is the full board. */
 function compose(b, ctx, u) {
   u = ((u % 1) + 1) % 1;
   const nItems = b.items.length;
+  const salt = Math.floor(u * FRAMES * 0.5); // the decode noise changes every other frame
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.globalAlpha = 1;
   ctx.globalCompositeOperation = "source-over";
-  // bilinear, not "high": the camera moves every sprite by under 3%, where a
-  // high-quality resample is invisible and costs half the frame (measured:
-  // 126ms → 62ms of rasterising per frame)
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = "low";
 
-  // ── the room (slow camera)
+  // the room, and the lights sliding over its facets
+  ctx.drawImage(b.bg, 0, 0);
+  // the facet edges, shown only where a light falls: the lights' union as a
+  // mask, the edges drawn into it
+  const tx = b.tmp.getContext("2d");
+  tx.setTransform(1, 0, 0, 1, 0, 0);
+  tx.globalCompositeOperation = "source-over";
+  tx.clearRect(0, 0, b.tmp.width, b.tmp.height);
+  tx.save();
+  tx.scale(K / 2, K / 2);
+  for (const l of LIGHTS) {
+    const [lx, ly] = lightAt(l, u);
+    const g = tx.createRadialGradient(lx, ly, 0, lx, ly, l.r);
+    g.addColorStop(0, "rgba(255,255,255,1)");
+    g.addColorStop(1, "rgba(255,255,255,0)");
+    tx.fillStyle = g;
+    tx.fillRect(lx - l.r, ly - l.r, l.r * 2, l.r * 2);
+  }
+  tx.restore();
+  tx.globalCompositeOperation = "source-in";
+  tx.drawImage(b.edges, 0, 0);
   ctx.save();
-  camera(ctx, camScale(u, 0.012));
-  b.scene.room(b, ctx, u);
-  ctx.restore();
+  ctx.globalCompositeOperation = "lighter";
+  ctx.globalAlpha = 0.55;
+  ctx.drawImage(b.tmp, 0, 0, W, H);
   ctx.globalAlpha = 1;
+  ctx.scale(K, K);
+  for (const l of LIGHTS) {
+    const [lx, ly] = lightAt(l, u);
+    const g = ctx.createRadialGradient(lx, ly, 0, lx, ly, l.r);
+    g.addColorStop(0, rgba(l.color, l.a));
+    g.addColorStop(1, rgba(l.color, 0));
+    ctx.fillStyle = g;
+    ctx.fillRect(lx - l.r, ly - l.r, l.r * 2, l.r * 2);
+  }
+  ctx.restore();
 
-  // ── the header and footer stand still: the parallax is against them
   ctx.drawImage(b.chrome, 0, 0);
 
-  // ── the stage (the camera's push)
+  // the tape scrolls one period per loop
   ctx.save();
-  camera(ctx, camScale(u, 0.026));
-  ctx.drawImage(b.back, 0, 0);
-
-  // motes rising through the light, behind the cards; whole laps per loop
-  const span = FLOOR - 120;
-  for (const m of b.motes) {
-    const y = 120 + ((((m.y - 120 - span * m.laps * u) % span) + span) % span);
-    const x = m.x + m.sway * Math.sin(TAU * u * m.laps + m.ph);
-    const a = m.a * (0.55 + 0.45 * Math.sin(TAU * u * m.tw + m.ph * 1.7));
-    if (a <= 0.01) continue;
-    ctx.globalAlpha = a;
-    ctx.drawImage(m.sprite, x * K - m.sprite.width / 2, y * K - m.sprite.height / 2);
+  ctx.beginPath();
+  ctx.rect(TAPE_L * K, TAPE_Y * K, (TAPE_R + 22 - TAPE_L) * K, (DH - TAPE_Y) * K);
+  ctx.clip();
+  const sw = b.tape.segW;
+  let tx0 = TAPE_L - 20 - u * sw;
+  while (tx0 < TAPE_R + 22) {
+    ctx.drawImage(b.tape.canvas, tx0 * K, TAPE_Y * K);
+    tx0 += sw;
   }
-  ctx.globalAlpha = 1;
+  ctx.restore();
 
+  // the plates
   for (const it of b.items) {
-    const [a, dy, p] = itemState(it, u, nItems);
-    if (a <= 0.004) continue;
-    const oy = Math.round(dy * K);
-    ctx.globalAlpha = a;
-    if (p >= 0.999) {
-      ctx.drawImage(it.final, it.x, it.y + oy);
+    const st = itemState(it, u, nItems);
+    if (st.a <= 0.004) continue;
+    const cyPx = ((it.box[1] + it.box[3]) / 2) * K;
+    ctx.save();
+    if (st.s < 0.999) {
+      ctx.translate(0, cyPx);
+      ctx.scale(1, st.s);
+      ctx.translate(0, -cyPx);
+    }
+    ctx.globalAlpha = st.a;
+    if (st.p >= 0.999) {
+      ctx.drawImage(it.final, it.x, it.y);
     } else {
-      ctx.drawImage(it.body, it.x, it.y + oy);
+      ctx.drawImage(it.body, it.x, it.y);
       ctx.save();
-      ctx.translate(it.x, it.y + oy);
+      ctx.translate(it.x, it.y);
       it.local(ctx);
-      for (const lv of it.lives) lv(ctx, p);
+      for (const lv of it.lives) lv(ctx, st.p, salt);
       ctx.restore();
     }
-    if (it.reflect) ctx.drawImage(it.reflect, it.x, Math.round(FLOOR * K) + 2 * K - oy);
+    ctx.restore();
+    // the thin bright line a terminal draws as it switches a panel off and
+    // on: only while the plate is nearly folded — a wash over a plate that
+    // is still open reads as a white sheet, not a screen
+    const line = clamp01(1.25 - st.s * 1.5);
+    if (st.flash > 0.01 && line > 0.01) {
+      const [x0, , x1] = it.box;
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      ctx.globalAlpha = line;
+      ctx.fillStyle = lin(ctx, x0 * K, 0, x1 * K, 0, [[0, rgba(C.cyan, 0)], [0.2, rgba(C.cyan, 0.8)], [0.5, rgba("#FFFFFF", 1)], [0.8, rgba(C.cyan, 0.8)], [1, rgba(C.cyan, 0)]]);
+      ctx.shadowColor = C.cyan;
+      ctx.shadowBlur = 14 * K;
+      ctx.fillRect(x0 * K, cyPx - 1.5 * K, (x1 - x0) * K, 3 * K);
+      ctx.restore();
+    }
   }
-  ctx.globalAlpha = 1;
 
   ctx.save();
   ctx.scale(K, K);
-  // a glint crosses each card in turn (hold only)
-  for (const it of b.items) {
-    const [g0, g1] = glintWindow(it, nItems);
-    if (!(u >= g0 && u < g1 && u < HOLD_END)) continue;
-    const [x0, y0, x1, y1] = it.box;
-    const gp = easeInOut((u - g0) / (g1 - g0));
-    const w = x1 - x0;
-    const bw = Math.max(30, w * 0.18);
-    const sk = (y1 - y0) * 0.35;
-    const bx = x0 - bw - sk + (w + bw + sk) * gp;
+  // a pulse runs down each LED bar, one after another (hold only)
+  for (const bar of b.bars) {
+    const s0 = 0.08 + bar.order * 0.035;
+    if (!(u >= s0 && u < s0 + 0.14)) continue;
+    const q = (u - s0) / 0.14;
+    const idx = Math.floor(q * bar.lit);
+    const gap = Math.max(1.5, bar.h * 0.35);
+    const sw2 = (bar.x1 - bar.x0 - gap * (bar.segs - 1)) / bar.segs;
+    const x = bar.x0 + idx * (sw2 + gap);
+    ctx.fillStyle = "rgba(255,255,255,0.85)";
+    ctx.shadowColor = bar.up ? C.mint : C.red;
+    ctx.shadowBlur = bar.h * 2.5 * K;
+    ctx.fillRect(x, bar.y - bar.h / 2, sw2, bar.h);
+    ctx.shadowBlur = 0;
+  }
+  // a glint crosses the leader's plate (hold only)
+  const lead = b.items.find((it) => it.lead);
+  if (lead && u >= 0.04 && u < 0.18) {
+    const [x0, y0, x1, y1] = lead.box;
+    const q = easeInOut((u - 0.04) / 0.14);
+    const bw = Math.max(60, (x1 - x0) * 0.16);
+    const sk = (y1 - y0) * 0.4;
+    const bx = x0 - bw - sk + (x1 - x0 + bw + sk) * q;
     ctx.save();
-    roundRect(ctx, x0, y0, w, y1 - y0, it.r);
+    gemPath(ctx, lead.P, lead.deep);
     ctx.clip();
     ctx.beginPath();
     ctx.moveTo(bx + sk, y0);
@@ -2057,185 +1391,44 @@ function compose(b, ctx, u) {
     ctx.lineTo(bx + bw, y1);
     ctx.lineTo(bx, y1);
     ctx.closePath();
-    ctx.fillStyle = lin(ctx, bx, 0, bx + bw + sk, 0, [[0, "rgba(255,255,255,0)"], [0.5, `rgba(255,255,255,${it.hero ? 0.17 : 0.12})`], [1, "rgba(255,255,255,0)"]]);
+    ctx.fillStyle = lin(ctx, bx, 0, bx + bw + sk, 0, [[0, "rgba(255,255,255,0)"], [0.5, "rgba(255,255,255,0.14)"], [1, "rgba(255,255,255,0)"]]);
     ctx.fill();
     ctx.restore();
   }
-
-  // a light runs along every gain bar, one after another (hold only)
-  for (const bar of b.bars) {
-    const s0 = 0.1 + bar.order * 0.03;
-    if (!(u >= s0 && u < s0 + 0.16) || bar.frac <= 0) continue;
-    const q = easeInOut((u - s0) / 0.16);
-    ctx.save();
-    if (bar.kind === "h") {
-      const xe = bar.x0 + (bar.x1 - bar.x0) * bar.frac;
-      roundRect(ctx, bar.x0, bar.y - bar.h / 2, Math.max(xe - bar.x0, bar.h), bar.h, bar.h / 2);
-      ctx.clip();
-      const L = Math.max(40, (xe - bar.x0) * 0.35);
-      const px = bar.x0 - L + (xe - bar.x0 + L) * q;
-      ctx.fillStyle = lin(ctx, px, 0, px + L, 0, [[0, "rgba(255,255,255,0)"], [0.6, "rgba(255,255,255,0.75)"], [1, "rgba(255,255,255,0)"]]);
-      ctx.fillRect(px, bar.y - bar.h, L, bar.h * 2);
-    } else {
-      const ye = bar.yb - (bar.yb - bar.yt) * bar.frac;
-      roundRect(ctx, bar.cx - bar.w / 2, ye, bar.w, bar.yb - ye, bar.w / 2);
-      ctx.clip();
-      const L = Math.max(30, (bar.yb - ye) * 0.4);
-      const py = bar.yb - (bar.yb - ye + L) * q;
-      ctx.fillStyle = lin(ctx, 0, py + L, 0, py, [[0, "rgba(255,255,255,0)"], [0.6, "rgba(255,255,255,0.7)"], [1, "rgba(255,255,255,0)"]]);
-      ctx.fillRect(bar.cx - bar.w, py, bar.w * 2, L);
-    }
-    ctx.restore();
-  }
-
-  // the champion: a light running round its frame, once per loop
-  const hero = b.items.find((it) => it.hero);
-  if (hero) {
-    const [a, dy] = itemState(hero, u, nItems);
-    if (a > 0.01) {
-      const [x0, y0, x1, y1] = hero.box;
-      const cx = (x0 + x1) / 2;
-      const cy = (y0 + y1) / 2 + dy;
-      const g = ctx.createConicGradient(-Math.PI / 2 + TAU * u, cx, cy);
-      g.addColorStop(0, "rgba(255,255,255,0)");
-      g.addColorStop(0.05, "rgba(220,255,245,0.95)");
-      g.addColorStop(0.11, "rgba(61,245,159,0)");
-      g.addColorStop(0.5, "rgba(34,211,238,0)");
-      g.addColorStop(0.54, "rgba(160,235,255,0.6)");
-      g.addColorStop(0.58, "rgba(34,211,238,0)");
-      g.addColorStop(1, "rgba(255,255,255,0)");
-      ctx.save();
-      ctx.globalAlpha = a;
-      roundRect(ctx, x0 + 1, y0 + 1 + dy, x1 - x0 - 2, y1 - y0 - 2, hero.r - 1);
-      ctx.strokeStyle = g;
-      ctx.lineWidth = 7;
-      ctx.globalAlpha = a * 0.35;
-      ctx.stroke();
-      ctx.lineWidth = 2.4;
-      ctx.globalAlpha = a;
-      ctx.stroke();
-      ctx.restore();
-    }
-  }
-  ctx.restore();
-
-  // the leader's orbit ring: two turns per loop; the crown rides over it
-  const lead = b.items.find((it) => it.order === 0);
-  if (lead && b.ring) {
-    const [a, dy] = itemState(lead, u, nItems);
-    if (a > 0.01) {
-      if (b.ringSprite) {
-        ctx.save();
-        ctx.globalAlpha = a;
-        ctx.translate(b.ring.cx * K, (b.ring.cy + dy) * K);
-        ctx.rotate(-TAU * 2 * u);
-        ctx.drawImage(b.ringSprite, -b.ringSprite.width / 2, -b.ringSprite.height / 2);
-        ctx.restore();
-      }
-      if (b.crownSprite) {
-        ctx.globalAlpha = a;
-        ctx.drawImage(b.crownSprite.canvas, b.crownSprite.dx, b.crownSprite.dy + dy * K);
-      }
-      // sparkles twinkling round the coin
-      for (const sp of b.sparkles || []) {
-        const tw = 0.5 + 0.5 * Math.sin(TAU * (u * sp.tw + sp.ph));
-        if (tw < 0.25) continue;
-        const sx = (b.ring.cx + Math.cos(sp.a) * sp.rad) * K;
-        const sy = (b.ring.cy + dy + Math.sin(sp.a) * sp.rad) * K;
-        const r = sp.size * K * (0.55 + 0.45 * tw);
-        ctx.save();
-        ctx.globalAlpha = a * tw;
-        ctx.fillStyle = "#FFFFFF";
-        ctx.shadowColor = C.cyan;
-        ctx.shadowBlur = r * 2.2;
-        ctx.beginPath();
-        for (let i = 0; i < 8; i++) {
-          const ang = (Math.PI / 4) * i;
-          const rad = i % 2 ? r * 0.22 : r;
-          ctx[i ? "lineTo" : "moveTo"](sx + Math.cos(ang) * rad, sy + Math.sin(ang) * rad);
-        }
-        ctx.closePath();
-        ctx.fill();
-        ctx.restore();
-      }
-      // the landing: a ring of light bursting off the coin
-      if (u >= FLASH[0] && u < FLASH[1]) {
-        const q = (u - FLASH[0]) / (FLASH[1] - FLASH[0]);
-        const R = b.ring.d * (0.5 + 0.95 * easeOut(q)) * K;
-        ctx.save();
-        ctx.globalAlpha = (1 - q) ** 1.6;
-        ctx.beginPath();
-        ctx.arc(b.ring.cx * K, (b.ring.cy + dy) * K, R, 0, TAU);
-        ctx.lineWidth = 3 * K * (1 - q) + 1;
-        ctx.strokeStyle = "#D8FAFF";
-        ctx.shadowColor = C.cyan;
-        ctx.shadowBlur = 18 * K;
-        ctx.stroke();
-        const gl = ctx.createRadialGradient(b.ring.cx * K, (b.ring.cy + dy) * K, 0, b.ring.cx * K, (b.ring.cy + dy) * K, R);
-        gl.addColorStop(0, rgba(C.cyan, 0.22 * (1 - q)));
-        gl.addColorStop(1, rgba(C.cyan, 0));
-        ctx.fillStyle = gl;
-        ctx.fill();
-        ctx.restore();
-      }
-      ctx.globalAlpha = 1;
-    }
-  }
-  ctx.restore();
-
-  // ── the front bokeh, closest to the lens: the most parallax (only the
-  // rooms that have it)
-  if (b.scene.front) {
-    ctx.save();
-    camera(ctx, camScale(u, 0.045));
-    ctx.scale(K, K);
-    for (const k of b.bokehFront) {
-      const x = k.x + k.ax * Math.sin(TAU * (u + k.ph));
-      ctx.globalAlpha = k.a;
-      ctx.drawImage(k.sprite, x - k.rad, k.y - k.rad, k.rad * 2, k.rad * 2);
-    }
-    ctx.restore();
-    ctx.globalAlpha = 1;
-  }
-
-  // the headline shine, once per loop
-  if (b.title && u >= 0.3 && u < 0.44) {
-    const t = b.title;
-    if (!b.tmp) b.tmp = b.cv.createCanvas(t.canvas.width, t.canvas.height);
-    const tx = b.tmp.getContext("2d");
-    tx.setTransform(1, 0, 0, 1, 0, 0);
-    tx.globalCompositeOperation = "source-over";
-    tx.clearRect(0, 0, b.tmp.width, b.tmp.height);
-    const gp = easeInOut((u - 0.3) / 0.14);
-    const bw = t.canvas.height * 1.1;
-    const bx = -bw * 1.5 + (t.canvas.width + bw * 2) * gp;
-    tx.beginPath();
-    tx.moveTo(bx + bw * 0.6, 0);
-    tx.lineTo(bx + bw * 1.2, 0);
-    tx.lineTo(bx + bw * 0.6, t.canvas.height);
-    tx.lineTo(bx, t.canvas.height);
-    tx.closePath();
-    tx.fillStyle = lin(tx, bx, 0, bx + bw * 1.2, 0, [[0, "rgba(255,255,255,0)"], [0.5, "rgba(255,255,255,0.8)"], [1, "rgba(255,255,255,0)"]]);
-    tx.fill();
-    tx.globalCompositeOperation = "destination-in";
-    tx.drawImage(t.canvas, 0, 0);
-    ctx.drawImage(b.tmp, t.x, t.y);
-  }
-
   // the LIVE dot breathes: three pulses per loop
   if (b.liveDot) {
     const ph = (u * 3) % 1;
-    ctx.save();
-    ctx.scale(K, K);
     ctx.beginPath();
-    ctx.arc(b.liveDot.x, b.liveDot.y, 3.5 + 9 * ph, 0, TAU);
+    ctx.arc(b.liveDot.x, b.liveDot.y, 3.5 + 8 * ph, 0, TAU);
     ctx.lineWidth = 0.9;
-    ctx.strokeStyle = rgba(C.mint, 0.6 * (1 - ph));
+    ctx.strokeStyle = rgba(C.mint, 0.65 * (1 - ph));
     ctx.stroke();
-    ctx.restore();
   }
+  ctx.restore();
 
-  ctx.drawImage(b.vig, 0, 0);
+  // the title shines once per loop
+  if (b.title && u >= 0.28 && u < 0.42) {
+    const t = b.title;
+    if (!b.shine) b.shine = b.cv.createCanvas(t.canvas.width, t.canvas.height);
+    const sx = b.shine.getContext("2d");
+    sx.setTransform(1, 0, 0, 1, 0, 0);
+    sx.globalCompositeOperation = "source-over";
+    sx.clearRect(0, 0, b.shine.width, b.shine.height);
+    const gp = easeInOut((u - 0.28) / 0.14);
+    const bw = t.canvas.height * 1.1;
+    const bx = -bw * 1.5 + (t.canvas.width + bw * 2) * gp;
+    sx.beginPath();
+    sx.moveTo(bx + bw * 0.6, 0);
+    sx.lineTo(bx + bw * 1.2, 0);
+    sx.lineTo(bx + bw * 0.6, t.canvas.height);
+    sx.lineTo(bx, t.canvas.height);
+    sx.closePath();
+    sx.fillStyle = lin(sx, bx, 0, bx + bw * 1.2, 0, [[0, "rgba(255,255,255,0)"], [0.5, "rgba(255,255,255,0.8)"], [1, "rgba(255,255,255,0)"]]);
+    sx.fill();
+    sx.globalCompositeOperation = "destination-in";
+    sx.drawImage(t.canvas, 0, 0);
+    ctx.drawImage(b.shine, t.x, t.y);
+  }
 }
 
 // ── render ──────────────────────────────────────────────────────────────────
@@ -2412,5 +1605,6 @@ module.exports = {
   _build: build,
   _clipTo: clipTo,
   _itemState: itemState,
+  _decode: decode,
   TMP_PREFIX,
 };

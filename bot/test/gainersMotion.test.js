@@ -89,29 +89,39 @@ test("awkward coins: no logo, bytes that are not one, a loss, no change, no mark
 });
 
 test("a figure the feed did not carry, or the operator hid, is never drawn", { skip: !gm.available() }, async () => {
-  const shown = await drawnText(() => gm.renderStill({ template: "m4", coins: many(4) }));
+  const { fmtCap } = require("../src/helpers/format");
+  const coins = many(5);
+  const cap = fmtCap(coins[1].mcap);
+  const shown = await drawnText(() => gm.renderStill({ template: "m5", coins }));
   assert.ok(shown.some((s) => /%$/.test(s)), "vacuity: the gains must be drawn when on");
-  assert.ok(shown.some((s) => /^MC \$/.test(s.split("  ·  ").pop())), "vacuity: the market cap must be drawn when on");
-  const hidden = await drawnText(() => gm.renderStill({ template: "m4", coins: many(4), showPct: false, showMcap: false }));
+  assert.ok(shown.includes(cap), `vacuity: the market cap ${cap} must be drawn when on`);
+  const hidden = await drawnText(() => gm.renderStill({ template: "m5", coins, showPct: false, showMcap: false }));
   assert.ok(!hidden.some((s) => /%$/.test(s)), "a hidden % was drawn");
-  assert.ok(!hidden.some((s) => /MC \$/.test(s)), "a hidden market cap was drawn");
-  const none = await drawnText(() => gm.renderStill({ template: "m4", coins: many(4).map((c) => ({ ...c, pct: null, price: null, mcap: null })) }));
-  // "MC —" or "$0" is a figure nobody measured, as much as a wrong number is
-  const bad = none.filter((s) => /%$|\$0\b|\bMC\b|—/.test(s));
-  assert.deepStrictEqual(bad, [], `an unread figure was drawn: ${bad.join(", ")}`);
+  assert.ok(!hidden.includes(cap), "a hidden market cap was drawn");
+  for (const id of ["m1", "m2", "m5"]) {
+    const none = await drawnText(() => gm.renderStill({ template: id, coins: many(5).map((c) => ({ ...c, pct: null, price: null, mcap: null, liq: null })) }));
+    // "$0", "—" or a "%" is a figure nobody measured, as much as a wrong number is
+    const bad = none.filter((s) => /%$|\$0\b|—/.test(s));
+    assert.deepStrictEqual(bad, [], `${id}: an unread figure was drawn: ${bad.join(", ")}`);
+  }
 });
 
-test("the loop settles before it wraps, and the cards really leave and come back", () => {
+test("a figure decodes into place, and only its digits move", () => {
+  assert.strictEqual(gm._decode("+3981%", 1, 7), "+3981%");
+  const mid = gm._decode("+3981%", 0, 7);
+  assert.match(mid, /^\+\d{4}%$/);
+});
+
+test("the loop settles before it wraps, and the plates really switch off and back on", () => {
   const items = Array.from({ length: 10 }, (_, order) => ({ order }));
   for (const it of items) {
-    assert.deepStrictEqual(gm._itemState(it, 0, 10), [1, 0, 1], "frame 0 is the board at rest");
-    const [a, dy, p] = gm._itemState(it, 0.999, 10);
-    assert.ok(a > 0.999 && Math.abs(dy) < 0.01 && p === 1, `card ${it.order} has not settled at the wrap: ${[a, dy, p]}`);
+    assert.deepStrictEqual(gm._itemState(it, 0, 10), { a: 1, s: 1, p: 1, flash: 0 }, "frame 0 is the board at rest");
+    const st = gm._itemState(it, 0.999, 10);
+    assert.ok(st.a === 1 && st.s > 0.999 && st.p === 1, `plate ${it.order} has not settled at the wrap: ${JSON.stringify(st)}`);
+    assert.strictEqual(gm._itemState(it, 0.69, 10).a, 0, "between off and on every plate is dark");
   }
-  const [aOut] = gm._itemState(items[0], 0.689, 10);
-  assert.ok(aOut < 0.05, "the exit is a no-op");
-  const [, , pIn] = gm._itemState(items[9], 0.8, 10);
-  assert.ok(pIn < 1, "the gains do not count up");
+  assert.ok(gm._itemState(items[9], 0.8, 10).p < 1, "the figures do not decode");
+  assert.ok(gm._itemState(items[0], 0.66, 10).s < 1, "the switch-off is a no-op");
 });
 
 test("a mid-entrance frame differs from frame 0, and the frames are full HD RGBA", { skip: !gm.available() }, async () => {
