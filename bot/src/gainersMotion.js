@@ -1452,17 +1452,24 @@ function stageBack(cv, b) {
   ctx.scale(K, K);
   const hero = b.items.find((it) => it.hero);
   if (hero) {
-    const [x0, y0, x1] = hero.box;
+    // a soft halo behind the champion — a hard-edged cone of light read as
+    // a pale triangle cut out of the room
+    const [x0, y0, x1, y1] = hero.box;
     const cx = (x0 + x1) / 2;
-    const w = x1 - x0;
+    const cy = (y0 + y1) / 2;
+    const rx = (x1 - x0) * 0.85;
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.scale(1, Math.min(1.4, (y1 - y0) / (x1 - x0) + 0.35));
+    const g = ctx.createRadialGradient(0, 0, 0, 0, 0, rx);
+    g.addColorStop(0, rgba(C.cyan, 0.2));
+    g.addColorStop(0.55, rgba("#2F86FF", 0.08));
+    g.addColorStop(1, rgba("#2F86FF", 0));
+    ctx.fillStyle = g;
     ctx.beginPath();
-    ctx.moveTo(cx - w * 0.12, -40);
-    ctx.lineTo(cx + w * 0.12, -40);
-    ctx.lineTo(cx + w * 0.62, y0 + 40);
-    ctx.lineTo(cx - w * 0.62, y0 + 40);
-    ctx.closePath();
-    ctx.fillStyle = lin(ctx, 0, -40, 0, y0 + 40, [[0, rgba(C.ice, 0.0)], [0.35, rgba(C.ice, 0.07)], [1, rgba(C.cyan, 0.12)]]);
+    ctx.arc(0, 0, rx, 0, TAU);
     ctx.fill();
+    ctx.restore();
   }
   for (const it of b.items) {
     const [x0, , x1, y1] = it.box;
@@ -1510,14 +1517,394 @@ function drawBeams(ctx, u) {
   ctx.restore();
 }
 
+// ── the rooms ───────────────────────────────────────────────────────────────
+// "backroundya burukkkk cobaaa buatkan another backround" (2026-11-06): the
+// room the board stands in is a SCENE — its static base, what moves in it,
+// and whether lens bokeh floats in front. The cards, the header and the
+// timeline are the same in every one.
+
+/** A fine film grain: a photographic room never bands. Deterministic. */
+function grain(cv, ctx, seed, amount = 0.035) {
+  const T = 192;
+  const tile = cv.createCanvas(T, T);
+  const tx = tile.getContext("2d");
+  const id = tx.createImageData(T, T);
+  const r = rng(seed);
+  for (let i = 0; i < T * T; i++) {
+    const v = r() < 0.5 ? 0 : 255;
+    id.data[i * 4] = v;
+    id.data[i * 4 + 1] = v;
+    id.data[i * 4 + 2] = v;
+    id.data[i * 4 + 3] = Math.round(255 * amount * r());
+  }
+  tx.putImageData(id, 0, 0);
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = ctx.createPattern(tile, "repeat");
+  ctx.fillRect(0, 0, W, H);
+  ctx.restore();
+}
+
+/** The floor every room shares: a sheen under the horizon, the horizon line. */
+function floorGloss(ctx, tint = C.cyan, strength = 1) {
+  ctx.fillStyle = lin(ctx, 0, FLOOR, 0, DH, [[0, rgba(tint, 0.1 * strength)], [1, rgba(tint, 0)]]);
+  ctx.fillRect(0, FLOOR, DW, DH - FLOOR);
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(60, FLOOR);
+  ctx.lineTo(1220, FLOOR);
+  ctx.lineWidth = 1.3;
+  ctx.strokeStyle = lin(ctx, 60, 0, 1220, 0, [[0, rgba(tint, 0)], [0.3, rgba(tint, 0.5 * strength)], [0.5, rgba(C.ice, 0.75 * strength)], [0.7, rgba(tint, 0.5 * strength)], [1, rgba(tint, 0)]]);
+  ctx.shadowColor = rgba(tint, 0.8);
+  ctx.shadowBlur = 12 * K;
+  ctx.stroke();
+  ctx.restore();
+}
+
+function bloomAt(ctx, x, y, r, color, a) {
+  const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+  g.addColorStop(0, rgba(color, a));
+  g.addColorStop(1, rgba(color, 0));
+  ctx.fillStyle = g;
+  ctx.fillRect(x - r, y - r, r * 2, r * 2);
+}
+
+/** The first room: swaying spotlights, aurora, a gem lattice, bokeh. */
+const SAPPHIRE = {
+  name: "Sapphire",
+  base: (cv) => backdrop(cv),
+  room(b, ctx, u) {
+    ctx.drawImage(b.bg, 0, 0);
+    drawBeams(ctx, u);
+    drawAurora(ctx, u);
+    ctx.save();
+    ctx.scale(K, K);
+    for (const k of b.bokehBack) {
+      const x = k.x + k.ax * Math.sin(TAU * (u + k.ph));
+      const y = k.y + 8 * Math.sin(TAU * (2 * u + k.ph));
+      ctx.globalAlpha = k.a;
+      ctx.drawImage(k.sprite, x - k.rad, y - k.rad, k.rad * 2, k.rad * 2);
+    }
+    ctx.restore();
+  },
+  front: true,
+};
+
+/** A: STUDIO — a photographer's sweep. One key light behind the stage, the
+ *  rings of an amphitheatre, grain; a slow light passes once per loop. */
+const STUDIO = {
+  name: "Studio",
+  base(cv) {
+    const out = cv.createCanvas(W, H);
+    const ctx = out.getContext("2d");
+    ctx.scale(K, K);
+    ctx.fillStyle = lin(ctx, 0, 0, 0, DH, [[0, "#0C2141"], [0.5, "#07142B"], [1, "#03070F"]]);
+    ctx.fillRect(0, 0, DW, DH);
+    bloomAt(ctx, 640, 300, 820, "#2E74CC", 0.62); // the key light
+    bloomAt(ctx, 640, 150, 420, "#7FDCFF", 0.26);
+    // the edges fall off into the dark
+    ctx.fillStyle = lin(ctx, 0, 0, DW, 0, [[0, "rgba(0,0,0,0.45)"], [0.22, "rgba(0,0,0,0)"], [0.78, "rgba(0,0,0,0)"], [1, "rgba(0,0,0,0.45)"]]);
+    ctx.fillRect(0, 0, DW, DH);
+    // an amphitheatre: rings centred under the stage
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, DW, FLOOR);
+    ctx.clip();
+    for (let R = 300, i = 0; R < 1150; R += 62, i++) {
+      ctx.beginPath();
+      ctx.arc(640, FLOOR + 40, R, Math.PI, TAU);
+      ctx.lineWidth = i % 3 === 0 ? 1.3 : 0.8;
+      ctx.strokeStyle = rgba("#B8DDFF", Math.max(0.03, 0.13 - i * 0.007));
+      ctx.stroke();
+    }
+    // the cove: wall meeting floor, lit from the front
+    ctx.fillStyle = lin(ctx, 0, FLOOR - 170, 0, FLOOR, [[0, rgba("#3A86D8", 0)], [1, rgba("#4FA2F0", 0.22)]]);
+    ctx.fillRect(0, FLOOR - 170, DW, 170);
+    ctx.restore();
+    // the gem, large and faint on the wall behind the stage
+    ctx.save();
+    ctx.globalAlpha = 0.07;
+    kit.drawGem(ctx, 640 - 330, 150, 660);
+    ctx.restore();
+    floorGloss(ctx, C.cyan, 0.9);
+    grain(cv, ctx, 401);
+    return out;
+  },
+  room(b, ctx, u) {
+    ctx.drawImage(b.bg, 0, 0);
+    ctx.save();
+    ctx.scale(K, K);
+    ctx.globalCompositeOperation = "lighter";
+    // the key light breathes
+    bloomAt(ctx, 640, 330, 700, "#2F7FD8", 0.07 * (1 - Math.cos(TAU * u)) / 2);
+    // one slow pass of light across the sweep, off-frame at both ends
+    const x = -360 + (DW + 720) * easeInOut(u);
+    ctx.beginPath();
+    ctx.rect(0, 0, DW, FLOOR);
+    ctx.clip();
+    ctx.beginPath();
+    ctx.moveTo(x - 60, 0);
+    ctx.lineTo(x + 200, 0);
+    ctx.lineTo(x + 20, FLOOR);
+    ctx.lineTo(x - 240, FLOOR);
+    ctx.closePath();
+    ctx.fillStyle = lin(ctx, x - 240, 0, x + 200, 0, [[0, "rgba(140,210,255,0)"], [0.5, "rgba(140,210,255,0.07)"], [1, "rgba(140,210,255,0)"]]);
+    ctx.fill();
+    ctx.restore();
+  },
+  front: false,
+};
+
+/** B: COSMIC — a nebula drifting over a starfield, and the board standing on
+ *  the rim of a planet, its atmosphere lit cyan. A star falls once a loop. */
+const PLANET = { cx: 640, R: 2400 };
+PLANET.cy = FLOOR - 26 + PLANET.R;
+const COSMIC = {
+  name: "Cosmic",
+  base(cv) {
+    const out = cv.createCanvas(W, H);
+    const ctx = out.getContext("2d");
+    ctx.scale(K, K);
+    ctx.fillStyle = lin(ctx, 0, 0, 0, DH, [[0, "#061031"], [0.55, "#040A20"], [1, "#010309"]]);
+    ctx.fillRect(0, 0, DW, DH);
+    const r = rng(7031);
+    for (let i = 0; i < 320; i++) {
+      const x = r() * DW;
+      const y = r() * (FLOOR + 10);
+      ctx.fillStyle = rgba(r() < 0.8 ? "#FFFFFF" : "#BFE6FF", 0.15 + r() * 0.5);
+      ctx.beginPath();
+      ctx.arc(x, y, 0.35 + r() * 0.8, 0, TAU);
+      ctx.fill();
+    }
+    grain(cv, ctx, 911, 0.025);
+    return out;
+  },
+  prep(cv, b) {
+    // the nebula, a little larger than the frame, so it can drift
+    const M = 60;
+    const neb = cv.createCanvas(Math.round((DW + M * 2) * K), Math.round((DH + M * 2) * K));
+    const nx = neb.getContext("2d");
+    nx.scale(K, K);
+    nx.translate(M, M);
+    nx.globalCompositeOperation = "lighter";
+    const r = rng(5521);
+    const cols = ["#1E4FD8", "#1E4FD8", "#18B8E0", "#5B3CFF", "#2F86FF", "#3DF5C0"];
+    for (let i = 0; i < 46; i++) {
+      const x = -40 + r() * (DW + 80);
+      const y = -40 + r() * (FLOOR * 0.62);
+      const rad = 70 + r() * 230;
+      const c = cols[Math.floor(r() * cols.length)];
+      bloomAt(nx, x, y, rad, c, (c === "#3DF5C0" ? 0.06 : 0.12) + r() * 0.1);
+    }
+    nx.globalCompositeOperation = "source-over";
+    for (let i = 0; i < 14; i++) bloomAt(nx, r() * DW, r() * FLOOR * 0.8, 60 + r() * 140, "#01030A", 0.35); // dust lanes
+    // the planet, its own layer over the nebula
+    const pl = cv.createCanvas(W, H);
+    const px = pl.getContext("2d");
+    px.scale(K, K);
+    const { cx, cy, R } = PLANET;
+    const halo = px.createRadialGradient(cx, cy, R - 4, cx, cy, R + 120);
+    halo.addColorStop(0, rgba(C.cyan, 0.42));
+    halo.addColorStop(0.1, rgba("#2F86FF", 0.18));
+    halo.addColorStop(1, rgba("#2F86FF", 0));
+    px.fillStyle = halo;
+    px.fillRect(0, 0, DW, DH);
+    px.beginPath();
+    px.arc(cx, cy, R, 0, TAU);
+    px.fillStyle = lin(px, 0, cy - R, 0, DH, [[0, "#0D2C52"], [0.06, "#071833"], [1, "#02060F"]]);
+    px.fill();
+    const rim = px.createRadialGradient(cx, cy, R - 70, cx, cy, R);
+    rim.addColorStop(0, rgba(C.cyan, 0));
+    rim.addColorStop(1, rgba(C.cyan, 0.32));
+    px.fillStyle = rim;
+    px.fill();
+    px.beginPath();
+    px.arc(cx, cy, R, Math.PI * 1.25, Math.PI * 1.75);
+    px.lineWidth = 1.6;
+    px.strokeStyle = rgba(C.ice, 0.9);
+    px.shadowColor = C.cyan;
+    px.shadowBlur = 14 * K;
+    px.stroke();
+    const star = (x, y, s) => ({ x, y, s });
+    const tw = Array.from({ length: 44 }, () => ({ ...star(r() * DW, r() * (FLOOR - 40), 0.9 + r() * 1.6), ph: r(), cyc: 1 + Math.floor(r() * 3) }));
+    b.cosmic = { neb, M, planet: pl, twinkle: tw, glint: glowSprite(cv, Math.round(14 * K), "#9FE6FF") };
+  },
+  room(b, ctx, u) {
+    const s = b.cosmic;
+    ctx.drawImage(b.bg, 0, 0);
+    const ox = 22 * Math.cos(TAU * u);
+    const oy = 12 * Math.sin(TAU * u);
+    ctx.drawImage(s.neb, (-s.M + ox) * K, (-s.M + oy) * K);
+    ctx.save();
+    ctx.scale(K, K);
+    for (const t of s.twinkle) {
+      const a = 0.5 + 0.5 * Math.sin(TAU * (u * t.cyc + t.ph));
+      if (a < 0.15) continue;
+      ctx.globalAlpha = a;
+      const z = t.s * 3.2;
+      ctx.drawImage(s.glint, t.x - z, t.y - z, z * 2, z * 2);
+    }
+    ctx.globalAlpha = 1;
+    // a falling star, once a loop
+    if (u >= 0.16 && u < 0.27) {
+      const q = (u - 0.16) / 0.11;
+      const x0 = 1010 - 520 * q;
+      const y0 = 70 + 170 * q;
+      ctx.globalAlpha = Math.sin(Math.PI * q);
+      ctx.lineCap = "round";
+      ctx.lineWidth = 1.6;
+      ctx.strokeStyle = lin(ctx, x0, y0, x0 + 150, y0 - 49, [[0, "rgba(255,255,255,0.95)"], [1, "rgba(160,220,255,0)"]]);
+      ctx.beginPath();
+      ctx.moveTo(x0, y0);
+      ctx.lineTo(x0 + 150, y0 - 49);
+      ctx.stroke();
+    }
+    ctx.restore();
+    ctx.drawImage(s.planet, 0, 0);
+  },
+  front: false,
+};
+
+/** C: SILK — two bundles of light threads flowing across the room, like
+ *  liquid sapphire; they ripple one whole cycle per loop. */
+const SILK = {
+  name: "Silk",
+  base(cv) {
+    const out = cv.createCanvas(W, H);
+    const ctx = out.getContext("2d");
+    ctx.scale(K, K);
+    ctx.fillStyle = lin(ctx, 0, 0, 0, DH, [[0, "#081B3A"], [0.5, "#04102A"], [1, "#01050F"]]);
+    ctx.fillRect(0, 0, DW, DH);
+    bloomAt(ctx, 640, 300, 720, "#1E5CAE", 0.4);
+    floorGloss(ctx, C.cyan, 0.8);
+    grain(cv, ctx, 1203, 0.03);
+    return out;
+  },
+  prep(cv, b) {
+    b.silk = cv.createCanvas(Math.round(W / 2), Math.round(H / 2)); // half-res: threads are soft anyway
+  },
+  room(b, ctx, u) {
+    ctx.drawImage(b.bg, 0, 0);
+    const sc = b.silk;
+    const sx = sc.getContext("2d");
+    sx.setTransform(1, 0, 0, 1, 0, 0);
+    sx.clearRect(0, 0, sc.width, sc.height);
+    sx.scale(K / 2, K / 2);
+    sx.globalCompositeOperation = "lighter";
+    sx.lineWidth = 1.1;
+    const bundle = (y0, amp, dir, n, colA, colB, a, clearMiddle = false) => {
+      for (let i = 0; i < n; i++) {
+        const t = i / (n - 1);
+        const bell = Math.exp(-((t - 0.5) ** 2) / 0.045);
+        sx.beginPath();
+        for (let x = -20; x <= DW + 20; x += 20) {
+          const s = x / DW;
+          const y = y0
+            + amp * Math.sin(TAU * (0.85 * s + dir * u) + t * 1.4)
+            + amp * 0.35 * Math.sin(TAU * (1.9 * s - dir * u) + t * 2.6)
+            + (t - 0.5) * amp * 1.3 * (0.6 + 0.4 * Math.sin(TAU * (s + dir * u)));
+          if (x === -20) sx.moveTo(x, y);
+          else sx.lineTo(x, y);
+        }
+        // behind the headline the threads part, so the date stays clean
+        sx.strokeStyle = lin(sx, 0, 0, DW, 0, clearMiddle
+          ? [[0, rgba(colA, 0)], [0.16, rgba(colA, a * (0.3 + bell))], [0.36, rgba(colA, a * 0.08)], [0.64, rgba(colB, a * 0.08)], [0.84, rgba(colB, a * (0.3 + bell))], [1, rgba(colB, 0)]]
+          : [[0, rgba(colA, 0)], [0.3, rgba(colA, a * (0.25 + bell))], [0.6, rgba(colB, a * (0.3 + bell))], [1, rgba(colB, 0)]]);
+        sx.stroke();
+      }
+    };
+    bundle(118, 70, 1, 60, "#8FE8FF", "#2F86FF", 0.34, true);
+    bundle(420, 90, -1, 50, "#2F86FF", "#3DF5B2", 0.24);
+    bundle(664, 40, 1, 44, "#7FE3FF", "#3DF5B2", 0.3);
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    ctx.drawImage(sc, 0, 0, W, H);
+    ctx.restore();
+  },
+  front: false,
+};
+
+/** D: AURORA — curtains of northern light over a night sky, in the gem's
+ *  own mint and cyan, rippling one whole cycle per loop; a still lake below
+ *  catches them. */
+const AURORA = {
+  name: "Aurora",
+  base(cv) {
+    const out = cv.createCanvas(W, H);
+    const ctx = out.getContext("2d");
+    ctx.scale(K, K);
+    ctx.fillStyle = lin(ctx, 0, 0, 0, DH, [[0, "#030A1E"], [0.5, "#061634"], [0.85, "#04102A"], [1, "#01040C"]]);
+    ctx.fillRect(0, 0, DW, DH);
+    const r = rng(3301);
+    for (let i = 0; i < 220; i++) {
+      ctx.fillStyle = rgba("#FFFFFF", 0.1 + r() * 0.45);
+      ctx.beginPath();
+      ctx.arc(r() * DW, r() * FLOOR * 0.7, 0.3 + r() * 0.7, 0, TAU);
+      ctx.fill();
+    }
+    bloomAt(ctx, 640, FLOOR + 20, 640, "#1F7FC8", 0.28);
+    floorGloss(ctx, C.mint, 0.9);
+    grain(cv, ctx, 77, 0.025);
+    return out;
+  },
+  prep(cv, b) {
+    b.aurora = cv.createCanvas(Math.round(W / 2), Math.round(H / 2)); // soft by nature: half-res
+  },
+  room(b, ctx, u) {
+    ctx.drawImage(b.bg, 0, 0);
+    const a = b.aurora;
+    const x = a.getContext("2d");
+    x.setTransform(1, 0, 0, 1, 0, 0);
+    x.clearRect(0, 0, a.width, a.height);
+    x.scale(K / 2, K / 2);
+    x.globalCompositeOperation = "lighter";
+    const curtain = (base, amp, k1, k2, dir, h, colTop, colBase, alpha) => {
+      for (let px = -10; px <= DW + 10; px += 3) {
+        const s = px / DW;
+        const y = base + amp * Math.sin(TAU * (k1 * s + dir * u)) + amp * 0.45 * Math.sin(TAU * (k2 * s - dir * u) + 1.7);
+        const flick = 0.55 + 0.45 * Math.sin(TAU * (7.3 * s + 2 * dir * u) + 0.4) * Math.sin(TAU * (3.1 * s - dir * u));
+        const hh = h * (0.7 + 0.3 * flick);
+        const g = x.createLinearGradient(0, y - hh, 0, y + 14);
+        g.addColorStop(0, rgba(colTop, 0));
+        g.addColorStop(0.7, rgba(colTop, alpha * 0.55 * flick));
+        g.addColorStop(0.94, rgba(colBase, alpha * flick));
+        g.addColorStop(1, rgba(colBase, 0));
+        x.fillStyle = g;
+        x.fillRect(px, y - hh, 3.4, hh + 14);
+      }
+    };
+    curtain(150, 40, 1, 2, 1, 150, "#2F86FF", "#3DF59F", 0.42);
+    curtain(205, 30, 2, 3, -1, 120, "#5B3CFF", "#22D3EE", 0.3);
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    ctx.drawImage(a, 0, 0, W, H);
+    // the lake below the horizon holds them, upside down and dimmer
+    ctx.beginPath();
+    ctx.rect(0, FLOOR * K, W, H - FLOOR * K);
+    ctx.clip();
+    ctx.globalAlpha = 0.28;
+    ctx.translate(0, FLOOR * K * 2);
+    ctx.scale(1, -1);
+    ctx.drawImage(a, 0, 0, W, H);
+    ctx.restore();
+  },
+  front: false,
+};
+
+const SCENES = { sapphire: SAPPHIRE, studio: STUDIO, cosmic: COSMIC, silk: SILK, aurora: AURORA };
+const DEFAULT_SCENE = "sapphire";
+const sceneOf = (name) => SCENES[name] || SCENES[process.env.GAINERS_MOTION_SCENE] || SCENES[DEFAULT_SCENE];
+
 /** Lay out the board once: the stage, the chrome, and every card's sprite. */
-function build(cv, n, coins, { dateText = "", showPct = true } = {}) {
+function build(cv, n, coins, { dateText = "", showPct = true, scene = null } = {}) {
   const b = new Board(cv, n, { showPct });
-  b.bg = backdrop(cv);
+  b.scene = sceneOf(scene);
+  b.bg = b.scene.base(cv);
   b.chrome = chrome(cv, b, n, dateText);
   b.vig = vignette(cv);
   LAYOUTS[n](b, coins);
   b.back = stageBack(cv, b);
+  if (b.scene.prep) b.scene.prep(cv, b);
   if (b.ring) b.ringSprite = ringSprite(cv, Math.round(b.ring.d * 1.22 * K));
   if (b.crownSpec) b.crownSprite = crownSprite(cv, b, b.crownSpec);
   const r = rng(n * 7919 + 3);
@@ -1606,18 +1993,7 @@ function compose(b, ctx, u) {
   // ── the room (slow camera)
   ctx.save();
   camera(ctx, camScale(u, 0.012));
-  ctx.drawImage(b.bg, 0, 0);
-  drawBeams(ctx, u);
-  drawAurora(ctx, u);
-  ctx.save();
-  ctx.scale(K, K);
-  for (const k of b.bokehBack) {
-    const x = k.x + k.ax * Math.sin(TAU * (u + k.ph));
-    const y = k.y + 8 * Math.sin(TAU * (2 * u + k.ph));
-    ctx.globalAlpha = k.a;
-    ctx.drawImage(k.sprite, x - k.rad, y - k.rad, k.rad * 2, k.rad * 2);
-  }
-  ctx.restore();
+  b.scene.room(b, ctx, u);
   ctx.restore();
   ctx.globalAlpha = 1;
 
@@ -1807,17 +2183,20 @@ function compose(b, ctx, u) {
   }
   ctx.restore();
 
-  // ── the front bokeh, closest to the lens: the most parallax
-  ctx.save();
-  camera(ctx, camScale(u, 0.045));
-  ctx.scale(K, K);
-  for (const k of b.bokehFront) {
-    const x = k.x + k.ax * Math.sin(TAU * (u + k.ph));
-    ctx.globalAlpha = k.a;
-    ctx.drawImage(k.sprite, x - k.rad, k.y - k.rad, k.rad * 2, k.rad * 2);
+  // ── the front bokeh, closest to the lens: the most parallax (only the
+  // rooms that have it)
+  if (b.scene.front) {
+    ctx.save();
+    camera(ctx, camScale(u, 0.045));
+    ctx.scale(K, K);
+    for (const k of b.bokehFront) {
+      const x = k.x + k.ax * Math.sin(TAU * (u + k.ph));
+      ctx.globalAlpha = k.a;
+      ctx.drawImage(k.sprite, x - k.rad, k.y - k.rad, k.rad * 2, k.rad * 2);
+    }
+    ctx.restore();
+    ctx.globalAlpha = 1;
   }
-  ctx.restore();
-  ctx.globalAlpha = 1;
 
   // the headline shine, once per loop
   if (b.title && u >= 0.3 && u < 0.44) {
