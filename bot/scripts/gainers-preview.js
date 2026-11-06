@@ -4,6 +4,7 @@
 //   node scripts/gainers-preview.js --live     # LIVE data from the real sources
 //   node scripts/gainers-preview.js --live list5
 //   node scripts/gainers-preview.js --no-pct   # what the admin's "% gain OFF" publishes
+//   node scripts/gainers-preview.js prism5     # 💠 Prism: the still (frame 0) AND the MP4
 //
 // Sample mode needs no network, no DB and no bot token — it is the fastest way
 // to see what a layout change did. --live goes through gainers.topGainers(), so
@@ -16,6 +17,7 @@ require("../src/config/loadEnv").loadEnv();
 const fs = require("node:fs");
 const path = require("node:path");
 const gb = require("../src/gainersBanner");
+const gr = require("../src/gainersRender");
 const gainers = require("../src/gainers");
 
 const OUT = process.env.OUT_DIR || "/tmp";
@@ -42,12 +44,12 @@ const SAMPLE = [
 
 (async () => {
   if (!gb.available()) return console.error("canvas unavailable — install @napi-rs/canvas");
-  const ids = only.length ? only.filter(gb.isTemplate) : gb.TEMPLATE_IDS;
-  if (!ids.length) return console.error(`unknown template — try: ${gb.TEMPLATE_IDS.join(", ")}`);
+  const ids = only.length ? only.filter(gr.isTemplate) : gr.TEMPLATE_IDS;
+  if (!ids.length) return console.error(`unknown template — try: ${gr.TEMPLATE_IDS.join(", ")}`);
   const dateText = gainers.dateText(process.env.GAINERS_TZ || "Asia/Jakarta");
 
   for (const id of ids) {
-    const n = gb.countOf(id);
+    const n = gr.countOf(id);
     let coins;
     if (live) {
       const res = await gainers.topGainers({ limit: n });
@@ -59,6 +61,19 @@ const SAMPLE = [
       coins = res.coins;
     } else {
       coins = SAMPLE.slice(0, n).map((c) => ({ ...c, url: `https://dexvra.io/token/${c.chain}/${c.address}` }));
+    }
+    if (gr.isPrism(id)) {
+      // the render door itself: the clip, and the still it posts beside it
+      const res = await gr.render({ template: id, coins, dateText, showPct });
+      if (!res) {
+        console.error(`${id}: render returned null`);
+        continue;
+      }
+      const base = path.join(OUT, `gainers-${id}${showPct ? "" : "-nopct"}`);
+      fs.writeFileSync(`${base}.png`, res.still);
+      if (res.mediaType === "animation") fs.writeFileSync(`${base}.mp4`, res.media);
+      console.log(`rendered ${base}.png${res.mediaType === "animation" ? ` + ${base}.mp4 (${(res.media.length / 1024).toFixed(0)} KB)` : " (still only — no clip on this host)"}, ${gr.labelOf(id)}`);
+      continue;
     }
     const buf = await gb.render({ template: id, coins, dateText, showPct, bgPath: process.env.GAINERS_BG || "" });
     if (!buf) {
