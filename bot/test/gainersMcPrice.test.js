@@ -82,6 +82,69 @@ test("⚠️ with MC OFF no template draws the market cap or an MCap heading; wi
   assert.ok(prices >= 6, `only ${prices} templates draw a price at all`);
 });
 
+// ── EVERY CARD, EVERY TEMPLATE ──────────────────────────────────────────────
+// "mc sudah on tapi yang di show mc on hanya top 1 gainers" (2026-11-07). The
+// test above gives every coin the SAME cap, so "the cap is drawn" passes when
+// ANY card draws it — one cap out of ten passed. And it walked gb.TEMPLATE_IDS,
+// so the 💠 Prism set was never in it at all. Measured, the same defect sat on
+// four premium stills too (the cap printed only as a fallback when the % was
+// hidden). So: distinct figures per coin, asserted per card, over the ONE list
+// the panel offers — a template set added later is in this guard the day it
+// ships, or the first assertion below fails.
+const gr = require("../src/gainersRender");
+const prism = require("../src/gainersPrism");
+// An id from neither set THROWS rather than reaching gb.render, which would
+// draw its fallback board and pass on somebody else's figures. (Neutral to a
+// mutation run today — every id is one of the two sets — it fires the day a
+// third set is added to gr.TEMPLATE_IDS without being taught here.)
+const drawStill = (id, o) => {
+  if (gr.isPrism(id)) return prism.still({ ...o, template: id });
+  if (gb.isTemplate(id)) return gb.render({ ...o, template: id });
+  throw new Error(`${id}: a template set this guard cannot render — teach drawStill the new set`);
+};
+const distinct = (n) => many(n).map((c, i) => ({ ...c, price: 0.000417 + i * 0.0000131, mcap: 1_234_567 * (i + 1) + i * 98_765 }));
+const bare = (s) => s.replace(/^\$/, "").toUpperCase();
+
+// Dense boards whose cards carry the market cap and NOT the price, by design:
+// the price is the lead card's (or appears only when there is no cap). Each is
+// a decision written down. A template NOT listed prints its price on every card
+// when 💲 is on; a listed one that starts doing so fails as a dead entry.
+const PRICE_NOT_ON_EVERY_CARD = {
+  p8_equalizer: "eight meter columns — the bar is the %, the floor line is the MC",
+  p9_cover: "the cover story carries the price; the index tiles carry MC only, clear of the deco corners",
+  p10_hall: "the podium plaques carry the price; the seven gallery frames carry MC only",
+  list5: "a gain-bar leaderboard — each row's figure is its MC",
+  tier6: "the lower tier is a board of rows — each row's figure is its MC",
+  crown7: "the champion band and the two boards show MC as their figure",
+  rail8: "film-strip mini-frames — one figure each, the MC",
+  mosaic9: "nine compact tiles — one figure each, the MC",
+  grid10: "the terminal board — one line per token, MC column",
+  spot10: "the champion card carries the price; the pack's rows carry MC",
+};
+
+test("⚠️ with 🏦 / 💲 ON, EVERY card of EVERY template carries its own figure — not just #1 — and OFF removes every one", async () => {
+  if (!gb.available()) return;
+  for (const id of Object.keys(PRICE_NOT_ON_EVERY_CARD)) assert.ok(gr.TEMPLATE_IDS.includes(id), `${id}: an exemption for a template that does not exist`);
+  for (const id of gr.TEMPLATE_IDS) {
+    const coins = distinct(gr.countOf(id));
+    const caps = coins.map((c) => bare(fmtCap(c.mcap)));
+    const prices = coins.map((c) => bare(fmtPrice(c.price)));
+    assert.strictEqual(new Set([...caps, ...prices]).size, 2 * coins.length, "fixture: every figure distinct");
+    const on = await drawn(() => drawStill(id, { coins, dateText: "" }));
+    caps.forEach((t, i) => assert.ok(on.includes(t), `${id}: card ${i + 1} shows no market cap with 🏦 ON (${t})`));
+    const priceMissing = prices.filter((t) => !on.includes(t)).length;
+    if (PRICE_NOT_ON_EVERY_CARD[id]) {
+      assert.ok(priceMissing > 0, `${id} now prints the price on every card — remove it from PRICE_NOT_ON_EVERY_CARD`);
+    } else {
+      prices.forEach((t, i) => assert.ok(on.includes(t), `${id}: card ${i + 1} shows no price with 💲 ON (${t})`));
+    }
+    const noCap = await drawn(() => drawStill(id, { coins, dateText: "", showMcap: false }));
+    caps.forEach((t, i) => assert.ok(!noCap.includes(t), `${id}: card ${i + 1} kept its market cap with 🏦 OFF`));
+    const noPrice = await drawn(() => drawStill(id, { coins, dateText: "", showPrice: false }));
+    prices.forEach((t, i) => assert.ok(!noPrice.includes(t), `${id}: card ${i + 1} kept its price with 💲 OFF`));
+  }
+});
+
 test("the render does not write onto the caller's coins", async () => {
   if (!gb.available()) return;
   const coins = many(5);

@@ -186,6 +186,50 @@ function gradText(ctx, text, x, y, stops, align = "left") {
   ctx.textAlign = "left";
 }
 
+/**
+ * The price / market-cap line a card carries under its ticker — ONE owner for
+ * every card, the leader's and the runners-up' alike. It used to be drawn on
+ * the leader's card only, so with 🏦 MC on the board showed one market cap out
+ * of ten ("mc sudah on tapi yang di show hanya top 1"). A figure that is
+ * missing (or switched off — the copies in `prepare` carry null) is left out,
+ * never drawn as $0. Two tones: the values bright enough to read at card size,
+ * the "MC" label and the separator receding.
+ */
+const META_VAL = "#AFC0DE";
+const META_DIM = "#5F7096";
+const META_SEP = "  ·  ";
+const metaParts = (c) => {
+  const parts = [];
+  if (c && c.price) parts.push(["", fmtPrice(c.price)]);
+  if (c && c.mcap) parts.push(["MC ", fmtCap(c.mcap)]);
+  return parts;
+};
+const hasMeta = (c) => metaParts(c).length > 0;
+function drawMeta(ctx, c, x, y, maxW, px, min, align = "left") {
+  const parts = metaParts(c);
+  if (!parts.length || !(maxW > 0)) return false;
+  const whole = parts.map(([l, v]) => l + v).join(META_SEP);
+  const f = fitFont(ctx, whole, maxW, px, min, F.d6);
+  ctx.font = font(f.px, F.d6);
+  ctx.textAlign = "left";
+  if (f.text !== whole) {
+    // did not fit even at the floor: one tone, ellipsised, still inside the card
+    const w = ctx.measureText(f.text).width;
+    ctx.fillStyle = META_VAL;
+    ctx.fillText(f.text, align === "center" ? x - w / 2 : align === "right" ? x - w : x, y);
+    return true;
+  }
+  const w = ctx.measureText(whole).width;
+  let cx = align === "center" ? x - w / 2 : align === "right" ? x - w : x;
+  const run = (t, col) => { ctx.fillStyle = col; ctx.fillText(t, cx, y); cx += ctx.measureText(t).width; };
+  parts.forEach(([l, v], i) => {
+    if (i) run(META_SEP, META_DIM);
+    if (l) run(l, META_DIM);
+    run(v, META_VAL);
+  });
+  return true;
+}
+
 const tickerOf = (c) => `$${String((c && (c.symbol || c.name)) || "?").replace(/^\$+/, "").slice(0, 14)}`;
 const nameOf = (c) => {
   const n = String((c && c.name) || "").trim();
@@ -600,7 +644,6 @@ function build(cv, coins, { dateText = "", showPct = true }) {
     ctx.fillStyle = "rgba(255,255,255,0.07)";
     roundRect(ctx, bx0, cy - h / 2, bx1 - bx0, h, h / 2); ctx.fill();
   };
-  const priceLine = (c) => [c.price ? fmtPrice(c.price) : "", c.mcap ? `MC ${fmtCap(c.mcap)}` : ""].filter(Boolean).join("   ·   ");
 
   function add(box, hero, content) {
     const s = card(cv, box, hero);
@@ -663,13 +706,7 @@ function build(cv, coins, { dateText = "", showPct = true }) {
       ctx.fillText(f.text, tx, yNext);
       yNext += 36 * k;
     }
-    const line = priceLine(c);
-    if (line) {
-      const f = fitFont(ctx, line, room, 19 * k, 12 * k, F.d5);
-      ctx.font = font(f.px, F.d5);
-      ctx.fillStyle = "#7688AA";
-      ctx.fillText(f.text, tx, yNext);
-    }
+    drawMeta(ctx, c, tx, yNext, room, 22 * k, 12 * k);
     return figs;
   }
 
@@ -707,13 +744,7 @@ function build(cv, coins, { dateText = "", showPct = true }) {
       const f = fitFont(ctx, c.pctLabel, w - 160, 168, 64, F.d7);
       figs.push(gainFig(c, cx, y0 + 752, f.px, "center", pctNum(c) < 0 ? "rgba(255,96,122,0.6)" : "rgba(41,98,255,0.6)"));
     }
-    const line = priceLine(c);
-    if (line) {
-      const f = fitFont(ctx, line, w - 160, 24, 14, F.d5);
-      ctx.font = font(f.px, F.d5);
-      ctx.fillStyle = "#7C8EB2";
-      tracked(ctx, f.text, cx, box[3] - 70, 1.5, "c");
-    }
+    drawMeta(ctx, c, cx, box[3] - 70, w - 160, 26, 14, "center");
     return figs;
   }
 
@@ -725,24 +756,29 @@ function build(cv, coins, { dateText = "", showPct = true }) {
     ctx.font = font(19, F.d7);
     ctx.fillStyle = rankInk(rank);
     tracked(ctx, String(rank).padStart(2, "0"), x0 + 34, y0 + 52, 3);
-    const d = Math.min(w * 0.36, h * 0.34, 168);
-    drawCoin(ctx, c, cx, y0 + h * 0.33, d, rank, { ring: 3.5 });
+    const meta = hasMeta(c);
+    const d = Math.min(w * 0.36, h * (meta ? 0.3 : 0.34), 168);
+    drawCoin(ctx, c, cx, y0 + h * (meta ? 0.29 : 0.33), d, rank, { ring: 3.5 });
+    const symY = y0 + h * (meta ? 0.585 : 0.645);
     const sym = fitFont(ctx, tickerOf(c), w - 60, Math.min(54, w * 0.115), 22, F.d7);
     ctx.save();
     ctx.font = font(sym.px, F.d7);
     ctx.shadowColor = "rgba(0,0,0,0.45)"; ctx.shadowBlur = 6; ctx.shadowOffsetY = 4;
-    gradText(ctx, sym.text, cx, y0 + h * 0.645, SILVER, "center");
+    gradText(ctx, sym.text, cx, symY, SILVER, "center");
     ctx.restore();
+    let yNext = symY;
     const nm = nameOf(c);
     if (nm) {
       const f = fitFont(ctx, nm, w - 70, Math.min(22, w * 0.05), 13, F.d5);
       ctx.font = font(f.px, F.d5);
       ctx.fillStyle = DIM;
-      ctx.textAlign = "center"; ctx.fillText(f.text, cx, y0 + h * 0.645 + 34); ctx.textAlign = "left";
+      yNext += 32;
+      ctx.textAlign = "center"; ctx.fillText(f.text, cx, yNext); ctx.textAlign = "left";
     }
+    if (meta) drawMeta(ctx, c, cx, yNext + 32, w - 60, Math.min(20, w * 0.048), 11, "center");
     const bx0 = x0 + 40, bx1 = x1 - 40, by = y1 - 30;
     track(ctx, bx0, bx1, by, 5);
-    return [gainFig(c, cx, y0 + h * 0.86, Math.min(62, w * 0.13), "center"), barFig(c, bx0, bx1, by, 5)];
+    return [gainFig(c, cx, y0 + h * (meta ? 0.875 : 0.86), Math.min(62, w * 0.13), "center"), barFig(c, bx0, bx1, by, 5)];
   }
 
   // narrow, tallish runner-up (Top 6 / 7): big coin left, rank / symbol / gain stacked
@@ -751,7 +787,9 @@ function build(cv, coins, { dateText = "", showPct = true }) {
     const w = x1 - x0, h = y1 - y0;
     const s = clamp(Math.min(h / 250, w / 400), 0.6, 1.3);
     const pad = 30 * s;
-    const cy = y0 + h / 2 - (showPct ? 12 * s : 0);
+    const meta = hasMeta(c);
+    const gain = showPct && hasPct(c);
+    const cy = y0 + h / 2 - (showPct ? 12 * s : 0) - (meta ? (gain ? 16 : 12) * s : 0);
     const d = Math.min(h * 0.46, 126 * s);
     const cx = x0 + pad + d / 2;
     drawCoin(ctx, c, cx, cy, d, rank, { ring: 3 * s });
@@ -767,6 +805,7 @@ function build(cv, coins, { dateText = "", showPct = true }) {
     gradText(ctx, sym.text, tx, cy + 6 * s, SILVER);
     ctx.restore();
     const fp = hasPct(c) ? fitFont(ctx, c.pctLabel, room, 46 * s, 18, F.d7).px : 18;
+    if (meta) drawMeta(ctx, c, tx, cy + (gain ? 90 : 40) * s, room, Math.max(15, 20 * s), 11);
     const by = y1 - 28 * s;
     track(ctx, x0 + pad, x1 - pad, by, 5);
     return [gainFig(c, tx, cy + 58 * s, fp, "left"), barFig(c, x0 + pad, x1 - pad, by, 5)];
@@ -777,8 +816,9 @@ function build(cv, coins, { dateText = "", showPct = true }) {
     const [x0, y0, x1, y1] = box;
     const w = x1 - x0, h = y1 - y0;
     if (h / w > 0.5) return stackedCard(ctx, box, c, rank);
-    const cy = y0 + h / 2 - (showPct ? 8 : 0);
     const s = clamp(Math.min(h / 240, w / 560), 0.55, 1.5);
+    const meta = hasMeta(c);
+    const cy = y0 + h / 2 - (showPct ? 8 : 0) - (meta ? 12 * s : 0);
     const d = Math.max(44, Math.min(h * 0.5, 118 * s));
     const pad = Math.max(22, 36 * s);
     const cx = x0 + pad + d / 2;
@@ -802,12 +842,15 @@ function build(cv, coins, { dateText = "", showPct = true }) {
     ctx.shadowColor = "rgba(0,0,0,0.4)"; ctx.shadowBlur = 6; ctx.shadowOffsetY = 4;
     gradText(ctx, sym.text, tx, sy, SILVER);
     ctx.restore();
+    let yNext = sy;
     if (showName) {
       const f = fitFont(ctx, nm, room, 19 * s, 12, F.d5);
       ctx.font = font(f.px, F.d5);
       ctx.fillStyle = DIM;
-      ctx.fillText(f.text, tx, sy + 30 * s);
+      yNext += 30 * s;
+      ctx.fillText(f.text, tx, yNext);
     }
+    if (meta) drawMeta(ctx, c, tx, yNext + Math.max(28, 32 * s), right - tx, clamp(22 * s, 16, 24), 11);
     ctx.font = font(fpx, F.d7);
     const gy = cy + capOf(ctx) / 2;
     const by = y1 - Math.max(22, 34 * s);

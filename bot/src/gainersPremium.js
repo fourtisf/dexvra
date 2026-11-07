@@ -475,6 +475,32 @@ module.exports = function premiumKit(k) {
   const facts = (c, { price = true, mcap = true } = {}) =>
     [price && c.price ? fmtPrice(c.price) : null, mcap && c.mcap ? `MC ${fmtCap(c.mcap)}` : null].filter(Boolean).join("  ·  ");
 
+  /**
+   * The card's "price · MC" as a muted micro line, shrunk to fit maxW. When
+   * even the floor size will not hold both, the PRICE goes first: with 🏦 MC
+   * on, every card carries its market cap ("mc sudah on tapi yang di show mc
+   * on hanya top 1 gainers" — several layouts printed MC only as a fallback
+   * when the % was hidden, so MC ON drew one cap, or none). Nothing is drawn
+   * for a coin with neither figure.
+   */
+  function factLine(ctx, x, y, c, maxW, S, { size = 11, min = 8, align = "center", track = 0.1, color = SITE.muted, price = true } = {}) {
+    const widthOf = (t, px) => {
+      ctx.save();
+      ctx.font = `700 ${px}px ${F.m7}`;
+      const chars = [...String(t).toUpperCase()];
+      const w = chars.reduce((a, ch) => a + ctx.measureText(ch).width, 0) + px * track * Math.max(0, chars.length - 1);
+      ctx.restore();
+      return w;
+    };
+    for (const text of price ? [facts(c), facts(c, { price: false })] : [facts(c, { price: false })]) {
+      if (!text) continue;
+      let px = size;
+      while (px > min * S && widthOf(text, px) > maxW) px -= 0.5;
+      if (widthOf(text, px) <= maxW) return microLabel(ctx, x, y, text, { size: px, track, color, align });
+    }
+    return 0;
+  }
+
   /** A rank tag: a small metal-filled pill on the podium, a glass one after. */
   function rankTag(ctx, x, y, rank, S, { size = 12, align = "left" } = {}) {
     const label = `#${rank}`;
@@ -711,7 +737,7 @@ module.exports = function premiumKit(k) {
       sym(ctx, c, x, ty, 380 * S, (rank === 1 ? 44 : 36) * S, S, { rank, align: "center", min: 18 });
       nameLine(ctx, c, x, ty + 28 * S, 360 * S, 16 * S, S, { align: "center" });
       gainPill(ctx, x, ty + 72 * S, c.pctLabel, (rank === 1 ? 24 : 20) * S, S);
-      if (!c.pctLabel) microLabel(ctx, x, ty + 76 * S, facts(c, { price: false }), { size: 12 * S, color: SITE.muted, align: "center" });
+      factLine(ctx, x, ty + (c.pctLabel ? 118 : 76) * S, c, 340 * S, S, { size: 12 * S, min: 9 });
     }
   }
 
@@ -929,7 +955,7 @@ module.exports = function premiumKit(k) {
     sym(ctx, c, cx, cy + 32 * S, R * 1.5, 40 * S, S, { rank: 1, align: "center", min: 18 });
     nameLine(ctx, c, cx, cy + 58 * S, R * 1.4, 15 * S, S, { align: "center" });
     if (c.pctLabel) heroPct(ctx, cx, cy + 128 * S, c.pctLabel, 52 * S, S, { align: "center" });
-    else microLabel(ctx, cx, cy + 112 * S, facts(c), { size: 13 * S, color: SITE.muted, align: "center" });
+    factLine(ctx, cx, cy + (c.pctLabel ? 166 : 112) * S, c, R * 1.3, S, { size: 13 * S, min: 9 });
     // satellites
     sats.forEach((s, k) => {
       const b = satBox(k);
@@ -945,6 +971,7 @@ module.exports = function premiumKit(k) {
       rankTag(ctx, tx, scy - 30 * S, rank, S, { size: 10.5 });
       sym(ctx, s, tx, scy + 8 * S, tw - (s.pctLabel ? 120 * S : 0), 24 * S, S, { rank, min: 12 });
       nameLine(ctx, s, tx, scy + 32 * S, tw, 12.5 * S, S);
+      factLine(ctx, tx, scy + 56 * S, s, tw, S, { size: 10.5 * S, min: 8, align: "left" });
       gainPill(ctx, b.x + sw - 22 * S, scy - 28 * S, s.pctLabel, 16 * S, S, { align: "r" });
     });
   }
@@ -1061,12 +1088,15 @@ module.exports = function premiumKit(k) {
       luxe(ctx, tx, ty, tw, th, 18 * S, S, { tone, rank });
       rankTag(ctx, tx + 18 * S, ty + 30 * S, rank, S, { size: 11 });
       const dd = Math.min(72 * S, th * 0.3);
-      const ay2 = ty + 50 * S + dd / 2;
+      const meta = Boolean(facts(s));
+      const ay2 = ty + (meta ? 42 : 50) * S + dd / 2;
       coin(ctx, s.img, tcx, ay2, dd, s.symbol, S, rank);
       sym(ctx, s, tcx, ay2 + dd / 2 + 32 * S, tw - 26 * S, 22 * S, S, { rank, align: "center", min: 11 });
       nameLine(ctx, s, tcx, ay2 + dd / 2 + 52 * S, tw - 28 * S, 11.5 * S, S, { align: "center", min: 8.5 });
-      gainPill(ctx, tcx, ty + th - 36 * S, s.pctLabel, 16 * S, S);
-      if (!s.pctLabel && s.mcap) microLabel(ctx, tcx, ty + th - 30 * S, `MC ${fmtCap(s.mcap)}`, { size: 11 * S, color: SITE.muted, align: "center" });
+      gainPill(ctx, tcx, ty + th - (meta ? 50 : 36) * S, s.pctLabel, 16 * S, S);
+      // MC only, and clear of the podium tiles' art-deco corners (42px each
+      // side) — every tile the same, like the Hall's gallery frames
+      factLine(ctx, tcx, ty + th - (s.pctLabel ? 17 : 30) * S, s, tw - 92 * S, S, { size: 11 * S, min: 8, price: false });
     });
   }
 
@@ -1105,7 +1135,8 @@ module.exports = function premiumKit(k) {
       sym(ctx, c, tx, acy - 14 * S, tw, 32 * S, S, { rank, min: 15 });
       nameLine(ctx, c, tx, acy + 10 * S, tw, 13.5 * S, S);
       heroPct(ctx, tx, acy + 66 * S, c.pctLabel, 40 * S, S);
-      if (!c.pctLabel) microLabel(ctx, tx, acy + 52 * S, facts(c), { size: 11.5 * S, color: SITE.muted });
+      // stops short of the right-hand art-deco corner, which sits at this height
+      factLine(ctx, tx, acy + (c.pctLabel ? 96 : 52) * S, c, tw - 24 * S, S, { size: 11.5 * S, min: 8.5, align: "left" });
     });
     if (!rest.length) return;
     const by = y + topH + gap;

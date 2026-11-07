@@ -194,6 +194,31 @@ test("🏦 / 💲 off remove the market cap / the price from the artwork", async
   assert.ok(!noPr.includes(priceText) && noPr.includes(capText), "💲 off left the price (or took the cap)");
 });
 
+// "mc sudah on tapi yang di show mc on hanya top 1 gainers": the line was drawn
+// on the leader's card only, and the test above looked at Top 1 only, so a
+// board showing one market cap out of ten passed. Every card, every count.
+test("🏦 / 💲 on: EVERY card carries its own price and market cap — off removes them from every card", async () => {
+  if (!canDraw()) return;
+  const coinsN = (n) => many(n).map((c, i) => ({ ...c, price: 0.000417 + i * 0.0000131, mcap: 1_234_567 * (i + 1) + i * 98_765 }));
+  const strip = (s) => s.replace(/^\$/, "").toUpperCase();
+  for (let n = 1; n <= 10; n++) {
+    const coins = coinsN(n);
+    const caps = coins.map((c) => strip(fmtCap(c.mcap)));
+    const prices = coins.map((c) => strip(fmtPrice(c.price)));
+    assert.strictEqual(new Set([...caps, ...prices]).size, 2 * n, "fixture: every figure distinct");
+    const on = await drawn(() => pr.still({ template: `prism${n}`, coins, dateText: "" }));
+    caps.forEach((t, i) => assert.ok(on.includes(t), `top ${n}: card ${i + 1} has no market cap (${t})`));
+    prices.forEach((t, i) => assert.ok(on.includes(t), `top ${n}: card ${i + 1} has no price (${t})`));
+    const noMc = await drawn(() => pr.still({ template: `prism${n}`, coins, dateText: "", showMcap: false }));
+    caps.forEach((t, i) => assert.ok(!noMc.includes(t), `top ${n}: 🏦 off left card ${i + 1}'s cap`));
+    assert.doesNotMatch(noMc, /MC \$/, `top ${n}: an "MC" label survived 🏦 off`);
+    prices.forEach((t, i) => assert.ok(noMc.includes(t), `top ${n}: 🏦 off took card ${i + 1}'s price`));
+    const noPr = await drawn(() => pr.still({ template: `prism${n}`, coins, dateText: "", showPrice: false }));
+    prices.forEach((t, i) => assert.ok(!noPr.includes(t), `top ${n}: 💲 off left card ${i + 1}'s price`));
+    caps.forEach((t, i) => assert.ok(noPr.includes(t), `top ${n}: 💲 off took card ${i + 1}'s cap`));
+  }
+});
+
 test("nothing is invented: a coin with no 24h change gets no figure, no price and no cap get no cells", async () => {
   if (!canDraw()) return;
   const bare = { chain: "solana", address: "SoX", symbol: "BARE", name: "Bare", pct: null, price: null, mcap: null };
