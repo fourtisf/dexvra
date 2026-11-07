@@ -5250,6 +5250,14 @@ operator chose **"Tambahan saja"** — so it is ADDED, it replaces nothing:
   formatter, 📈 off removes every % AND every bar (the bar is the % as a
   length), 🏦 / 💲 off remove the cap / the price — decided once, on copies.
   The admin's 🎨 background is not used: the poster panel IS Prism's backdrop.
+- ⚠️ **EVERY card carries its own price · MC line, not just the leader's.**
+  The first cut drew it on card #1 only, so with 🏦 MC on a Top 10 showed one
+  market cap out of ten ("mc sudah on tapi yang di show mc on hanya top 1
+  gainers") — and the toggle test looked at the Top 1 board alone, which is
+  why it passed. `drawMeta` is the ONE owner for all five card shapes (hero,
+  solo, portrait, stacked, row), and the test now checks every card of every
+  count with distinct figures, on and off. Mutation-tested: removing the line
+  from any one card shape fails it.
 - **No clip on this host → the still frame goes out**, not nothing: a broken
   or missing ffmpeg costs the motion, never the post (logged as a WARN).
   ffmpeg is `@ffmpeg-installer/ffmpeg`, already a dependency of the trending
