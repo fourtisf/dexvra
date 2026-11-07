@@ -230,6 +230,38 @@ function drawMeta(ctx, c, x, y, maxW, px, min, align = "left") {
   return true;
 }
 
+/**
+ * The same figures split across the card: the price under the ticker on the
+ * left, the market cap under the gain on the right ("mc nya … agak ke kanan,
+ * jangan terlalu ke kiri", 2026-11-07). Shrinks toward `min` when the two
+ * would meet, and when even that leaves no clear gap it falls back to the one
+ * left-aligned line — both figures stay on the card either way.
+ */
+function drawMetaSplit(ctx, c, xL, xR, y, px, min) {
+  const parts = metaParts(c);
+  if (!parts.length || !(xR > xL)) return false;
+  const price = parts.find(([l]) => !l);
+  const cap = parts.find(([l]) => l);
+  if (!price || !cap) return drawMeta(ctx, c, cap ? xR : xL, y, xR - xL, px, min, cap ? "right" : "left");
+  const gap = Math.max(14, px);
+  const widthAt = (p) => {
+    ctx.font = font(p, F.d6);
+    return ctx.measureText(price[1]).width + ctx.measureText(cap[0] + cap[1]).width;
+  };
+  let p = px;
+  while (p > min && widthAt(p) + gap > xR - xL) p -= 0.5;
+  if (widthAt(p) + gap > xR - xL) return drawMeta(ctx, c, xL, y, xR - xL, px, min);
+  ctx.font = font(p, F.d6);
+  ctx.textAlign = "left";
+  ctx.fillStyle = META_VAL;
+  ctx.fillText(price[1], xL, y);
+  const vw = ctx.measureText(cap[1]).width;
+  ctx.fillText(cap[1], xR - vw, y);
+  ctx.fillStyle = META_DIM;
+  ctx.fillText(cap[0], xR - vw - ctx.measureText(cap[0]).width, y);
+  return true;
+}
+
 const tickerOf = (c) => `$${String((c && (c.symbol || c.name)) || "?").replace(/^\$+/, "").slice(0, 14)}`;
 const nameOf = (c) => {
   const n = String((c && c.name) || "").trim();
@@ -856,7 +888,7 @@ function build(cv, coins, { dateText = "", showPct = true }) {
     // "price dan MC nya agak ke bawah" (2026-11-07): the line sits in the
     // middle of the gap between the ticker (or the name) and the bar, never
     // pressed up under the ticker with the gap left empty below it.
-    if (meta) drawMeta(ctx, c, tx, Math.max(yNext + Math.max(28, 32 * s), yNext + (by - yNext) * 0.56), right - tx, clamp(22 * s, 16, 24), 11);
+    if (meta) drawMetaSplit(ctx, c, tx, right, Math.max(yNext + Math.max(28, 32 * s), yNext + (by - yNext) * 0.56), clamp(22 * s, 16, 24), 11);
     track(ctx, tx, right, by, 5);
     return [gainFig(c, right, gy, fpx, "right"), barFig(c, tx, right, by, 5)];
   }
