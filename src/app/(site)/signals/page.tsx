@@ -19,7 +19,7 @@ export default function SignalsPage() {
   const signals = data?.signals ?? [];
 
   return (
-    <section className="view">
+    <section className="view narrow">
       <PageHead
         icon="⚡"
         title="Signal Feed"

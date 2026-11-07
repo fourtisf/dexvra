@@ -3,17 +3,19 @@
 import { useApp } from "@/components/AppState";
 import { PageHead } from "@/components/PageHead";
 import { CHAINS } from "@/config/chains";
-import { tierLabel } from "@/lib/packages";
+import { BOT_URL } from "@/config/brand";
+import { shortAddr } from "@/lib/walletConnect";
+import { publicTier, tierLabel } from "@/lib/packages";
 
 export default function AccountPage() {
-  const { wallet, toggleWallet, watchlist, myListings, openListing } = useApp();
+  const { wallet, openWalletModal, disconnectWallet, watchlist, myListings } = useApp();
 
   return (
-    <section className="view">
+    <section className="view narrow">
       <PageHead icon="👤" title="Account" sub="Your wallet, your listings, your watchlist — all in one place." />
       <div className="panel" style={{ maxWidth: 640, display: "flex", flexDirection: "column", gap: 2 }}>
         <div className="acct-row">
-          Wallet<span className="av">{wallet ?? "Not connected"}</span>
+          Wallet<span className="av">{wallet ? `${wallet.name} · ${shortAddr(wallet.address)}` : "Not connected"}</span>
         </div>
         <div className="acct-row">
           Watchlist
@@ -24,8 +26,12 @@ export default function AccountPage() {
         <div className="acct-row">
           Member since<span className="av">Jul 2026</span>
         </div>
-        <button className="btn-primary" style={{ alignSelf: "flex-start", marginTop: 12 }} onClick={toggleWallet}>
-          {wallet ? "Disconnect" : "Connect wallet"}
+        <button
+          className="btn-primary"
+          style={{ alignSelf: "flex-start", marginTop: 12 }}
+          onClick={wallet ? disconnectWallet : openWalletModal}
+        >
+          {wallet ? "⏏ Disconnect" : "Connect wallet"}
         </button>
       </div>
 
@@ -37,7 +43,12 @@ export default function AccountPage() {
           <div className="panel big-empty">
             <div className="em">🪙</div>
             <p>No listings yet. Submit your first token and it shows up here with live status.</p>
-            <button className="btn-primary" onClick={openListing}>⚡ List my token</button>
+            <a className="btn-primary" href={BOT_URL} target="_blank" rel="noopener noreferrer">
+              <svg className="cta-ic" viewBox="0 0 24 24" aria-hidden>
+                <path d="M13.2 2 4.6 13.4h6.1L9.8 22l8.6-11.4h-6.1L13.2 2Z" />
+              </svg>
+              List my token
+            </a>
           </div>
         ) : (
           myListings.map((m, i) => {
@@ -58,7 +69,7 @@ export default function AccountPage() {
                 <div>
                   <div style={{ fontFamily: "var(--fd)", fontWeight: 700, fontSize: 14 }}>{m.symbol}</div>
                   <div style={{ fontSize: 11.5, color: "var(--muted)" }}>
-                    {m.name} · <span style={{ color: c?.color }}>{c?.label ?? m.chain}</span> · {tierLabel(m.tier)}
+                    {m.name} · <span style={{ color: c?.color }}>{c?.label ?? m.chain}</span> · {tierLabel(publicTier(m.tier))}
                   </div>
                 </div>
                 <span className="status-chip">{m.status}</span>

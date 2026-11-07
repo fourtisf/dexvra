@@ -1,0 +1,600 @@
+'use strict';
+/*
+ * A Solana token's own metadata, read off the CHAIN — for the listing form.
+ *
+ * "bot tidak detect socials nya pdahal tokenya ada website dan x". BINWISE
+ * ($BWS, a pump.fun mint) was pasted into the listing flow and the review card
+ * came back `Website: not set · X: not set · Telegram: not set` over an
+ * auto-written overview — about a token whose pump.fun page shows its X and
+ * its website in the same minute.
+ *
+ * Nothing in the form was wrong; the wiring copies whatever the merge hands
+ * it. Every source the merge had is a THIRD PARTY over HTTP, and each one has
+ * a way to answer with no socials that is not a fact about the token:
+ *
+ *   · DexScreener carries socials only for a token whose project paid for a
+ *     profile — an ordinary pump.fun launch has a pair and an empty `info`;
+ *   · pump.fun's own API blocks datacenter ranges, which is what the box is,
+ *     and its breaker benches it after three transport failures;
+ *   · Jupiter's registry is rate-limited per IP and shared with the trade bot.
+ *
+ * And the one source that cannot be refused was never asked. A pump.fun mint
+ * (and a LetsBonk one, and anything minted by the standard tools) carries a
+ * Metaplex metadata account whose `uri` names a JSON document holding exactly
+ * what the form wants — `website`, `twitter`, `telegram`, `description`,
+ * `image`. pump.fun's API reads the same file. That is the Pons lesson one
+ * chain over ("the one source that cannot be unreachable — the token contract
+ * itself — was the one nobody asked"), and this module is its Solana half.
+ *
+ * WHAT IT READS, in one RPC request: the mint account and the Metaplex
+ * metadata PDA together (`getMultipleAccounts`). A Token-2022 mint carrying
+ * its OWN metadata extension (pump.fun's newer mints) is read from the mint;
+ * anything else from the Metaplex account. Then the `uri` document, through
+ * the guarded fetch (it is a url a stranger typed — see helpers/safeImage) and
+ * across the IPFS gateway ladder, because a CID is the hash of the bytes and
+ * one gateway's 404 is a fact about that gateway.
+ *
+ * ⚠️ DISPLAY METADATA ONLY, the contract ponsChain, poolstrade and the
+ * launchpad registry carry. No price and no liquidity — the fields the
+ * auto-lister's gates read are deliberately ABSENT, so `mergeInfo` can only
+ * ever fill a social hole with this and never a market one.
+ *
+ * The one market-shaped thing it DOES answer is a pump.fun token's curve PHASE
+ * (bonding / graduated, and how far along), read off the curve account in the
+ * same request — see `parsePumpCurve`. That is what the review card's
+ * "🚀 Still bonding" line renders, and it is no gate input.
+ *
+ * ⚠️ OPT-IN (`discovery.fetchTokenInfoX(…, { chainMeta: true })`), and only the
+ * listing form opts in. The auto-lister and the listing audit call the same
+ * merge for every candidate on every scan, and they would pay an RPC request
+ * and a gateway fetch per token for socials they never render.
+ */
+const rpcConfig = require('./config/rpc');
+const { rpcRead } = rpcConfig;
+const safeImage = require('./helpers/safeImage');
+const ipfs = require('./helpers/ipfsGateways');
+const { httpsLogo } = require('./helpers/httpsLogo');
+const { safeUrl, socialUrl, description: cleanDescription, str } = require('../../shared/launchpads/normalize');
+const { pumpfunParse } = require('../../shared/launchpads/pads');
+const log = require('./helpers/logger');
+
+const METADATA_PROGRAM = 'metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s';
+const TOKEN_2022 = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
+
+// The Token-2022 extension that holds name/symbol/uri INSIDE the mint
+// (spl-token-2022 ExtensionType::TokenMetadata).
+const EXT_TOKEN_METADATA = 19;
+// The mint's base layout is 82 bytes, padded to an Account's 165 so the two
+// cannot be confused, then one AccountType byte (1 = Mint), then the TLV list.
+const ACCOUNT_TYPE_OFFSET = 165;
+const ACCOUNT_TYPE_MINT = 1;
+// Metaplex `Key::MetadataV1`.
+const METAPLEX_METADATA_V1 = 4;
+
+// pump.fun's bonding-curve program, and the account it keeps per mint at the
+// PDA ["bonding-curve", mint]. Anchor prefixes every account with the first 8
+// bytes of sha256("account:<Name>") — COMPUTED here rather than pasted, so the
+// one thing that says "this really is a BondingCurve" is not a constant
+// somebody could get wrong by a byte.
+const PUMP_PROGRAM = '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P';
+const PUMP_CURVE_DISC = require('crypto').createHash('sha256').update('account:BondingCurve').digest().subarray(0, 8);
+// discriminator(8) · virtual token(8) · virtual sol(8) · real token(8) · real
+// sol(8) · total supply(8) · complete(1). Newer curves append the creator; the
+// fields read here sit in front of it and have never moved.
+const PUMP_CURVE_MIN = 8 + 5 * 8 + 1;
+
+/** `SOLANA_META=0` turns the source off. Blank is ON (the raid/sourceFlag rule). */
+const enabled = () => !/^(0|false|off|no)$/i.test(String(process.env.SOLANA_META == null ? '' : process.env.SOLANA_META).trim());
+const covers = (chain) => chain === 'solana' && enabled();
+
+let web3 = null;
+function lib() {
+  if (web3 === null) {
+    try {
+      web3 = require('@solana/web3.js');
+    } catch {
+      web3 = false;
+    }
+  }
+  return web3 || null;
+}
+
+// ── Parsing ──────────────────────────────────────────────────────────────────
+
+/**
+ * A pump.fun token's curve phase, read off its own curve account.
+ *
+ * ⚠️ WHY THIS EXISTS: `launchpads:check` on the box, for $BWS — a mint whose
+ * pump.fun page was open in the operator's browser — printed `pumpfun answered:
+ * never heard of it (frontend-api-v3.pump.fun)`: the CURRENT host, 404, about
+ * its own token. Whether that is a moved path or a datacenter block dressed as
+ * a 404 cannot be measured from here, and it does not have to be: the curve
+ * the API reports on is an account on the chain we are already reading, in
+ * the request we are already making. The pad's "phase unknown — no pad said"
+ * was a third party's silence standing in for a fact the chain states.
+ *
+ * Believed only if the PROGRAM owns it (the PDA pins the mint) and the Anchor
+ * discriminator says BondingCurve. The reserves go through the registry's OWN
+ * `pumpfunParse` — the shape pump.fun's API returns the same numbers in — so
+ * the curve constants and the "% sold" derivation have one owner.
+ *
+ * `complete` must be exactly 0 or 1: anything else is a mis-parse, and a
+ * mis-parse must not become "graduated".
+ */
+function parsePumpCurve(acct, mint) {
+  if (!acct || acct.owner !== PUMP_PROGRAM) return null;
+  const buf = acct.data;
+  if (!Buffer.isBuffer(buf) || buf.length < PUMP_CURVE_MIN || !buf.subarray(0, 8).equals(PUMP_CURVE_DISC)) return null;
+  const done = buf[48];
+  if (done !== 0 && done !== 1) return null;
+  const rec = pumpfunParse({ key: 'pumpfun', label: 'pump.fun' }, 'solana', {
+    mint,
+    real_token_reserves: Number(buf.readBigUInt64LE(24)),
+    real_sol_reserves: Number(buf.readBigUInt64LE(32)),
+    complete: done === 1,
+  }, Date.now());
+  return {
+    graduated: rec.graduated,
+    onCurve: rec.onCurve,
+    progressPct: rec.progressPct,
+    // "derived" is a percentage divided out of an API's reserve figures; this
+    // one was divided out of the curve itself, and the check prints which.
+    progressSource: rec.progressSource === 'derived' ? 'chain' : rec.progressSource,
+    launchpad: 'pump.fun',
+    launchUrl: rec.launchUrl,
+  };
+}
+
+/** A borsh String (u32 LE length + UTF-8), or null when it does not fit. */
+function readString(buf, off) {
+  if (off + 4 > buf.length) return null;
+  const len = buf.readUInt32LE(off);
+  // A metadata string is a name, a ticker or a url. A length this large is a
+  // mis-parse, and reading it would hand a garbage megabyte to the form.
+  if (len > 4096 || off + 4 + len > buf.length) return null;
+  // Metaplex pads name/symbol/uri with NULs to a fixed width.
+  const value = buf.slice(off + 4, off + 4 + len).toString('utf8').replace(/\u0000/g, '').trim();
+  return { value, next: off + 4 + len };
+}
+
+/**
+ * name/symbol/uri from a Metaplex metadata account — and ONLY if it describes
+ * THIS mint. The PDA derivation already pins that, and the check costs nothing:
+ * a record about another token's mint is the wrong token's socials.
+ */
+function parseMetaplex(buf, mintBytes) {
+  if (!Buffer.isBuffer(buf) || buf.length < 1 + 32 + 32 + 12 || buf[0] !== METAPLEX_METADATA_V1) return null;
+  if (mintBytes && !buf.slice(33, 65).equals(mintBytes)) return null;
+  const name = readString(buf, 65);
+  const symbol = name && readString(buf, name.next);
+  const uri = symbol && readString(buf, symbol.next);
+  if (!uri) return null;
+  return { name: name.value, symbol: symbol.value, uri: uri.value, extra: {}, from: 'metaplex' };
+}
+
+/**
+ * name/symbol/uri (and the additional key/value pairs, where some mints keep
+ * their socials) from a Token-2022 mint's own TokenMetadata extension.
+ */
+function parseToken2022(buf, mintBytes) {
+  if (!Buffer.isBuffer(buf) || buf.length <= ACCOUNT_TYPE_OFFSET + 1 || buf[ACCOUNT_TYPE_OFFSET] !== ACCOUNT_TYPE_MINT) return null;
+  let off = ACCOUNT_TYPE_OFFSET + 1;
+  while (off + 4 <= buf.length) {
+    const type = buf.readUInt16LE(off);
+    const len = buf.readUInt16LE(off + 2);
+    off += 4;
+    if (type === 0 || off + len > buf.length) break; // uninitialised tail, or a torn TLV
+    if (type === EXT_TOKEN_METADATA) {
+      const v = buf.slice(off, off + len);
+      // update authority (32) · mint (32) · name · symbol · uri · additional
+      if (v.length < 64 + 12) return null;
+      if (mintBytes && !v.slice(32, 64).equals(mintBytes)) return null;
+      const name = readString(v, 64);
+      const symbol = name && readString(v, name.next);
+      const uri = symbol && readString(v, symbol.next);
+      if (!uri) return null;
+      const extra = {};
+      if (uri.next + 4 <= v.length) {
+        const n = Math.min(v.readUInt32LE(uri.next), 64);
+        let p = uri.next + 4;
+        for (let i = 0; i < n; i++) {
+          const k = readString(v, p);
+          const val = k && readString(v, k.next);
+          if (!val) break;
+          extra[k.value.toLowerCase()] = val.value;
+          p = val.next;
+        }
+      }
+      return { name: name.value, symbol: symbol.value, uri: uri.value, extra, from: 'token-2022' };
+    }
+    off += len;
+  }
+  return null;
+}
+
+// ── Socials ──────────────────────────────────────────────────────────────────
+
+const text = (v) => (typeof v === 'string' && v.trim() ? v.trim() : null);
+const firstText = (...vals) => {
+  for (const v of vals) {
+    const t = text(v);
+    if (t) return t;
+  }
+  return null;
+};
+const hostOf = (u) => {
+  try {
+    return new URL(u).hostname.toLowerCase();
+  } catch {
+    return '';
+  }
+};
+
+/** A website, tolerating the bare `binwise.xyz` a creator types into a form. */
+function webUrl(v) {
+  const s = text(v);
+  if (!s) return null;
+  if (/^https?:\/\//i.test(s)) return safeUrl(s);
+  if (/^(www\.)?[a-z0-9-]+(\.[a-z0-9-]+)+(\/\S*)?$/i.test(s)) return safeUrl(`https://${s}`);
+  return null;
+}
+
+/**
+ * An X or Telegram link — and ONLY if it goes where its label says.
+ *
+ * ⚠️ A creator types these into a free-text form, and the review card renders
+ * them under "X:" and "Telegram:". A `twitter` field holding some other site
+ * is a link a buyer taps believing it is the project's X; refusing it costs a
+ * blank the form lets them fill, and accepting it costs a mislabelled link on a
+ * public listing. So a URL is kept only on the label's own host; a bare handle
+ * (`@binwise`, `binwise`) becomes one.
+ */
+function labelledUrl(v, base, hostRe) {
+  const s = text(v);
+  if (!s) return null;
+  const full = /^https?:\/\//i.test(s) ? s : /^[a-z0-9.-]+\.[a-z]{2,}\//i.test(s) ? `https://${s}` : null;
+  if (full) {
+    const u = safeUrl(full);
+    return u && hostRe.test(hostOf(u)) ? u : null;
+  }
+  return socialUrl(s, base);
+}
+const X_HOST = /(^|\.)(x|twitter)\.com$/;
+const TG_HOST = /(^|\.)(t\.me|telegram\.me|telegram\.dog)$/;
+
+/**
+ * A launchpad stamps its OWN url into `external_url` / `createdOn` on every
+ * token it mints. That is where the token was made, not the project's website.
+ */
+const PLATFORM_HOST = /(^|\.)(pump\.fun|bonk\.fun|letsbonk\.fun|believe\.app|moonshot\.money|raydium\.io|jup\.ag|meteora\.ag|dexscreener\.com|boop\.fun|heaven\.xyz|bags\.fm)$/;
+
+/** Everything the form can use, out of the uri document and the on-chain record. */
+function extract(doc, onchain) {
+  const j = doc && typeof doc === 'object' ? doc : {};
+  const ext = j.extensions && typeof j.extensions === 'object' ? j.extensions : {};
+  const links = j.links && typeof j.links === 'object' && !Array.isArray(j.links) ? j.links : {};
+  const props = j.properties && typeof j.properties === 'object' ? j.properties : {};
+  const extra = (onchain && onchain.extra) || {};
+
+  let website = webUrl(firstText(j.website, ext.website, links.website, props.website, extra.website));
+  if (!website) {
+    // The Metaplex standard's project url — unless it is the launchpad's own.
+    const made = hostOf(webUrl(j.createdOn) || '');
+    const cand = webUrl(j.external_url);
+    const h = cand && hostOf(cand);
+    if (cand && !PLATFORM_HOST.test(h) && h !== made) website = cand;
+  }
+  return {
+    name: str(firstText(onchain && onchain.name, j.name), 60) || null,
+    symbol: str(firstText(onchain && onchain.symbol, j.symbol), 24) || null,
+    logoUrl: httpsLogo(firstText(j.image, props.image, ext.image)),
+    website,
+    twitter: labelledUrl(firstText(j.twitter, j.x, ext.twitter, ext.x, links.twitter, links.x, props.twitter, extra.twitter, extra.x), 'https://x.com', X_HOST),
+    telegram: labelledUrl(firstText(j.telegram, ext.telegram, links.telegram, props.telegram, extra.telegram), 'https://t.me', TG_HOST),
+    description: cleanDescription(typeof j.description === 'string' ? j.description : null),
+    source: 'solana-meta',
+  };
+}
+
+// ── The two reads ────────────────────────────────────────────────────────────
+
+/** One JSON-RPC call against one endpoint. A refusal reads as a TRANSPORT
+ *  error, so rpcRead asks the next endpoint: a 401/403/429 is a fact about the
+ *  host's bucket, never about the token. */
+async function rpcPost(url, method, params, timeoutMs) {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!res.ok) {
+    const refused = res.status === 401 || res.status === 403 || res.status === 429;
+    throw new Error(`HTTP ${res.status}${refused ? ' — service unavailable to this server' : ''}`);
+  }
+  const j = await res.json();
+  if (j && j.error) {
+    const msg = `rpc ${j.error.code}: ${j.error.message || 'error'}`;
+    // A node's own "too many requests" arrives as a JSON-RPC error.
+    throw new Error(/rate|too many|limit/i.test(msg) ? `${msg} (rate limit)` : msg);
+  }
+  return j && j.result;
+}
+
+/**
+ * The public Solana endpoints this read may fall back to AFTER the operator's
+ * own — `config/rpc.js`'s shipped defaults, not a new list.
+ *
+ * ⚠️ WHY THIS READ, AND NO OTHER, MAY REACH PAST `RPC_SOLANA_URLS`. $KVR's
+ * review card came back "Logo: not set · X: not set" on a box whose operator
+ * had said their Helius plan was hitting its limit — and the buy bot polls
+ * Solana pools through that same list all day (CLAUDE.md, "the trade bot was
+ * never the spender"). `RPC_SOLANA_URLS` wins outright, so one 429 there left
+ * this read with nowhere to go, and the form lost the logo the chain was
+ * holding. The rule against appending public nodes exists so the operator's
+ * traffic and ADDRESSES never reach a node they did not pick; a mint's public
+ * metadata carries neither. Payments and sweeps never take this path. It is
+ * the trade bot's SOL_READ_FALLBACKS decision, one package over.
+ *
+ * `SOLANA_META_PUBLIC_RPC=0` keeps the read on the configured list alone.
+ */
+function publicFallbacks() {
+  const v = String(process.env.SOLANA_META_PUBLIC_RPC == null ? '' : process.env.SOLANA_META_PUBLIC_RPC).trim();
+  if (/^(0|false|off|no)$/i.test(v)) return [];
+  return (rpcConfig.DEFAULTS.solana || []).slice();
+}
+
+/** A url's HOST only. A paid endpoint keeps its key in the path or the query,
+ *  and every reason below lands in a log line. */
+const rpcHost = (u) => {
+  try {
+    return new URL(u).host;
+  } catch {
+    return 'unparseable url';
+  }
+};
+
+/** Every account in ONE request — the metadata PDA, the mint, the pump.fun curve. */
+async function readAccounts(addrs, { timeoutMs, budgetMs }) {
+  // ⚠️ EVERY endpoint's reason, not the last one's. `rpcRead` rethrows the LAST
+  // error, and with the public fallbacks behind the operator's endpoint that
+  // would report a public node's refusal over the Helius 429 that actually
+  // started it — the misdiagnosis shared/launchpads/http.js and solana.js
+  // _overBases already had to be fixed for. `onFail` fires for a timeout too,
+  // which an error handler inside `fn` never sees.
+  const reasons = [];
+  let value;
+  try {
+    ({ value } = await rpcRead(
+      'solana',
+      (url) => rpcPost(url, 'getMultipleAccounts', [addrs, { encoding: 'base64', commitment: 'confirmed' }], timeoutMs),
+      {
+        timeoutMs,
+        budgetMs,
+        extraUrls: publicFallbacks(),
+        onFail: (url, e) => reasons.push(`${rpcHost(url)} ${str((e && e.message) || e, 80)}`),
+      },
+    ));
+  } catch (e) {
+    // A request error (not a refusal) is final and never reached onFail, so it
+    // is added here; a transport error already has its line from onFail.
+    const final = rpcConfig.isTransportError(e) ? [] : [str((e && e.message) || e, 120)];
+    const why = [...reasons, ...final].join('; ') || 'no Solana RPC answered';
+    const err = new Error(why);
+    if (e && e.cause) err.cause = e.cause;
+    throw err;
+  }
+  return (value && Array.isArray(value.value) ? value.value : []).map((a) => {
+    if (!a || !Array.isArray(a.data)) return null;
+    return { owner: a.owner, data: Buffer.from(String(a.data[0] || ''), 'base64') };
+  });
+}
+
+/**
+ * The uri document across the ladder, HEDGED: the next gateway starts after
+ * `staggerMs` if the current one is merely slow, a miss starts it at once, the
+ * first JSON object wins. A fresh pump.fun CID is a DHT walk on a public
+ * gateway, and aborting that walk to restart it elsewhere is the `$DLYN`
+ * defect (src/lib/hedge.ts) — so the slow one is left to finish.
+ */
+function readDocument(uri, { deadlineMs, staggerMs = 1200, fetchJson }) {
+  const cands = ipfs.candidates(uri, 4);
+  if (!cands.length) return Promise.resolve({ json: null, why: `the metadata uri is not a url (${str(uri, 60) || 'blank'})`, flaky: false });
+  return new Promise((resolve) => {
+    const started = Date.now();
+    const whys = [];
+    let i = 0;
+    let pending = 0;
+    let flaky = false;
+    let done = false;
+    let stagger = null;
+    // ⚠️ NOT unref'd — a caller is waiting on this — and cleared on settle.
+    const deadline = setTimeout(() => finish({ json: null, why: `no gateway answered within ${deadlineMs}ms${whys.length ? ` (${whys.join('; ')})` : ''}`, flaky: true }), deadlineMs);
+    function finish(v) {
+      if (done) return;
+      done = true;
+      clearTimeout(deadline);
+      clearTimeout(stagger);
+      resolve(v);
+    }
+    function launch() {
+      if (done || i >= cands.length) return;
+      const u = cands[i++];
+      pending++;
+      clearTimeout(stagger);
+      stagger = setTimeout(launch, staggerMs);
+      const left = Math.max(250, deadlineMs - (Date.now() - started));
+      Promise.resolve()
+        .then(() => fetchJson(u, { timeoutMs: left }))
+        .catch((e) => ({ json: null, why: (e && e.message) || String(e), flaky: true }))
+        .then((r) => {
+          pending--;
+          if (done) return;
+          if (r && r.json) return finish({ json: r.json, url: u, why: null, flaky: false });
+          if (r && r.flaky) flaky = true;
+          whys.push((r && r.why) || `${hostOf(u)}: no answer`);
+          if (i < cands.length) return launch();
+          if (!pending) finish({ json: null, why: whys.join('; '), flaky });
+        });
+    }
+    launch();
+  });
+}
+
+// ── Public ───────────────────────────────────────────────────────────────────
+
+/** Test seam — the two network reads. */
+const _deps = { readAccounts, fetchJson: (u, o) => safeImage.fetchJson(u, o) };
+
+const HIT_TTL_MS = 15 * 60_000;
+const CACHE_MAX = 500;
+const cache = new Map(); // mint → { at, res }  (ANSWERS only)
+const inflight = new Map();
+const lastFail = new Map(); // mint → { why, at }
+
+function remember(map, k, v, max) {
+  map.delete(k);
+  map.set(k, v);
+  if (map.size > max) map.delete(map.keys().next().value);
+}
+
+const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+
+async function read(mint, budgetMs) {
+  const w = lib();
+  if (!w) return { ok: false, why: '@solana/web3.js is not installed', info: null };
+  let mintKey;
+  let pda;
+  let curvePda;
+  try {
+    mintKey = new w.PublicKey(mint);
+    const prog = new w.PublicKey(METADATA_PROGRAM);
+    [pda] = w.PublicKey.findProgramAddressSync([Buffer.from('metadata'), prog.toBuffer(), mintKey.toBuffer()], prog);
+    [curvePda] = w.PublicKey.findProgramAddressSync([Buffer.from('bonding-curve'), mintKey.toBuffer()], new w.PublicKey(PUMP_PROGRAM));
+  } catch {
+    // Not a key at all is an ANSWER about the paste, not a failure to ask.
+    return { ok: true, why: 'not a Solana address', info: null };
+  }
+  const started = Date.now();
+  const B = budgetMs > 0 ? budgetMs : 0;
+  const rpcTimeout = B ? clamp(Math.round(B * 0.3), 600, 2500) : 4000;
+  const rpcBudget = B ? clamp(Math.round(B * 0.4), 800, 3500) : 8000;
+
+  let accts;
+  try {
+    // THREE accounts, ONE request: the curve rides along for nothing.
+    accts = await _deps.readAccounts([pda.toBase58(), mintKey.toBase58(), curvePda.toBase58()], { timeoutMs: rpcTimeout, budgetMs: rpcBudget });
+  } catch (e) {
+    // undici hides the syscall in `err.cause` — "fetch failed" alone cannot
+    // tell a dead DNS from a refused socket, and the operator needs which.
+    const code = e && e.cause && e.cause.code ? ` (${e.cause.code})` : '';
+    return { ok: false, why: `could not read the token's accounts from the Solana RPC (${str((e && e.message) || e, 120)}${code})`, info: null };
+  }
+  const [metaAcct, mintAcct, curveAcct] = accts;
+  const mintBytes = mintKey.toBuffer();
+  // No account at the PDA is an ANSWER — not a pump.fun token — so it is
+  // simply absent, never "could not ask".
+  const curve = parsePumpCurve(curveAcct, mintKey.toBase58());
+  const withCurve = (info) => (curve ? { ...(info || { source: 'solana-meta' }), ...curve } : info);
+  // The mint's OWN metadata extension first — it is the authority on itself;
+  // the Metaplex account is what every other mint has.
+  const onchain =
+    (mintAcct && mintAcct.owner === TOKEN_2022 && parseToken2022(mintAcct.data, mintBytes)) ||
+    (metaAcct && metaAcct.owner === METADATA_PROGRAM && parseMetaplex(metaAcct.data, mintBytes)) ||
+    null;
+  if (!onchain) {
+    // The chain ANSWERED: no metadata account, no extension. A token nobody
+    // gave a name to has no socials to find either.
+    return { ok: true, why: mintAcct ? 'the mint carries no metadata' : 'no such mint on Solana', info: withCurve(null) };
+  }
+  const base = withCurve(extract(null, onchain));
+  if (!onchain.uri) return { ok: true, why: 'the metadata names no document', info: base };
+
+  const left = B ? B - (Date.now() - started) - 250 : 10_000;
+  if (left < 300) return { ok: false, why: 'no time left to read the metadata document', info: base };
+  const doc = await readDocument(onchain.uri, { deadlineMs: left, fetchJson: _deps.fetchJson });
+  if (!doc.json) {
+    // The on-chain half is still worth having — name and ticker — and the
+    // document's failure is said, not swallowed: "the gateway did not answer"
+    // and "the project wrote no socials" send an operator different places.
+    return { ok: !doc.flaky, why: `metadata document ${doc.flaky ? 'could not be read' : 'is unusable'}: ${str(doc.why, 200)}`, info: base };
+  }
+  return { ok: true, why: null, info: withCurve(extract(doc.json, onchain)), docUrl: doc.url };
+}
+
+/**
+ * `{ ok, why, info }`. `ok:false` is "we could not ask" (an RPC or every
+ * gateway refusing us) and is never cached; an ANSWER — including "this mint
+ * has no metadata" — is remembered for HIT_TTL_MS, and concurrent pastes of
+ * one mint share one read.
+ */
+async function fetchTokenInfoX(chain, mint, opts = {}) {
+  if (!covers(chain)) return { ok: true, why: null, info: null };
+  const key = String(mint || '').trim();
+  const hit = cache.get(key);
+  if (hit && Date.now() - hit.at < HIT_TTL_MS) return hit.res;
+  if (inflight.has(key)) return inflight.get(key);
+  const budget = Number(opts.budgetMs) > 0 ? Number(opts.budgetMs) : 0;
+  const p = read(key, budget)
+    .catch((e) => ({ ok: false, why: `metadata read crashed: ${str((e && e.message) || e, 120)}`, info: null }))
+    .then((res) => {
+      if (res.ok) {
+        remember(cache, key, { at: Date.now(), res }, CACHE_MAX);
+        lastFail.delete(key);
+      } else {
+        remember(lastFail, key, { why: res.why, at: Date.now() }, 200);
+        // At INFO: this is the line that says why a form came back with no
+        // socials, and production does not print debug.
+        log.info(`[solana-meta] ${key}: ${res.why}`);
+      }
+      // An ANSWER can still explain an empty form — "the mint carries no metadata".
+      if (res.ok && res.why) remember(lastFail, key, { why: res.why, at: Date.now() }, 200);
+      return res;
+    })
+    .finally(() => inflight.delete(key));
+  inflight.set(key, p);
+  return p;
+}
+
+async function fetchTokenInfo(chain, mint, opts) {
+  return (await fetchTokenInfoX(chain, mint, opts)).info;
+}
+
+/**
+ * Is there a remembered ANSWER for this mint? A settled read will say the same
+ * thing for HIT_TTL_MS, so asking again cannot change the form — the listing
+ * form's second look (handlers/listing.js lateFill) is skipped for it. Only a
+ * read that could not ask (`ok:false`, never cached) is worth a second look.
+ */
+function settled(mint) {
+  const hit = cache.get(String(mint || '').trim());
+  return !!(hit && Date.now() - hit.at < HIT_TTL_MS);
+}
+
+/** Why the last read of this mint came back short, or null. */
+function lastWhy(mint) {
+  const f = lastFail.get(String(mint || '').trim());
+  if (!f || Date.now() - f.at > HIT_TTL_MS) return null;
+  return f.why;
+}
+
+const _reset = () => {
+  cache.clear();
+  inflight.clear();
+  lastFail.clear();
+};
+
+module.exports = {
+  covers,
+  enabled,
+  fetchTokenInfo,
+  fetchTokenInfoX,
+  lastWhy,
+  settled,
+  METADATA_PROGRAM,
+  TOKEN_2022,
+  PUMP_PROGRAM,
+  _deps,
+  _reset,
+  _test: { publicFallbacks, readAccounts, parseMetaplex, parseToken2022, parsePumpCurve, PUMP_CURVE_DISC, extract, readDocument, readString, webUrl, labelledUrl, rpcPost },
+};
