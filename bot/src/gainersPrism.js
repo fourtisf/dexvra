@@ -818,7 +818,7 @@ function build(cv, coins, { dateText = "", showPct = true }) {
     if (h / w > 0.5) return stackedCard(ctx, box, c, rank);
     const s = clamp(Math.min(h / 240, w / 560), 0.55, 1.5);
     const meta = hasMeta(c);
-    const cy = y0 + h / 2 - (showPct ? 8 : 0) - (meta ? 12 * s : 0);
+    const cy = y0 + h / 2 - (showPct ? 8 : 0) - (meta ? 4 * s : 0);
     const d = Math.max(44, Math.min(h * 0.5, 118 * s));
     const pad = Math.max(22, 36 * s);
     const cx = x0 + pad + d / 2;
@@ -850,10 +850,13 @@ function build(cv, coins, { dateText = "", showPct = true }) {
       yNext += 30 * s;
       ctx.fillText(f.text, tx, yNext);
     }
-    if (meta) drawMeta(ctx, c, tx, yNext + Math.max(28, 32 * s), right - tx, clamp(22 * s, 16, 24), 11);
     ctx.font = font(fpx, F.d7);
     const gy = cy + capOf(ctx) / 2;
     const by = y1 - Math.max(22, 34 * s);
+    // "price dan MC nya agak ke bawah" (2026-11-07): the line sits in the
+    // middle of the gap between the ticker (or the name) and the bar, never
+    // pressed up under the ticker with the gap left empty below it.
+    if (meta) drawMeta(ctx, c, tx, Math.max(yNext + Math.max(28, 32 * s), yNext + (by - yNext) * 0.56), right - tx, clamp(22 * s, 16, 24), 11);
     track(ctx, tx, right, by, 5);
     return [gainFig(c, right, gy, fpx, "right"), barFig(c, tx, right, by, 5)];
   }

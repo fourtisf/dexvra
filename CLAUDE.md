@@ -5295,6 +5295,12 @@ operator chose **"Tambahan saja"** — so it is ADDED, it replaces nothing:
   solo, portrait, stacked, row), and the test now checks every card of every
   count with distinct figures, on and off. Mutation-tested: removing the line
   from any one card shape fails it.
+- **On a row card the price · MC line sits in the MIDDLE of the gap** between
+  the ticker (or the name) and the bar ("price dan MC nya agak ke bawah"). It
+  used to sit pressed up under the ticker, 28–39% of the way down, with the
+  gap below it empty. `gainersPrismLayout.test.js` measures it from what is
+  drawn (the ticker's and the price's y, the bar's rect) on Top 2, 5, 6, 8, 9
+  and 10, and fails 6/6 on the old placement.
 - **No clip on this host → the still frame goes out**, not nothing: a broken
   or missing ffmpeg costs the motion, never the post (logged as a WARN).
   ffmpeg is `@ffmpeg-installer/ffmpeg`, already a dependency of the trending
@@ -5304,7 +5310,7 @@ operator chose **"Tambahan saja"** — so it is ADDED, it replaces nothing:
   preview — a few seconds…" so it never reads as dead.
 
 ```bash
-cd bot && node scripts/run-tests.js test/gainersPrism.test.js     # 14 tests, no network
+cd bot && node scripts/run-tests.js test/gainersPrism.test.js test/gainersPrismLayout.test.js   # 15 + 6 tests, no network
 cd bot && node scripts/gainers-preview.js prism5 prism10           # LOOK at it: the still + the MP4
 ```
 
