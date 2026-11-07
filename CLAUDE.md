@@ -5197,8 +5197,45 @@ between one and two tests.
 - Measured across every template with fillText wrapped, with positive and
   vacuity controls; every render site in both processes is counted.
 
+##### "mc sudah on tapi yang di show mc on hanya top 1 gainers" — ON means EVERY card
+
+Reported on 💠 Prism Nine Grid, with 🏦 MC: ON: only the #1 card showed a market
+cap. Prism drew its "price · MC" line on the leader alone. Measuring every
+template card by card found the same defect on four PREMIUM stills, which are
+the front set and the 🎲 default:
+
+| layout | MC was shown on |
+| --- | --- |
+| p9_cover | card #1 only |
+| p10_hall | not on the three podium plaques |
+| p3_arc, p7_orbit | no card at all |
+
+On those four layouts MC was printed only as a FALLBACK when the % was hidden.
+
+- ⚠️ **THE GUARD WAS BLIND IN TWO WAYS.** It gave every coin the SAME cap, so
+  "the cap is drawn" passed if ANY card drew it. It also walked
+  `gb.TEMPLATE_IDS`, so Prism was never in it. It now uses DISTINCT figures per
+  coin and asserts per card, over `gr.TEMPLATE_IDS`, the one list the panel
+  offers. An id from a set it cannot render throws instead of reaching a
+  fallback board.
+- **MC ON is a hard rule: every card of every template.** There are no
+  exemptions.
+- **Price is explicit, not accidental.** Ten dense layouts carry MC but not the
+  price on every card, by design. They are listed in `PRICE_NOT_ON_EVERY_CARD`,
+  each with its reason. A template not listed must print the price on every
+  card, and a listed one that starts doing so fails as a dead entry.
+- **`factLine` (premium) and `drawMeta` (Prism) are the one owner per set.**
+  Each fits its line to the card and drops the PRICE before the MC when both
+  will not fit. The Cover index tiles carry MC only, and the line stays clear
+  of the podium tiles' art-deco corners, which take 42px on each side.
+- Mutation-tested. The guard fails on each of these:
+  - the old premium code;
+  - the old Prism code;
+  - `factLine` drawing nothing;
+  - a stale price exemption.
+
 ```bash
-cd bot && node scripts/run-tests.js test/gainersMcPrice.test.js   # 5 tests, no network
+cd bot && node scripts/run-tests.js test/gainersMcPrice.test.js test/gainersPrism.test.js   # every card, every template
 ```
 
 ```bash
