@@ -5306,7 +5306,11 @@ operator chose **"Tambahan saja"** — so it is ADDED, it replaces nothing:
   right-aligned to the card's edge (`drawMetaSplit`). Figures too wide to sit
   apart even at the floor size fall back to `drawMeta`'s one left line, so
   both stay on the card and never overlap. Portrait, stacked and hero cards
-  keep the one line (no room for two columns there).
+  keep the one line (no room for two columns there). Mutation-tested: the
+  row card back to one left line, the fallback removed, the MC off the edge,
+  the price off the ticker's column, no shrink before the fallback, and a
+  lone MC (💲 off) sliding back left each fail a test. Two of those survived
+  the first run and were test gaps.
 - **No clip on this host → the still frame goes out**, not nothing: a broken
   or missing ffmpeg costs the motion, never the post (logged as a WARN).
   ffmpeg is `@ffmpeg-installer/ffmpeg`, already a dependency of the trending
@@ -5316,7 +5320,7 @@ operator chose **"Tambahan saja"** — so it is ADDED, it replaces nothing:
   preview — a few seconds…" so it never reads as dead.
 
 ```bash
-cd bot && node scripts/run-tests.js test/gainersPrism.test.js test/gainersPrismLayout.test.js   # 15 + 7 tests, no network
+cd bot && node scripts/run-tests.js test/gainersPrism.test.js test/gainersPrismLayout.test.js   # 15 + 9 tests, no network
 cd bot && node scripts/gainers-preview.js prism5 prism10           # LOOK at it: the still + the MP4
 ```
 

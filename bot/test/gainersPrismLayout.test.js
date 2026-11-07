@@ -98,3 +98,47 @@ test("prism10: figures too wide to sit apart fall back to one line — never ove
     for (let k = 1; k < sorted.length; k++) assert.ok(sorted[k].x >= sorted[k - 1].x + sorted[k - 1].w - 0.5, `card ${i + 1}: "${sorted[k - 1].t}" and "${sorted[k].t}" overlap`);
   }
 });
+
+// One owner for both checks below: the MC value's fillText must END at the
+// card's right edge (the bar track spans ticker-x → that edge).
+function capAtEdge(texts, rr, list, i, label) {
+  const tick = texts.find((e) => e.t === "$" + list[i].symbol);
+  const bar = rr.filter((r) => Math.abs(r.x - tick.x) < 1 && Math.abs(r.h - 5) < 0.01 && r.y > tick.y).sort((a, b) => a.y - b.y)[0];
+  const cap = texts.find((e) => e.t === fmtCap(list[i].mcap) && e.y > tick.y && e.y < bar.y && e.x >= tick.x && e.x < bar.x + bar.w);
+  assert.ok(cap, `${label} card ${i + 1}: the market cap was not drawn as its own run — it fell back to one line`);
+  assert.ok(Math.abs(cap.x + cap.w - (bar.x + bar.w)) < 1.5, `${label} card ${i + 1}: MC is not at the card's right edge`);
+}
+
+test("prism10: wide-but-splittable figures SHRINK to stay apart, rather than collapsing to one line", async () => {
+  if (!kit.canvasLib()) return;
+  // these do not fit at the full 16px on the narrowest row card, and do at ~12px
+  const list = coins(10).map((c, i) => (i ? { ...c, price: 0.0000000000000042, mcap: 987_654_321_000 + i * 1_000_000 } : c));
+  const { texts, rects: rr } = await geometry(10, list);
+  for (let i = 1; i < 10; i++) capAtEdge(texts, rr, list, i, "prism10");
+});
+
+test("💲 price OFF: the market cap alone still sits on the right, under the gain", async () => {
+  if (!kit.canvasLib()) return;
+  const list = coins(10);
+  const CV = kit.canvasLib();
+  const proto = Object.getPrototypeOf(CV.createCanvas(4, 4).getContext("2d"));
+  const real = proto.fillText;
+  const texts = [];
+  proto.fillText = function (t, x, y, ...rest) { texts.push({ t: String(t), x, y, w: this.measureText(String(t)).width }); return real.call(this, t, x, y, ...rest); };
+  rects.length = 0;
+  try {
+    await prism.still({ template: "prism10", coins: list, dateText: "", showPrice: false });
+  } finally {
+    proto.fillText = real;
+  }
+  assert.ok(!texts.some((e) => e.t === fmtPrice(list[1].price)), "the price was drawn with the switch off — this test is measuring the wrong board");
+  for (let i = 1; i < 10; i++) {
+    const tick = texts.find((e) => e.t === "$" + list[i].symbol);
+    const bar = rects.filter((r) => Math.abs(r.x - tick.x) < 1 && Math.abs(r.h - 5) < 0.01 && r.y > tick.y).sort((a, b) => a.y - b.y)[0];
+    // drawMeta right-aligns the whole "MC $1.23M" line; its runs end at the edge
+    const runs = texts.filter((e) => e.y > tick.y && e.y < bar.y && e.x >= tick.x - 0.5 && e.x < bar.x + bar.w && !e.t.includes("%"));
+    assert.ok(runs.some((e) => e.t.includes(fmtCap(list[i].mcap).replace(/^\$/, ""))), `card ${i + 1}: no market cap drawn`);
+    const end = Math.max(...runs.map((e) => e.x + e.w));
+    assert.ok(Math.abs(end - (bar.x + bar.w)) < 1.5, `card ${i + 1}: with the price off the MC slid back to the left`);
+  }
+});
