@@ -37,6 +37,7 @@ export const NATIVE: Record<string, string> = {
   unichain: "BNB",
   // payVia:"ethereum" — settled in ETH.
   plasma: "ETH",
+  elysium: "ETH", // gas there is HYPE; the listing is paid in ETH on Ethereum
 };
 export const nativeOf = (chain: string): string => NATIVE[chain] ?? "SOL";
 

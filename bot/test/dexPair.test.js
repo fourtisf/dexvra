@@ -264,6 +264,6 @@ test("resolveInputSoon gives up on a hung DexScreener instead of holding a perso
 test("probeChains is the buy bot's candidate list — one owner, re-exported", () => {
   const setup = require("../src/group/setup");
   assert.equal(setup.candidateChains, caInput.probeChains);
-  assert.deepEqual(caInput.probeChains(PAIR), ["ethereum", "bsc", "base", "robinhood", "plasma"]);
+  assert.deepEqual(caInput.probeChains(PAIR), ["ethereum", "bsc", "base", "robinhood", "plasma", "elysium"]);
   assert.deepEqual(caInput.probeChains("8sLbNZoA1cfnvMJLPfp98ZLAnFSYCFApfJKMbiXNLwxj"), ["solana"]);
 });

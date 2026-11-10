@@ -95,6 +95,7 @@ const DS_CHAIN = {
   // blank for GT-primary chains. Chain-filtered, so price stays correct-chain.
   robinhood: "robinhood",
   plasma: "plasma",
+  elysium: "elysium",
 };
 
 // A 24h change beyond this is broken data, not a market move — a pool created

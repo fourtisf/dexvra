@@ -37,6 +37,7 @@ const GECKO_NETWORK = {
   polygon: "polygon_pos", arbitrum: "arbitrum", optimism: "optimism", avalanche: "avax",
   berachain: "berachain", sonic: "sonic", hyperevm: "hyperevm", abstract: "abstract",
   apechain: "apechain", blast: "blast", sei: "sei-evm", aptos: "aptos", unichain: "unichain",
+  elysium: "elysium",
 };
 const DEXSCREENER_SLUG = {
   solana: "solana", bsc: "bsc", ethereum: "ethereum", base: "base",
@@ -44,6 +45,7 @@ const DEXSCREENER_SLUG = {
   polygon: "polygon", arbitrum: "arbitrum", optimism: "optimism", avalanche: "avalanche",
   berachain: "berachain", sonic: "sonic", hyperevm: "hyperevm", abstract: "abstract",
   apechain: "apechain", blast: "blast", sei: "seiv2", aptos: "aptos", unichain: "unichain",
+  elysium: "elysium",
 };
 
 const G = (s) => `\x1b[32m${s}\x1b[0m`;

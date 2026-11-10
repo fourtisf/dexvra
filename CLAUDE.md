@@ -9289,6 +9289,63 @@ Each fails a test.
 
 **Config a fix depends on:** nothing. `bot/` only — the ecosystem restart.
 
+## "tambahkan chain elysium … payment juga pake eth" — Elysium's gas is HYPE, so it is Plasma's shape, not Robinhood's
+
+Asked 2026-11-10 with the question *"apakah elysium itu eth elysium sama
+seperti robinhood eth robinhood?"*. **No.** Elysium is Kinetiq's Layer 2 on
+Hyperliquid (Arbitrum Orbit, chain id **99901**, mainnet 9 Nov 2026) and its
+gas coin is **HYPE**. It is NOT Vulcan Forged's older Elysium (chain 1339).
+So there is no "ETH on Elysium" to pay with:
+
+| | gas coin | a listing is paid in |
+| --- | --- | --- |
+| Robinhood | ETH | ETH on Robinhood Chain **or** ETH on Ethereum (the buyer picks) |
+| **Elysium** | **HYPE** | **ETH on Ethereum mainnet only** (`payVia: "ethereum"`) |
+
+- **Site**: `elysium` in `src/config/chains.ts` (GT + DexScreener slug
+  `elysium`), `NATIVE.elysium = "ETH"` in `packages.ts`, the mark in
+  `public/chains/elysium.svg`, both ported maps in `scripts/market-check.mjs`.
+- **Bot**: `chains.js` (`native: "HYPE"`, `family: null`, `payVia:
+  "ethereum"`), `DEXSCREENER_SLUG`, `CHAIN_ORDER` (last), `marketdata`'s
+  `DS_CHAIN`, the board emoji, and `caInput.probeChains` — so a pasted `0x…`
+  is detected on Elysium for the listing form, `/settoken`, Mass DM and
+  Trending. The same ETH price table as every ETH-billed chain; one rail, no
+  picker (the picker is Robinhood's alone).
+- **Buy bot**: `family: null`, so it reads trades through the indexer, as it
+  does for Plasma. No on-chain Swap reader and no whale detection there.
+- ⚠️ **NO RPC AND NO EXPLORER ARE SHIPPED, on purpose.** No public mainnet RPC
+  or official explorer could be verified (the one RPC a source named answered
+  403 before launch). So transaction links are omitted on buy alerts, and token
+  links go to `dexscreener.com/elysium/<address>`. `RPC_ELYSIUM` in `bot/.env`
+  adds an endpoint without a deploy.
+- ⚠️ **FREE auto-listing on Elysium is held until an RPC is set.** GoPlus does
+  not cover the chain, so the safety check is the on-chain sell simulation,
+  which needs `eth_getLogs`. Without an endpoint the scan reports those tokens
+  as "could not be safety-checked" — the fail-safe direction. Paid listings
+  are unaffected.
+- ⚠️ **The two indexer slugs are SECONDARY-sourced** (DexScreener's own
+  `/elysium` page and a third party's integration); this sandbox reaches
+  neither API. A wrong slug costs a 404, never a wrong price, and
+  `npm run market:check -- elysium` on the box is the measurement.
+- ⚠️ **The mark is a rendition of the official icon, built from its pixels**
+  (the 128px icon dRPC's chain registry ships). The icon set the other marks
+  come from has no Elysium file yet; replace it with the brand's own SVG when
+  one exists.
+- **The trade bot is NOT touched.** Trading a chain needs its router, factory
+  and wrapped-native addresses, and none could be verified — a guessed address
+  on a money path is the one thing this repo refuses.
+- Elysium is not in auto-trend's default chains: it is PAID-ONLY on the
+  channel board until an operator switches it on in ⚙️ Auto-Trend.
+
+```bash
+cd bot && node scripts/run-tests.js test/chains.test.js test/dexPair.test.js
+cd /opt/dexvra && npm run market:check -- elysium
+```
+
+**Config a fix depends on:** nothing to list and take payment. `RPC_ELYSIUM`
+in `bot/.env` is what free auto-listing on the chain waits for. ⚠️ `bot/` AND
+`src/` changed, so `npm run deploy` rebuilds the site and restarts both bots.
+
 ## Two bot processes, one config
 
 `bot/` runs **two** PM2 processes: `dexvra-bot` (`main.js`) and

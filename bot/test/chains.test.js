@@ -27,7 +27,7 @@ test("all supported chains present", () => {
     [
       "base", "bsc", "ethereum", "plasma", "robinhood", "solana", "sui", "ton", "tron",
       "polygon", "arbitrum", "optimism", "avalanche", "berachain", "sonic", "hyperevm", "abstract",
-      "apechain", "blast", "sei", "aptos", "unichain",
+      "apechain", "blast", "sei", "aptos", "unichain", "elysium",
     ].sort(),
   );
 });
@@ -73,4 +73,25 @@ test("sui / plasma address validation + payVia pricing", () => {
   assert.strictEqual(tierPrice("DIAMOND", "sui"), 1.5); // BNB price
   assert.strictEqual(tierPrice("DIAMOND", "plasma"), 0.26); // ETH price
   assert.strictEqual(trendingForChain("sui")[0].price, 0.25); // BNB table
+});
+
+test("Elysium: gas is HYPE, the listing is paid in ETH on Ethereum mainnet", () => {
+  const { payChainOf, payNativeOf, PAYABLE_CHAIN_IDS, DEXSCREENER_SLUG } = require("../src/config/chains");
+  const { tierPrice } = require("../src/config/packages");
+  const { payOptionsFor } = require("../src/config/payOptions");
+  // NOT Robinhood's shape: no wallet adapter on the chain, never a receiving chain.
+  assert.strictEqual(nativeOf("elysium"), "HYPE");
+  assert.strictEqual(familyOf("elysium"), null);
+  assert.strictEqual(payChainOf("elysium"), "ethereum");
+  assert.strictEqual(payNativeOf("elysium"), "ETH");
+  assert.ok(!PAYABLE_CHAIN_IDS.includes("elysium"));
+  // One ETH price table — the same number an Ethereum or Robinhood listing pays.
+  assert.strictEqual(tierPrice("DIAMOND", "elysium"), tierPrice("DIAMOND", "ethereum"));
+  assert.strictEqual(tierPrice("XPRESS", "elysium"), tierPrice("XPRESS", "robinhood"));
+  assert.strictEqual(DEXSCREENER_SLUG.elysium, "elysium");
+  assert.ok(isValidAddress("elysium", "0x6982508145454Ce325dDbE47a25d4ec3d2311933"));
+  assert.ok(!isValidAddress("elysium", "So1anaStyleAddress11111111111111111111111"));
+  // The rail choice belongs to Robinhood alone: an Elysium order has ONE rail.
+  const opts = payOptionsFor({ chain: "elysium", prices: { ETH: 0.06, BNB: 0.25, SOL: 1 } });
+  assert.deepStrictEqual(opts.map((o) => o.chain), ["ethereum"]);
 });

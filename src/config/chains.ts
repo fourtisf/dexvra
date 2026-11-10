@@ -185,6 +185,32 @@ export const CHAINS: Record<string, ChainConfig> = {
     buyUrl: (a) => `https://www.geckoterminal.com/plasma/tokens/${a}`,
     addressPattern: /^0x[a-fA-F0-9]{40}$/,
   },
+  // Elysium — Kinetiq's Layer 2 on Hyperliquid (Arbitrum Orbit, chain id 99901,
+  // mainnet 9 Nov 2026). ⚠️ Its gas coin is HYPE, NOT ETH: it is not "ETH on
+  // Elysium" the way Robinhood Chain is ETH on Robinhood. Listings here are
+  // billed in ETH on Ethereum mainnet (payVia in bot/src/config/chains.js, the
+  // Plasma pattern). NOT Vulcan Forged's older Elysium (chain 1339, LAVA).
+  //
+  // Both indexers call it "elysium" — taken from DexScreener's own page
+  // (dexscreener.com/elysium) and a third party's integration, not measured
+  // from here: `npm run market:check -- elysium` on the box is the measurement.
+  // A wrong slug costs a 404, never a wrong price.
+  //
+  // No explorer host is set on purpose: no official mainnet explorer could be
+  // verified, so both links go to the DexScreener page that does exist, and
+  // there is no `blockscout` (holders fall through to the other sources).
+  elysium: {
+    id: "elysium",
+    label: "Elysium",
+    color: "#5799AB",
+    geckoNetwork: "elysium",
+    dexscreener: "elysium",
+    coingecko: null,
+    goPlusChainId: null, // GoPlus does not cover chain 99901
+    explorer: (a) => `https://dexscreener.com/elysium/${a}`,
+    buyUrl: (a) => `https://dexscreener.com/elysium/${a}`,
+    addressPattern: /^0x[a-fA-F0-9]{40}$/,
+  },
   // ── More EVM chains (billed in BNB by the bot via BSC). Registered here so
   //    listings validate + render + get live market data; settlement currency
   //    for the web price display lives in src/lib/packages.ts (NATIVE map). ──

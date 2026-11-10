@@ -62,7 +62,7 @@ const DEXVRA_LINK = /\/token\/([a-z0-9]+)\/([^/\s?#]+)/i;
  *  set of chains for the same paste. */
 function probeChains(address) {
   const a = String(address || "");
-  if (/^0x[a-fA-F0-9]{40}$/.test(a)) return ["ethereum", "bsc", "base", "robinhood", "plasma"];
+  if (/^0x[a-fA-F0-9]{40}$/.test(a)) return ["ethereum", "bsc", "base", "robinhood", "plasma", "elysium"];
   if (/^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(a)) return ["tron"];
   if (/^(EQ|UQ|0:)/.test(a)) return ["ton"];
   if (/^0x[a-fA-F0-9]+::/.test(a)) return ["sui"];

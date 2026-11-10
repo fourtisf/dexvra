@@ -36,6 +36,7 @@ const DEXSCREENER_SLUG = {
   sei: "seiv2",
   aptos: "aptos",
   unichain: "unichain",
+  elysium: "elysium",
 };
 
 /**
@@ -130,6 +131,21 @@ const CHAINS = {
     addressPattern: /^0x[a-fA-F0-9]{40}$/,
     explorer: (a) => `https://dexscreener.com/plasma/${a}`,
     buyUrl: (a) => `https://dexscreener.com/plasma/${a}`,
+  },
+  // Elysium — Kinetiq's Layer 2 on Hyperliquid (Arbitrum Orbit, chain id 99901).
+  // ⚠️ GAS IS HYPE, NOT ETH, so this is not Robinhood's shape ("ETH on its own
+  // chain, with its own wallet adapter"). It is Plasma's: no adapter, no temp
+  // wallet on the chain, and the buyer pays ETH ON ETHEREUM MAINNET (payVia) at
+  // the same ETH price every other ETH-billed listing pays. family:null also
+  // means the buy bot reads its trades through the indexer, as it does for
+  // Plasma — no RPC is shipped because no public mainnet endpoint could be
+  // verified (RPC_ELYSIUM in bot/.env adds one without a deploy).
+  elysium: {
+    id: "elysium", label: "Elysium", native: "HYPE", family: null, payVia: "ethereum", decimals: 18,
+    geckoNetwork: "elysium",
+    addressPattern: /^0x[a-fA-F0-9]{40}$/,
+    explorer: (a) => `https://dexscreener.com/elysium/${a}`,
+    buyUrl: (a) => `https://dexscreener.com/elysium/${a}`,
   },
   // ── More EVM chains — all PAID IN BNB via BSC (payVia:"bsc"), no wallet
   //    adapter needed (same pattern as Sui). geckoNetwork drives live market
@@ -238,7 +254,7 @@ const CHAINS = {
 const CHAIN_ORDER = [
   "solana", "bsc", "robinhood", "ethereum", "base", "tron", "ton", "sui", "plasma",
   "polygon", "arbitrum", "optimism", "avalanche", "berachain", "sonic", "hyperevm", "abstract",
-  "apechain", "blast", "sei", "aptos", "unichain",
+  "apechain", "blast", "sei", "aptos", "unichain", "elysium",
 ];
 const CHAIN_IDS = CHAIN_ORDER.filter((id) => CHAINS[id]);
 

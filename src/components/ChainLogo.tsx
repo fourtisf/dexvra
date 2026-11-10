@@ -22,7 +22,7 @@ import { chainOf } from "@/config/chains";
  */
 const MARKS = new Set([
   "solana", "ethereum", "bsc", "base", "ton", "robinhood", "tron", "sui", "plasma", "polygon", "arbitrum",
-  "optimism", "avalanche", "berachain", "sonic", "hyperevm", "abstract", "apechain", "blast", "sei", "aptos", "unichain",
+  "optimism", "avalanche", "berachain", "sonic", "hyperevm", "abstract", "apechain", "blast", "sei", "aptos", "unichain", "elysium",
 ]);
 
 /** The url of a chain's mark, or null for a chain with no file yet. */

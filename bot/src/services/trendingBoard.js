@@ -44,6 +44,7 @@ const DEFAULT_CHAIN_LOGOS = {
   sei: "🔴",
   aptos: "⚪",
   unichain: "🦄",
+  elysium: "🌀",
 };
 const FALLBACK_LOGO = "🔹";
 
