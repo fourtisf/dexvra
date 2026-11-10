@@ -25,6 +25,8 @@
 //     and an exchange withdrawal lands on mainnet. So a Robinhood project may
 //     settle ETH on Robinhood Chain or ETH on Ethereum; everything else arms
 //     exactly as it always did, no picker.
+//     (Elysium was added later, on the operator's ask: it has no ETH of its
+//     own, so its ETH may be settled on either rail — see CHOICE_CHAINS.)
 //   • …and only when the package HAS an ETH price. Trending is the reason that
 //     clause exists rather than being assumed: its durations differ per
 //     currency (ETH has no 3H row, BNB has no 16H), so a network offered for a
@@ -42,8 +44,17 @@ const { payChainOf, payNativeOf, chainOf } = require("./chains");
 // offered beside Robinhood rather than instead. The order's own chain still
 // comes first, so a Robinhood order reads [robinhood, ethereum].
 const ETH_NETWORKS = ["ethereum", "robinhood"];
-// The one chain whose orders are offered the choice.
+// The chains whose orders are offered the choice, keyed by the TOKEN's chain.
+//   • robinhood — same coin, two networks.
+//   • elysium — "tambahkan payment bisa eth robinhood juga jadi ga cmn eth eth".
+//     Its gas coin is HYPE and there is no ETH on Elysium at all, so it is
+//     billed in ETH elsewhere (payVia: ethereum); the buyer may settle that ETH
+//     on Ethereum or on Robinhood Chain. Its own pay chain is "ethereum", which
+//     an ETHEREUM token shares — so the choice is read from `order.tokenChain`,
+//     never from the pay chain, or every Ethereum project would get a picker
+//     the operator ruled out.
 const CHOICE_CHAIN = "robinhood";
+const CHOICE_CHAINS = new Set([CHOICE_CHAIN, "elysium"]);
 
 // ⚠️ "Robinhood" ALONE IS AMBIGUOUS on the one line a buyer acts on: it is also
 // a broker most of them have an account with, and the mistake this label exists
@@ -54,9 +65,11 @@ const networkLabel = (id) => NETWORK_LABEL[id] || chainOf(id).label;
 
 /** The networks this order may be settled on, default first.
  *
- *  @param order {{ chain, prices }} — `chain` is the order's own pay chain
- *         (already through payChainOf), `prices` is the package's own
- *         currency-keyed table, e.g. TIER_MAP[tier].price.
+ *  @param order {{ chain, prices, tokenChain? }} — `chain` is the order's own
+ *         pay chain (already through payChainOf), `prices` is the package's own
+ *         currency-keyed table, e.g. TIER_MAP[tier].price, and `tokenChain` is
+ *         the chain the TOKEN lives on (what decides whether there is a choice
+ *         for a chain billed elsewhere).
  *  @returns [{ chain, native, amount, label }]
  */
 function payOptionsFor(order) {
@@ -82,7 +95,8 @@ function payOptionsFor(order) {
 
   const own = payChainOf(order && order.chain);
   add(own);
-  if (own === CHOICE_CHAIN) for (const id of ETH_NETWORKS) add(id);
+  const token = order && (order.tokenChain || order.chain);
+  if (CHOICE_CHAINS.has(own) || CHOICE_CHAINS.has(token)) for (const id of ETH_NETWORKS) add(id);
   return out;
 }
 
@@ -92,4 +106,4 @@ function optionFor(order, chainId) {
   return payOptionsFor(order).find((o) => o.chain === chainId) || null;
 }
 
-module.exports = { payOptionsFor, optionFor, networkLabel, ETH_NETWORKS, CHOICE_CHAIN };
+module.exports = { payOptionsFor, optionFor, networkLabel, ETH_NETWORKS, CHOICE_CHAIN, CHOICE_CHAINS };

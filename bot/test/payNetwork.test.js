@@ -582,3 +582,50 @@ test("…and its picker offers both ETH rails, own chain first", async () => {
     [`${eth} ETH · Robinhood Chain`, `${eth} ETH · Ethereum`],
   );
 });
+
+// ── Elysium: no ETH on its own chain, so its ETH has two rails ───────────────
+//
+// "tambahkan payment bisa eth robinhood juga jadi ga cmn eth eth". Elysium's
+// gas coin is HYPE, so a listing there is billed in ETH elsewhere. Its pay
+// chain is "ethereum" — the same value an ETHEREUM token has — so the choice is
+// decided by the TOKEN's chain, which every flow has to hand over.
+const elForm = () => ({ chain: "elysium", address: RH_TOKEN, name: "Elysian", sym: "ELY" });
+
+test("an Elysium token booking Xpress is offered ETH on Ethereum AND on Robinhood Chain", async (t) => {
+  const orig = listed.existingListing;
+  listed.existingListing = async () => null;
+  t.after(() => {
+    listed.existingListing = orig;
+  });
+  const ctx = mkCtx();
+  ctx.session = { type: "xpress_listing", form: elForm() };
+  await listing.approve(ctx);
+  assert.deepStrictEqual(
+    rails(ctx).map((b) => `${b.text} → ${b.data}`),
+    ["0.06 ETH · Ethereum → paynet_ethereum", "0.06 ETH · Robinhood Chain → paynet_robinhood"],
+    "mainnet first (its own pay chain), Robinhood beside it, one price, never Elysium",
+  );
+  // …and the pick arms Robinhood at the TABLE price, with the token still on Elysium.
+  ctx.match = ["paynet_robinhood", "robinhood"];
+  await netPick(ctx);
+  const o = ctx.session.pendingPayment.order;
+  assert.strictEqual(o.chain, "robinhood");
+  assert.strictEqual(o.native, "ETH");
+  assert.strictEqual(o.humanAmount, 0.06);
+});
+
+test("⚠️ an ETHEREUM token is still never asked — the choice is the token's chain, not the pay chain", () => {
+  const eth = payOptionsFor({ chain: "ethereum", tokenChain: "ethereum", prices: XPRESS });
+  assert.deepStrictEqual(eth.map((o) => o.chain), ["ethereum"]);
+  const plasma = payOptionsFor({ chain: "ethereum", tokenChain: "plasma", prices: XPRESS });
+  assert.deepStrictEqual(plasma.map((o) => o.chain), ["ethereum"], "Plasma bills on Ethereum too and was not given a choice");
+});
+
+test("⚠️ every flow hands the TOKEN's chain to the picker", () => {
+  const src = (f) => fss.readFileSync(path.join(__dirname, "../src/handlers", f), "utf8");
+  for (const f of ["listing.js", "trending.js", "massdm.js"]) {
+    const calls = src(f).split("startPayment(ctx, {").slice(1);
+    assert.ok(calls.length > 0, `${f}: no startPayment call found — the scan matched nothing`);
+    for (const c of calls) assert.match(c.slice(0, 400), /tokenChain:/, `${f}: a payment armed without its token chain`);
+  }
+});

@@ -122,6 +122,7 @@ async function durationPick(ctx) {
   await startPayment(ctx, {
     kind: "trending",
     chain: payChainOf(coin.chain),
+    tokenChain: coin.chain,
     native: payNativeOf(coin.chain),
     humanAmount: row.price,
     // The same duration in every currency that prices it — ETH included, so a
@@ -147,6 +148,7 @@ async function extendPick(ctx) {
   await startPayment(ctx, {
     kind: "trending",
     chain: payChainOf(offer.chain),
+    tokenChain: offer.chain,
     native: payNativeOf(offer.chain),
     humanAmount: renew.price,
     // The renewal discount applies in every currency alike — a slot that was

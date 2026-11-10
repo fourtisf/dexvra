@@ -91,7 +91,9 @@ test("Elysium: gas is HYPE, the listing is paid in ETH on Ethereum mainnet", () 
   assert.strictEqual(DEXSCREENER_SLUG.elysium, "elysium");
   assert.ok(isValidAddress("elysium", "0x6982508145454Ce325dDbE47a25d4ec3d2311933"));
   assert.ok(!isValidAddress("elysium", "So1anaStyleAddress11111111111111111111111"));
-  // The rail choice belongs to Robinhood alone: an Elysium order has ONE rail.
-  const opts = payOptionsFor({ chain: "elysium", prices: { ETH: 0.06, BNB: 0.25, SOL: 1 } });
-  assert.deepStrictEqual(opts.map((o) => o.chain), ["ethereum"]);
+  // No ETH exists on Elysium, so its ETH is settled elsewhere: Ethereum mainnet
+  // (its own pay chain, first) or Robinhood Chain. Same amount on both.
+  const opts = payOptionsFor({ chain: "ethereum", tokenChain: "elysium", prices: { ETH: 0.06, BNB: 0.25, SOL: 1 } });
+  assert.deepStrictEqual(opts.map((o) => `${o.chain}/${o.amount} ${o.native}`), ["ethereum/0.06 ETH", "robinhood/0.06 ETH"]);
+  assert.ok(!opts.some((o) => o.chain === "elysium"), "never armed on Elysium itself — no adapter, no ETH there");
 });

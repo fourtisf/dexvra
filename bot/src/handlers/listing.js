@@ -723,6 +723,7 @@ async function goPay(ctx, tier) {
   await pay.startPayment(ctx, {
     kind,
     chain: payChainOf(chain),
+    tokenChain: chain,
     native: payNativeOf(chain),
     humanAmount: price,
     // Every tier is priced per CURRENCY already, so handing the table over is

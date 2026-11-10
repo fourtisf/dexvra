@@ -408,6 +408,7 @@ async function payPick(ctx) {
   await payFlow.startPayment(ctx, {
     kind: "mass_dm",
     chain: pay.payChain,
+    tokenChain: ctx.session.massForm.chain,
     native: pay.native,
     humanAmount: pay.price,
     // Mass DM is priced in all three currencies already; handing the table over

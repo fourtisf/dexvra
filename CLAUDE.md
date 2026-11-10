@@ -9300,7 +9300,7 @@ So there is no "ETH on Elysium" to pay with:
 | | gas coin | a listing is paid in |
 | --- | --- | --- |
 | Robinhood | ETH | ETH on Robinhood Chain **or** ETH on Ethereum (the buyer picks) |
-| **Elysium** | **HYPE** | **ETH on Ethereum mainnet only** (`payVia: "ethereum"`) |
+| **Elysium** | **HYPE** | ETH on Ethereum **or** ETH on Robinhood Chain (the buyer picks); never on Elysium |
 
 - **Site**: `elysium` in `src/config/chains.ts` (GT + DexScreener slug
   `elysium`), `NATIVE.elysium = "ETH"` in `packages.ts`, the mark in
@@ -9309,8 +9309,18 @@ So there is no "ETH on Elysium" to pay with:
   "ethereum"`), `DEXSCREENER_SLUG`, `CHAIN_ORDER` (last), `marketdata`'s
   `DS_CHAIN`, the board emoji, and `caInput.probeChains` — so a pasted `0x…`
   is detected on Elysium for the listing form, `/settoken`, Mass DM and
-  Trending. The same ETH price table as every ETH-billed chain; one rail, no
-  picker (the picker is Robinhood's alone).
+  Trending. The same ETH price table as every ETH-billed chain.
+- **An Elysium order picks its ETH rail** ("tambahkan payment bisa eth
+  robinhood juga jadi ga cmn eth eth"): Ethereum mainnet first (its own pay
+  chain), Robinhood Chain beside it, one price. "ETH on Elysium" was asked for
+  first and refused: no ETH or bridged WETH exists there (Uniswap's `weth9.ts`
+  and LI.FI's `networks.json` both name WHYPE as the wrapped native).
+  ⚠️ Elysium's pay chain is `ethereum`, the same value an Ethereum token has,
+  so `payOptionsFor` decides the choice from **`order.tokenChain`**
+  (`CHOICE_CHAINS`), and listing, trending (both calls) and Mass DM hand it
+  over; a scan fails on a flow that does not. An Ethereum or Plasma token is
+  still never asked. Mutation-tested: the choice read from the pay chain alone,
+  and the listing flow dropping `tokenChain`, each fail two tests.
 - **Buy bot**: `family: null`, so it reads trades through the indexer, as it
   does for Plasma.
 - **RPC and explorer are the chain's own**, from its registry entry
