@@ -1,19 +1,26 @@
 import type { CSSProperties } from "react";
 import type { ListingTier } from "@/lib/types";
-import { tierColor, tierGlyph, tierLabel, tierRank, tierTip } from "@/lib/packages";
+import { publicTier, tierColor, tierGlyph, tierLabel, tierRank, tierTip } from "@/lib/packages";
 
-/** The paid-listing tag every token carries — Diamond/Gold/Platinum/Silver/
- *  Bronze (ranked #1–#5) or Xpress (instant). Color comes from the tier. */
+/** The package tag every listing carries, always — Diamond/Gold/Platinum/
+ *  Silver/Bronze (ranked #1–#5) or Xpress (instant).
+ *
+ *  "yang free listing juga harus ada … tulis aja sesuai dengan packagenya":
+ *  the tag used to vanish 48h after listing and was never drawn for FREE, so
+ *  most of the board carried no package at all. `publicTier` is the one owner
+ *  of the name shown (the bot's FREE auto-listing reads as Xpress); this
+ *  component only draws it. */
 export function TierTag({ tier, showRank = true }: { tier: ListingTier; showRank?: boolean }) {
-  const rank = tierRank(tier);
+  const shown = publicTier(tier);
+  const rank = tierRank(shown);
   return (
     <span
-      className={`tier-chip tier-${tier}`}
-      style={{ "--tc": tierColor(tier) } as CSSProperties}
-      title={tierTip(tier)}
+      className={`tier-chip tier-${shown}`}
+      style={{ "--tc": tierColor(shown) } as CSSProperties}
+      title={tierTip(shown)}
     >
-      <span className="tier-glyph">{tierGlyph(tier)}</span>
-      {tierLabel(tier)}
+      <span className="tier-glyph">{tierGlyph(shown)}</span>
+      {tierLabel(shown)}
       {showRank && rank > 0 && <span className="tier-rank">#{rank}</span>}
     </span>
   );

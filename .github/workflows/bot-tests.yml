@@ -1,0 +1,56 @@
+# The bot suite on every push and pull request that touches the bot.
+#
+# "bagaimana agar masalah ini tidak terjadi lgi" — the bot's tests were the
+# MERGE gate in name only: `npm run deploy` runs the web app's suites, never
+# the bot's (scripts/deploy.sh step 4), and nothing else ran them either. The
+# guarantees that keep a deleted honeypot from being pump-announced live in
+# bot/test/ and were enforced only by whoever remembered to type `npm test`.
+#
+# ⚠️ OFFLINE BY CONSTRUCTION — and the first run here is what proved it had
+# not been. The suite was offline only by accident of the dev sandbox (no
+# egress), so a test that forgot a stub passed there and failed HERE, where
+# the real DexScreener answered. scripts/run-tests.js now preloads
+# scripts/offline-guard.js into every test process: a request to a non-local
+# host fails like a dead network on every machine, and the run ends by naming
+# any test file that tried. No secret and no network is needed.
+name: bot tests
+
+on:
+  push:
+    paths:
+      - "bot/**"
+      - "shared/**"
+      - ".github/workflows/bot-tests.yml"
+  pull_request:
+    paths:
+      - "bot/**"
+      - "shared/**"
+      - ".github/workflows/bot-tests.yml"
+
+jobs:
+  bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: bot/package-lock.json
+      - name: Install
+        working-directory: bot
+        run: npm ci --no-audit --no-fund
+      # The TAP output is ~18k lines and a failure sits wherever its file
+      # finished — a red run whose reason is in a line nobody can find is
+      # "a fact that lives only in a log line is not retrievable", in CI. So
+      # the output is kept and the NEXT step prints only the failures.
+      - name: Test
+        working-directory: bot
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee test-output.txt
+      - name: Failures
+        if: failure()
+        working-directory: bot
+        run: grep -n -A45 '^not ok' test-output.txt || echo "no 'not ok' line — the run failed outside a test (see the Test step)"

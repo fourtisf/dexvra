@@ -1,15 +1,21 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { useApp } from "@/components/AppState";
 import { PageHead } from "@/components/PageHead";
 import { StdBoard } from "@/components/TokenBoard";
-import { CHAINS, CHAIN_IDS } from "@/config/chains";
-import { ChainLogo } from "@/components/ChainLogo";
+import { ChainFilter } from "@/components/ChainFilter";
+import { useChainParam } from "@/components/useChainParam";
+import { chainCounts, resolveChain } from "@/lib/home";
 
 export default function LeaderboardPage() {
   const { data } = useApp();
-  const [chain, setChain] = useState("all");
+  // The one chain filter (useChainParam). This page used to draw every chain
+  // in the registry as its own chip — twenty-three, wrapped into three rows
+  // over the table — in a second design of the row the home already had.
+  const [chainParam, setChain] = useChainParam();
+  const counts = useMemo(() => chainCounts(data?.tokens ?? []), [data]);
+  const chain = resolveChain(chainParam, counts);
 
   const list = useMemo(
     () =>
@@ -26,17 +32,7 @@ export default function LeaderboardPage() {
         title="Leaderboard"
         sub="Ranked by Dexvra Score — pure on-chain signal, never paid votes."
       />
-      <div className="tabs">
-        <button className={`tab ${chain === "all" ? "active" : ""}`} onClick={() => setChain("all")}>
-          🌐 All chains
-        </button>
-        {CHAIN_IDS.map((id) => (
-          <button key={id} className={`tab ${chain === id ? "active" : ""}`} onClick={() => setChain(id)}>
-            <ChainLogo chain={id} size={15} />
-            {CHAINS[id].label}
-          </button>
-        ))}
-      </div>
+      <ChainFilter counts={counts} value={chain} onChange={setChain} total={data?.tokens.length ?? 0} />
       <StdBoard tokens={list} loading={!data} emptyText="No listings on this chain yet." />
     </section>
   );

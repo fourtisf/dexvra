@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { UPLOADS_DIR } from "@/lib/uploadsDir";
 
 export const runtime = "nodejs";
 
-const DIR = path.join(process.cwd(), "data", "uploads");
+// One owner for this path — see lib/uploadsDir.ts.
+const DIR = UPLOADS_DIR;
 // Only our own generated names (24 hex + known image ext) — blocks traversal.
 const NAME_RE = /^[a-f0-9]{24}\.(png|jpg|gif|webp)$/;
 const MIME: Record<string, string> = {
@@ -25,6 +27,11 @@ export async function GET(_req: Request, { params }: { params: { name: string } 
       headers: {
         "content-type": MIME[ext],
         "cache-control": "public, max-age=31536000, immutable",
+        // These bytes can be a BUYER's upload, checked by magic bytes only — so
+        // a GIF/HTML polyglot is possible. nosniff keeps a browser from deciding
+        // it is a page; the sandbox CSP makes it inert if one is opened anyway.
+        "x-content-type-options": "nosniff",
+        "content-security-policy": "default-src 'none'; img-src 'self' data:; media-src 'self'; sandbox",
       },
     });
   } catch {

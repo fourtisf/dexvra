@@ -48,7 +48,7 @@ export default function InstallPage() {
   };
 
   return (
-    <section className="view">
+    <section className="view narrow">
       <PageHead icon="📲" title="Install App" sub={`${BRAND_NAME} on your home screen — full-screen, fast, no app store needed.`} />
       <div className="panel" style={{ maxWidth: 640, display: "flex", flexDirection: "column", gap: 6 }}>
         <div className="check-list">

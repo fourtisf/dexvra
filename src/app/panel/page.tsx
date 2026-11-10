@@ -1,40 +1,84 @@
 "use client";
 
+// The admin console. ONE TAB AT A TIME:
+//
+//   Review   — what is waiting on a human: the counts, and pending submissions
+//   Listings — every listing, searched/filtered/paged; one Manage button a row
+//   Pons     — fresh Robinhood launches (reads the chain, so only when opened)
+//   Add      — create a listing by hand
+//   Site     — the homepage showcase, the homepage banners, the channel banners
+//
+// "perbaiki admin panel agar lebih clean dan mudah diakses, ini terlalu banyak
+// spam": it used to be one scroll of all of the above — three site editors
+// first, then ~700 listings with nine controls each, then the add form at the
+// very bottom. The open tab lives in the URL hash, so a reload or a bookmark
+// lands on it. The view rules (filter, order, pages, counts) are in
+// lib/adminView, where they are tested by being called.
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { StoredListing } from "@/lib/store";
-import type { ListingTier } from "@/lib/types";
-import { CHAIN_IDS, CHAINS } from "@/config/chains";
-import { LISTING_TIERS, tierLabel } from "@/lib/packages";
+import { CHAINS } from "@/config/chains";
+import { tierLabel } from "@/lib/packages";
+import { fmtAge } from "@/lib/format";
+import {
+  EMPTY_FILTER,
+  arrivedAt,
+  countListings,
+  tabFromHash,
+  type AdminTab,
+  type ListFilter,
+} from "@/lib/adminView";
 import { Logo } from "@/components/Logo";
+import { BannerManager } from "@/components/admin/BannerManager";
+import { ChannelBannerManager } from "@/components/admin/ChannelBannerManager";
+import { PromoManager } from "@/components/admin/PromoManager";
+import { ListingsTable, type ListingActions } from "@/components/admin/ListingsTable";
+import { PonsQueue } from "@/components/admin/PonsQueue";
+import { AddListingForm } from "@/components/admin/AddListingForm";
 
-const short = (a: string) => (a.length > 16 ? `${a.slice(0, 8)}…${a.slice(-6)}` : a);
+type Note = { kind: "ok" | "err"; text: string } | null;
 
-const emptyAdd = {
-  chain: "solana",
-  address: "",
-  sym: "",
-  name: "",
-  emoji: "",
-  tier: "DIAMOND" as ListingTier,
-  logoUrl: "",
-  website: "",
-  twitter: "",
-  telegram: "",
+const TAB_LABEL: Record<AdminTab, string> = {
+  review: "Review",
+  listings: "Listings",
+  pons: "Pons",
+  add: "Add listing",
+  site: "Site content",
 };
+
+/** The reason a refused admin request gives, or its status. */
+async function reason(r: Response, what: string): Promise<string> {
+  const j = await r.json().catch(() => ({}) as Record<string, unknown>);
+  return `${what}: ${typeof j.error === "string" && j.error ? j.error : `HTTP ${r.status}`}`;
+}
 
 export default function AdminDashboard() {
   const [rows, setRows] = useState<StoredListing[] | null>(null);
-  const [err, setErr] = useState("");
+  const [loadErr, setLoadErr] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
-  const [add, setAdd] = useState(emptyAdd);
-  const [addErr, setAddErr] = useState("");
-  const [adding, setAdding] = useState(false);
-  const [editId, setEditId] = useState<string | null>(null);
-  const [ef, setEf] = useState({ name: "", emoji: "", logoUrl: "", website: "", twitter: "", telegram: "" });
-  const [savingEdit, setSavingEdit] = useState(false);
-  const [editErr, setEditErr] = useState("");
-  const [uploading, setUploading] = useState(false);
-  const [search, setSearch] = useState("");
+  const [note, setNote] = useState<Note>(null);
+  const [tab, setTab] = useState<AdminTab>("review");
+  const [filter, setFilter] = useState<ListFilter>(EMPTY_FILTER);
+  const [now, setNow] = useState(() => Date.now());
+
+  // The tab follows the hash: the back button and a reload both land right.
+  useEffect(() => {
+    const sync = () => setTab(tabFromHash(window.location.hash));
+    sync();
+    window.addEventListener("hashchange", sync);
+    return () => window.removeEventListener("hashchange", sync);
+  }, []);
+  const go = (t: AdminTab) => {
+    if (window.location.hash !== `#${t}`) window.location.hash = t;
+    setTab(t);
+    window.scrollTo({ top: 0 });
+  };
+
+  // A success note clears itself; a failure stays until the next action.
+  useEffect(() => {
+    if (note?.kind !== "ok") return;
+    const t = setTimeout(() => setNote(null), 4000);
+    return () => clearTimeout(t);
+  }, [note]);
 
   const load = useCallback(async () => {
     try {
@@ -43,10 +87,16 @@ export default function AdminDashboard() {
         window.location.assign(window.location.pathname.replace(/\/$/, "") || "/");
         return;
       }
+      if (!r.ok) {
+        setLoadErr(await reason(r, "Could not load listings"));
+        return;
+      }
       const j = await r.json();
       setRows(j.listings ?? []);
+      setLoadErr("");
+      setNow(Date.now());
     } catch {
-      setErr("Failed to load listings");
+      setLoadErr("Could not load listings — the site did not answer.");
     }
   }, []);
 
@@ -54,390 +104,227 @@ export default function AdminDashboard() {
     load();
   }, [load]);
 
-  const patch = async (id: string, body: Record<string, unknown>) => {
-    setBusy(id);
-    try {
-      const r = await fetch(`/api/admin/listings/${id}`, {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (r.ok) await load();
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const setStatus = async (id: string, status: string) => {
-    setBusy(id);
-    try {
-      const r = await fetch(`/api/admin/listings/${id}/status`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ status }),
-      });
-      if (r.ok) await load();
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const remove = async (id: string) => {
-    if (!confirm("Delete this listing permanently?")) return;
-    setBusy(id);
-    try {
-      const r = await fetch(`/api/admin/listings/${id}`, { method: "DELETE" });
-      if (r.ok) await load();
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const submitAdd = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setAddErr("");
-    setAdding(true);
-    try {
-      const r = await fetch("/api/admin/listings", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(add),
-      });
-      const j = await r.json().catch(() => ({}));
-      if (r.ok) {
-        setAdd(emptyAdd);
+  // Every write reports its outcome — a refused change used to vanish without
+  // a word, which reads exactly like a button that does nothing.
+  const run = useCallback(
+    async (id: string, what: string, req: () => Promise<Response>, okText?: string): Promise<boolean> => {
+      setBusy(id);
+      setNote(null);
+      try {
+        const r = await req();
+        if (!r.ok) {
+          setNote({ kind: "err", text: await reason(r, what) });
+          return false;
+        }
         await load();
-      } else {
-        setAddErr(j.error || "Could not add listing");
+        if (okText) setNote({ kind: "ok", text: okText });
+        return true;
+      } catch {
+        setNote({ kind: "err", text: `${what}: the site did not answer` });
+        return false;
+      } finally {
+        setBusy(null);
       }
-    } finally {
-      setAdding(false);
-    }
-  };
+    },
+    [load],
+  );
 
-  const startEdit = (r: StoredListing) => {
-    setEditId(r.id);
-    setEditErr("");
-    setEf({
-      name: r.name ?? "",
-      emoji: r.emoji ?? "",
-      logoUrl: r.logoUrl ?? "",
-      website: r.website ?? "",
-      twitter: r.twitter ?? "",
-      telegram: r.telegram ?? "",
-    });
-  };
+  const symOf = useCallback((id: string) => rows?.find((r) => r.id === id)?.sym ?? "listing", [rows]);
 
-  const saveEdit = async (id: string) => {
-    setSavingEdit(true);
-    setEditErr("");
-    try {
-      const r = await fetch(`/api/admin/listings/${id}`, {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(ef),
-      });
-      const j = await r.json().catch(() => ({}));
-      if (r.ok) {
-        setEditId(null);
-        await load();
-      } else {
-        setEditErr(j.error || "Could not save");
-      }
-    } finally {
-      setSavingEdit(false);
-    }
-  };
-
-  const setE = (k: keyof typeof ef) => (e: React.ChangeEvent<HTMLInputElement>) =>
-    setEf((s) => ({ ...s, [k]: e.target.value }));
-
-  const uploadLogo = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = ""; // allow re-selecting the same file
-    if (!file) return;
-    setUploading(true);
-    setEditErr("");
-    try {
-      const fd = new FormData();
-      fd.append("file", file);
-      const r = await fetch("/api/admin/upload", { method: "POST", body: fd });
-      const j = await r.json().catch(() => ({}));
-      if (r.ok && j.url) setEf((s) => ({ ...s, logoUrl: j.url }));
-      else setEditErr(j.error || "Upload failed");
-    } catch {
-      setEditErr("Upload failed");
-    } finally {
-      setUploading(false);
-    }
-  };
+  const actions: ListingActions = useMemo(
+    () => ({
+      patch: (id, body) =>
+        run(id, `Could not update ${symOf(id)}`, () =>
+          fetch(`/api/admin/listings/${id}`, {
+            method: "PATCH",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(body),
+          }),
+        `${symOf(id)} updated`),
+      setStatus: (id, status) =>
+        run(id, `Could not change ${symOf(id)}`, () =>
+          fetch(`/api/admin/listings/${id}/status`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ status }),
+          }),
+        `${symOf(id)} ${status === "approved" ? "approved — live on the site" : status === "rejected" ? "unlisted" : status}`),
+      remove: (id) => {
+        if (!confirm(`Delete ${symOf(id)} permanently? This cannot be undone.`)) return Promise.resolve(false);
+        return run(id, `Could not delete ${symOf(id)}`, () => fetch(`/api/admin/listings/${id}`, { method: "DELETE" }), `${symOf(id)} deleted`);
+      },
+      reload: load,
+    }),
+    [run, symOf, load],
+  );
 
   const logout = async () => {
     await fetch("/api/admin/logout", { method: "POST" }).catch(() => {});
     window.location.assign(window.location.pathname.replace(/\/$/, "") || "/");
   };
 
-  const pending = useMemo(() => (rows ?? []).filter((r) => r.status === "pending"), [rows]);
-  const shown = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    const all = rows ?? [];
-    return q
-      ? all.filter((r) => (r.sym + r.name + r.address).toLowerCase().includes(q))
-      : all;
-  }, [rows, search]);
-  const stats = useMemo(() => {
-    const all = rows ?? [];
-    return {
-      total: all.length,
-      approved: all.filter((r) => r.status === "approved").length,
-      pending: all.filter((r) => r.status === "pending").length,
-      trending: all.filter((r) => r.trendingRank != null && r.status === "approved").length,
-    };
-  }, [rows]);
+  const counts = useMemo(() => countListings(rows ?? [], now), [rows, now]);
+  const pending = useMemo(
+    () => (rows ?? []).filter((r) => r.status === "pending").sort((a, b) => arrivedAt(b) - arrivedAt(a)),
+    [rows],
+  );
 
-  const setA = (k: keyof typeof emptyAdd) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
-    setAdd((s) => ({ ...s, [k]: e.target.value }));
+  // A stat card opens the Listings tab already filtered to what it counts.
+  const openListings = (patch: Partial<ListFilter>) => {
+    setFilter({ ...EMPTY_FILTER, ...patch });
+    go("listings");
+  };
+
+  const rejectAll = async () => {
+    if (!pending.length) return;
+    if (!confirm(`Reject all ${pending.length} pending submission(s)? They stay in the store as unlisted.`)) return;
+    setBusy("__all");
+    setNote(null);
+    let done = 0;
+    let failed = "";
+    try {
+      for (const r of pending) {
+        const res = await fetch(`/api/admin/listings/${r.id}/status`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ status: "rejected" }),
+        }).catch(() => null);
+        if (res?.ok) done++;
+        else if (!failed) failed = res ? await reason(res, r.sym) : `${r.sym}: the site did not answer`;
+      }
+      await load();
+      setNote(failed ? { kind: "err", text: `Rejected ${done} of ${pending.length}. ${failed}` } : { kind: "ok", text: `Rejected ${done} submission(s)` });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const badge: Partial<Record<AdminTab, number>> = { review: counts.pending, listings: counts.total };
 
   return (
     <>
       <header className="admin-top">
         <div className="admin-brand">
-          <div className="brand-logo"><Logo size={36} /></div>
-          <div className="admin-name">Dexvra<span>Admin Console</span></div>
+          <div className="brand-logo"><Logo size={32} /></div>
+          <div className="admin-name">Dexvra<span>Admin</span></div>
         </div>
+        <nav className="admin-tabs" aria-label="Admin sections">
+          {(Object.keys(TAB_LABEL) as AdminTab[]).map((t) => (
+            <button key={t} className={`atab ${tab === t ? "on" : ""}`} aria-current={tab === t ? "page" : undefined} onClick={() => go(t)}>
+              {TAB_LABEL[t]}
+              {badge[t] ? <span className={`atab-n ${t === "review" ? "warn" : ""}`}>{badge[t]}</span> : null}
+            </button>
+          ))}
+        </nav>
         <div className="admin-top-actions">
-          <a className="abtn" href="https://dexvra.io" target="_blank" rel="noopener noreferrer">View site ↗</a>
+          <a className="abtn" href="https://dexvra.io" target="_blank" rel="noopener noreferrer">Site ↗</a>
           <button className="abtn bad" onClick={logout}>Log out</button>
         </div>
       </header>
 
       <div className="admin-wrap">
-        {err && <div className="login-err">{err}</div>}
+        {loadErr && <div className="a-note err">{loadErr} <button className="abtn" onClick={load}>Retry</button></div>}
+        {note && (
+          <div className={`a-note ${note.kind}`} role={note.kind === "err" ? "alert" : "status"}>
+            {note.text}
+            <button className="a-note-x" onClick={() => setNote(null)} aria-label="Dismiss">×</button>
+          </div>
+        )}
 
-        <div className="admin-stats">
-          <div className="astat"><div className="k">Listings</div><div className="v">{stats.total}</div></div>
-          <div className="astat"><div className="k">Approved</div><div className="v">{stats.approved}</div></div>
-          <div className="astat pend"><div className="k">Pending</div><div className="v">{stats.pending}</div></div>
-          <div className="astat"><div className="k">Trending</div><div className="v">{stats.trending}</div></div>
-        </div>
+        {tab === "review" && (
+          <>
+            <div className="admin-stats">
+              <button className="astat" onClick={() => openListings({})}>
+                <div className="k">Listings</div><div className="v">{rows ? counts.total : "…"}</div>
+              </button>
+              <button className="astat" onClick={() => openListings({ status: "approved" })}>
+                <div className="k">Live</div><div className="v">{rows ? counts.approved : "…"}</div>
+              </button>
+              <button className="astat pend" onClick={() => openListings({ status: "pending" })}>
+                <div className="k">Pending</div><div className="v">{rows ? counts.pending : "…"}</div>
+              </button>
+              <button className="astat" onClick={() => openListings({ status: "trending" })}>
+                <div className="k">Trending now</div><div className="v">{rows ? counts.trending : "…"}</div>
+              </button>
+            </div>
 
-        {/* Pending submissions */}
-        <section className="asec">
-          <div className="asec-h">Pending submissions <span className="cnt">{pending.length}</span></div>
-          <div className="asec-body">
-            {rows == null ? (
-              <div className="a-chain">Loading…</div>
-            ) : pending.length === 0 ? (
-              <div className="a-chain">No submissions waiting for review.</div>
-            ) : (
-              <div className="pend-grid">
-                {pending.map((r) => (
-                  <div className="pend-card" key={r.id}>
-                    <div className="pend-top">
-                      <span style={{ fontSize: 20 }}>{r.emoji}</span>
-                      <div>
-                        <div className="pend-sym">{r.sym}</div>
-                        <div className="a-chain">{r.name} · {CHAINS[r.chain]?.label ?? r.chain}</div>
-                      </div>
-                    </div>
-                    <div className="pend-meta">{r.address}</div>
-                    <div className="pend-actions">
-                      <button className="abtn ok" disabled={busy === r.id} onClick={() => setStatus(r.id, "approved")}>Approve</button>
-                      <button className="abtn bad" disabled={busy === r.id} onClick={() => setStatus(r.id, "rejected")}>Reject</button>
-                    </div>
+            <section className="asec">
+              <div className="asec-h">
+                Pending submissions <span className="cnt">{pending.length}</span>
+                {pending.length > 1 && (
+                  <div className="asec-h-tools">
+                    <button className="abtn bad" disabled={busy != null} onClick={rejectAll}>
+                      {busy === "__all" ? "Rejecting…" : `Reject all ${pending.length}`}
+                    </button>
                   </div>
-                ))}
+                )}
               </div>
-            )}
-          </div>
-        </section>
-
-        {/* All listings */}
-        <section className="asec">
-          <div className="asec-h">
-            All listings <span className="cnt">{search ? `${shown.length}/${rows?.length ?? 0}` : rows?.length ?? 0}</span>
-            <input
-              className="asec-search"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search ticker, name, or CA…"
-            />
-          </div>
-          <div className="atable-wrap">
-            <table className="atable">
-              <thead>
-                <tr>
-                  <th>Token</th>
-                  <th>Chain</th>
-                  <th>Contract</th>
-                  <th>Tier</th>
-                  <th>Trending</th>
-                  <th>Status</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {shown.flatMap((r) => [
-                  <tr key={r.id}>
-                    <td>
-                      <div className="a-sym">
-                        <span className="a-logo">
-                          {r.logoUrl ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img src={r.logoUrl} alt="" />
-                          ) : (
-                            r.emoji
-                          )}
-                        </span>
-                        {r.sym}
-                      </div>
-                      <div className="a-chain">{r.name}</div>
-                    </td>
-                    <td className="a-chain">{CHAINS[r.chain]?.label ?? r.chain}</td>
-                    <td className="a-ca" title={r.address}>{short(r.address)}</td>
-                    <td style={{ minWidth: 130 }}>
-                      <select
-                        className="a-select"
-                        value={r.tier}
-                        disabled={busy === r.id}
-                        onChange={(e) => patch(r.id, { tier: e.target.value })}
-                      >
-                        {LISTING_TIERS.map((t) => (
-                          <option key={t.key} value={t.key}>{tierLabel(t.key)}</option>
-                        ))}
-                      </select>
-                    </td>
-                    <td>
-                      <label className="a-check">
-                        <input
-                          type="checkbox"
-                          checked={r.trendingRank != null}
-                          disabled={busy === r.id}
-                          onChange={(e) => patch(r.id, { trendingRank: e.target.checked ? (r.trendingRank ?? 1) : null })}
-                        />
-                        Featured
-                      </label>
-                    </td>
-                    <td><span className={`a-status ${r.status}`}>{r.status}</span></td>
-                    <td>
-                      <div className="a-row-actions">
-                        <button className="abtn" disabled={busy === r.id} onClick={() => (editId === r.id ? setEditId(null) : startEdit(r))}>
-                          {editId === r.id ? "Close" : "Edit"}
-                        </button>
-                        {r.status !== "approved" ? (
-                          <button className="abtn ok" disabled={busy === r.id} onClick={() => setStatus(r.id, "approved")}>Approve</button>
-                        ) : (
-                          <button className="abtn" disabled={busy === r.id} onClick={() => setStatus(r.id, "rejected")}>Unlist</button>
-                        )}
-                        <button className="abtn bad" disabled={busy === r.id} onClick={() => remove(r.id)}>Delete</button>
-                      </div>
-                    </td>
-                  </tr>,
-                  editId === r.id && (
-                    <tr className="edit-row" key={`${r.id}-edit`}>
-                      <td colSpan={7}>
-                        <div className="edit-panel">
-                          <div className="edit-grid">
-                            <div className="add-fld"><label>Name</label><input className="a-input" value={ef.name} onChange={setE("name")} /></div>
-                            <div className="add-fld"><label>Emoji (fallback)</label><input className="a-input" value={ef.emoji} onChange={setE("emoji")} maxLength={4} placeholder="🐕" /></div>
-                            <div className="add-fld">
-                              <label>Preview</label>
-                              <div className="edit-logo-box">
-                                {ef.logoUrl ? (
-                                  // eslint-disable-next-line @next/next/no-img-element
-                                  <img src={ef.logoUrl} alt="" />
-                                ) : (
-                                  <span>{ef.emoji || "🪙"}</span>
-                                )}
-                              </div>
+              <div className="asec-body">
+                {rows == null ? (
+                  <div className="a-chain">Loading…</div>
+                ) : pending.length === 0 ? (
+                  <div className="a-empty">Nothing waiting for review.</div>
+                ) : (
+                  <div className="a-list">
+                    {pending.map((r) => {
+                      const links = [
+                        ["Website", r.website],
+                        ["X", r.twitter],
+                        ["Telegram", r.telegram],
+                      ].filter(([, u]) => u) as [string, string][];
+                      return (
+                        <div className="a-item" key={r.id}>
+                          <div className="a-item-main">
+                            <div className="a-sym-t">
+                              {r.emoji} {r.sym} <span className="a-chain">{r.name}</span>
                             </div>
-                            <div className="add-fld wide">
-                              <label>Logo — upload a file or paste an image URL</label>
-                              <div className="logo-row">
-                                <label className={`abtn upload-btn ${uploading ? "busy" : ""}`}>
-                                  {uploading ? "Uploading…" : "⬆ Upload"}
-                                  <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={uploadLogo} hidden disabled={uploading} />
-                                </label>
-                                <input className="a-input" value={ef.logoUrl} onChange={setE("logoUrl")} placeholder="https://…/logo.png  or upload →" />
-                              </div>
+                            <div className="a-chain">
+                              {CHAINS[r.chain]?.label ?? r.chain} · asked for {tierLabel(r.tier)} ·{" "}
+                              {arrivedAt(r) ? `${fmtAge((now - arrivedAt(r)) / 60_000)} ago` : "—"}
+                              {links.length ? " · " : ""}
+                              {links.map(([k, u], i) => (
+                                <span key={k}>
+                                  {i ? " · " : ""}
+                                  <a href={u} target="_blank" rel="noopener noreferrer nofollow">{k} ↗</a>
+                                </span>
+                              ))}
                             </div>
-                            <div className="add-fld"><label>Website</label><input className="a-input" value={ef.website} onChange={setE("website")} placeholder="https://…" /></div>
-                            <div className="add-fld"><label>X / Twitter</label><input className="a-input" value={ef.twitter} onChange={setE("twitter")} placeholder="https://x.com/…" /></div>
-                            <div className="add-fld"><label>Telegram</label><input className="a-input" value={ef.telegram} onChange={setE("telegram")} placeholder="https://t.me/…" /></div>
+                            <div className="a-ca" title={r.address}>{r.address}</div>
                           </div>
-                          {editErr && <div className="login-err" style={{ textAlign: "left" }}>{editErr}</div>}
-                          <div className="edit-actions">
-                            <button className="abtn p" disabled={savingEdit} onClick={() => saveEdit(r.id)}>{savingEdit ? "Saving…" : "Save changes"}</button>
-                            <button className="abtn" onClick={() => setEditId(null)}>Cancel</button>
+                          <div className="a-item-act">
+                            <button className="abtn ok" disabled={busy != null} onClick={() => actions.setStatus(r.id, "approved")}>Approve</button>
+                            <button className="abtn bad" disabled={busy != null} onClick={() => actions.setStatus(r.id, "rejected")}>Reject</button>
                           </div>
                         </div>
-                      </td>
-                    </tr>
-                  ),
-                ])}
-              </tbody>
-            </table>
-          </div>
-        </section>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </section>
+          </>
+        )}
 
-        {/* Add listing */}
-        <section className="asec">
-          <div className="asec-h">Add listing</div>
-          <div className="asec-body">
-            <form className="add-grid" onSubmit={submitAdd}>
-              <div className="add-fld">
-                <label>Chain</label>
-                <select className="a-select" value={add.chain} onChange={setA("chain")}>
-                  {CHAIN_IDS.map((id) => (<option key={id} value={id}>{CHAINS[id].label}</option>))}
-                </select>
-              </div>
-              <div className="add-fld">
-                <label>Ticker</label>
-                <input className="a-input" value={add.sym} onChange={setA("sym")} placeholder="BONK" />
-              </div>
-              <div className="add-fld">
-                <label>Name</label>
-                <input className="a-input" value={add.name} onChange={setA("name")} placeholder="Bonk" />
-              </div>
-              <div className="add-fld">
-                <label>Tier</label>
-                <select className="a-select" value={add.tier} onChange={setA("tier")}>
-                  {LISTING_TIERS.map((t) => (<option key={t.key} value={t.key}>{tierLabel(t.key)}</option>))}
-                </select>
-              </div>
-              <div className="add-fld wide">
-                <label>Contract address</label>
-                <input className="a-input" value={add.address} onChange={setA("address")} placeholder="Paste CA…" />
-              </div>
-              <div className="add-fld">
-                <label>Emoji</label>
-                <input className="a-input" value={add.emoji} onChange={setA("emoji")} placeholder="🐕" maxLength={4} />
-              </div>
-              <div className="add-fld wide">
-                <label>Logo image URL (optional)</label>
-                <input className="a-input" value={add.logoUrl} onChange={setA("logoUrl")} placeholder="https://…/logo.png" />
-              </div>
-              <div className="add-fld">
-                <label>Website</label>
-                <input className="a-input" value={add.website} onChange={setA("website")} placeholder="https://…" />
-              </div>
-              <div className="add-fld">
-                <label>X / Twitter</label>
-                <input className="a-input" value={add.twitter} onChange={setA("twitter")} placeholder="https://x.com/…" />
-              </div>
-              <div className="add-fld">
-                <label>Telegram</label>
-                <input className="a-input" value={add.telegram} onChange={setA("telegram")} placeholder="https://t.me/…" />
-              </div>
-              {addErr && <div className="add-fld wide"><div className="login-err" style={{ textAlign: "left" }}>{addErr}</div></div>}
-              <div className="add-fld wide">
-                <button className="abtn p" type="submit" disabled={adding} style={{ padding: "10px 18px" }}>
-                  {adding ? "Adding…" : "Add listing (goes live)"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </section>
+        {tab === "listings" && <ListingsTable rows={rows} busy={busy} filter={filter} setFilter={setFilter} actions={actions} />}
+
+        {tab === "pons" && <PonsQueue onListed={load} />}
+
+        {tab === "add" && (
+          <AddListingForm
+            onAdded={async (sym) => {
+              await load();
+              setNote({ kind: "ok", text: `${sym} added — live on the site` });
+            }}
+          />
+        )}
+
+        {tab === "site" && (
+          <>
+            <PromoManager />
+            <BannerManager />
+            <ChannelBannerManager />
+          </>
+        )}
       </div>
     </>
   );

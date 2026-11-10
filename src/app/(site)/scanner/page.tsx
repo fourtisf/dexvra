@@ -75,7 +75,7 @@ export default function ScannerPage() {
   const chain = result?.chain ? CHAINS[result.chain] : undefined;
 
   return (
-    <section className="view">
+    <section className="view narrow">
       <PageHead icon="🧪" title="Token Scanner" sub="Paste any contract address for an instant safety snapshot." />
       <div className="panel" style={{ display: "flex", flexDirection: "column", gap: 13, maxWidth: 720 }}>
         <div className="fld">
@@ -84,7 +84,7 @@ export default function ScannerPage() {
         </div>
         <div style={{ display: "flex", gap: 10 }}>
           <button className="btn-primary" onClick={() => scan(ca)} disabled={busy}>
-            {busy ? "Scanning…" : "🧪 Scan token"}
+            {busy ? "Scanning…" : "Scan token"}
           </button>
           <button className="btn-ghost2" onClick={demo}>Try a demo CA</button>
         </div>
