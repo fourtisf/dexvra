@@ -196,9 +196,10 @@ export const CHAINS: Record<string, ChainConfig> = {
   // from here: `npm run market:check -- elysium` on the box is the measurement.
   // A wrong slug costs a 404, never a wrong price.
   //
-  // No explorer host is set on purpose: no official mainnet explorer could be
-  // verified, so both links go to the DexScreener page that does exist, and
-  // there is no `blockscout` (holders fall through to the other sources).
+  // The explorer is the chain's own, from its ethereum-lists registry entry
+  // (eip155-99901.json, EIP-3091 paths). No `blockscout` host is set: whether
+  // that explorer speaks the Blockscout v2 API was not measurable from here, so
+  // holders fall through to the other sources rather than to a guessed API.
   elysium: {
     id: "elysium",
     label: "Elysium",
@@ -207,7 +208,7 @@ export const CHAINS: Record<string, ChainConfig> = {
     dexscreener: "elysium",
     coingecko: null,
     goPlusChainId: null, // GoPlus does not cover chain 99901
-    explorer: (a) => `https://dexscreener.com/elysium/${a}`,
+    explorer: (a) => `https://elysium.kinetiq.xyz/explorer/token/${a}`,
     buyUrl: (a) => `https://dexscreener.com/elysium/${a}`,
     addressPattern: /^0x[a-fA-F0-9]{40}$/,
   },

@@ -38,7 +38,7 @@ const build = require('../build.js');
  * direction. Same guard `market:check`'s ported chain map carries, for the same
  * reason.
  */
-const DS_SLUG = { ethereum: 'ethereum', base: 'base', bsc: 'bsc', arbitrum: 'arbitrum', solana: 'solana', robinhood: 'robinhood' };
+const DS_SLUG = { ethereum: 'ethereum', base: 'base', bsc: 'bsc', arbitrum: 'arbitrum', solana: 'solana', robinhood: 'robinhood', elysium: 'elysium' };
 
 const argv = process.argv.slice(2);
 const optOf = (n) => { const i = argv.indexOf('--' + n); return i >= 0 ? (argv[i + 1] || '') : ''; };

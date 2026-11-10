@@ -386,7 +386,7 @@ async function _afterTrade(u, side, r) {
     recordTrade(r.chain, volEth, Number(r.feeEth));   // bucket by chain (r.chain is the chainKey)
     // Price the report in USD using THIS chain's native (ETH/SOL/BNB) — never the ETH
     // price for a SOL/BNB trade. ethUsd(chainKey) picks the right Coinbase pair.
-    let usdRate = 0; if (['ETH', 'SOL', 'BNB'].includes(r.native)) { try { usdRate = await ethUsd(r.chain); } catch (_) {} }
+    let usdRate = 0; if (['ETH', 'SOL', 'BNB', 'HYPE'].includes(r.native)) { try { usdRate = await ethUsd(r.chain); } catch (_) {} }
     report.onTrade({ username: u.username, chatId: u.chatId, side, sym: r.sym, ca: r.ca, native: r.native, volEth, feeEth: Number(r.feeEth), feeCollected: !!r.feeHash, usdRate, chainName: chain.name });
   } catch (_) { /* reporting must never affect trading */ }
 }
@@ -1949,9 +1949,12 @@ async function tokenBalancesAcross(chatId, ca, chainKey) {
   })));
 }
 async function ethUsd(chainKey) {
-  // Price the chain's native in USD: BNB, SOL, or ETH (default). Coinbase has spot for all.
+  // Price the chain's native in USD: BNB, SOL, HYPE, or ETH (default).
+  // ⚠️ HYPE must be NAMED: falling to the ETH default would price every figure
+  // on Elysium at ETH's price — a wrong number, where a failed HYPE lookup is
+  // only a missing one (0, which every caller already reads as "no USD").
   const nat = (chainOf(chainKey) || {}).native;
-  const sym = nat === 'BNB' ? 'BNB' : nat === 'SOL' ? 'SOL' : 'ETH';
+  const sym = nat === 'BNB' ? 'BNB' : nat === 'SOL' ? 'SOL' : nat === 'HYPE' ? 'HYPE' : 'ETH';
   const hit = _usdCache.get(sym);
   if (hit && Date.now() - hit.ts < USD_CACHE_MS) return hit.px;
   try {
@@ -1975,7 +1978,7 @@ async function ethUsd(chainKey) {
 // robinhood joined when DexScreener added the chain (~July 2026) — before
 // that, a robinhood pair in a DS response was impossible and the missing key
 // was correct. Display/enrichment only, same as every entry here.
-const DS_CHAIN_KEY = { ethereum: 'ethereum', base: 'base', bsc: 'bsc', arbitrum: 'arbitrum', solana: 'solana', robinhood: 'robinhood' };
+const DS_CHAIN_KEY = { ethereum: 'ethereum', base: 'base', bsc: 'bsc', arbitrum: 'arbitrum', solana: 'solana', robinhood: 'robinhood', elysium: 'elysium' };
 const DS_TO_CHAIN = Object.fromEntries(Object.entries(DS_CHAIN_KEY).map(([k, v]) => [v, k]));
 const _dsCache = new Map();   // caLower → { at, pairs }
 const DS_TTL_MS = 30000;
@@ -2059,7 +2062,7 @@ async function tokenLogoUrl(ca, chainKey) {
   _logoCache.set(key, { at: Date.now(), url });
   return url;
 }
-const GT_NETWORK_LOGO = { robinhood: 'robinhood', ethereum: 'eth', base: 'base', bsc: 'bsc', arbitrum: 'arbitrum_nova', solana: 'solana' };
+const GT_NETWORK_LOGO = { robinhood: 'robinhood', ethereum: 'eth', base: 'base', bsc: 'bsc', arbitrum: 'arbitrum_nova', solana: 'solana', elysium: 'elysium' };
 
 // Solana mints are base58 and CASE-SIGNIFICANT — lowercasing one destroys it.
 const _idQ = (ca) => (/^0x[a-fA-F0-9]{40}$/.test(String(ca)) ? String(ca).toLowerCase() : String(ca));
@@ -2070,7 +2073,7 @@ const _idQ = (ca) => (/^0x[a-fA-F0-9]{40}$/.test(String(ca)) ? String(ca).toLowe
 // "this token has no market" from "this VPS is being throttled". GT also names
 // the venue precisely ("uniswap-v4"), where DexScreener splits it across dexId
 // and a label.
-const GT_NET = { ethereum: 'eth', base: 'base', bsc: 'bsc', arbitrum: 'arbitrum', solana: 'solana', robinhood: 'robinhood' };
+const GT_NET = { ethereum: 'eth', base: 'base', bsc: 'bsc', arbitrum: 'arbitrum', solana: 'solana', robinhood: 'robinhood', elysium: 'elysium' };
 const _gtCache = new Map();   // `${chainKey}:${caLower}` → { at, m }
 
 async function gtMarketX(ca, chainKey) {

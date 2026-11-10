@@ -95,6 +95,10 @@ const DEFAULTS = {
   sei: ["https://evm-rpc.sei-apis.com", "https://sei-evm-rpc.publicnode.com"],
   unichain: ["https://mainnet.unichain.org", "https://unichain-rpc.publicnode.com"],
   plasma: ["https://rpc.plasma.to"],
+  // Kinetiq's own endpoint, from ethereum-lists/chains eip155-99901.json. ONE
+  // host — the only one a primary source names. RPC_ELYSIUM_URLS replaces it,
+  // RPC_ELYSIUM leads it; `npm run rpc:check` says whether it answers this box.
+  elysium: ["https://rpc.elysium.kinetiq.xyz"],
 };
 
 const RPC_CHAINS = Object.keys(DEFAULTS);

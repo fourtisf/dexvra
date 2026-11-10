@@ -624,7 +624,7 @@ async function orderPrompt(ca, chainKey, kind) {
   return L.join('\n');
 }
 
-const DS_SLUG = { robinhood: 'robinhood', ethereum: 'ethereum', base: 'base', bsc: 'bsc', arbitrum: 'arbitrum', solana: 'solana' };
+const DS_SLUG = { robinhood: 'robinhood', ethereum: 'ethereum', base: 'base', bsc: 'bsc', arbitrum: 'arbitrum', solana: 'solana', elysium: 'elysium' };
 const chartUrl = (chainKey, ca) => DS_SLUG[chainKey] ? `https://dexscreener.com/${DS_SLUG[chainKey]}/${ca}` : `https://dexscreener.com/search?q=${ca}`;
 const expTokenUrl = (chainKey, ca) => { const c = core.chainOf(chainKey); return c ? `${c.explorer}/token/${ca}` : ''; };
 
@@ -5776,7 +5776,11 @@ function helpText(chatId) {
 
 // ------------------------------------------------------------ startup + poll
 async function refreshPrices() {
-  for (const sym of ['ETH', 'BNB', 'SOL']) {
+  // HYPE (Elysium's gas coin) is asked only where a chain that uses it is
+  // enabled — an install without one must not grow a request per refresh.
+  const syms = ['ETH', 'BNB', 'SOL'];
+  try { if (core.chains.enabledChains().some((c) => c.native === 'HYPE')) syms.push('HYPE'); } catch (_) {}
+  for (const sym of syms) {
     try { const r = await fetch(`https://api.coinbase.com/v2/prices/${sym}-USD/spot`, { signal: AbortSignal.timeout(6000) }); const j = await r.json(); const p = Number(j?.data?.amount); if (p > 0) PRICES[sym] = p; } catch (_) {}
   }
 }

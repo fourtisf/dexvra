@@ -56,7 +56,7 @@ async function curveRaised(curveAddr, chainKey) {
 // Market stats (24h volume, price change, buy/sell txns, pool age) from public
 // indexers: DexScreener for the big EVM chains, GeckoTerminal for Robinhood
 // Chain (DexScreener doesn't index it). Best-effort: null on any failure.
-const DS_CHAIN = { ethereum: 'ethereum', base: 'base', bsc: 'bsc', arbitrum: 'arbitrum' };
+const DS_CHAIN = { ethereum: 'ethereum', base: 'base', bsc: 'bsc', arbitrum: 'arbitrum', elysium: 'elysium' };
 const GT_NETWORK = { robinhood: 'robinhood' };
 async function marketStats(ca, chainKey) {
   try {
@@ -146,7 +146,7 @@ async function launchpadApi(ca, chainKey) {
 // every open card. Links do not change; a hit is held far longer than a miss,
 // because a brand-new token usually has no socials indexed for the first few
 // minutes and is worth asking about again.
-const DS_SOCIAL_CHAIN = { robinhood: 'robinhood', ethereum: 'ethereum', base: 'base', bsc: 'bsc', arbitrum: 'arbitrum', solana: 'solana' };
+const DS_SOCIAL_CHAIN = { robinhood: 'robinhood', ethereum: 'ethereum', base: 'base', bsc: 'bsc', arbitrum: 'arbitrum', solana: 'solana', elysium: 'elysium' };
 const _socialCache = new Map();   // 'chain:ca' → { v, at }
 const SOCIAL_TTL_HIT = 30 * 60 * 1000;
 const SOCIAL_TTL_MISS = 5 * 60 * 1000;

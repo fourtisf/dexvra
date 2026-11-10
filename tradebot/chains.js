@@ -111,6 +111,30 @@ const CHAINS = {
   // All Solana logic lives in solana.js; EVM code must branch on `kind === 'svm'` and
   // never build an ethers provider/contract for it. Kept OUT of the default enabled set
   // until the core/telegram Solana branches land (see ENABLED_CHAINS below).
+  // Elysium — Kinetiq's Layer 2 on Hyperliquid (Arbitrum Orbit). ⚠️ The gas
+  // coin is HYPE, so every "ETH" amount on this chain is HYPE and `weth` is
+  // WHYPE. NOT in the default ENABLED_CHAINS: an operator opts in.
+  //
+  // Sources, both primary and both read 2026-11-10:
+  //   · rpc, chainId, explorer — ethereum-lists/chains, eip155-99901.json
+  //   · every contract — github.com/Uniswap/contracts, deployments/json/99901.json
+  // They cross-check inside that file: UniswapV2Router02, SwapRouter02 and both
+  // Universal Routers all name this same WHYPE in their constructors, and the
+  // V2 router names this V2 factory. ⚠️ A citation is still not a measurement —
+  // this sandbox cannot reach the chain — and a wrong value fails SAFE (no code
+  // at a factory reads as "no pool"; a wrong router cannot pass the simulation
+  // a buy makes before it signs). Every value is env-overridable.
+  elysium: {
+    key: 'elysium', name: 'Elysium', emoji: '🌀', chainId: 99901, native: 'HYPE', curve: false,
+    rpc: env('ELYSIUM_RPC', 'https://rpc.elysium.kinetiq.xyz'),
+    factory: env('ELYSIUM_FACTORY', '0xBbBcC62853a5fA27b93d6Bab3E6F7ce841E25Df2'),   // Uniswap V2 factory
+    router: env('ELYSIUM_ROUTER', '0xE783DE89a7F0408687f051e3E6D0BEb62719EbAd'),     // UniswapV2Router02
+    weth: env('ELYSIUM_WHYPE', '0xbA876237B0F021A6c6D852d6c26E107997cC5E81'),        // WHYPE
+    v3: { factory: env('ELYSIUM_V3_FACTORY', '0x1707327F626496A7b5b3872e7E4d2879Df7d7a9f'),
+          router: env('ELYSIUM_V3_ROUTER', '0x2d01411773c8C24805306E89A41F7855C3c4Fe65'),   // SwapRouter02
+          quoter: env('ELYSIUM_V3_QUOTER', '0x204FAca1764B154221e35c0d20aBb3c525710498') }, // QuoterV2
+    explorer: env('ELYSIUM_EXPLORER', 'https://elysium.kinetiq.xyz/explorer').replace(/\/+$/, ''),
+  },
   solana: {
     key: 'solana', name: 'Solana', emoji: '🟣', kind: 'svm', native: 'SOL', decimals: 9, curve: false,
     rpc: env('SOLANA_RPC', 'https://api.mainnet-beta.solana.com'),
@@ -159,7 +183,7 @@ const isSvm = (key) => kindOf(key) === 'svm';
 // Both are overridable per chain (`<CHAIN>_RPC_POLL_MS`, `<CHAIN>_RPC_BATCH`) and
 // globally (`RPC_POLL_MS`, `RPC_BATCH`) so an operator on a rate-limited public
 // endpoint can dial them back without a code change.
-const DEFAULT_POLL_MS = { robinhood: 250, arbitrum: 250, base: 400, bsc: 400, ethereum: 1000 };
+const DEFAULT_POLL_MS = { robinhood: 250, arbitrum: 250, elysium: 250, base: 400, bsc: 400, ethereum: 1000 };
 const DEFAULT_BATCH = { robinhood: 1 };   // see above — everything else batches
 function pollMsFor(key) {
   const v = Number(env(key.toUpperCase() + '_RPC_POLL_MS', env('RPC_POLL_MS', String(DEFAULT_POLL_MS[key] || 500))));

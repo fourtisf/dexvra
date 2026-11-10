@@ -138,8 +138,8 @@ const CHAINS = {
   // wallet on the chain, and the buyer pays ETH ON ETHEREUM MAINNET (payVia) at
   // the same ETH price every other ETH-billed listing pays. family:null also
   // means the buy bot reads its trades through the indexer, as it does for
-  // Plasma — no RPC is shipped because no public mainnet endpoint could be
-  // verified (RPC_ELYSIUM in bot/.env adds one without a deploy).
+  // Plasma. The RPC (config/rpc.js) and the explorer below are the chain's own,
+  // from its ethereum-lists registry entry (eip155-99901.json).
   elysium: {
     id: "elysium", label: "Elysium", native: "HYPE", family: null, payVia: "ethereum", decimals: 18,
     geckoNetwork: "elysium",
@@ -311,6 +311,8 @@ const EVM_EXPLORER_BASE = {
   sei: "https://seitrace.com",
   unichain: "https://uniscan.xyz",
   plasma: "https://plasmascan.to",
+  // EIP-3091 per the chain's ethereum-lists entry: <base>/tx/<hash>, /address/<a>.
+  elysium: "https://elysium.kinetiq.xyz/explorer",
 };
 
 const SPECIAL_EXPLORER = {

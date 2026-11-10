@@ -9312,39 +9312,55 @@ So there is no "ETH on Elysium" to pay with:
   Trending. The same ETH price table as every ETH-billed chain; one rail, no
   picker (the picker is Robinhood's alone).
 - **Buy bot**: `family: null`, so it reads trades through the indexer, as it
-  does for Plasma. No on-chain Swap reader and no whale detection there.
-- ⚠️ **NO RPC AND NO EXPLORER ARE SHIPPED, on purpose.** No public mainnet RPC
-  or official explorer could be verified (the one RPC a source named answered
-  403 before launch). So transaction links are omitted on buy alerts, and token
-  links go to `dexscreener.com/elysium/<address>`. `RPC_ELYSIUM` in `bot/.env`
-  adds an endpoint without a deploy.
-- ⚠️ **FREE auto-listing on Elysium is held until an RPC is set.** GoPlus does
-  not cover the chain, so the safety check is the on-chain sell simulation,
-  which needs `eth_getLogs`. Without an endpoint the scan reports those tokens
-  as "could not be safety-checked" — the fail-safe direction. Paid listings
-  are unaffected.
+  does for Plasma.
+- **RPC and explorer are the chain's own**, from its registry entry
+  (`ethereum-lists/chains`, `eip155-99901.json`): `rpc.elysium.kinetiq.xyz`
+  and `elysium.kinetiq.xyz/explorer` (EIP-3091 paths). ONE RPC host, because a
+  primary source names only one; `RPC_ELYSIUM_URLS` / `RPC_ELYSIUM` in
+  `bot/.env` and `ELYSIUM_RPC` in `tradebot/.env` change it without a deploy.
+  With it the buy bot's whale detection and the free listing's on-chain sell
+  simulation (GoPlus does not cover the chain) can run there.
+- **The trade bot has the chain, and it is OPT-IN.** `tradebot/chains.js`
+  carries Uniswap V2 (factory, router), V3 (factory, SwapRouter02, QuoterV2) and
+  WHYPE; `v4.js` `CANONICAL_V4.elysium` carries the PoolManager and both
+  Universal Routers. Every address is from Uniswap's own record
+  (`github.com/Uniswap/contracts`, `deployments/json/99901.json`), and they
+  cross-check inside it: every router's constructor names the same WHYPE, and
+  both Universal Routers name this PoolManager. ⚠️ It is NOT in the default
+  `ENABLED_CHAINS`: an existing install does not start trading a new chain on
+  deploy. Add `elysium` to `ENABLED_CHAINS` in `tradebot/.env` to turn it on.
+- ⚠️ **HYPE is priced as HYPE.** `ethUsd` priced every native that was not BNB
+  or SOL as ETH, which would have put ETH's price on every Elysium figure and
+  fed it to the v4 divergence guard. It asks Coinbase for `HYPE-USD` now; if
+  Coinbase has no such pair the answer is 0 ("no USD"), never ETH's.
+- ⚠️ **A citation is not a measurement.** This sandbox reaches neither the RPC
+  nor the indexers, so nothing here was read off the live chain. A wrong
+  address fails safe (no code at a factory reads as "no pool"; a wrong router
+  cannot pass the simulation a buy makes before signing). Before enabling the
+  chain in the trade bot, make one small buy and one sell on it.
 - ⚠️ **The two indexer slugs are SECONDARY-sourced** (DexScreener's own
-  `/elysium` page and a third party's integration); this sandbox reaches
-  neither API. A wrong slug costs a 404, never a wrong price, and
-  `npm run market:check -- elysium` on the box is the measurement.
+  `/elysium` page and a third party's integration). A wrong slug costs a 404,
+  never a wrong price; `npm run market:check -- elysium` is the measurement.
+- **No `blockscout` host on the site.** Whether the explorer speaks the
+  Blockscout v2 API could not be measured, so holders use the other sources.
 - ⚠️ **The mark is a rendition of the official icon, built from its pixels**
-  (the 128px icon dRPC's chain registry ships). The icon set the other marks
-  come from has no Elysium file yet; replace it with the brand's own SVG when
-  one exists.
-- **The trade bot is NOT touched.** Trading a chain needs its router, factory
-  and wrapped-native addresses, and none could be verified — a guessed address
-  on a money path is the one thing this repo refuses.
+  (the 128px icon dRPC's chain registry ships). Replace it with the brand's own
+  SVG when the icon set gains one.
 - Elysium is not in auto-trend's default chains: it is PAID-ONLY on the
-  channel board until an operator switches it on in ⚙️ Auto-Trend.
+  channel board until an operator switches it on in ⚙️ Auto-Trend. No
+  launchpad on the chain (Citadel, ElysianPad, …) is wired into the registry.
 
 ```bash
 cd bot && node scripts/run-tests.js test/chains.test.js test/dexPair.test.js
+cd tradebot && SKIP_DOTENV=1 node --test elysiumChain.test.js
+cd /opt/dexvra/bot && npm run rpc:check
 cd /opt/dexvra && npm run market:check -- elysium
 ```
 
-**Config a fix depends on:** nothing to list and take payment. `RPC_ELYSIUM`
-in `bot/.env` is what free auto-listing on the chain waits for. ⚠️ `bot/` AND
-`src/` changed, so `npm run deploy` rebuilds the site and restarts both bots.
+**Config a fix depends on:** nothing for the site and the listing bot. The
+trade bot trades Elysium only after `elysium` is added to `ENABLED_CHAINS` in
+`tradebot/.env`. ⚠️ `src/`, `bot/` AND `tradebot/` changed, so `npm run deploy`
+rebuilds the site and restarts every bot process.
 
 ## Two bot processes, one config
 

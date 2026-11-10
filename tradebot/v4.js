@@ -133,6 +133,12 @@ const CANONICAL_V4 = Object.freeze({
     routers: ['0xDc264714F68d84CF29BC605589405E78bDBE7C9f', '0x1906c1d672b88cD1B9aC7593301cA990F94Eae07',
       '0x91BF3bfAEf8D771A74E1A8fE460b3EE646b2e588'],
   },
+  // deployments/json/99901.json, read 2026-11-10: Universal Router v2.1.2
+  // (`latest`) and v2.2 — both constructors name this PoolManager.
+  elysium: {
+    poolManager: '0xE2e105d3F7209A9DA11f83cCf3E7398a753823F1',
+    routers: ['0xA13f7611115752DEB2B13813BDDE16A5073e4b45', '0x1B341FDD55d56F8E08409A2C25DDFad93Eb03C1a'],
+  },
   arbitrum: {
     poolManager: '0x360E68faCcca8cA495c1B759Fd9EEe466db9FB32',
     routers: ['0x2d01411773c8C24805306E89A41F7855C3c4Fe65', '0xA51afAFe0263b40EdaEf0Df8781eA9aa03E381a3',

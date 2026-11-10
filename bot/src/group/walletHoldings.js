@@ -42,7 +42,7 @@ const FAIL_CACHE_MS = 60 * 1000;
 const decimalsCache = new Map();
 const holdCache = new Map(); // `${chain}:${token}:${wallet}` → { at, amount }
 
-const EVM_FAMILY = new Set(["ethereum", "bsc", "base", "robinhood", "polygon", "arbitrum", "optimism", "avalanche", "berachain", "sonic", "hyperevm", "abstract", "apechain", "blast", "sei", "unichain", "plasma"]);
+const EVM_FAMILY = new Set(["ethereum", "bsc", "base", "robinhood", "polygon", "arbitrum", "optimism", "avalanche", "berachain", "sonic", "hyperevm", "abstract", "apechain", "blast", "sei", "unichain", "plasma", "elysium"]);
 
 // ── EVM ──────────────────────────────────────────────────────────────────────
 
